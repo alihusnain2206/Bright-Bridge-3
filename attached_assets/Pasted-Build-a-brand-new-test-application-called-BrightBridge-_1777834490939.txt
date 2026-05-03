@@ -1,0 +1,367 @@
+Build a brand new test application called "BrightBridge EasyTeam Integration Test" to test and explore the EasyTeam Embedded SDK. This is a sandbox testing app to understand how EasyTeam components work before integrating them into the main platform.
+
+IMPORTANT — API KEY SETUP:
+Before building anything
+ask me for the following:
+
+1. EasyTeam Sandbox API Key
+   Say to user:
+   "Please provide your 
+   EasyTeam Sandbox API Key
+   so I can set it up securely
+   as an environment variable"
+
+2. Once user provides the key:
+   Store it as environment variable:
+   EASYTEAM_API_KEY=provided_key
+   
+   Never hardcode the key
+   in any file!
+   Always use:
+   process.env.EASYTEAM_API_KEY
+
+TECH STACK:
+Frontend: React.js
+Backend: Node.js with Express
+Styling: Tailwind CSS
+Package: @easyteam/react (npm)
+Environment: Replit
+
+BRAND & DESIGN:
+App name: BrightBridge EasyTeam Test
+Primary color: Deep Blue (#1B3A6B)
+Accent color: Teal (#0EA5C9)
+Background: White (#FFFFFF)
+Clean professional design
+Mobile responsive
+
+STEP 1 — INSTALL EASYTEAM:
+Install EasyTeam npm package:
+npm install @easyteam/react
+
+Also install:
+npm install axios
+npm install cors
+npm install dotenv
+
+STEP 2 — BACKEND SETUP:
+Create a Node.js Express backend
+with these endpoints:
+
+ENDPOINT 1 — Generate Token:
+POST /api/easyteam/token
+
+This endpoint:
+→ Takes employee/user details
+→ Calls EasyTeam API to get
+  an authentication token
+→ Returns token to frontend
+
+Code:
+const response = await axios.post(
+  'https://api.easyteam.com/v1/auth/token',
+  {
+    api_key: process.env.EASYTEAM_API_KEY,
+    employee_id: req.body.employee_id,
+    company_id: req.body.company_id
+  }
+);
+return response.data.token;
+
+ENDPOINT 2 — Get Employees:
+GET /api/easyteam/employees
+
+Returns list of all employees
+from EasyTeam sandbox
+
+ENDPOINT 3 — Get Timesheets:
+GET /api/easyteam/timesheets
+
+Returns timesheet data
+from EasyTeam sandbox
+
+ENDPOINT 4 — Webhook Receiver:
+POST /api/easyteam/webhook
+
+Receives automatic notifications
+from EasyTeam when:
+→ Employee clocks in
+→ Employee clocks out
+→ Timesheet updated
+→ Log all received webhooks
+
+STEP 3 — FRONTEND PAGES:
+Build these pages with
+a simple navigation at top:
+
+Page 1: Home/Dashboard
+Page 2: Time Clock Test
+Page 3: Timesheets Test
+Page 4: Schedule Test
+Page 5: Webhook Log
+Page 6: API Key Status
+
+PAGE 1 — HOME DASHBOARD:
+Title: "BrightBridge EasyTeam Integration Test"
+Subtitle: "Sandbox Testing Environment"
+
+Show status cards:
+Card 1: API Connection Status
+→ Green ✅ if API key works
+→ Red ❌ if not connected
+→ Show sandbox environment label
+
+Card 2: EasyTeam SDK Version
+→ Show installed version
+
+Card 3: Last Webhook Received
+→ Show last event from EasyTeam
+
+Card 4: Test Status
+→ How many tests passed
+
+Quick navigation buttons:
+→ Test Time Clock
+→ Test Timesheets
+→ Test Schedule
+→ View Webhook Log
+
+Show sandbox warning banner:
+Yellow banner at top:
+"⚠️ SANDBOX MODE — 
+This is a testing environment.
+No real data or payments."
+
+PAGE 2 — TIME CLOCK TEST:
+Title: "Time Clock Component Test"
+
+This page embeds the EasyTeam
+Time Clock component using iframe
+
+Section 1 — Component Display:
+Show EasyTeam Time Clock iframe:
+
+<iframe
+  src="https://app.easyteam.com/timeclock"
+  width="100%"
+  height="600px"
+  style="border: none; border-radius: 8px"
+/>
+
+Section 2 — Test Controls:
+Below the iframe show:
+→ Employee ID input field
+→ Company ID input field
+→ Generate Token button
+→ Load Component button
+
+Section 3 — Event Log:
+Show real time log of events:
+→ When clock in happens
+→ Show timestamp
+→ Show employee ID
+→ Show event type
+
+Section 4 — Raw API Test:
+Show a simple form to test
+the API directly:
+→ Input: Employee ID
+→ Button: Clock In via API
+→ Button: Clock Out via API
+→ Show API response below
+
+PAGE 3 — TIMESHEETS TEST:
+Title: "Timesheets Component Test"
+
+Section 1 — EasyTeam Timesheet iframe:
+<iframe
+  src="https://app.easyteam.com/timesheets"
+  width="100%"
+  height="600px"
+  style="border: none; border-radius: 8px"
+/>
+
+Section 2 — Raw Data Test:
+Button: Fetch Timesheets via API
+Show the raw JSON response
+in a formatted code block
+
+This helps understand
+what data EasyTeam returns
+so we can use it for:
+→ Payroll calculations
+→ Class ratio tracking
+→ Attendance reports
+
+PAGE 4 — SCHEDULE TEST:
+Title: "Schedule Component Test"
+
+Section 1 — EasyTeam Schedule iframe:
+<iframe
+  src="https://app.easyteam.com/schedules"
+  width="100%"
+  height="600px"
+  style="border: none; border-radius: 8px"
+/>
+
+Section 2 — Schedule API Test:
+Button: Fetch Current Schedule
+Show raw schedule data returned
+
+PAGE 5 — WEBHOOK LOG:
+Title: "Webhook Event Log"
+Subtitle: "Real time events from EasyTeam"
+
+Show a live updating table:
+Columns:
+→ Time received
+→ Event type
+→ Employee ID
+→ Data
+→ Status
+
+Events to capture:
+→ clock_in
+→ clock_out
+→ timesheet_updated
+→ schedule_changed
+→ time_off_requested
+
+Show last 50 events
+Auto refresh every 10 seconds
+
+Also show:
+Webhook URL for EasyTeam config:
+"Set this URL in EasyTeam dashboard:
+https://your-replit-url/api/easyteam/webhook"
+
+PAGE 6 — API KEY STATUS:
+Title: "API Configuration"
+
+Show:
+→ API Key status (connected/not connected)
+→ Sandbox environment confirmed
+→ SDK version installed
+→ Backend connection status
+
+Test buttons:
+→ Test API Connection
+→ Test Authentication
+→ Test Webhook
+
+Show results of each test
+Green = working ✅
+Red = not working ❌
+
+Instructions section:
+How to update the API key
+in Replit environment variables
+
+EASYTEAM INITIALIZATION CODE:
+In your React app
+initialize EasyTeam like this:
+
+import { EasyTeamProvider } from '@easyteam/react';
+
+function App() {
+  return (
+    <EasyTeamProvider
+      apiKey={process.env.REACT_APP_EASYTEAM_API_KEY}
+      environment="sandbox"
+      theme={{
+        primaryColor: '#1B3A6B',
+        accentColor: '#0EA5C9',
+        fontFamily: 'Inter, sans-serif'
+      }}
+    >
+      {/* Your app components */}
+    </EasyTeamProvider>
+  );
+}
+
+This sets up:
+→ API connection
+→ Sandbox environment
+→ BrightBridge colors
+→ Available everywhere in app
+
+ENVIRONMENT VARIABLES NEEDED:
+Ask user for these and store
+as Replit environment variables:
+
+EASYTEAM_API_KEY=
+(EasyTeam sandbox API key)
+
+REACT_APP_EASYTEAM_API_KEY=
+(Same key for React frontend)
+
+EASYTEAM_ENVIRONMENT=sandbox
+(Always sandbox for now)
+
+EASYTEAM_WEBHOOK_SECRET=
+(If provided in API key link)
+
+ERROR HANDLING:
+If API key is missing:
+Show clear error message:
+"⚠️ EasyTeam API Key not found!
+Please add EASYTEAM_API_KEY
+to your Replit environment variables"
+
+If API connection fails:
+Show error with details:
+"❌ Could not connect to EasyTeam
+Error: [show actual error]
+Please check your API key"
+
+If iframe fails to load:
+Show placeholder:
+"EasyTeam component loading...
+If this persists check your API key"
+
+SAMPLE TEST DATA:
+Add these test employees
+to use during testing:
+
+Employee 1:
+ID: EMP-TEST-001
+Name: John Smith
+Position: Teacher
+Company: SUNSHINE-TEST
+
+Employee 2:
+ID: EMP-TEST-002
+Name: Mary Johnson
+Position: Assistant
+Company: SUNSHINE-TEST
+
+Use these IDs when testing
+the time clock and timesheets
+
+IMPORTANT REQUIREMENTS:
+✅ ASK FOR API KEY FIRST
+   Before building anything
+   ask user to provide key
+
+✅ Never hardcode API key
+   Always use environment variables
+
+✅ Show clear sandbox warning
+   on every page
+
+✅ Show real time connection status
+
+✅ Log all API calls and responses
+   for debugging
+
+✅ Mobile responsive design
+
+✅ Show loading states
+
+✅ Show clear error messages
+   if something does not work
+
+✅ This is a TEST app only
+   Keep it simple and clear
+   Focus on understanding
+   how EasyTeam works
