@@ -6,4 +6,21 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./connectionTestResult";
+export * from "./connectionTestResultDetails";
+export * from "./easyTeamStatus";
+export * from "./employee";
+export * from "./employeesResponse";
+export * from "./errorResponse";
+export * from "./generateTokenRequest";
+export * from "./generateTokenResponse";
 export * from "./healthStatus";
+export * from "./timesheetsResponse";
+export * from "./timesheetsResponseRaw";
+export * from "./timesheetsResponseTimesheetsItem";
+export * from "./webhookAck";
+export * from "./webhookEvent";
+export * from "./webhookEventData";
+export * from "./webhookLogsResponse";
+export * from "./webhookPayload";
+export * from "./webhookPayloadData";

@@ -14,3 +14,97 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary Get EasyTeam API connection status
+ */
+export const GetEasyTeamStatusResponse = zod.object({
+  connected: zod.boolean(),
+  environment: zod.string(),
+  apiKeyPresent: zod.boolean(),
+  sdkVersion: zod.string(),
+  lastChecked: zod.string(),
+});
+
+/**
+ * @summary Generate EasyTeam auth token
+ */
+export const GenerateEasyTeamTokenBody = zod.object({
+  employee_id: zod.string(),
+  company_id: zod.string(),
+});
+
+export const GenerateEasyTeamTokenResponse = zod.object({
+  token: zod.string().optional(),
+  success: zod.boolean(),
+  error: zod.string().optional(),
+});
+
+/**
+ * @summary Get all employees from EasyTeam
+ */
+export const GetEmployeesResponse = zod.object({
+  employees: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      position: zod.string().optional(),
+      company_id: zod.string().optional(),
+      status: zod.string().optional(),
+    }),
+  ),
+  success: zod.boolean(),
+  error: zod.string().optional(),
+});
+
+/**
+ * @summary Get timesheets from EasyTeam
+ */
+export const GetTimesheetsResponse = zod.object({
+  timesheets: zod.array(zod.record(zod.string(), zod.unknown())),
+  success: zod.boolean(),
+  error: zod.string().optional(),
+  raw: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+/**
+ * @summary Receive webhook events from EasyTeam
+ */
+export const ReceiveWebhookBody = zod.object({
+  event: zod.string(),
+  employee_id: zod.string().optional(),
+  timestamp: zod.string().optional(),
+  data: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+export const ReceiveWebhookResponse = zod.object({
+  received: zod.boolean(),
+  id: zod.string(),
+});
+
+/**
+ * @summary Get stored webhook event logs
+ */
+export const GetWebhookLogsResponse = zod.object({
+  events: zod.array(
+    zod.object({
+      id: zod.string(),
+      event: zod.string(),
+      employee_id: zod.string().optional(),
+      timestamp: zod.string(),
+      data: zod.record(zod.string(), zod.unknown()).optional(),
+      status: zod.string(),
+    }),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * @summary Test EasyTeam API connection
+ */
+export const TestConnectionResponse = zod.object({
+  apiConnection: zod.boolean(),
+  authentication: zod.boolean(),
+  webhook: zod.boolean(),
+  details: zod.record(zod.string(), zod.unknown()).optional(),
+});

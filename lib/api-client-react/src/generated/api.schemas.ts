@@ -8,3 +8,92 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface EasyTeamStatus {
+  connected: boolean;
+  environment: string;
+  apiKeyPresent: boolean;
+  sdkVersion: string;
+  lastChecked: string;
+}
+
+export interface GenerateTokenRequest {
+  employee_id: string;
+  company_id: string;
+}
+
+export interface GenerateTokenResponse {
+  token?: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface Employee {
+  id: string;
+  name: string;
+  position?: string;
+  company_id?: string;
+  status?: string;
+}
+
+export interface EmployeesResponse {
+  employees: Employee[];
+  success: boolean;
+  error?: string;
+}
+
+export type TimesheetsResponseTimesheetsItem = { [key: string]: unknown };
+
+export type TimesheetsResponseRaw = { [key: string]: unknown };
+
+export interface TimesheetsResponse {
+  timesheets: TimesheetsResponseTimesheetsItem[];
+  success: boolean;
+  error?: string;
+  raw?: TimesheetsResponseRaw;
+}
+
+export type WebhookPayloadData = { [key: string]: unknown };
+
+export interface WebhookPayload {
+  event: string;
+  employee_id?: string;
+  timestamp?: string;
+  data?: WebhookPayloadData;
+  [key: string]: unknown;
+}
+
+export interface WebhookAck {
+  received: boolean;
+  id: string;
+}
+
+export type WebhookEventData = { [key: string]: unknown };
+
+export interface WebhookEvent {
+  id: string;
+  event: string;
+  employee_id?: string;
+  timestamp: string;
+  data?: WebhookEventData;
+  status: string;
+}
+
+export interface WebhookLogsResponse {
+  events: WebhookEvent[];
+  total: number;
+}
+
+export type ConnectionTestResultDetails = { [key: string]: unknown };
+
+export interface ConnectionTestResult {
+  apiConnection: boolean;
+  authentication: boolean;
+  webhook: boolean;
+  details?: ConnectionTestResultDetails;
+}
+
+export interface ErrorResponse {
+  error: string;
+  details?: string;
+}

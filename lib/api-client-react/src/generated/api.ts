@@ -5,18 +5,33 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  ConnectionTestResult,
+  EasyTeamStatus,
+  EmployeesResponse,
+  ErrorResponse,
+  GenerateTokenRequest,
+  GenerateTokenResponse,
+  HealthStatus,
+  TimesheetsResponse,
+  WebhookAck,
+  WebhookLogsResponse,
+  WebhookPayload,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +114,556 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Get EasyTeam API connection status
+ */
+export const getGetEasyTeamStatusUrl = () => {
+  return `/api/easyteam/status`;
+};
+
+export const getEasyTeamStatus = async (
+  options?: RequestInit,
+): Promise<EasyTeamStatus> => {
+  return customFetch<EasyTeamStatus>(getGetEasyTeamStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEasyTeamStatusQueryKey = () => {
+  return [`/api/easyteam/status`] as const;
+};
+
+export const getGetEasyTeamStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEasyTeamStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEasyTeamStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEasyTeamStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getEasyTeamStatus>>
+  > = ({ signal }) => getEasyTeamStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEasyTeamStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEasyTeamStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEasyTeamStatus>>
+>;
+export type GetEasyTeamStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get EasyTeam API connection status
+ */
+
+export function useGetEasyTeamStatus<
+  TData = Awaited<ReturnType<typeof getEasyTeamStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEasyTeamStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEasyTeamStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Generate EasyTeam auth token
+ */
+export const getGenerateEasyTeamTokenUrl = () => {
+  return `/api/easyteam/token`;
+};
+
+export const generateEasyTeamToken = async (
+  generateTokenRequest: GenerateTokenRequest,
+  options?: RequestInit,
+): Promise<GenerateTokenResponse> => {
+  return customFetch<GenerateTokenResponse>(getGenerateEasyTeamTokenUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(generateTokenRequest),
+  });
+};
+
+export const getGenerateEasyTeamTokenMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateEasyTeamToken>>,
+    TError,
+    { data: BodyType<GenerateTokenRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateEasyTeamToken>>,
+  TError,
+  { data: BodyType<GenerateTokenRequest> },
+  TContext
+> => {
+  const mutationKey = ["generateEasyTeamToken"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateEasyTeamToken>>,
+    { data: BodyType<GenerateTokenRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return generateEasyTeamToken(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateEasyTeamTokenMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateEasyTeamToken>>
+>;
+export type GenerateEasyTeamTokenMutationBody = BodyType<GenerateTokenRequest>;
+export type GenerateEasyTeamTokenMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Generate EasyTeam auth token
+ */
+export const useGenerateEasyTeamToken = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateEasyTeamToken>>,
+    TError,
+    { data: BodyType<GenerateTokenRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateEasyTeamToken>>,
+  TError,
+  { data: BodyType<GenerateTokenRequest> },
+  TContext
+> => {
+  return useMutation(getGenerateEasyTeamTokenMutationOptions(options));
+};
+
+/**
+ * @summary Get all employees from EasyTeam
+ */
+export const getGetEmployeesUrl = () => {
+  return `/api/easyteam/employees`;
+};
+
+export const getEmployees = async (
+  options?: RequestInit,
+): Promise<EmployeesResponse> => {
+  return customFetch<EmployeesResponse>(getGetEmployeesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetEmployeesQueryKey = () => {
+  return [`/api/easyteam/employees`] as const;
+};
+
+export const getGetEmployeesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getEmployees>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEmployees>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetEmployeesQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmployees>>> = ({
+    signal,
+  }) => getEmployees({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getEmployees>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetEmployeesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getEmployees>>
+>;
+export type GetEmployeesQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get all employees from EasyTeam
+ */
+
+export function useGetEmployees<
+  TData = Awaited<ReturnType<typeof getEmployees>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getEmployees>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetEmployeesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get timesheets from EasyTeam
+ */
+export const getGetTimesheetsUrl = () => {
+  return `/api/easyteam/timesheets`;
+};
+
+export const getTimesheets = async (
+  options?: RequestInit,
+): Promise<TimesheetsResponse> => {
+  return customFetch<TimesheetsResponse>(getGetTimesheetsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetTimesheetsQueryKey = () => {
+  return [`/api/easyteam/timesheets`] as const;
+};
+
+export const getGetTimesheetsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getTimesheets>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTimesheets>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetTimesheetsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTimesheets>>> = ({
+    signal,
+  }) => getTimesheets({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getTimesheets>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetTimesheetsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getTimesheets>>
+>;
+export type GetTimesheetsQueryError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get timesheets from EasyTeam
+ */
+
+export function useGetTimesheets<
+  TData = Awaited<ReturnType<typeof getTimesheets>>,
+  TError = ErrorType<ErrorResponse>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getTimesheets>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetTimesheetsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Receive webhook events from EasyTeam
+ */
+export const getReceiveWebhookUrl = () => {
+  return `/api/easyteam/webhook`;
+};
+
+export const receiveWebhook = async (
+  webhookPayload: WebhookPayload,
+  options?: RequestInit,
+): Promise<WebhookAck> => {
+  return customFetch<WebhookAck>(getReceiveWebhookUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(webhookPayload),
+  });
+};
+
+export const getReceiveWebhookMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof receiveWebhook>>,
+    TError,
+    { data: BodyType<WebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof receiveWebhook>>,
+  TError,
+  { data: BodyType<WebhookPayload> },
+  TContext
+> => {
+  const mutationKey = ["receiveWebhook"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof receiveWebhook>>,
+    { data: BodyType<WebhookPayload> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return receiveWebhook(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReceiveWebhookMutationResult = NonNullable<
+  Awaited<ReturnType<typeof receiveWebhook>>
+>;
+export type ReceiveWebhookMutationBody = BodyType<WebhookPayload>;
+export type ReceiveWebhookMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Receive webhook events from EasyTeam
+ */
+export const useReceiveWebhook = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof receiveWebhook>>,
+    TError,
+    { data: BodyType<WebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof receiveWebhook>>,
+  TError,
+  { data: BodyType<WebhookPayload> },
+  TContext
+> => {
+  return useMutation(getReceiveWebhookMutationOptions(options));
+};
+
+/**
+ * @summary Get stored webhook event logs
+ */
+export const getGetWebhookLogsUrl = () => {
+  return `/api/easyteam/webhooks`;
+};
+
+export const getWebhookLogs = async (
+  options?: RequestInit,
+): Promise<WebhookLogsResponse> => {
+  return customFetch<WebhookLogsResponse>(getGetWebhookLogsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetWebhookLogsQueryKey = () => {
+  return [`/api/easyteam/webhooks`] as const;
+};
+
+export const getGetWebhookLogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getWebhookLogs>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWebhookLogs>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetWebhookLogsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getWebhookLogs>>> = ({
+    signal,
+  }) => getWebhookLogs({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getWebhookLogs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetWebhookLogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getWebhookLogs>>
+>;
+export type GetWebhookLogsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get stored webhook event logs
+ */
+
+export function useGetWebhookLogs<
+  TData = Awaited<ReturnType<typeof getWebhookLogs>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getWebhookLogs>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetWebhookLogsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Test EasyTeam API connection
+ */
+export const getTestConnectionUrl = () => {
+  return `/api/easyteam/test-connection`;
+};
+
+export const testConnection = async (
+  options?: RequestInit,
+): Promise<ConnectionTestResult> => {
+  return customFetch<ConnectionTestResult>(getTestConnectionUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getTestConnectionMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testConnection>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testConnection>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["testConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testConnection>>,
+    void
+  > = () => {
+    return testConnection(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testConnection>>
+>;
+
+export type TestConnectionMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Test EasyTeam API connection
+ */
+export const useTestConnection = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testConnection>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testConnection>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getTestConnectionMutationOptions(options));
+};

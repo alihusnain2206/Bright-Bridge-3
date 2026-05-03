@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "BrightBridge EasyTeam Test"
+version = "1.0.0"
+id = "artifacts/brightbridge"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19205
+
+[services.development]
+run = "pnpm --filter @workspace/brightbridge run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/brightbridge", "run", "build" ]
+publicDir = "artifacts/brightbridge/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19205"
+BASE_PATH = "/"

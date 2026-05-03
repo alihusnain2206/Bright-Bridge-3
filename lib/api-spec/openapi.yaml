@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: easyteam
+    description: EasyTeam integration endpoints
 paths:
   /healthz:
     get:
@@ -24,6 +26,128 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /easyteam/status:
+    get:
+      operationId: getEasyTeamStatus
+      tags: [easyteam]
+      summary: Get EasyTeam API connection status
+      responses:
+        "200":
+          description: Status info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EasyTeamStatus"
+
+  /easyteam/token:
+    post:
+      operationId: generateEasyTeamToken
+      tags: [easyteam]
+      summary: Generate EasyTeam auth token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GenerateTokenRequest"
+      responses:
+        "200":
+          description: Token generated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GenerateTokenResponse"
+        "500":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /easyteam/employees:
+    get:
+      operationId: getEmployees
+      tags: [easyteam]
+      summary: Get all employees from EasyTeam
+      responses:
+        "200":
+          description: List of employees
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeesResponse"
+        "500":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /easyteam/timesheets:
+    get:
+      operationId: getTimesheets
+      tags: [easyteam]
+      summary: Get timesheets from EasyTeam
+      responses:
+        "200":
+          description: Timesheet data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimesheetsResponse"
+        "500":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /easyteam/webhook:
+    post:
+      operationId: receiveWebhook
+      tags: [easyteam]
+      summary: Receive webhook events from EasyTeam
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookPayload"
+      responses:
+        "200":
+          description: Webhook received
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookAck"
+
+  /easyteam/webhooks:
+    get:
+      operationId: getWebhookLogs
+      tags: [easyteam]
+      summary: Get stored webhook event logs
+      responses:
+        "200":
+          description: Webhook log entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookLogsResponse"
+
+  /easyteam/test-connection:
+    post:
+      operationId: testConnection
+      tags: [easyteam]
+      summary: Test EasyTeam API connection
+      responses:
+        "200":
+          description: Connection test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionTestResult"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +158,185 @@ components:
       required:
         - status
 
+    EasyTeamStatus:
+      type: object
+      properties:
+        connected:
+          type: boolean
+        environment:
+          type: string
+        apiKeyPresent:
+          type: boolean
+        sdkVersion:
+          type: string
+        lastChecked:
+          type: string
+      required:
+        - connected
+        - environment
+        - apiKeyPresent
+        - sdkVersion
+        - lastChecked
+
+    GenerateTokenRequest:
+      type: object
+      properties:
+        employee_id:
+          type: string
+        company_id:
+          type: string
+      required:
+        - employee_id
+        - company_id
+
+    GenerateTokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        success:
+          type: boolean
+        error:
+          type: string
+      required:
+        - success
+
+    EmployeesResponse:
+      type: object
+      properties:
+        employees:
+          type: array
+          items:
+            $ref: "#/components/schemas/Employee"
+        success:
+          type: boolean
+        error:
+          type: string
+      required:
+        - employees
+        - success
+
+    Employee:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        position:
+          type: string
+        company_id:
+          type: string
+        status:
+          type: string
+      required:
+        - id
+        - name
+
+    TimesheetsResponse:
+      type: object
+      properties:
+        timesheets:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        success:
+          type: boolean
+        error:
+          type: string
+        raw:
+          type: object
+          additionalProperties: true
+      required:
+        - timesheets
+        - success
+
+    WebhookPayload:
+      type: object
+      properties:
+        event:
+          type: string
+        employee_id:
+          type: string
+        timestamp:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+      required:
+        - event
+      additionalProperties: true
+
+    WebhookAck:
+      type: object
+      properties:
+        received:
+          type: boolean
+        id:
+          type: string
+      required:
+        - received
+        - id
+
+    WebhookLogsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEvent"
+        total:
+          type: integer
+      required:
+        - events
+        - total
+
+    WebhookEvent:
+      type: object
+      properties:
+        id:
+          type: string
+        event:
+          type: string
+        employee_id:
+          type: string
+        timestamp:
+          type: string
+        data:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+      required:
+        - id
+        - event
+        - timestamp
+        - status
+
+    ConnectionTestResult:
+      type: object
+      properties:
+        apiConnection:
+          type: boolean
+        authentication:
+          type: boolean
+        webhook:
+          type: boolean
+        details:
+          type: object
+          additionalProperties: true
+      required:
+        - apiConnection
+        - authentication
+        - webhook
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        details:
+          type: string
+      required:
+        - error
