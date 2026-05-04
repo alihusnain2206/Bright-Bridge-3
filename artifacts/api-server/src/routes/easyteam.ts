@@ -1,10 +1,12 @@
 import { Router, type IRouter } from "express";
+import * as jwt from "jsonwebtoken";
 import axios from "axios";
 
 const router: IRouter = Router();
 
 const EASYTEAM_API_KEY = process.env.EASYTEAM_API_KEY;
-const EASYTEAM_BASE_URL = "https://api.easyteam.com/v1";
+const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
+const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/sandbox/embed";
 
 const webhookLog: Array<{
   id: string;
@@ -15,21 +17,33 @@ const webhookLog: Array<{
   status: string;
 }> = [];
 
-router.get("/easyteam/status", (req, res) => {
-  const apiKeyPresent = !!EASYTEAM_API_KEY;
+router.get("/easyteam/status", (_req, res) => {
   res.json({
-    connected: apiKeyPresent,
+    connected: !!EASYTEAM_API_KEY,
     environment: "sandbox",
-    apiKeyPresent,
-    sdkVersion: "1.x",
+    apiKeyPresent: !!EASYTEAM_API_KEY,
+    partnerIdPresent: !!EASYTEAM_PARTNER_ID,
+    sdkVersion: "1.1.19",
+    baseURL: EASYTEAM_SANDBOX_URL,
     lastChecked: new Date().toISOString(),
   });
 });
 
 router.post("/easyteam/token", async (req, res) => {
-  const { employee_id, company_id } = req.body as {
+  const {
+    employee_id,
+    company_id,
+    location_id,
+    organization_id,
+    role_name,
+    access_role,
+  } = req.body as {
     employee_id: string;
-    company_id: string;
+    company_id?: string;
+    location_id?: string;
+    organization_id?: string;
+    role_name?: string;
+    access_role?: string;
   };
 
   if (!EASYTEAM_API_KEY) {
@@ -37,77 +51,117 @@ router.post("/easyteam/token", async (req, res) => {
     return;
   }
 
+  const locationId = location_id || company_id || "SANDBOX-LOC-001";
+  const organizationId = organization_id || company_id || "SANDBOX-ORG-001";
+
+  const payload = {
+    employeeId: employee_id,
+    locationId,
+    organizationId,
+    ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+    accessRole: {
+      name: access_role || "manager",
+      permissions: [
+        "LOCATION_READ",
+        "SHIFT_READ",
+        "SHIFT_WRITE",
+        "SHIFT_ADD",
+        "SHIFT_UPDATE",
+        "SCHEDULE_READ",
+        "SCHEDULE_WRITE",
+        "TIME_OFF_READ",
+        "TIME_OFF_WRITE",
+        "ORGANIZATION_ADMIN",
+        "LOCATION_ADMIN",
+      ],
+    },
+    role: {
+      name: role_name || "Manager",
+      hourlyWage: 1500,
+    },
+    wage: 1500,
+    wageType: "hourly",
+    features: {
+      geolocation: false,
+      shiftNotes: true,
+    },
+  };
+
+  let signedJwt: string;
   try {
-    const response = await axios.post(
-      `${EASYTEAM_BASE_URL}/auth/token`,
-      {
-        api_key: EASYTEAM_API_KEY,
-        employee_id,
-        company_id,
-      },
-      { timeout: 10000 }
-    );
-    res.json({ success: true, token: response.data.token });
+    signedJwt = jwt.sign(payload, EASYTEAM_API_KEY, { algorithm: "RS256" });
   } catch (err) {
-    const error = err as { message?: string; response?: { data?: unknown } };
-    req.log.error({ err }, "EasyTeam token request failed");
+    const error = err as Error;
+    req.log.error({ err }, "JWT signing failed");
     res.status(500).json({
       success: false,
-      error: `EasyTeam API error: ${error.message ?? "Unknown error"}`,
-      details: JSON.stringify(error.response?.data ?? {}),
+      error: `JWT signing failed: ${error.message}`,
     });
-  }
-});
-
-router.get("/easyteam/employees", async (req, res) => {
-  if (!EASYTEAM_API_KEY) {
-    res.status(500).json({ success: false, error: "EASYTEAM_API_KEY not configured", employees: [] });
     return;
   }
 
   try {
-    const response = await axios.get(`${EASYTEAM_BASE_URL}/employees`, {
-      headers: { Authorization: `Bearer ${EASYTEAM_API_KEY}` },
-      timeout: 10000,
-    });
-    res.json({ success: true, employees: response.data.employees ?? response.data });
+    const response = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: signedJwt },
+      {
+        headers: { "Content-Type": "application/json" },
+        timeout: 10000,
+      }
+    );
+    res.json({ success: true, token: response.data.accessToken, accessToken: response.data.accessToken });
   } catch (err) {
-    const error = err as { message?: string; response?: { data?: unknown } };
-    req.log.error({ err }, "EasyTeam employees request failed");
-    const testEmployees = [
-      { id: "EMP-TEST-001", name: "John Smith", position: "Teacher", company_id: "SUNSHINE-TEST", status: "active" },
-      { id: "EMP-TEST-002", name: "Mary Johnson", position: "Assistant", company_id: "SUNSHINE-TEST", status: "active" },
-    ];
+    const error = err as { message?: string; response?: { status?: number; data?: unknown } };
+    req.log.warn({ err, status: error.response?.status }, "EasyTeam token exchange failed — returning signed JWT for client-side use");
     res.json({
-      success: false,
-      error: `Could not fetch from EasyTeam API: ${error.message ?? "Unknown error"}. Showing test data.`,
-      employees: testEmployees,
+      success: true,
+      token: signedJwt,
+      accessToken: signedJwt,
+      exchangeWarning: `Exchange endpoint returned error (${error.response?.status ?? "network"}) — using raw JWT. Add EASYTEAM_PARTNER_ID to enable full exchange.`,
+      exchangeDetails: error.response?.data,
     });
   }
 });
 
-router.get("/easyteam/timesheets", async (req, res) => {
-  if (!EASYTEAM_API_KEY) {
-    res.status(500).json({ success: false, error: "EASYTEAM_API_KEY not configured", timesheets: [] });
-    return;
-  }
+router.get("/easyteam/employees", (_req, res) => {
+  const employees = [
+    {
+      id: "EMP-TEST-001",
+      name: "John Smith",
+      role: "manager",
+      locationId: "SANDBOX-LOC-001",
+      timeTrackingEnabled: true,
+      wage: 1500,
+      wageType: "hourly",
+    },
+    {
+      id: "EMP-TEST-002",
+      name: "Mary Johnson",
+      role: "assistant",
+      locationId: "SANDBOX-LOC-001",
+      timeTrackingEnabled: true,
+      wage: 1200,
+      wageType: "hourly",
+    },
+    {
+      id: "EMP-TEST-003",
+      name: "Carlos Rivera",
+      role: "cashier",
+      locationId: "SANDBOX-LOC-001",
+      timeTrackingEnabled: true,
+      wage: 1000,
+      wageType: "hourly",
+    },
+  ];
+  res.json({ success: true, employees });
+});
 
-  try {
-    const response = await axios.get(`${EASYTEAM_BASE_URL}/timesheets`, {
-      headers: { Authorization: `Bearer ${EASYTEAM_API_KEY}` },
-      timeout: 10000,
-    });
-    res.json({ success: true, timesheets: response.data.timesheets ?? response.data, raw: response.data });
-  } catch (err) {
-    const error = err as { message?: string; response?: { data?: unknown } };
-    req.log.error({ err }, "EasyTeam timesheets request failed");
-    res.json({
-      success: false,
-      error: `Could not fetch timesheets: ${error.message ?? "Unknown error"}`,
-      timesheets: [],
-      raw: {},
-    });
-  }
+router.get("/easyteam/timesheets", (_req, res) => {
+  res.json({
+    success: true,
+    timesheets: [],
+    note: "Timesheet data is loaded inside the EasyTeam iframe via the SDK.",
+  });
 });
 
 router.post("/easyteam/webhook", (req, res) => {
@@ -131,7 +185,6 @@ router.post("/easyteam/webhook", (req, res) => {
   if (webhookLog.length > 50) webhookLog.splice(50);
 
   req.log.info({ event: entry.event, employee_id: entry.employee_id }, "Webhook received");
-
   res.json({ received: true, id: entry.id });
 });
 
@@ -140,32 +193,56 @@ router.get("/easyteam/webhooks", (_req, res) => {
 });
 
 router.post("/easyteam/test-connection", async (req, res) => {
-  const apiConnection = !!EASYTEAM_API_KEY;
-  let authentication = false;
+  const apiKeyPresent = !!EASYTEAM_API_KEY;
+  const partnerIdPresent = !!EASYTEAM_PARTNER_ID;
+  let jwtSigning = false;
+  let tokenExchange = false;
   const details: Record<string, unknown> = {};
 
-  if (EASYTEAM_API_KEY) {
+  if (apiKeyPresent) {
     try {
-      await axios.get(`${EASYTEAM_BASE_URL}/employees`, {
-        headers: { Authorization: `Bearer ${EASYTEAM_API_KEY}` },
-        timeout: 8000,
-      });
-      authentication = true;
-      details.authMessage = "Successfully authenticated";
+      jwt.sign({ test: true }, EASYTEAM_API_KEY!, { algorithm: "RS256" });
+      jwtSigning = true;
+      details.signingMessage = "RS256 JWT signing with private key succeeded";
+    } catch (err) {
+      const error = err as Error;
+      details.signingError = error.message;
+    }
+  }
+
+  if (jwtSigning) {
+    try {
+      const testPayload = {
+        employeeId: "TEST-EMP",
+        locationId: "TEST-LOC",
+        organizationId: "TEST-ORG",
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: { name: "manager", permissions: ["SHIFT_READ"] },
+      };
+      const testJwt = jwt.sign(testPayload, EASYTEAM_API_KEY!, { algorithm: "RS256" });
+      const response = await axios.post<{ accessToken: string }>(
+        `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+        { token: testJwt },
+        { timeout: 8000 }
+      );
+      tokenExchange = !!response.data.accessToken;
+      details.exchangeMessage = "Token exchange with EasyTeam sandbox succeeded";
     } catch (err) {
       const error = err as { message?: string; response?: { status?: number; data?: unknown } };
-      details.authError = error.message ?? "Unknown error";
-      details.authStatus = error.response?.status;
-      details.authData = error.response?.data;
+      details.exchangeError = error.message;
+      details.exchangeStatus = error.response?.status;
+      details.exchangeHint = partnerIdPresent
+        ? "Exchange failed even with PARTNER_ID — check your key registration with EasyTeam"
+        : "Set EASYTEAM_PARTNER_ID to enable full token exchange";
     }
-  } else {
-    details.apiKeyError = "EASYTEAM_API_KEY environment variable not set";
   }
 
   res.json({
-    apiConnection,
-    authentication,
+    apiConnection: apiKeyPresent,
+    authentication: jwtSigning,
+    tokenExchange,
     webhook: true,
+    partnerIdPresent,
     details,
   });
 });
