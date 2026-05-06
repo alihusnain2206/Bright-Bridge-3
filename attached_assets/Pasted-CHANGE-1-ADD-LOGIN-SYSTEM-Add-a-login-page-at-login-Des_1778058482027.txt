@@ -1,0 +1,692 @@
+CHANGE 1 — ADD LOGIN SYSTEM:
+Add a login page at /login
+
+Design:
+BrightBridge logo at top
+Title: "BrightBridge"
+Subtitle: "EasyTeam Integration Test"
+
+Email input field
+Password input field
+Login button (teal)
+
+After login:
+→ Check user role
+→ Redirect to correct dashboard
+
+Add logout button to all pages
+
+CHANGE 2 — ADD SAMPLE USERS DATABASE:
+Create a simple users array
+in the backend for testing:
+
+const testUsers = [
+
+  // SUPER ADMIN - Joanne
+  {
+    id: "USER-001",
+    name: "Joanne Indiviglio",
+    email: "joanne@brightbridgeassist.com",
+    password: "Admin123!",
+    role: "super_admin",
+    companyId: "ORG-BRIGHTBRIDGE",
+    employeeId: "ADMIN-JOANNE",
+    position: "Super Admin"
+  },
+
+  // DAYCARE MANAGER - Sunshine
+  {
+    id: "USER-002",
+    name: "Susan Manager",
+    email: "manager@sunshine.com",
+    password: "Manager123!",
+    role: "manager",
+    companyId: "ORG-SUNSHINE",
+    locationId: "LOC-SUNSHINE",
+    employeeId: "MGR-SUNSHINE-001",
+    position: "Daycare Manager"
+  },
+
+  // DAYCARE MANAGER - Rainbow
+  {
+    id: "USER-003",
+    name: "Mike Manager",
+    email: "manager@rainbow.com",
+    password: "Manager123!",
+    role: "manager",
+    companyId: "ORG-RAINBOW",
+    locationId: "LOC-RAINBOW",
+    employeeId: "MGR-RAINBOW-001",
+    position: "Daycare Manager"
+  },
+
+  // STAFF MEMBER - Sunshine Teacher
+  {
+    id: "USER-004",
+    name: "John Smith",
+    email: "john@sunshine.com",
+    password: "Staff123!",
+    role: "employee",
+    companyId: "ORG-SUNSHINE",
+    locationId: "LOC-SUNSHINE",
+    employeeId: "EMP-SUNSHINE-001",
+    position: "Teacher",
+    hourlyWage: 1800
+  },
+
+  // STAFF MEMBER - Sunshine Assistant
+  {
+    id: "USER-005",
+    name: "Mary Johnson",
+    email: "mary@sunshine.com",
+    password: "Staff123!",
+    role: "employee",
+    companyId: "ORG-SUNSHINE",
+    locationId: "LOC-SUNSHINE",
+    employeeId: "EMP-SUNSHINE-002",
+    position: "Assistant",
+    hourlyWage: 1500
+  },
+
+  // STAFF MEMBER - Rainbow Teacher
+  {
+    id: "USER-006",
+    name: "Tom Wilson",
+    email: "tom@rainbow.com",
+    password: "Staff123!",
+    role: "employee",
+    companyId: "ORG-RAINBOW",
+    locationId: "LOC-RAINBOW",
+    employeeId: "EMP-RAINBOW-001",
+    position: "Teacher",
+    hourlyWage: 1800
+  },
+
+  // PARENT - Cannot access EasyTeam
+  {
+    id: "USER-007",
+    name: "Sarah Parent",
+    email: "sarah@parent.com",
+    password: "Parent123!",
+    role: "parent",
+    companyId: "ORG-SUNSHINE",
+    employeeId: null,
+    position: "Parent"
+  }
+];
+
+CHANGE 3 — ADD COMPANIES AND LOCATIONS:
+Create sample companies data:
+
+const companies = [
+  {
+    id: "ORG-BRIGHTBRIDGE",
+    name: "BrightBridge Assist",
+    type: "headquarters"
+  },
+  {
+    id: "ORG-SUNSHINE",
+    name: "Sunshine Daycare Centre",
+    type: "daycare",
+    locationId: "LOC-SUNSHINE",
+    address: "123 Main St, Newark NJ",
+    latitude: 40.7357,
+    longitude: -74.1724
+  },
+  {
+    id: "ORG-RAINBOW",
+    name: "Rainbow Kids Daycare",
+    type: "daycare",
+    locationId: "LOC-RAINBOW",
+    address: "456 Oak Ave, Jersey City NJ",
+    latitude: 40.7178,
+    longitude: -74.0431
+  }
+];
+
+const locations = [
+  {
+    id: "LOC-SUNSHINE",
+    name: "Sunshine Daycare Centre",
+    organizationId: "ORG-SUNSHINE",
+    address: "123 Main St, Newark NJ",
+    latitude: 40.7357,
+    longitude: -74.1724
+  },
+  {
+    id: "LOC-RAINBOW",
+    name: "Rainbow Kids Daycare",
+    organizationId: "ORG-RAINBOW",
+    address: "456 Oak Ave, Jersey City NJ",
+    latitude: 40.7178,
+    longitude: -74.0431
+  }
+];
+
+CHANGE 4 — BUILD JWT TOKEN GENERATOR:
+Update the existing token endpoint:
+POST /api/easyteam/token
+
+Generate DIFFERENT JWT tokens
+based on user role:
+
+// Install required package:
+// npm install jsonwebtoken
+
+const jwt = require('jsonwebtoken');
+
+app.post('/api/easyteam/token', (req, res) => {
+  const { userId } = req.body;
+  const user = testUsers.find(u => u.id === userId);
+  
+  if (!user) {
+    return res.status(404).json({ 
+      error: 'User not found' 
+    });
+  }
+
+  // SUPER ADMIN JWT:
+  if (user.role === 'super_admin') {
+    const payload = {
+      employeeId: user.employeeId,
+      organizationId: user.companyId,
+      partnerId: process.env.EASYTEAM_PARTNER_ID,
+      accessRole: {
+        name: "admin",
+        permissions: [
+          "timeclock",
+          "timeclock.edit",
+          "timesheet.view",
+          "timesheet.edit",
+          "schedule.view",
+          "schedule.manage",
+          "timeoff.view",
+          "timeoff.manage",
+          "reports.view"
+        ]
+      },
+      features: {
+        geolocation: false,
+        shiftNotes: true
+      }
+    };
+    const token = jwt.sign(
+      payload,
+      process.env.EASYTEAM_PRIVATE_KEY,
+      { algorithm: 'RS256' }
+    );
+    return res.json({ token, role: 'super_admin' });
+  }
+
+  // MANAGER JWT:
+  if (user.role === 'manager') {
+    const payload = {
+      employeeId: user.employeeId,
+      organizationId: user.companyId,
+      locationId: user.locationId,
+      partnerId: process.env.EASYTEAM_PARTNER_ID,
+      accessRole: {
+        name: "manager",
+        permissions: [
+          "timeclock",
+          "timesheet.view",
+          "timesheet.edit",
+          "schedule.view",
+          "schedule.manage",
+          "timeoff.view",
+          "timeoff.manage"
+        ]
+      },
+      features: {
+        geolocation: false,
+        shiftNotes: true
+      }
+    };
+    const token = jwt.sign(
+      payload,
+      process.env.EASYTEAM_PRIVATE_KEY,
+      { algorithm: 'RS256' }
+    );
+    return res.json({ token, role: 'manager' });
+  }
+
+  // EMPLOYEE JWT:
+  if (user.role === 'employee') {
+    const payload = {
+      employeeId: user.employeeId,
+      organizationId: user.companyId,
+      locationId: user.locationId,
+      partnerId: process.env.EASYTEAM_PARTNER_ID,
+      role: {
+        name: user.position,
+        hourlyWage: user.hourlyWage
+      },
+      accessRole: {
+        name: "employee",
+        permissions: [
+          "timeclock",
+          "timesheet.view",
+          "timeoff.request",
+          "timeoff.view"
+        ]
+      },
+      features: {
+        geolocation: true,
+        shiftNotes: false
+      }
+    };
+    const token = jwt.sign(
+      payload,
+      process.env.EASYTEAM_PRIVATE_KEY,
+      { algorithm: 'RS256' }
+    );
+    return res.json({ token, role: 'employee' });
+  }
+
+  // PARENT - No EasyTeam access:
+  if (user.role === 'parent') {
+    return res.json({ 
+      token: null,
+      role: 'parent',
+      message: 'Parents do not have EasyTeam access'
+    });
+  }
+});
+
+CHANGE 5 — BUILD SUPER ADMIN DASHBOARD:
+Route: /dashboard/super-admin
+Only accessible to super_admin role
+
+Show:
+Header:
+→ BrightBridge logo
+→ "Super Admin Dashboard"
+→ "Welcome Joanne"
+→ Logout button
+
+Top info bar:
+→ Green badge: "EasyTeam Connected"
+→ Blue badge: "Sandbox Mode"
+→ Show Partner ID (masked)
+
+Companies section:
+Show both companies as cards:
+Card 1: Sunshine Daycare Centre
+Card 2: Rainbow Kids Daycare
+
+Each card shows:
+→ Company name
+→ Location
+→ Number of staff
+
+EasyTeam section:
+Title: "EasyTeam Full Access View"
+
+Generate token button
+After clicking show EasyTeam iframe
+with FULL admin access:
+
+<EasyTeamLauncher
+  jwt={adminToken}
+  organization={{
+    id: "ORG-BRIGHTBRIDGE",
+    name: "BrightBridge Assist"
+  }}
+  employees={allEmployees}
+  locations={allLocations}
+  theme={{
+    primaryColor: "#1B3A6B",
+    accentColor: "#0EA5C9"
+  }}
+/>
+
+This shows ALL companies
+ALL staff timesheets
+FULL control
+
+Token info section:
+Show the decoded JWT token
+in a formatted box
+So we can verify it is correct
+
+Show:
+→ Role: super_admin
+→ Permissions: [list all]
+→ Organization: BrightBridge
+→ Token expires: [time]
+
+CHANGE 6 — BUILD MANAGER DASHBOARD:
+Route: /dashboard/manager
+Only accessible to manager role
+
+Show:
+Header:
+→ BrightBridge logo
+→ "[Company Name] Manager Dashboard"
+→ "Welcome [Manager Name]"
+→ Logout button
+
+Company info:
+→ Show their company name only
+→ Their location address
+→ Number of their staff
+
+EasyTeam section:
+Title: "EasyTeam Manager View"
+Subtitle: "You can see only
+[Company Name] staff"
+
+Generate token button
+After clicking show EasyTeam iframe
+with MANAGER access:
+
+<EasyTeamLauncher
+  jwt={managerToken}
+  organization={{
+    id: user.companyId,
+    name: company.name
+  }}
+  employees={companyEmployees}
+  locations={[companyLocation]}
+  theme={{
+    primaryColor: "#1B3A6B",
+    accentColor: "#0EA5C9"
+  }}
+/>
+
+This shows ONLY their company
+CANNOT see other companies
+
+Token info section:
+Show decoded JWT:
+→ Role: manager
+→ Permissions: [list manager permissions]
+→ Organization: [their company]
+→ Cannot access: other companies
+
+Side by side comparison:
+Show what manager CAN see:
+✅ View own company timesheets
+✅ Edit timesheets
+✅ Manage schedules
+✅ Approve time off
+
+Show what manager CANNOT see:
+❌ Other companies
+❌ BrightBridge admin panel
+❌ Super admin features
+
+CHANGE 7 — BUILD EMPLOYEE DASHBOARD:
+Route: /dashboard/employee
+Only accessible to employee role
+
+Show:
+Header:
+→ BrightBridge logo
+→ "Welcome [Employee Name]!"
+→ "[Company Name] — [Position]"
+→ Logout button
+
+Employee info card:
+→ Name
+→ Position
+→ Employee ID
+→ Company
+→ Hourly wage (masked as $XX/hr)
+
+EasyTeam section:
+Title: "Your Time Clock"
+Subtitle: "Clock in and out for your shift"
+
+Generate token button
+After clicking show EasyTeam iframe
+with EMPLOYEE access:
+
+<EasyTeamLauncher
+  jwt={employeeToken}
+  employees={[{
+    id: user.employeeId,
+    name: user.name,
+    role: user.position
+  }]}
+  organization={{
+    id: user.companyId,
+    name: company.name
+  }}
+  locations={[companyLocation]}
+  theme={{
+    primaryColor: "#1B3A6B",
+    accentColor: "#0EA5C9"
+  }}
+  onEvent={(event) => {
+    logEvent(event);
+  }}
+/>
+
+This shows ONLY:
+→ Their own time clock
+→ Their own timesheet
+→ Their own schedule
+→ Their own time off
+
+Token info section:
+Show decoded JWT:
+→ Role: employee
+→ Permissions: limited list
+→ Geolocation: enabled
+→ Wage: $18/hour
+
+What this employee CAN do:
+✅ Clock in and out
+✅ View own timesheet
+✅ View own schedule
+✅ Request time off
+
+What this employee CANNOT do:
+❌ See other staff data
+❌ Edit timesheets
+❌ Manage schedules
+❌ See company reports
+
+CHANGE 8 — BUILD PARENT DASHBOARD:
+Route: /dashboard/parent
+Only accessible to parent role
+
+Show:
+Header:
+→ BrightBridge logo
+→ "Parent Portal"
+→ "Welcome [Parent Name]!"
+→ Logout button
+
+Important notice:
+Yellow info banner:
+"Parents do not have access
+to EasyTeam workforce features.
+Parent check in for children
+is a custom BrightBridge feature."
+
+Children section:
+Show parent's children:
+Child 1: Emma Johnson
+→ Status: Not checked in
+→ [CHECK IN] button (teal)
+
+Child 2: Liam Johnson
+→ Status: Not checked in
+→ [CHECK IN] button (teal)
+
+When parent clicks CHECK IN:
+→ Show camera countdown
+→ Take photo
+→ Record check in time
+→ Update status to Checked In ✅
+
+No EasyTeam iframe shown!
+This is our CUSTOM feature!
+
+Token info section:
+Show clear message:
+"No EasyTeam JWT generated
+for parent accounts.
+
+Parents use BrightBridge's
+custom check in system
+instead of EasyTeam."
+
+CHANGE 9 — ADD ROLE COMPARISON PAGE:
+Route: /roles
+
+Title: "User Role Comparison"
+Subtitle: "See how different roles
+access EasyTeam features"
+
+Show a comparison table:
+
+Feature | Super Admin | Manager | Employee | Parent
+--------|-------------|---------|----------|-------
+EasyTeam Access | ✅ Full | ✅ Company | ✅ Own | ❌ None
+Clock In/Out | ✅ | ✅ | ✅ | ❌
+View All Timesheets | ✅ | ✅ Company | ❌ | ❌
+Edit Timesheets | ✅ | ✅ | ❌ | ❌
+Manage Schedules | ✅ | ✅ | ❌ | ❌
+Approve Time Off | ✅ | ✅ | ❌ | ❌
+View Reports | ✅ | ✅ | ❌ | ❌
+All Companies | ✅ | ❌ | ❌ | ❌
+Parent Check In | ❌ | ❌ | ❌ | ✅
+JWT Generated | ✅ Admin | ✅ Manager | ✅ Employee | ❌ None
+
+Below table show:
+Quick login buttons:
+→ Login as Super Admin
+→ Login as Manager (Sunshine)
+→ Login as Manager (Rainbow)
+→ Login as Employee (John)
+→ Login as Employee (Tom)
+→ Login as Parent (Sarah)
+
+Each button auto fills
+login form with correct credentials
+
+CHANGE 10 — ADD EVENT LOG TO ALL DASHBOARDS:
+Add a live event log section
+at bottom of each dashboard:
+
+Title: "Live EasyTeam Events"
+
+Show events received from EasyTeam:
+Table columns:
+→ Time
+→ Event type
+→ Employee
+→ Details
+
+Events to capture:
+→ clock_in → "John clocked in at 8:02 AM"
+→ clock_out → "John clocked out at 5:15 PM"
+→ timesheet_updated → "Timesheet updated"
+→ timeoff_requested → "Time off requested"
+
+Auto refresh every 10 seconds
+Show last 10 events
+
+If no events yet:
+Show message:
+"No events yet.
+Try clocking in using
+the time clock above!"
+
+CHANGE 11 — ADD NAVIGATION:
+Add navigation that changes
+based on logged in role:
+
+SUPER ADMIN NAV:
+→ Dashboard
+→ All Companies
+→ Role Comparison
+→ Event Log
+→ Config
+→ Logout
+
+MANAGER NAV:
+→ Dashboard
+→ My Company
+→ Role Comparison
+→ Event Log
+→ Logout
+
+EMPLOYEE NAV:
+→ Dashboard
+→ My Time Clock
+→ Role Comparison
+→ Event Log
+→ Logout
+
+PARENT NAV:
+→ Dashboard
+→ My Children
+→ Role Comparison
+→ Logout
+
+CHANGE 12 — ADD LOGIN PAGE WITH QUICK SELECT:
+Update login page:
+
+Add Quick Login section:
+"Quick Login for Testing"
+
+Show role buttons:
+[🔴 Super Admin - Joanne]
+[🟡 Manager - Sunshine]
+[🟡 Manager - Rainbow]
+[🟢 Employee - John]
+[🟢 Employee - Tom]
+[🔵 Parent - Sarah]
+
+When button clicked:
+Auto fill email and password
+User just clicks Login button
+
+Show test credentials below:
+Super Admin: joanne@brightbridgeassist.com / Admin123!
+Manager: manager@sunshine.com / Manager123!
+Employee: john@sunshine.com / Staff123!
+Parent: sarah@parent.com / Parent123!
+
+CHANGE 13 — IMPORTANT REQUIREMENTS:
+✅ Do NOT rebuild from scratch
+✅ Keep existing API connection
+✅ Keep existing sandbox warning
+✅ Keep existing webhook log
+✅ Keep existing config page
+
+✅ JWT must use RS256 algorithm
+✅ Private key from environment variable
+✅ Never expose keys in frontend
+✅ Each role sees ONLY their data
+
+✅ Super admin sees ALL companies
+✅ Manager sees ONLY their company
+✅ Employee sees ONLY themselves
+✅ Parent sees NO EasyTeam at all
+
+✅ Show decoded JWT on each dashboard
+   So we can verify it is correct
+
+✅ Show clear labels everywhere:
+   SANDBOX MODE
+   TEST ENVIRONMENT
+   NOT REAL DATA
+
+✅ Mobile responsive
+✅ Loading states
+✅ Error messages
+✅ Success messages
+
+Test all these logins work:
+joanne@brightbridgeassist.com / Admin123!
+manager@sunshine.com / Manager123!
+manager@rainbow.com / Manager123!
+john@sunshine.com / Staff123!
+mary@sunshine.com / Staff123!
+tom@rainbow.com / Staff123!
+sarah@parent.com / Parent123!
