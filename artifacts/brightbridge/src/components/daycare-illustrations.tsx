@@ -1,5 +1,152 @@
 import React from "react";
 
+export function DashboardSceneIllustration() {
+  const navy = "rgba(40,67,98,";
+  const orange = "rgba(232,98,42,";
+  return (
+    <svg viewBox="0 0 1200 260" fill="none" xmlns="http://www.w3.org/2000/svg"
+      className="w-full" style={{ display: "block" }} aria-hidden="true">
+
+      {/* Ground line */}
+      <path d="M0 200 Q300 192 600 198 Q900 204 1200 196" stroke={`${navy}0.08)`} strokeWidth="1.5" fill="none" />
+
+      {/* ── LEFT: School building ── */}
+      {/* Main body */}
+      <rect x="60" y="110" width="130" height="90" rx="3" fill={`${navy}0.06)`} />
+      {/* Roof */}
+      <polygon points="50,112 125,68 200,112" fill={`${navy}0.08)`} />
+      {/* Door */}
+      <rect x="107" y="152" width="34" height="48" rx="3" fill={`${navy}0.07)`} />
+      {/* Windows */}
+      <rect x="72" y="128" width="24" height="20" rx="2" fill={`${navy}0.05)`} stroke={`${navy}0.08)`} strokeWidth="1" />
+      <rect x="152" y="128" width="24" height="20" rx="2" fill={`${navy}0.05)`} stroke={`${navy}0.08)`} strokeWidth="1" />
+      {/* Flag pole */}
+      <line x1="125" y1="68" x2="125" y2="40" stroke={`${navy}0.07)`} strokeWidth="1.5" />
+      <rect x="125" y="40" width="20" height="12" rx="1" fill={`${orange}0.09)`} />
+      {/* Sign */}
+      <rect x="80" y="200" width="90" height="16" rx="2" fill={`${navy}0.05)`} />
+      <rect x="88" y="204" width="60" height="4" rx="1" fill={`${navy}0.07)`} />
+      <rect x="88" y="210" width="40" height="3" rx="1" fill={`${navy}0.05)`} />
+
+      {/* ── LEFT: Kid running toward school ── */}
+      <circle cx="240" cy="158" r="12" fill={`${navy}0.07)`} />
+      <line x1="240" y1="170" x2="240" y2="195" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="240" y1="178" x2="226" y2="188" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="240" y1="178" x2="253" y2="185" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="240" y1="195" x2="228" y2="208" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="240" y1="195" x2="250" y2="210" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      {/* Backpack */}
+      <rect x="248" y="172" width="10" height="16" rx="3" fill={`${orange}0.08)`} />
+
+      {/* ── CENTER-LEFT: ABC blocks cluster ── */}
+      <rect x="360" y="175" width="32" height="32" rx="4" fill={`${navy}0.06)`} stroke={`${navy}0.08)`} strokeWidth="1" />
+      <text x="376" y="196" textAnchor="middle" fill={`${navy}0.12)`} fontSize="13" fontWeight="700">A</text>
+      <rect x="395" y="180" width="28" height="28" rx="4" fill={`${orange}0.06)`} stroke={`${orange}0.08)`} strokeWidth="1" />
+      <text x="409" y="199" textAnchor="middle" fill={`${orange}0.12)`} fontSize="12" fontWeight="700">B</text>
+      <rect x="340" y="183" width="26" height="26" rx="4" fill={`${navy}0.05)`} stroke={`${navy}0.07)`} strokeWidth="1" />
+      <text x="353" y="200" textAnchor="middle" fill={`${navy}0.10)`} fontSize="11" fontWeight="700">C</text>
+
+      {/* ── CENTER-LEFT: Kid with balloon ── */}
+      <circle cx="460" cy="155" r="11" fill={`${navy}0.07)`} />
+      <line x1="460" y1="166" x2="460" y2="190" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="460" y1="174" x2="449" y2="184" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+      <line x1="460" y1="174" x2="472" y2="183" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+      <line x1="460" y1="190" x2="452" y2="203" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+      <line x1="460" y1="190" x2="468" y2="203" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+      {/* Balloon */}
+      <ellipse cx="472" cy="133" rx="14" ry="16" fill={`${orange}0.08)`} />
+      <line x1="472" y1="149" x2="467" y2="163" stroke={`${navy}0.06)`} strokeWidth="1" />
+
+      {/* ── CENTER: Two kids playing with a ball ── */}
+      {/* Kid left */}
+      <circle cx="570" cy="156" r="12" fill={`${navy}0.07)`} />
+      <line x1="570" y1="168" x2="570" y2="193" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="570" y1="176" x2="556" y2="184" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="570" y1="176" x2="582" y2="172" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="570" y1="193" x2="562" y2="207" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="570" y1="193" x2="578" y2="207" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      {/* Ball */}
+      <circle cx="610" cy="180" r="12" fill={`${orange}0.08)`} stroke={`${orange}0.10)`} strokeWidth="1" />
+      <path d="M600 175 Q610 170 620 175" stroke={`${navy}0.08)`} strokeWidth="1" fill="none" />
+      <line x1="610" y1="168" x2="610" y2="192" stroke={`${navy}0.06)`} strokeWidth="1" />
+      {/* Kid right */}
+      <circle cx="650" cy="156" r="12" fill={`${navy}0.07)`} />
+      <line x1="650" y1="168" x2="650" y2="193" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="650" y1="176" x2="638" y2="172" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="650" y1="176" x2="663" y2="184" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="650" y1="193" x2="642" y2="207" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="650" y1="193" x2="658" y2="207" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+
+      {/* ── CENTER-RIGHT: Tree ── */}
+      <line x1="760" y1="200" x2="760" y2="130" stroke={`${navy}0.07)`} strokeWidth="6" strokeLinecap="round" />
+      <circle cx="760" cy="110" r="32" fill={`${navy}0.06)`} />
+      <circle cx="742" cy="120" r="22" fill={`${navy}0.05)`} />
+      <circle cx="778" cy="118" r="24" fill={`${navy}0.055)`} />
+      {/* Apples */}
+      <circle cx="750" cy="108" r="5" fill={`${orange}0.08)`} />
+      <circle cx="769" cy="100" r="4" fill={`${orange}0.07)`} />
+      <circle cx="760" cy="118" r="4.5" fill={`${orange}0.07)`} />
+
+      {/* ── RIGHT: Kid reading/sitting ── */}
+      <circle cx="860" cy="165" r="11" fill={`${navy}0.07)`} />
+      {/* Sitting body */}
+      <line x1="860" y1="176" x2="860" y2="196" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="860" y1="183" x2="846" y2="192" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="860" y1="183" x2="874" y2="192" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      {/* Book */}
+      <rect x="838" y="192" width="44" height="14" rx="3" fill={`${orange}0.07)`} />
+      <line x1="860" y1="192" x2="860" y2="206" stroke={`${navy}0.07)`} strokeWidth="1" />
+      {/* Legs on ground */}
+      <line x1="860" y1="196" x2="845" y2="210" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="860" y1="196" x2="875" y2="210" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+
+      {/* ── RIGHT: Swing set ── */}
+      {/* Frame */}
+      <line x1="960" y1="100" x2="980" y2="200" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="1060" y1="100" x2="1040" y2="200" stroke={`${navy}0.07)`} strokeWidth="4" strokeLinecap="round" />
+      <line x1="960" y1="100" x2="1060" y2="100" stroke={`${navy}0.08)`} strokeWidth="3" strokeLinecap="round" />
+      {/* Swing ropes */}
+      <line x1="990" y1="100" x2="985" y2="155" stroke={`${navy}0.06)`} strokeWidth="1.5" />
+      <line x1="1010" y1="100" x2="1015" y2="155" stroke={`${navy}0.06)`} strokeWidth="1.5" />
+      {/* Swing seat */}
+      <rect x="982" y="152" width="36" height="6" rx="3" fill={`${navy}0.08)`} />
+      {/* Kid on swing */}
+      <circle cx="1000" cy="140" r="10" fill={`${navy}0.07)`} />
+      <line x1="1000" y1="150" x2="1000" y2="166" stroke={`${navy}0.07)`} strokeWidth="3.5" strokeLinecap="round" />
+      <line x1="1000" y1="157" x2="988" y2="165" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+      <line x1="1000" y1="157" x2="1012" y2="165" stroke={`${navy}0.07)`} strokeWidth="3" strokeLinecap="round" />
+
+      {/* ── FAR RIGHT: Flower patch ── */}
+      {[1105, 1120, 1132, 1115, 1128].map((x, i) => {
+        const y = 195 - (i % 2) * 6;
+        const stemH = 18 + (i % 3) * 8;
+        return (
+          <g key={i}>
+            <line x1={x} y1={y} x2={x} y2={y + stemH} stroke={`${navy}0.07)`} strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx={x} cy={y} r={5 + (i % 2)} fill={i % 2 === 0 ? `${orange}0.08)` : `${navy}0.07)`} />
+          </g>
+        );
+      })}
+
+      {/* ── Scattered decorative dots / stars ── */}
+      {[
+        [310, 140], [510, 90], [680, 80], [800, 155], [900, 95],
+        [1070, 130], [430, 130], [730, 60], [550, 125],
+      ].map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r={i % 2 === 0 ? 3 : 2} fill={i % 3 === 0 ? `${orange}0.09)` : `${navy}0.08)`} />
+      ))}
+
+      {/* ── Small stars (4-pointed) ── */}
+      {[[200, 95], [480, 70], [820, 75], [1085, 85], [340, 75]].map(([x, y], i) => (
+        <g key={i} transform={`translate(${x},${y})`}>
+          <line x1="0" y1="-6" x2="0" y2="6" stroke={i % 2 === 0 ? `${orange}0.10)` : `${navy}0.09)`} strokeWidth="1.5" strokeLinecap="round" />
+          <line x1="-6" y1="0" x2="6" y2="0" stroke={i % 2 === 0 ? `${orange}0.10)` : `${navy}0.09)`} strokeWidth="1.5" strokeLinecap="round" />
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 export function ClockIllustration() {
   return (
     <svg viewBox="0 0 240 200" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full max-w-[220px]">

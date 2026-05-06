@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Clock, Activity, Webhook, Settings, CalendarDays, Calendar } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardSceneIllustration } from "@/components/daycare-illustrations";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const PANEL_INNER = { background: "rgba(255,255,255,0.07)", borderColor: "rgba(255,255,255,0.12)" } as const;
@@ -154,6 +155,11 @@ export default function Home() {
             </div>
           </div>
         </div>
+      </div>
+
+      {/* Decorative scene — sits quietly below the cards */}
+      <div className="pointer-events-none select-none pt-4 pb-2" style={{ opacity: 0.85 }}>
+        <DashboardSceneIllustration />
       </div>
     </div>
   );
