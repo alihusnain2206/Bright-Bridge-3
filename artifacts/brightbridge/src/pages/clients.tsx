@@ -30,6 +30,10 @@ import {
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
+const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
+const PANEL_INNER = { background: "rgba(255,255,255,0.07)", borderColor: "rgba(255,255,255,0.12)" } as const;
+const PANEL_DIVIDER = { borderColor: "rgba(255,255,255,0.1)" } as const;
+
 const ROLE_OPTIONS = [
   { value: "manager", label: "Manager" },
   { value: "teacher", label: "Teacher" },
@@ -78,9 +82,7 @@ function AddClientForm({ onDone }: { onDone: () => void }) {
       <div className="space-y-1">
         <Label className="text-xs">Timezone</Label>
         <Select value={timezone} onValueChange={setTimezone}>
-          <SelectTrigger className="h-8 text-sm">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="America/New_York">Eastern (New York)</SelectItem>
             <SelectItem value="America/Chicago">Central (Chicago)</SelectItem>
@@ -114,33 +116,24 @@ function AddEmployeeForm({ clientId, onDone }: { clientId: string; onDone: () =>
     createEmployee.mutate(
       {
         clientId,
-        data: {
-          name,
-          role,
-          roleName: ROLE_NAMES[role] || role,
-          wage: Number(wage) || 1500,
-          wageType: "hourly",
-          timeTrackingEnabled: true,
-        },
+        data: { name, role, roleName: ROLE_NAMES[role] || role, wage: Number(wage) || 1500, wageType: "hourly", timeTrackingEnabled: true },
       },
       { onSuccess: onDone }
     );
   };
 
   return (
-    <form onSubmit={handleSubmit} className="mt-3 p-3 bg-muted/50 rounded-lg border border-dashed border-border space-y-2">
-      <div className="text-xs font-medium text-muted-foreground mb-2">Add Employee</div>
+    <form onSubmit={handleSubmit} className="mt-3 p-3 rounded-lg border border-dashed border-white/20 space-y-2" style={{ background: "rgba(255,255,255,0.05)" }}>
+      <div className="text-xs font-medium text-white/50 mb-2">Add Employee</div>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1">
-          <Label className="text-xs">Full Name *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" className="h-7 text-xs" />
+          <Label className="text-xs text-white/70">Full Name *</Label>
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" className="h-7 text-xs bg-white/10 border-white/20 text-white placeholder:text-white/30" />
         </div>
         <div className="space-y-1">
-          <Label className="text-xs">Role *</Label>
+          <Label className="text-xs text-white/70">Role *</Label>
           <Select value={role} onValueChange={setRole}>
-            <SelectTrigger className="h-7 text-xs">
-              <SelectValue />
-            </SelectTrigger>
+            <SelectTrigger className="h-7 text-xs bg-white/10 border-white/20 text-white"><SelectValue /></SelectTrigger>
             <SelectContent>
               {ROLE_OPTIONS.map((r) => (
                 <SelectItem key={r.value} value={r.value} className="text-xs">{r.label}</SelectItem>
@@ -150,14 +143,14 @@ function AddEmployeeForm({ clientId, onDone }: { clientId: string; onDone: () =>
         </div>
       </div>
       <div className="space-y-1">
-        <Label className="text-xs">Hourly Wage (cents, e.g. 1500 = $15.00)</Label>
-        <Input value={wage} onChange={(e) => setWage(e.target.value)} placeholder="1500" className="h-7 text-xs" type="number" />
+        <Label className="text-xs text-white/70">Hourly Wage (cents, e.g. 1500 = $15.00)</Label>
+        <Input value={wage} onChange={(e) => setWage(e.target.value)} placeholder="1500" className="h-7 text-xs bg-white/10 border-white/20 text-white" type="number" />
       </div>
       <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={!name || createEmployee.isPending} className="h-7 text-xs flex-1">
+        <Button type="submit" size="sm" disabled={!name || createEmployee.isPending} className="h-7 text-xs flex-1 bg-[#E8622A] hover:bg-[#d4571f] text-white border-0">
           {createEmployee.isPending ? "Adding…" : "Add Employee"}
         </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onDone} className="h-7 text-xs">Cancel</Button>
+        <Button type="button" size="sm" variant="outline" onClick={onDone} className="h-7 text-xs border-white/20 text-white/70 hover:bg-white/10 bg-transparent">Cancel</Button>
       </div>
     </form>
   );
@@ -173,7 +166,7 @@ function EmployeeList({ clientId }: { clientId: string }) {
   };
 
   if (isLoading) {
-    return <div className="space-y-1 mt-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>;
+    return <div className="space-y-1 mt-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-8 w-full opacity-20" />)}</div>;
   }
 
   const employees = data?.employees ?? [];
@@ -181,42 +174,42 @@ function EmployeeList({ clientId }: { clientId: string }) {
   return (
     <div className="mt-3 space-y-2">
       {employees.length === 0 && !addingEmployee && (
-        <div className="text-xs text-muted-foreground text-center py-3 bg-muted/30 rounded-md border border-dashed border-border">
+        <div className="text-xs text-white/40 text-center py-3 rounded-md border border-dashed border-white/15">
           No employees yet — add your first staff member.
         </div>
       )}
 
       {employees.map((emp) => (
-        <div key={emp.id} className="flex items-center justify-between p-2 bg-background rounded-md border border-border group">
+        <div key={emp.id} className="flex items-center justify-between p-2 rounded-md border group" style={PANEL_INNER}>
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-bold shrink-0">
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: "#E8622A" }}>
               {emp.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-medium truncate">{emp.name}</div>
-              <div className="text-xs text-muted-foreground">{emp.roleName}</div>
+              <div className="text-sm font-medium truncate text-white">{emp.name}</div>
+              <div className="text-xs text-white/50">{emp.roleName}</div>
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0 ml-2">
             <Link href={`/timeclock?clientId=${clientId}&employeeId=${emp.id}`}>
-              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 hover:bg-primary hover:text-primary-foreground">
+              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
                 <Clock className="h-3 w-3" /> Clock
               </Button>
             </Link>
             <Link href={`/timesheets?clientId=${clientId}&employeeId=${emp.id}`}>
-              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 hover:bg-primary hover:text-primary-foreground">
+              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
                 <CalendarDays className="h-3 w-3" /> Sheets
               </Button>
             </Link>
             <Link href={`/schedule?clientId=${clientId}&employeeId=${emp.id}`}>
-              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 hover:bg-primary hover:text-primary-foreground">
+              <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
                 <Calendar className="h-3 w-3" /> Sched
               </Button>
             </Link>
             <Button
               size="sm"
               variant="ghost"
-              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-6 w-6 p-0 text-white/30 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity bg-transparent"
               onClick={() => handleDelete(emp.id)}
             >
               <Trash2 className="h-3 w-3" />
@@ -231,7 +224,7 @@ function EmployeeList({ clientId }: { clientId: string }) {
         <Button
           size="sm"
           variant="outline"
-          className="w-full h-7 text-xs gap-1 border-dashed"
+          className="w-full h-7 text-xs gap-1 border-dashed border-white/20 text-white/50 hover:text-white hover:bg-white/10 bg-transparent"
           onClick={() => setAddingEmployee(true)}
         >
           <UserPlus className="h-3 w-3" /> Add Employee
@@ -249,59 +242,57 @@ function ClientCard({ client, onDelete }: { client: { id: string; name: string; 
   const handleDelete = () => {
     if (!confirm(`Delete "${client.name}" and all their employees?`)) return;
     deleteClient.mutate({ clientId: client.id }, {
-      onSuccess: () => {
-        qc.invalidateQueries({ queryKey: ["/api/clients"] });
-        onDelete();
-      },
+      onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/clients"] }); onDelete(); },
     });
   };
 
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="py-3 px-4 bg-primary/5 border-b border-border">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="p-1.5 bg-primary/10 rounded text-primary shrink-0">
-              <Building2 className="h-4 w-4" />
-            </div>
-            <div className="min-w-0">
-              <CardTitle className="text-sm font-semibold truncate">{client.name}</CardTitle>
-              <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5">
-                <MapPin className="h-3 w-3 shrink-0" />
-                <span className="truncate">{client.locationName}</span>
-                <span className="text-border mx-1">·</span>
-                <span className="truncate">{client.timezone.replace("America/", "")}</span>
-              </div>
-            </div>
+    <div className="rounded-xl border overflow-hidden" style={PANEL}>
+      {/* Card header */}
+      <div className="px-4 py-3 border-b flex items-center justify-between" style={{ ...PANEL_DIVIDER, background: "rgba(255,255,255,0.05)" }}>
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="p-1.5 rounded shrink-0" style={{ background: "rgba(232,98,42,0.2)" }}>
+            <Building2 className="h-4 w-4 text-[#E8622A]" />
           </div>
-          <div className="flex items-center gap-1 shrink-0 ml-2">
-            <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 font-mono">{client.id.slice(0, 10)}…</Badge>
-            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive" onClick={handleDelete}>
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-muted-foreground" onClick={() => setExpanded(!expanded)}>
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-white truncate">{client.name}</div>
+            <div className="flex items-center gap-1 text-xs text-white/40 mt-0.5">
+              <MapPin className="h-3 w-3 shrink-0" />
+              <span className="truncate">{client.locationName}</span>
+              <span className="text-white/20 mx-1">·</span>
+              <span className="truncate">{client.timezone.replace("America/", "")}</span>
+            </div>
           </div>
         </div>
-      </CardHeader>
+        <div className="flex items-center gap-1 shrink-0 ml-2">
+          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 font-mono border-white/20 text-white/40 bg-transparent">
+            {client.id.slice(0, 10)}…
+          </Badge>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white/30 hover:text-red-400 bg-transparent" onClick={handleDelete}>
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white/40 hover:text-white bg-transparent" onClick={() => setExpanded(!expanded)}>
+            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+
       {expanded && (
-        <CardContent className="px-4 pb-4 pt-3">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-1">
+        <div className="px-4 pb-4 pt-3">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-white/40 mb-1">
             <Users className="h-3.5 w-3.5" />
             Staff
           </div>
           <EmployeeList clientId={client.id} />
-        </CardContent>
+        </div>
       )}
-    </Card>
+    </div>
   );
 }
 
 export default function Clients() {
   const { data, isLoading, refetch } = useListClients();
   const [addingClient, setAddingClient] = useState(false);
-
   const clients = data?.clients ?? [];
 
   return (
@@ -309,11 +300,9 @@ export default function Clients() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-primary">Clients</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage daycare centers and their staff. Launch EasyTeam sessions per employee.
-          </p>
+          <p className="text-muted-foreground mt-1">Manage daycare centers and their staff. Launch EasyTeam sessions per employee.</p>
         </div>
-        <Button onClick={() => setAddingClient(true)} disabled={addingClient} className="gap-2">
+        <Button onClick={() => setAddingClient(true)} disabled={addingClient} className="gap-2 bg-[#E8622A] hover:bg-[#d4571f] text-white border-0">
           <Plus className="h-4 w-4" /> Add Client
         </Button>
       </div>
@@ -335,7 +324,7 @@ export default function Clients() {
 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-lg" />)}
+          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
         </div>
       ) : clients.length === 0 ? (
         <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-xl">

@@ -1,11 +1,14 @@
 import React from "react";
 import { Link } from "wouter";
 import { useGetEasyTeamStatus, useGetWebhookLogs, useHealthCheck } from "@workspace/api-client-react";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Clock, Activity, Webhook, Settings, CalendarDays, Calendar } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+
+const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
+const PANEL_INNER = { background: "rgba(255,255,255,0.07)", borderColor: "rgba(255,255,255,0.12)" } as const;
+const PANEL_DIVIDER = { borderColor: "rgba(255,255,255,0.1)" } as const;
 
 export default function Home() {
   const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus();
@@ -25,14 +28,14 @@ export default function Home() {
           {healthLoading ? (
             <Skeleton className="h-6 w-24" />
           ) : (
-            <Badge variant={health?.status === "ok" ? "default" : "destructive"} className="bg-emerald-500 hover:bg-emerald-600">
+            <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white">
               API {health?.status === "ok" ? "Online" : "Offline"}
             </Badge>
           )}
           {statusLoading ? (
             <Skeleton className="h-6 w-24" />
           ) : (
-            <Badge variant={status?.connected ? "default" : "destructive"} className={status?.connected ? "bg-emerald-500 hover:bg-emerald-600" : ""}>
+            <Badge className={status?.connected ? "bg-emerald-500 hover:bg-emerald-600 text-white" : "bg-destructive text-white"}>
               EasyTeam {status?.connected ? "Connected" : "Disconnected"}
             </Badge>
           )}
@@ -40,115 +43,117 @@ export default function Home() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Activity className="h-5 w-5 text-accent" />
-              SDK Status
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+
+        {/* SDK Status */}
+        <div className="rounded-xl border flex flex-col" style={PANEL}>
+          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-[#E8622A]" />
+              <span className="text-white font-semibold text-base">SDK Status</span>
+            </div>
+          </div>
+          <div className="px-5 py-4 flex-1">
             {statusLoading ? (
               <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-full opacity-20" />
+                <Skeleton className="h-4 w-3/4 opacity-20" />
               </div>
             ) : (
-              <dl className="space-y-2 text-sm">
+              <dl className="space-y-2.5 text-sm">
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">Environment</dt>
-                  <dd className="font-medium capitalize">{status?.environment || "Unknown"}</dd>
+                  <dt className="text-white/50">Environment</dt>
+                  <dd className="font-medium text-white capitalize">{status?.environment || "Unknown"}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">API Key</dt>
-                  <dd className="font-medium flex items-center gap-1">
-                    {status?.apiKeyPresent ? "✅ Present" : "❌ Missing"}
-                  </dd>
+                  <dt className="text-white/50">API Key</dt>
+                  <dd className="font-medium text-white">{status?.apiKeyPresent ? "✅ Present" : "❌ Missing"}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">SDK Version</dt>
-                  <dd className="font-medium">{status?.sdkVersion || "Unknown"}</dd>
+                  <dt className="text-white/50">SDK Version</dt>
+                  <dd className="font-medium text-white">{status?.sdkVersion || "Unknown"}</dd>
                 </div>
               </dl>
             )}
-            <div className="mt-4 pt-4 border-t border-border">
-              <Link href="/config">
-                <Button variant="outline" className="w-full text-xs h-8">View Configuration</Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="px-5 pb-5 pt-2 border-t" style={PANEL_DIVIDER}>
+            <Link href="/config">
+              <Button variant="outline" className="w-full text-xs h-8 text-white/80 hover:text-white border-white/20 hover:border-white/40 hover:bg-white/10 bg-transparent">
+                View Configuration
+              </Button>
+            </Link>
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Webhook className="h-5 w-5 text-accent" />
-              Recent Activity
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        {/* Recent Activity */}
+        <div className="rounded-xl border flex flex-col" style={PANEL}>
+          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+            <div className="flex items-center gap-2">
+              <Webhook className="h-5 w-5 text-[#E8622A]" />
+              <span className="text-white font-semibold text-base">Recent Activity</span>
+            </div>
+          </div>
+          <div className="px-5 py-4 flex-1">
             {webhooksLoading ? (
               <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-4 w-full opacity-20" />
+                <Skeleton className="h-4 w-3/4 opacity-20" />
               </div>
             ) : lastWebhook ? (
               <div className="space-y-3">
                 <div>
-                  <div className="text-xs text-muted-foreground">Last Event Received</div>
-                  <div className="font-medium mt-1 truncate" title={lastWebhook.event}>
-                    {lastWebhook.event}
-                  </div>
-                  <div className="text-xs mt-1 text-muted-foreground">
-                    {new Date(lastWebhook.timestamp).toLocaleString()}
-                  </div>
+                  <div className="text-xs text-white/40">Last Event Received</div>
+                  <div className="font-medium mt-1 truncate text-white" title={lastWebhook.event}>{lastWebhook.event}</div>
+                  <div className="text-xs mt-1 text-white/40">{new Date(lastWebhook.timestamp).toLocaleString()}</div>
                 </div>
-                <div className="text-xs bg-muted p-2 rounded-md font-mono truncate">
+                <div className="text-xs p-2 rounded-md font-mono truncate text-white/60 border" style={PANEL_INNER}>
                   {lastWebhook.employee_id ? `Employee: ${lastWebhook.employee_id}` : "No Employee ID"}
                 </div>
               </div>
             ) : (
-              <div className="py-4 text-center text-muted-foreground text-sm flex flex-col items-center">
+              <div className="py-4 text-center text-white/35 text-sm flex flex-col items-center">
                 <Webhook className="h-8 w-8 mb-2 opacity-20" />
                 No webhooks received yet
               </div>
             )}
-            <div className="mt-4 pt-4 border-t border-border">
-              <Link href="/webhooks">
-                <Button variant="outline" className="w-full text-xs h-8">View All Logs</Button>
-              </Link>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="px-5 pb-5 pt-2 border-t" style={PANEL_DIVIDER}>
+            <Link href="/webhooks">
+              <Button variant="outline" className="w-full text-xs h-8 text-white/80 hover:text-white border-white/20 hover:border-white/40 hover:bg-white/10 bg-transparent">
+                View All Logs
+              </Button>
+            </Link>
+          </div>
+        </div>
 
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Settings className="h-5 w-5 text-accent" />
-              Quick Links
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-2">
-              <Link href="/timeclock" className="flex flex-col items-center justify-center p-4 bg-muted hover:bg-muted/80 rounded-lg text-center transition-colors border border-border">
-                <Clock className="h-6 w-6 mb-2 text-primary" />
-                <span className="text-xs font-medium">Time Clock</span>
-              </Link>
-              <Link href="/timesheets" className="flex flex-col items-center justify-center p-4 bg-muted hover:bg-muted/80 rounded-lg text-center transition-colors border border-border">
-                <CalendarDays className="h-6 w-6 mb-2 text-primary" />
-                <span className="text-xs font-medium">Timesheets</span>
-              </Link>
-              <Link href="/schedule" className="flex flex-col items-center justify-center p-4 bg-muted hover:bg-muted/80 rounded-lg text-center transition-colors border border-border">
-                <Calendar className="h-6 w-6 mb-2 text-primary" />
-                <span className="text-xs font-medium">Schedule</span>
-              </Link>
-              <Link href="/config" className="flex flex-col items-center justify-center p-4 bg-muted hover:bg-muted/80 rounded-lg text-center transition-colors border border-border">
-                <Settings className="h-6 w-6 mb-2 text-primary" />
-                <span className="text-xs font-medium">Settings</span>
-              </Link>
+        {/* Quick Links */}
+        <div className="rounded-xl border flex flex-col" style={PANEL}>
+          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+            <div className="flex items-center gap-2">
+              <Settings className="h-5 w-5 text-[#E8622A]" />
+              <span className="text-white font-semibold text-base">Quick Links</span>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+          <div className="px-5 py-4 flex-1">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { href: "/timeclock", icon: Clock, label: "Time Clock" },
+                { href: "/timesheets", icon: CalendarDays, label: "Timesheets" },
+                { href: "/schedule", icon: Calendar, label: "Schedule" },
+                { href: "/config", icon: Settings, label: "Settings" },
+              ].map(({ href, icon: Icon, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="flex flex-col items-center justify-center p-4 rounded-lg text-center transition-colors border border-white/10 hover:border-[#E8622A]/50 hover:bg-white/10"
+                  style={{ background: "rgba(255,255,255,0.06)" }}
+                >
+                  <Icon className="h-6 w-6 mb-2 text-[#E8622A]" />
+                  <span className="text-xs font-medium text-white/80">{label}</span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
