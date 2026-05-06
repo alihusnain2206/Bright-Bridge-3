@@ -12,6 +12,8 @@ tags:
     description: Health operations
   - name: easyteam
     description: EasyTeam integration endpoints
+  - name: clients
+    description: Daycare client and employee management
 paths:
   /healthz:
     get:
@@ -65,44 +67,6 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
-  /easyteam/employees:
-    get:
-      operationId: getEmployees
-      tags: [easyteam]
-      summary: Get all employees from EasyTeam
-      responses:
-        "200":
-          description: List of employees
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EmployeesResponse"
-        "500":
-          description: Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-  /easyteam/timesheets:
-    get:
-      operationId: getTimesheets
-      tags: [easyteam]
-      summary: Get timesheets from EasyTeam
-      responses:
-        "200":
-          description: Timesheet data
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TimesheetsResponse"
-        "500":
-          description: Error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
   /easyteam/webhook:
     post:
       operationId: receiveWebhook
@@ -148,6 +112,121 @@ paths:
               schema:
                 $ref: "#/components/schemas/ConnectionTestResult"
 
+  /clients:
+    get:
+      operationId: listClients
+      tags: [clients]
+      summary: List all daycare clients
+      responses:
+        "200":
+          description: List of clients
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientsListResponse"
+    post:
+      operationId: createClient
+      tags: [clients]
+      summary: Create a new daycare client
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "201":
+          description: Client created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+
+  /clients/{clientId}:
+    delete:
+      operationId: deleteClient
+      tags: [clients]
+      summary: Delete a daycare client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
+  /clients/{clientId}/employees:
+    get:
+      operationId: listClientEmployees
+      tags: [clients]
+      summary: List employees for a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of employees
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientEmployeesListResponse"
+    post:
+      operationId: createClientEmployee
+      tags: [clients]
+      summary: Add an employee to a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEmployeeRequest"
+      responses:
+        "201":
+          description: Employee created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientEmployee"
+
+  /clients/{clientId}/employees/{employeeId}:
+    delete:
+      operationId: deleteClientEmployee
+      tags: [clients]
+      summary: Remove an employee from a client
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeletedResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -185,9 +264,18 @@ components:
           type: string
         company_id:
           type: string
+        client_id:
+          type: string
+        location_id:
+          type: string
+        organization_id:
+          type: string
+        role_name:
+          type: string
+        access_role:
+          type: string
       required:
         - employee_id
-        - company_id
 
     GenerateTokenResponse:
       type: object
@@ -199,57 +287,6 @@ components:
         error:
           type: string
       required:
-        - success
-
-    EmployeesResponse:
-      type: object
-      properties:
-        employees:
-          type: array
-          items:
-            $ref: "#/components/schemas/Employee"
-        success:
-          type: boolean
-        error:
-          type: string
-      required:
-        - employees
-        - success
-
-    Employee:
-      type: object
-      properties:
-        id:
-          type: string
-        name:
-          type: string
-        position:
-          type: string
-        company_id:
-          type: string
-        status:
-          type: string
-      required:
-        - id
-        - name
-
-    TimesheetsResponse:
-      type: object
-      properties:
-        timesheets:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        success:
-          type: boolean
-        error:
-          type: string
-        raw:
-          type: object
-          additionalProperties: true
-      required:
-        - timesheets
         - success
 
     WebhookPayload:
@@ -340,3 +377,126 @@ components:
           type: string
       required:
         - error
+
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        locationName:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        timezone:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - locationName
+        - latitude
+        - longitude
+        - timezone
+        - createdAt
+
+    CreateClientRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        locationName:
+          type: string
+        latitude:
+          type: number
+        longitude:
+          type: number
+        timezone:
+          type: string
+      required:
+        - name
+        - locationName
+
+    ClientsListResponse:
+      type: object
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: "#/components/schemas/Client"
+      required:
+        - clients
+
+    ClientEmployee:
+      type: object
+      properties:
+        id:
+          type: string
+        clientId:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        roleName:
+          type: string
+        wage:
+          type: number
+        wageType:
+          type: string
+        timeTrackingEnabled:
+          type: boolean
+        createdAt:
+          type: string
+      required:
+        - id
+        - clientId
+        - name
+        - role
+        - roleName
+        - createdAt
+
+    CreateEmployeeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        roleName:
+          type: string
+        wage:
+          type: number
+        wageType:
+          type: string
+        timeTrackingEnabled:
+          type: boolean
+      required:
+        - name
+        - role
+        - roleName
+
+    ClientEmployeesListResponse:
+      type: object
+      properties:
+        employees:
+          type: array
+          items:
+            $ref: "#/components/schemas/ClientEmployee"
+      required:
+        - employees
+
+    DeletedResponse:
+      type: object
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: string
+      required:
+        - deleted
+        - id

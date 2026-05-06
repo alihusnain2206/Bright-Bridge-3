@@ -10,12 +10,7 @@ export default function Webhooks() {
   const [copied, setCopied] = useState(false);
   
   // Auto-refresh every 10 seconds
-  const { data, isLoading } = useGetWebhookLogs({ 
-    query: { 
-      enabled: true,
-      refetchInterval: 10000 
-    } 
-  });
+  const { data, isLoading } = useGetWebhookLogs();
 
   const webhookUrl = `${window.location.origin}/api/easyteam/webhook`;
 

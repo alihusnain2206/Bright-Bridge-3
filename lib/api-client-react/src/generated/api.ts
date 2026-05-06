@@ -17,14 +17,19 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  Client,
+  ClientEmployee,
+  ClientEmployeesListResponse,
+  ClientsListResponse,
   ConnectionTestResult,
+  CreateClientRequest,
+  CreateEmployeeRequest,
+  DeletedResponse,
   EasyTeamStatus,
-  EmployeesResponse,
   ErrorResponse,
   GenerateTokenRequest,
   GenerateTokenResponse,
   HealthStatus,
-  TimesheetsResponse,
   WebhookAck,
   WebhookLogsResponse,
   WebhookPayload,
@@ -277,156 +282,6 @@ export const useGenerateEasyTeamToken = <
 };
 
 /**
- * @summary Get all employees from EasyTeam
- */
-export const getGetEmployeesUrl = () => {
-  return `/api/easyteam/employees`;
-};
-
-export const getEmployees = async (
-  options?: RequestInit,
-): Promise<EmployeesResponse> => {
-  return customFetch<EmployeesResponse>(getGetEmployeesUrl(), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetEmployeesQueryKey = () => {
-  return [`/api/easyteam/employees`] as const;
-};
-
-export const getGetEmployeesQueryOptions = <
-  TData = Awaited<ReturnType<typeof getEmployees>>,
-  TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getEmployees>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetEmployeesQueryKey();
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getEmployees>>> = ({
-    signal,
-  }) => getEmployees({ signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getEmployees>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetEmployeesQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getEmployees>>
->;
-export type GetEmployeesQueryError = ErrorType<ErrorResponse>;
-
-/**
- * @summary Get all employees from EasyTeam
- */
-
-export function useGetEmployees<
-  TData = Awaited<ReturnType<typeof getEmployees>>,
-  TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getEmployees>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetEmployeesQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
- * @summary Get timesheets from EasyTeam
- */
-export const getGetTimesheetsUrl = () => {
-  return `/api/easyteam/timesheets`;
-};
-
-export const getTimesheets = async (
-  options?: RequestInit,
-): Promise<TimesheetsResponse> => {
-  return customFetch<TimesheetsResponse>(getGetTimesheetsUrl(), {
-    ...options,
-    method: "GET",
-  });
-};
-
-export const getGetTimesheetsQueryKey = () => {
-  return [`/api/easyteam/timesheets`] as const;
-};
-
-export const getGetTimesheetsQueryOptions = <
-  TData = Awaited<ReturnType<typeof getTimesheets>>,
-  TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getTimesheets>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}) => {
-  const { query: queryOptions, request: requestOptions } = options ?? {};
-
-  const queryKey = queryOptions?.queryKey ?? getGetTimesheetsQueryKey();
-
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getTimesheets>>> = ({
-    signal,
-  }) => getTimesheets({ signal, ...requestOptions });
-
-  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getTimesheets>>,
-    TError,
-    TData
-  > & { queryKey: QueryKey };
-};
-
-export type GetTimesheetsQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getTimesheets>>
->;
-export type GetTimesheetsQueryError = ErrorType<ErrorResponse>;
-
-/**
- * @summary Get timesheets from EasyTeam
- */
-
-export function useGetTimesheets<
-  TData = Awaited<ReturnType<typeof getTimesheets>>,
-  TError = ErrorType<ErrorResponse>,
->(options?: {
-  query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getTimesheets>>,
-    TError,
-    TData
-  >;
-  request?: SecondParameter<typeof customFetch>;
-}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetTimesheetsQueryOptions(options);
-
-  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
-    queryKey: QueryKey;
-  };
-
-  return { ...query, queryKey: queryOptions.queryKey };
-}
-
-/**
  * @summary Receive webhook events from EasyTeam
  */
 export const getReceiveWebhookUrl = () => {
@@ -666,4 +521,519 @@ export const useTestConnection = <
   TContext
 > => {
   return useMutation(getTestConnectionMutationOptions(options));
+};
+
+/**
+ * @summary List all daycare clients
+ */
+export const getListClientsUrl = () => {
+  return `/api/clients`;
+};
+
+export const listClients = async (
+  options?: RequestInit,
+): Promise<ClientsListResponse> => {
+  return customFetch<ClientsListResponse>(getListClientsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListClientsQueryKey = () => {
+  return [`/api/clients`] as const;
+};
+
+export const getListClientsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listClients>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listClients>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListClientsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listClients>>> = ({
+    signal,
+  }) => listClients({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listClients>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListClientsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listClients>>
+>;
+export type ListClientsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all daycare clients
+ */
+
+export function useListClients<
+  TData = Awaited<ReturnType<typeof listClients>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listClients>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListClientsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a new daycare client
+ */
+export const getCreateClientUrl = () => {
+  return `/api/clients`;
+};
+
+export const createClient = async (
+  createClientRequest: CreateClientRequest,
+  options?: RequestInit,
+): Promise<Client> => {
+  return customFetch<Client>(getCreateClientUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createClientRequest),
+  });
+};
+
+export const getCreateClientMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createClient>>,
+    TError,
+    { data: BodyType<CreateClientRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createClient>>,
+  TError,
+  { data: BodyType<CreateClientRequest> },
+  TContext
+> => {
+  const mutationKey = ["createClient"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createClient>>,
+    { data: BodyType<CreateClientRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createClient(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateClientMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createClient>>
+>;
+export type CreateClientMutationBody = BodyType<CreateClientRequest>;
+export type CreateClientMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a new daycare client
+ */
+export const useCreateClient = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createClient>>,
+    TError,
+    { data: BodyType<CreateClientRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createClient>>,
+  TError,
+  { data: BodyType<CreateClientRequest> },
+  TContext
+> => {
+  return useMutation(getCreateClientMutationOptions(options));
+};
+
+/**
+ * @summary Delete a daycare client
+ */
+export const getDeleteClientUrl = (clientId: string) => {
+  return `/api/clients/${clientId}`;
+};
+
+export const deleteClient = async (
+  clientId: string,
+  options?: RequestInit,
+): Promise<DeletedResponse> => {
+  return customFetch<DeletedResponse>(getDeleteClientUrl(clientId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteClientMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClient>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteClient>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteClient"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteClient>>,
+    { clientId: string }
+  > = (props) => {
+    const { clientId } = props ?? {};
+
+    return deleteClient(clientId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteClientMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteClient>>
+>;
+
+export type DeleteClientMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a daycare client
+ */
+export const useDeleteClient = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClient>>,
+    TError,
+    { clientId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteClient>>,
+  TError,
+  { clientId: string },
+  TContext
+> => {
+  return useMutation(getDeleteClientMutationOptions(options));
+};
+
+/**
+ * @summary List employees for a client
+ */
+export const getListClientEmployeesUrl = (clientId: string) => {
+  return `/api/clients/${clientId}/employees`;
+};
+
+export const listClientEmployees = async (
+  clientId: string,
+  options?: RequestInit,
+): Promise<ClientEmployeesListResponse> => {
+  return customFetch<ClientEmployeesListResponse>(
+    getListClientEmployeesUrl(clientId),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListClientEmployeesQueryKey = (clientId: string) => {
+  return [`/api/clients/${clientId}/employees`] as const;
+};
+
+export const getListClientEmployeesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listClientEmployees>>,
+  TError = ErrorType<unknown>,
+>(
+  clientId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listClientEmployees>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListClientEmployeesQueryKey(clientId);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listClientEmployees>>
+  > = ({ signal }) =>
+    listClientEmployees(clientId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!clientId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listClientEmployees>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListClientEmployeesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listClientEmployees>>
+>;
+export type ListClientEmployeesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List employees for a client
+ */
+
+export function useListClientEmployees<
+  TData = Awaited<ReturnType<typeof listClientEmployees>>,
+  TError = ErrorType<unknown>,
+>(
+  clientId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listClientEmployees>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListClientEmployeesQueryOptions(clientId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add an employee to a client
+ */
+export const getCreateClientEmployeeUrl = (clientId: string) => {
+  return `/api/clients/${clientId}/employees`;
+};
+
+export const createClientEmployee = async (
+  clientId: string,
+  createEmployeeRequest: CreateEmployeeRequest,
+  options?: RequestInit,
+): Promise<ClientEmployee> => {
+  return customFetch<ClientEmployee>(getCreateClientEmployeeUrl(clientId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createEmployeeRequest),
+  });
+};
+
+export const getCreateClientEmployeeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createClientEmployee>>,
+    TError,
+    { clientId: string; data: BodyType<CreateEmployeeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createClientEmployee>>,
+  TError,
+  { clientId: string; data: BodyType<CreateEmployeeRequest> },
+  TContext
+> => {
+  const mutationKey = ["createClientEmployee"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createClientEmployee>>,
+    { clientId: string; data: BodyType<CreateEmployeeRequest> }
+  > = (props) => {
+    const { clientId, data } = props ?? {};
+
+    return createClientEmployee(clientId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateClientEmployeeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createClientEmployee>>
+>;
+export type CreateClientEmployeeMutationBody = BodyType<CreateEmployeeRequest>;
+export type CreateClientEmployeeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add an employee to a client
+ */
+export const useCreateClientEmployee = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createClientEmployee>>,
+    TError,
+    { clientId: string; data: BodyType<CreateEmployeeRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createClientEmployee>>,
+  TError,
+  { clientId: string; data: BodyType<CreateEmployeeRequest> },
+  TContext
+> => {
+  return useMutation(getCreateClientEmployeeMutationOptions(options));
+};
+
+/**
+ * @summary Remove an employee from a client
+ */
+export const getDeleteClientEmployeeUrl = (
+  clientId: string,
+  employeeId: string,
+) => {
+  return `/api/clients/${clientId}/employees/${employeeId}`;
+};
+
+export const deleteClientEmployee = async (
+  clientId: string,
+  employeeId: string,
+  options?: RequestInit,
+): Promise<DeletedResponse> => {
+  return customFetch<DeletedResponse>(
+    getDeleteClientEmployeeUrl(clientId, employeeId),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteClientEmployeeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClientEmployee>>,
+    TError,
+    { clientId: string; employeeId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteClientEmployee>>,
+  TError,
+  { clientId: string; employeeId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteClientEmployee"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteClientEmployee>>,
+    { clientId: string; employeeId: string }
+  > = (props) => {
+    const { clientId, employeeId } = props ?? {};
+
+    return deleteClientEmployee(clientId, employeeId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteClientEmployeeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteClientEmployee>>
+>;
+
+export type DeleteClientEmployeeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Remove an employee from a client
+ */
+export const useDeleteClientEmployee = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteClientEmployee>>,
+    TError,
+    { clientId: string; employeeId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteClientEmployee>>,
+  TError,
+  { clientId: string; employeeId: string },
+  TContext
+> => {
+  return useMutation(getDeleteClientEmployeeMutationOptions(options));
 };

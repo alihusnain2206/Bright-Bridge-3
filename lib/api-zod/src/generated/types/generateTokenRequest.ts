@@ -8,5 +8,10 @@
 
 export interface GenerateTokenRequest {
   employee_id: string;
-  company_id: string;
+  company_id?: string;
+  client_id?: string;
+  location_id?: string;
+  organization_id?: string;
+  role_name?: string;
+  access_role?: string;
 }

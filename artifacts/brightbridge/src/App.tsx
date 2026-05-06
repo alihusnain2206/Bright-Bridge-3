@@ -6,6 +6,7 @@ import NotFound from "@/pages/not-found";
 
 import { AppLayout } from "@/components/layout";
 import Home from "@/pages/home";
+import Clients from "@/pages/clients";
 import TimeClock from "@/pages/timeclock";
 import Timesheets from "@/pages/timesheets";
 import Schedule from "@/pages/schedule";
@@ -19,6 +20,7 @@ function Router() {
     <AppLayout>
       <Switch>
         <Route path="/" component={Home} />
+        <Route path="/clients" component={Clients} />
         <Route path="/timeclock" component={TimeClock} />
         <Route path="/timesheets" component={Timesheets} />
         <Route path="/schedule" component={Schedule} />

@@ -6,4 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type TimesheetsResponseRaw = { [key: string]: unknown };
+export interface DeletedResponse {
+  deleted: boolean;
+  id: string;
+}

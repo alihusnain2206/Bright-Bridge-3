@@ -1,11 +1,11 @@
 import React from "react";
 import { Link, useRoute } from "wouter";
-import { AlertTriangle, Activity, Clock, CalendarDays, Calendar, Settings, Webhook, Menu } from "lucide-react";
+import { AlertTriangle, Activity, Clock, CalendarDays, Calendar, Settings, Webhook, Menu, Building2 } from "lucide-react";
 import { Button } from "./ui/button";
 import { useGetEasyTeamStatus } from "@workspace/api-client-react";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
-  const { data: status } = useGetEasyTeamStatus({ query: { enabled: true } });
+  const { data: status } = useGetEasyTeamStatus();
 
   return (
     <div className="min-h-screen bg-muted/20 flex flex-col">
@@ -26,9 +26,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               EasyTeam Integration Test
             </span>
           </div>
-          
+
           <div className="hidden md:flex items-center gap-6 text-sm font-medium">
             <NavLink href="/" icon={<Activity className="w-4 h-4" />}>Dashboard</NavLink>
+            <NavLink href="/clients" icon={<Building2 className="w-4 h-4" />}>Clients</NavLink>
             <NavLink href="/timeclock" icon={<Clock className="w-4 h-4" />}>Time Clock</NavLink>
             <NavLink href="/timesheets" icon={<CalendarDays className="w-4 h-4" />}>Timesheets</NavLink>
             <NavLink href="/schedule" icon={<Calendar className="w-4 h-4" />}>Schedule</NavLink>
@@ -59,10 +60,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
-function NavLink({ href, children, icon }: { href: string, children: React.ReactNode, icon?: React.ReactNode }) {
+function NavLink({ href, children, icon }: { href: string; children: React.ReactNode; icon?: React.ReactNode }) {
   const [isActive] = useRoute(href);
   return (
-    <Link href={href} className={`flex items-center gap-2 transition-colors hover:text-accent ${isActive ? "text-accent border-b-2 border-accent pb-1 -mb-[6px]" : "text-primary-foreground/80 pb-1 -mb-[6px] border-b-2 border-transparent"}`}>
+    <Link
+      href={href}
+      className={`flex items-center gap-2 transition-colors hover:text-accent ${
+        isActive
+          ? "text-accent border-b-2 border-accent pb-1 -mb-[6px]"
+          : "text-primary-foreground/80 pb-1 -mb-[6px] border-b-2 border-transparent"
+      }`}
+    >
       {icon}
       {children}
     </Link>

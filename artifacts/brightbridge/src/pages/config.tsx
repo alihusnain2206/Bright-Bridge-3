@@ -9,7 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { SANDBOX_BASE_URL, SANDBOX_API_URL, TEST_EMPLOYEES, TEST_LOCATIONS, TEST_ORGANIZATION } from "@/hooks/useEasyTeamLauncher";
 
 export default function Config() {
-  const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus({ query: { enabled: true } });
+  const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus();
   const testConnection = useTestConnection();
 
   const handleTestConnection = () => {

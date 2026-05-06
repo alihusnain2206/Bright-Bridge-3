@@ -6,10 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface Employee {
-  id: string;
+export interface CreateClientRequest {
   name: string;
-  position?: string;
-  company_id?: string;
-  status?: string;
+  locationName: string;
+  latitude?: number;
+  longitude?: number;
+  timezone?: string;
 }

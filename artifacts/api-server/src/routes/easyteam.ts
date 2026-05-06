@@ -1,10 +1,38 @@
 import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
 import axios from "axios";
+import { store } from "../store";
 
 const router: IRouter = Router();
 
-const EASYTEAM_API_KEY = process.env.EASYTEAM_API_KEY;
+function normalizePemKey(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+
+  // Replace literal \n sequences (common when stored in env vars)
+  let key = raw.replace(/\\n/g, "\n").trim();
+
+  // If the key has no proper newlines, reformat it as a valid PEM
+  if (!key.includes("\n")) {
+    // Extract header, body, footer
+    const headerMatch = key.match(/^(-----BEGIN [^-]+-----)/);
+    const footerMatch = key.match(/(-----END [^-]+-----)$/);
+    if (headerMatch && footerMatch) {
+      const header = headerMatch[1];
+      const footer = footerMatch[1];
+      const body = key.slice(header.length, key.length - footer.length).replace(/\s+/g, "");
+      // Chunk body into 64-char lines
+      const lines: string[] = [];
+      for (let i = 0; i < body.length; i += 64) {
+        lines.push(body.slice(i, i + 64));
+      }
+      key = `${header}\n${lines.join("\n")}\n${footer}`;
+    }
+  }
+
+  return key;
+}
+
+const EASYTEAM_API_KEY = normalizePemKey(process.env.EASYTEAM_API_KEY);
 const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/sandbox/embed";
 
@@ -18,10 +46,17 @@ const webhookLog: Array<{
 }> = [];
 
 router.get("/easyteam/status", (_req, res) => {
+  const keyFirstLine = EASYTEAM_API_KEY?.split("\n")[0]?.slice(0, 40) ?? "";
+  const keyLooksLikePem =
+    !!EASYTEAM_API_KEY &&
+    (EASYTEAM_API_KEY.includes("BEGIN RSA PRIVATE KEY") ||
+      EASYTEAM_API_KEY.includes("BEGIN PRIVATE KEY"));
   res.json({
     connected: !!EASYTEAM_API_KEY,
     environment: "sandbox",
     apiKeyPresent: !!EASYTEAM_API_KEY,
+    apiKeyLooksPem: keyLooksLikePem,
+    apiKeyFirstLine: keyFirstLine,
     partnerIdPresent: !!EASYTEAM_PARTNER_ID,
     sdkVersion: "1.1.19",
     baseURL: EASYTEAM_SANDBOX_URL,
@@ -32,6 +67,7 @@ router.get("/easyteam/status", (_req, res) => {
 router.post("/easyteam/token", async (req, res) => {
   const {
     employee_id,
+    client_id,
     company_id,
     location_id,
     organization_id,
@@ -39,6 +75,7 @@ router.post("/easyteam/token", async (req, res) => {
     access_role,
   } = req.body as {
     employee_id: string;
+    client_id?: string;
     company_id?: string;
     location_id?: string;
     organization_id?: string;
@@ -51,16 +88,37 @@ router.post("/easyteam/token", async (req, res) => {
     return;
   }
 
-  const locationId = location_id || company_id || "SANDBOX-LOC-001";
-  const organizationId = organization_id || company_id || "SANDBOX-ORG-001";
+  // Resolve client and employee from store when client_id is provided
+  let resolvedLocationId = location_id || company_id || "SANDBOX-LOC-001";
+  let resolvedOrgId = organization_id || company_id || "SANDBOX-ORG-001";
+  let resolvedRoleName = role_name || "Manager";
+  let resolvedAccessRole = access_role || "manager";
+  let resolvedWage = 1500;
+
+  if (client_id) {
+    const client = store.getClient(client_id);
+    if (client) {
+      resolvedLocationId = client.id;
+      resolvedOrgId = client.id;
+    }
+  }
+
+  if (employee_id) {
+    const emp = store.getEmployee(employee_id);
+    if (emp) {
+      resolvedRoleName = emp.roleName;
+      resolvedAccessRole = emp.role;
+      resolvedWage = emp.wage;
+    }
+  }
 
   const payload = {
     employeeId: employee_id,
-    locationId,
-    organizationId,
+    locationId: resolvedLocationId,
+    organizationId: resolvedOrgId,
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
     accessRole: {
-      name: access_role || "manager",
+      name: resolvedAccessRole,
       permissions: [
         "LOCATION_READ",
         "SHIFT_READ",
@@ -76,10 +134,10 @@ router.post("/easyteam/token", async (req, res) => {
       ],
     },
     role: {
-      name: role_name || "Manager",
-      hourlyWage: 1500,
+      name: resolvedRoleName,
+      hourlyWage: resolvedWage,
     },
-    wage: 1500,
+    wage: resolvedWage,
     wageType: "hourly",
     features: {
       geolocation: false,

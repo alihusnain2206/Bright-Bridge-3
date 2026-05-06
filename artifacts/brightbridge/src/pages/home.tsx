@@ -8,9 +8,9 @@ import { Clock, Activity, Webhook, Settings, CalendarDays, Calendar } from "luci
 import { Skeleton } from "@/components/ui/skeleton";
 
 export default function Home() {
-  const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus({ query: { enabled: true } });
-  const { data: health, isLoading: healthLoading } = useHealthCheck({ query: { enabled: true } });
-  const { data: webhooks, isLoading: webhooksLoading } = useGetWebhookLogs({ query: { enabled: true } });
+  const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus();
+  const { data: health, isLoading: healthLoading } = useHealthCheck();
+  const { data: webhooks, isLoading: webhooksLoading } = useGetWebhookLogs();
 
   const lastWebhook = webhooks?.events?.[0];
 

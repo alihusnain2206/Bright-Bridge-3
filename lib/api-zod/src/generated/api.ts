@@ -31,40 +31,18 @@ export const GetEasyTeamStatusResponse = zod.object({
  */
 export const GenerateEasyTeamTokenBody = zod.object({
   employee_id: zod.string(),
-  company_id: zod.string(),
+  company_id: zod.string().optional(),
+  client_id: zod.string().optional(),
+  location_id: zod.string().optional(),
+  organization_id: zod.string().optional(),
+  role_name: zod.string().optional(),
+  access_role: zod.string().optional(),
 });
 
 export const GenerateEasyTeamTokenResponse = zod.object({
   token: zod.string().optional(),
   success: zod.boolean(),
   error: zod.string().optional(),
-});
-
-/**
- * @summary Get all employees from EasyTeam
- */
-export const GetEmployeesResponse = zod.object({
-  employees: zod.array(
-    zod.object({
-      id: zod.string(),
-      name: zod.string(),
-      position: zod.string().optional(),
-      company_id: zod.string().optional(),
-      status: zod.string().optional(),
-    }),
-  ),
-  success: zod.boolean(),
-  error: zod.string().optional(),
-});
-
-/**
- * @summary Get timesheets from EasyTeam
- */
-export const GetTimesheetsResponse = zod.object({
-  timesheets: zod.array(zod.record(zod.string(), zod.unknown())),
-  success: zod.boolean(),
-  error: zod.string().optional(),
-  raw: zod.record(zod.string(), zod.unknown()).optional(),
 });
 
 /**
@@ -107,4 +85,96 @@ export const TestConnectionResponse = zod.object({
   authentication: zod.boolean(),
   webhook: zod.boolean(),
   details: zod.record(zod.string(), zod.unknown()).optional(),
+});
+
+/**
+ * @summary List all daycare clients
+ */
+export const ListClientsResponse = zod.object({
+  clients: zod.array(
+    zod.object({
+      id: zod.string(),
+      name: zod.string(),
+      locationName: zod.string(),
+      latitude: zod.number(),
+      longitude: zod.number(),
+      timezone: zod.string(),
+      createdAt: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Create a new daycare client
+ */
+export const CreateClientBody = zod.object({
+  name: zod.string(),
+  locationName: zod.string(),
+  latitude: zod.number().optional(),
+  longitude: zod.number().optional(),
+  timezone: zod.string().optional(),
+});
+
+/**
+ * @summary Delete a daycare client
+ */
+export const DeleteClientParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const DeleteClientResponse = zod.object({
+  deleted: zod.boolean(),
+  id: zod.string(),
+});
+
+/**
+ * @summary List employees for a client
+ */
+export const ListClientEmployeesParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const ListClientEmployeesResponse = zod.object({
+  employees: zod.array(
+    zod.object({
+      id: zod.string(),
+      clientId: zod.string(),
+      name: zod.string(),
+      role: zod.string(),
+      roleName: zod.string(),
+      wage: zod.number().optional(),
+      wageType: zod.string().optional(),
+      timeTrackingEnabled: zod.boolean().optional(),
+      createdAt: zod.string(),
+    }),
+  ),
+});
+
+/**
+ * @summary Add an employee to a client
+ */
+export const CreateClientEmployeeParams = zod.object({
+  clientId: zod.coerce.string(),
+});
+
+export const CreateClientEmployeeBody = zod.object({
+  name: zod.string(),
+  role: zod.string(),
+  roleName: zod.string(),
+  wage: zod.number().optional(),
+  wageType: zod.string().optional(),
+  timeTrackingEnabled: zod.boolean().optional(),
+});
+
+/**
+ * @summary Remove an employee from a client
+ */
+export const DeleteClientEmployeeParams = zod.object({
+  clientId: zod.coerce.string(),
+  employeeId: zod.coerce.string(),
+});
+
+export const DeleteClientEmployeeResponse = zod.object({
+  deleted: zod.boolean(),
+  id: zod.string(),
 });
