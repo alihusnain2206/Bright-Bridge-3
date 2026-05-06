@@ -24,7 +24,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       {/* Slim sandbox notice */}
       <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide"
-           style={{ background: "linear-gradient(90deg, #1B2D55 0%, #2a4070 100%)", color: "#fff" }}>
+           style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}>
         <FlaskConical className="h-3.5 w-3.5 opacity-70" />
         <span className="opacity-80">SANDBOX</span>
         <span className="opacity-40 mx-1">·</span>

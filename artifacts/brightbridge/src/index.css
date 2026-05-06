@@ -77,28 +77,28 @@
   --elevate-2: rgba(0,0,0, .08);
 
   --background: 0 0% 100%;
-  --foreground: 220 51% 10%;
-  --border: 220 20% 90%;
-  --input: 220 20% 90%;
+  --foreground: 212 42% 10%;
+  --border: 212 20% 90%;
+  --input: 212 20% 90%;
   --ring: 20 79% 54%;
 
   --card: 0 0% 100%;
-  --card-foreground: 220 51% 10%;
-  --card-border: 220 20% 90%;
+  --card-foreground: 212 42% 10%;
+  --card-border: 212 20% 90%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 220 51% 10%;
-  --popover-border: 220 20% 90%;
+  --popover-foreground: 212 42% 10%;
+  --popover-border: 212 20% 90%;
 
-  /* BrightBridge Navy #1B2D55 -> 220 51% 22% */
-  --primary: 220 51% 22%;
+  /* BrightBridge Navy #284362 -> 212 42% 27% */
+  --primary: 212 42% 27%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 220 30% 95%;
-  --secondary-foreground: 220 51% 22%;
+  --secondary: 212 30% 95%;
+  --secondary-foreground: 212 42% 27%;
 
-  --muted: 220 20% 96%;
-  --muted-foreground: 220 14% 46%;
+  --muted: 212 20% 96%;
+  --muted-foreground: 212 14% 46%;
 
   /* BrightBridge Orange #E8622A -> 20 79% 54% */
   --accent: 20 79% 54%;
