@@ -18,12 +18,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Header / Navbar */}
       <header className="bg-primary text-primary-foreground shadow-md">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
-          {/* Logo — matches BrightBridge brand style */}
+          {/* Logo */}
           <div className="flex items-center gap-3">
-            <div className="flex flex-col leading-none">
-              <span className="font-bold text-xl tracking-tight text-white">Brightbridge</span>
-              <span className="text-xs font-bold tracking-widest uppercase text-accent">Consulting</span>
-            </div>
+            <img
+              src="/brightbridge-logo.png"
+              alt="Brightbridge Assist"
+              className="h-9 w-auto brightness-0 invert"
+            />
             <div className="h-6 w-px bg-white/20 mx-1" />
             <span className="text-sm font-medium text-white/70 hidden sm:block">
               EasyTeam Integration Test
