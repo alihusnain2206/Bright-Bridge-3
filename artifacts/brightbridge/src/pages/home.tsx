@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Clock, Activity, Webhook, Settings, CalendarDays, Calendar } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { DashboardHeroIllustration, SDKStatusMini, ActivityMini, QuickLinksMini } from "@/components/daycare-illustrations";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const PANEL_INNER = { background: "rgba(255,255,255,0.07)", borderColor: "rgba(255,255,255,0.12)" } as const;
@@ -19,38 +20,69 @@ export default function Home() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">Integration Dashboard</h1>
-          <p className="text-muted-foreground mt-1">Overview of your EasyTeam Embedded SDK sandbox.</p>
+
+      {/* Hero banner */}
+      <div className="rounded-2xl border overflow-hidden relative" style={{ ...PANEL, minHeight: 200 }}>
+        {/* Left: text content */}
+        <div className="absolute inset-0 flex flex-col justify-center px-8 py-6 z-10 max-w-[55%]">
+          <div className="flex items-center gap-2 mb-3 flex-wrap">
+            {healthLoading ? (
+              <Skeleton className="h-6 w-24 opacity-20" />
+            ) : (
+              <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white text-xs px-2.5">
+                API {health?.status === "ok" ? "Online" : "Offline"}
+              </Badge>
+            )}
+            {statusLoading ? (
+              <Skeleton className="h-6 w-28 opacity-20" />
+            ) : (
+              <Badge className={`text-white text-xs px-2.5 ${status?.connected ? "bg-emerald-500 hover:bg-emerald-600" : "bg-destructive"}`}>
+                EasyTeam {status?.connected ? "Connected" : "Disconnected"}
+              </Badge>
+            )}
+          </div>
+          <h1 className="text-3xl font-bold text-white leading-tight tracking-tight">
+            Integration Dashboard
+          </h1>
+          <p className="text-white/50 mt-2 text-sm leading-relaxed">
+            Overview of your EasyTeam Embedded SDK sandbox.<br />
+            Manage daycare clients, staff, and test live iframe components.
+          </p>
+          <div className="mt-5 flex items-center gap-3">
+            <Link href="/clients">
+              <Button className="bg-[#E8622A] hover:bg-[#d4571f] text-white border-0 text-sm h-9">
+                Manage Clients
+              </Button>
+            </Link>
+            <Link href="/timeclock">
+              <Button variant="outline" className="text-white/80 hover:text-white border-white/20 hover:border-white/40 hover:bg-white/10 bg-transparent text-sm h-9">
+                Launch Time Clock
+              </Button>
+            </Link>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {healthLoading ? (
-            <Skeleton className="h-6 w-24" />
-          ) : (
-            <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white">
-              API {health?.status === "ok" ? "Online" : "Offline"}
-            </Badge>
-          )}
-          {statusLoading ? (
-            <Skeleton className="h-6 w-24" />
-          ) : (
-            <Badge className={status?.connected ? "bg-emerald-500 hover:bg-emerald-600 text-white" : "bg-destructive text-white"}>
-              EasyTeam {status?.connected ? "Connected" : "Disconnected"}
-            </Badge>
-          )}
+
+        {/* Right: illustration */}
+        <div className="absolute right-0 top-0 bottom-0 w-[50%] flex items-end justify-end overflow-hidden">
+          <DashboardHeroIllustration />
         </div>
+
+        {/* Subtle gradient overlay so text stays readable */}
+        <div className="absolute inset-0 pointer-events-none"
+          style={{ background: "linear-gradient(90deg, #284362 38%, transparent 70%)" }} />
       </div>
 
+      {/* Status cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
         {/* SDK Status */}
         <div className="rounded-xl border flex flex-col" style={PANEL}>
-          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+          <div className="px-5 py-4 border-b flex items-center justify-between" style={PANEL_DIVIDER}>
             <div className="flex items-center gap-2">
               <Activity className="h-5 w-5 text-[#E8622A]" />
               <span className="text-white font-semibold text-base">SDK Status</span>
             </div>
+            <SDKStatusMini />
           </div>
           <div className="px-5 py-4 flex-1">
             {statusLoading ? (
@@ -86,11 +118,12 @@ export default function Home() {
 
         {/* Recent Activity */}
         <div className="rounded-xl border flex flex-col" style={PANEL}>
-          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+          <div className="px-5 py-4 border-b flex items-center justify-between" style={PANEL_DIVIDER}>
             <div className="flex items-center gap-2">
               <Webhook className="h-5 w-5 text-[#E8622A]" />
               <span className="text-white font-semibold text-base">Recent Activity</span>
             </div>
+            <ActivityMini />
           </div>
           <div className="px-5 py-4 flex-1">
             {webhooksLoading ? (
@@ -127,11 +160,12 @@ export default function Home() {
 
         {/* Quick Links */}
         <div className="rounded-xl border flex flex-col" style={PANEL}>
-          <div className="px-5 py-4 border-b" style={PANEL_DIVIDER}>
+          <div className="px-5 py-4 border-b flex items-center justify-between" style={PANEL_DIVIDER}>
             <div className="flex items-center gap-2">
               <Settings className="h-5 w-5 text-[#E8622A]" />
               <span className="text-white font-semibold text-base">Quick Links</span>
             </div>
+            <QuickLinksMini />
           </div>
           <div className="px-5 py-4 flex-1">
             <div className="grid grid-cols-2 gap-2">
