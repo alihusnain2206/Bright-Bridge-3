@@ -62,14 +62,11 @@ function RootRedirect() {
   useEffect(() => {
     if (isLoading) return;
     if (!user) { navigate("/login"); return; }
-    if (user.role === "super_admin") return; // show existing home page
     navigate(dashboardPath(user.role));
   }, [user, isLoading, navigate]);
 
   if (isLoading) return <LoadingScreen />;
-  if (!user) return null;
-  if (user.role !== "super_admin") return null;
-  return <Home />;
+  return null;
 }
 
 function Router() {
@@ -78,10 +75,7 @@ function Router() {
       {/* Public */}
       <Route path="/login" component={Login} />
 
-      {/* Role dashboards */}
-      <Route path="/dashboard/super-admin">
-        <ProtectedRoute component={SuperAdminDashboard} roles={["super_admin"]} />
-      </Route>
+      {/* Manager / Employee / Parent — standalone pages (own header + simple nav) */}
       <Route path="/dashboard/manager">
         <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
       </Route>
@@ -92,11 +86,14 @@ function Router() {
         <ProtectedRoute component={ParentDashboard} roles={["parent"]} />
       </Route>
 
-      {/* Authenticated pages wrapped in layout */}
+      {/* All super-admin pages + /roles share the AppLayout with full nav */}
       <Route>
         <AppLayout>
           <Switch>
             <Route path="/" component={RootRedirect} />
+            <Route path="/dashboard/super-admin">
+              <ProtectedRoute component={SuperAdminDashboard} roles={["super_admin"]} />
+            </Route>
             <Route path="/clients">
               <ProtectedRoute component={Clients} roles={["super_admin"]} />
             </Route>

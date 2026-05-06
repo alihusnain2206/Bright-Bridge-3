@@ -14,7 +14,7 @@ function getNavItems(role: string | undefined): NavItem[] {
   switch (role) {
     case "super_admin":
       return [
-        { href: "/", label: "Dashboard", icon: LayoutDashboard },
+        { href: "/dashboard/super-admin", label: "Dashboard", icon: LayoutDashboard },
         { href: "/clients", label: "Clients", icon: Building2 },
         { href: "/timeclock", label: "Time Clock", icon: Clock },
         { href: "/timesheets", label: "Timesheets", icon: CalendarDays },
