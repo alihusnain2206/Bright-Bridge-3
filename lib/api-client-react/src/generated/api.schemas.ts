@@ -27,10 +27,20 @@ export interface GenerateTokenRequest {
   access_role?: string;
 }
 
+/**
+ * EasyTeam internal UUIDs returned after token exchange
+ */
+export interface EasyTeamIds {
+  employeeId: string;
+  locationId: string;
+  organizationId: string;
+}
+
 export interface GenerateTokenResponse {
   token?: string;
   success: boolean;
   error?: string;
+  et?: EasyTeamIds;
 }
 
 export type WebhookPayloadData = { [key: string]: unknown };

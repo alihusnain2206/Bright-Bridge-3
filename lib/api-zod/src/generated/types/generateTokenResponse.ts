@@ -5,9 +5,11 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EasyTeamIds } from "./easyTeamIds";
 
 export interface GenerateTokenResponse {
   token?: string;
   success: boolean;
   error?: string;
+  et?: EasyTeamIds;
 }

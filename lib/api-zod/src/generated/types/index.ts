@@ -15,6 +15,7 @@ export * from "./connectionTestResultDetails";
 export * from "./createClientRequest";
 export * from "./createEmployeeRequest";
 export * from "./deletedResponse";
+export * from "./easyTeamIds";
 export * from "./easyTeamStatus";
 export * from "./errorResponse";
 export * from "./generateTokenRequest";

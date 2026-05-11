@@ -43,6 +43,14 @@ export const GenerateEasyTeamTokenResponse = zod.object({
   token: zod.string().optional(),
   success: zod.boolean(),
   error: zod.string().optional(),
+  et: zod
+    .object({
+      employeeId: zod.string(),
+      locationId: zod.string(),
+      organizationId: zod.string(),
+    })
+    .optional()
+    .describe("EasyTeam internal UUIDs returned after token exchange"),
 });
 
 /**
