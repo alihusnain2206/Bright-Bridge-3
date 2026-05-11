@@ -158,23 +158,8 @@ router.post("/auth/token-by-role", async (req, res) => {
     return;
   }
 
-  // Try token exchange
-  try {
-    const axios = (await import("axios")).default;
-    const response = await axios.post<{ accessToken: string }>(
-      "https://www.easyteam.io/sandbox/embed/api/auth/exchangeToken",
-      { token: signedJwt },
-      { headers: { "Content-Type": "application/json" }, timeout: 10000 }
-    );
-    res.json({ token: response.data.accessToken, role: user.role, decoded: payload });
-  } catch {
-    res.json({
-      token: signedJwt,
-      role: user.role,
-      decoded: payload,
-      exchangeWarning: `Token exchange failed — using raw JWT. Set EASYTEAM_PARTNER_ID for full exchange.`,
-    });
-  }
+  // Return the signed JWT directly — EasyTeamLauncher handles token exchange internally
+  res.json({ token: signedJwt, role: user.role, decoded: payload });
 });
 
 // ── Children check-in (parent feature) ──────────────────────

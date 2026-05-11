@@ -158,27 +158,8 @@ router.post("/easyteam/token", async (req, res) => {
     return;
   }
 
-  try {
-    const response = await axios.post<{ accessToken: string }>(
-      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
-      { token: signedJwt },
-      {
-        headers: { "Content-Type": "application/json" },
-        timeout: 10000,
-      }
-    );
-    res.json({ success: true, token: response.data.accessToken, accessToken: response.data.accessToken });
-  } catch (err) {
-    const error = err as { message?: string; response?: { status?: number; data?: unknown } };
-    req.log.warn({ err, status: error.response?.status }, "EasyTeam token exchange failed — returning signed JWT for client-side use");
-    res.json({
-      success: true,
-      token: signedJwt,
-      accessToken: signedJwt,
-      exchangeWarning: `Exchange endpoint returned error (${error.response?.status ?? "network"}) — using raw JWT. Add EASYTEAM_PARTNER_ID to enable full exchange.`,
-      exchangeDetails: error.response?.data,
-    });
-  }
+  // Return the signed JWT directly — EasyTeamLauncher handles token exchange internally
+  res.json({ success: true, token: signedJwt, accessToken: signedJwt });
 });
 
 router.get("/easyteam/employees", (_req, res) => {

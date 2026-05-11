@@ -27,7 +27,6 @@ export default function Timesheets() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [events, setEvents] = useState<EasyTeamEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [exchangeWarning, setExchangeWarning] = useState<string | null>(null);
   const [launcherEmployees, setLauncherEmployees] = useState<Array<{ id: string; name: string; role: string; timeTrackingEnabled: boolean }>>([]);
   const [launcherOrg, setLauncherOrg] = useState<{ id: string; name: string } | undefined>();
   const [launcherLocations, setLauncherLocations] = useState<Array<{ id: string; name: string; latitude: number; longitude: number }>>([]);
@@ -77,7 +76,6 @@ export default function Timesheets() {
         onSuccess: (data) => {
           if (data.success && data.token) {
             setAccessToken(data.token);
-            if ((data as { exchangeWarning?: string }).exchangeWarning) setExchangeWarning((data as { exchangeWarning?: string }).exchangeWarning ?? null);
           } else { setError((data as { error?: string }).error ?? "Token generation failed"); }
         },
         onError: (err) => setError(err instanceof Error ? err.message : "Request failed"),
@@ -174,7 +172,6 @@ export default function Timesheets() {
             </Button>
 
             {error && <div className="flex items-start gap-2 p-3 rounded-md text-xs text-red-300 border border-red-500/30 bg-red-900/20"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /><span>{error}</span></div>}
-            {exchangeWarning && <div className="flex items-start gap-2 p-3 rounded-md text-xs text-amber-300 border border-amber-500/30 bg-amber-900/20"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /><span>{exchangeWarning}</span></div>}
             {accessToken && !error && (
               <div className="space-y-1">
                 <div className="text-xs text-white/50 font-medium">Access Token</div>

@@ -33,7 +33,7 @@ const ALL_LOCATIONS = [
   { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
 ];
 
-interface TokenData { token: string; decoded: Record<string, unknown>; role: string; exchangeWarning?: string }
+interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
 
 interface Company {
@@ -188,11 +188,6 @@ export default function SuperAdminDashboard() {
         {tokenError && (
           <div className="mx-6 mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/20">
             <AlertTriangle className="h-4 w-4" />{tokenError}
-          </div>
-        )}
-        {tokenData?.exchangeWarning && (
-          <div className="mx-6 mt-4 flex items-start gap-2 text-xs text-amber-300 bg-amber-500/10 rounded-lg px-3 py-2 border border-amber-500/20">
-            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />{tokenData.exchangeWarning}
           </div>
         )}
         {!tokenData && !tokenLoading && (
