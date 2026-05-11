@@ -60,7 +60,7 @@ export default function TimeClock() {
 
   const handleLaunch = (cId = clientId, eId = employeeId, empList = employees) => {
     if (!cId) return;
-    setError(null); setExchangeWarning(null); setAccessToken(null);
+    setError(null); setAccessToken(null);
     const client = clientsData?.clients.find((c) => c.id === cId);
     const emp = empList.find((e) => e.id === eId);
     if (client) {
