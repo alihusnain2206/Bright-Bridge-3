@@ -277,21 +277,6 @@ components:
       required:
         - employee_id
 
-    EasyTeamIds:
-      type: object
-      description: EasyTeam internal UUIDs returned after token exchange
-      properties:
-        employeeId:
-          type: string
-        locationId:
-          type: string
-        organizationId:
-          type: string
-      required:
-        - employeeId
-        - locationId
-        - organizationId
-
     GenerateTokenResponse:
       type: object
       properties:
@@ -301,8 +286,6 @@ components:
           type: boolean
         error:
           type: string
-        et:
-          $ref: "#/components/schemas/EasyTeamIds"
       required:
         - success
 

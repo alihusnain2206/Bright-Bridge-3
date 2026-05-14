@@ -65,23 +65,16 @@ export default function Timesheets() {
     setError(null); setAccessToken(null);
     const client = clientsData?.clients.find((c) => c.id === cId);
     const emp = empList.find((e) => e.id === eId) ?? empList[0];
+    if (client) {
+      setLauncherOrg({ id: client.id, name: client.name });
+      setLauncherLocations([{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }]);
+      setLauncherEmployees(empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })));
+    }
     generateToken.mutate(
       { data: { employee_id: eId || (empList[0]?.id ?? ""), client_id: cId, role_name: emp?.roleName, access_role: emp?.role } },
       {
         onSuccess: (data) => {
           if (data.success && data.token) {
-            if (client) {
-              const et = data.et;
-              if (et) {
-                setLauncherOrg({ id: et.organizationId, name: client.name });
-                setLauncherLocations([{ id: et.locationId, name: client.locationName, latitude: client.latitude, longitude: client.longitude }]);
-                setLauncherEmployees([{ id: et.employeeId, name: emp?.name ?? "Employee", role: emp?.role ?? "employee", timeTrackingEnabled: true }]);
-              } else {
-                setLauncherOrg({ id: client.id, name: client.name });
-                setLauncherLocations([{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }]);
-                setLauncherEmployees(empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })));
-              }
-            }
             setAccessToken(data.token);
           } else { setError((data as { error?: string }).error ?? "Token generation failed"); }
         },

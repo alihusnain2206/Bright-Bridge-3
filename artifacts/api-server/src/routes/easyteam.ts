@@ -142,6 +142,9 @@ router.post("/easyteam/token", async (req, res) => {
     features: {
       geolocation: false,
       shiftNotes: true,
+      timesheet_badges: true,
+      location_picker: true,
+      timesheets_wages: true,
     },
   };
 
@@ -158,41 +161,8 @@ router.post("/easyteam/token", async (req, res) => {
     return;
   }
 
-  // Exchange the raw JWT with EasyTeam to get their internal UUIDs.
-  // The launcher passes our raw JWT to the iframe, which exchanges it internally.
-  // We pre-exchange here only to learn EasyTeam's UUIDs so the launcher's
-  // employees/locations/organization arrays match what the iframe sees post-exchange.
-  let etIds: { employeeId: string; locationId: string; organizationId: string } | undefined;
-  try {
-    const exchangeResp = await axios.post<{ accessToken: string }>(
-      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
-      { token: signedJwt },
-      { timeout: 8000 }
-    );
-    const exchangedToken = exchangeResp.data.accessToken;
-    if (exchangedToken) {
-      const parts = exchangedToken.split(".");
-      const rawPart = parts[1];
-      if (rawPart) {
-        const decoded = JSON.parse(
-          Buffer.from(rawPart.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8")
-        ) as { employeeId?: string; locationId?: string; organizationId?: string };
-        if (decoded.employeeId && decoded.locationId && decoded.organizationId) {
-          etIds = {
-            employeeId: decoded.employeeId,
-            locationId: decoded.locationId,
-            organizationId: decoded.organizationId,
-          };
-          req.log.info({ etIds }, "EasyTeam token exchange succeeded");
-        }
-      }
-    }
-  } catch (err) {
-    const error = err as { message?: string; response?: { status?: number } };
-    req.log.warn({ exchangeError: error.message, status: error.response?.status }, "EasyTeam token exchange failed — using raw JWT");
-  }
-
-  res.json({ success: true, token: signedJwt, ...(etIds ? { et: etIds } : {}) });
+  req.log.info({ employeeId: employee_id, clientId: client_id }, "EasyTeam token generated");
+  res.json({ success: true, token: signedJwt });
 });
 
 router.get("/easyteam/employees", (_req, res) => {
