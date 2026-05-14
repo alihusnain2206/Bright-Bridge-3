@@ -161,27 +161,12 @@ router.post("/easyteam/token", async (req, res) => {
     return;
   }
 
-  // Exchange our raw RS256 JWT for an EasyTeam accessToken.
-  // The launcher constructor expects EasyTeam's own accessToken, not our raw JWT.
-  // Our own IDs (employee_id, client_id) are already embedded in the JWT claims,
-  // so EasyTeam maps them transparently — no UUID juggling needed in the frontend.
-  try {
-    const exchangeResp = await axios.post<{ accessToken: string }>(
-      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
-      { token: signedJwt },
-      { timeout: 8000 }
-    );
-    const accessToken = exchangeResp.data.accessToken;
-    req.log.info({ employeeId: employee_id, clientId: client_id }, "EasyTeam token exchanged");
-    res.json({ success: true, token: accessToken });
-  } catch (err) {
-    const error = err as { message?: string; response?: { status?: number; data?: unknown } };
-    req.log.warn(
-      { exchangeError: error.message, status: error.response?.status, body: error.response?.data },
-      "EasyTeam token exchange failed — returning raw JWT"
-    );
-    res.json({ success: true, token: signedJwt, exchangeWarning: true });
-  }
+  // Return the raw RS256 JWT directly to the frontend.
+  // The EasyTeam iframe SPA reads this from the URL query string (?token=...)
+  // and performs the exchange with EasyTeam's /api/auth/exchangeToken itself.
+  // Do NOT pre-exchange here — the iframe rejects already-exchanged tokens (400 Bad token).
+  req.log.info({ employeeId: employee_id, clientId: client_id }, "EasyTeam raw JWT generated");
+  res.json({ success: true, token: signedJwt });
 });
 
 router.get("/easyteam/employees", (_req, res) => {
