@@ -42,6 +42,7 @@ interface LauncherEvent {
 export function useEasyTeamLauncher(
   containerId: string,
   onEvent?: (event: LauncherEvent) => void,
+  iframeMinHeight = 600,
 ) {
   const launcherRef = useRef<EasyTeamEmbedLauncher | null>(null);
   const onEventRef = useRef(onEvent);
@@ -54,6 +55,13 @@ export function useEasyTeamLauncher(
         launcherRef.current = null;
       }
     };
+  }, []);
+
+  const applyMinHeight = useCallback((launcher: EasyTeamEmbedLauncher, px: number) => {
+    if (launcher.iframe) {
+      launcher.iframe.style.minHeight = `${px}px`;
+      launcher.iframe.style.height = `${px}px`;
+    }
   }, []);
 
   const launch = useCallback((token: string, config: LauncherConfig) => {
@@ -83,7 +91,15 @@ export function useEasyTeamLauncher(
 
     launcher.run(containerId, config.page);
     launcherRef.current = launcher;
-  }, [containerId]);
+
+    // The SDK sets its own iframe height. Override it immediately and after
+    // load so the SDK's resize logic doesn't produce internal scrollbars.
+    applyMinHeight(launcher, iframeMinHeight);
+    const t1 = setTimeout(() => applyMinHeight(launcher, iframeMinHeight), 300);
+    const t2 = setTimeout(() => applyMinHeight(launcher, iframeMinHeight), 1500);
+
+    return () => { clearTimeout(t1); clearTimeout(t2); };
+  }, [containerId, iframeMinHeight, applyMinHeight]);
 
   return { launch };
 }

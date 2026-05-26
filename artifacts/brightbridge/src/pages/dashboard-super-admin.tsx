@@ -61,7 +61,7 @@ export default function SuperAdminDashboard() {
     { id: "ORG-RAINBOW", name: "Rainbow Kids Daycare", type: "daycare", address: "456 Oak Ave, Jersey City NJ" },
   ]);
 
-  const { launch } = useEasyTeamLauncher("admin-et-container");
+  const { launch } = useEasyTeamLauncher("admin-et-container", undefined, 700);
 
   useEffect(() => {
     fetchEvents();

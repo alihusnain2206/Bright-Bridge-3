@@ -39,7 +39,7 @@ export default function Timesheets() {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
   }, []);
 
-  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent);
+  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent, 780);
 
   const employees = employeesData?.employees ?? [];
   const selectedClient = clientsData?.clients.find((c) => c.id === clientId);

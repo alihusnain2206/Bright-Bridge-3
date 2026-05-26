@@ -48,7 +48,7 @@ export default function ManagerDashboard() {
   const companyEmployees = COMPANY_EMPLOYEES[user?.companyId ?? ""] ?? [];
   const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
 
-  const { launch } = useEasyTeamLauncher("mgr-et-container");
+  const { launch } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
 
   useEffect(() => {
     fetchEvents();

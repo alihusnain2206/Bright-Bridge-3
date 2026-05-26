@@ -33,7 +33,7 @@ export default function EmployeeDashboard() {
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
 
-  const { launch } = useEasyTeamLauncher("emp-et-container");
+  const { launch } = useEasyTeamLauncher("emp-et-container", undefined, 520);
 
   useEffect(() => {
     fetchEvents();

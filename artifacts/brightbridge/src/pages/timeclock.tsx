@@ -37,7 +37,7 @@ export default function TimeClock() {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
   }, []);
 
-  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent);
+  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent, 520);
 
   const employees = employeesData?.employees ?? [];
   const selectedClient = clientsData?.clients.find((c) => c.id === clientId);
