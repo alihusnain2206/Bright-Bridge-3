@@ -113,7 +113,7 @@ function ChildCard({ child, onCheckIn, onCheckOut }: {
     <div className="rounded-2xl bg-white border p-5 shadow-sm space-y-4">
       <div className="flex items-start justify-between">
         <div>
-          <h3 className="font-bold text-lg text-foreground">{child.name}</h3>
+          <h3 className="font-bold text-lg text-gray-900">{child.name}</h3>
           <p className="text-sm text-muted-foreground">Age {child.age} · ID: {child.id}</p>
         </div>
         {child.checkedIn ? (

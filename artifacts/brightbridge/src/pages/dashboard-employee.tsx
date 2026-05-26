@@ -114,7 +114,7 @@ export default function EmployeeDashboard() {
       <div className="px-6 py-6 max-w-6xl mx-auto space-y-6">
         {/* Employee info card */}
         <div className="rounded-2xl bg-white border p-5 shadow-sm">
-          <h2 className="font-semibold text-foreground mb-4">Your Details</h2>
+          <h2 className="font-semibold text-gray-900 mb-4">Your Details</h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><User className="h-3.5 w-3.5" />Name</div>
@@ -136,9 +136,9 @@ export default function EmployeeDashboard() {
             </div>
           </div>
           <div className="mt-3 pt-3 border-t flex items-center gap-2 text-xs text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" />Employee ID: <span className="font-mono font-semibold text-foreground">{user?.employeeId}</span>
+            <Clock className="h-3.5 w-3.5" />Employee ID: <span className="font-mono font-semibold text-gray-900">{user?.employeeId}</span>
             <span className="mx-1">·</span>
-            Location: <span className="font-semibold text-foreground">{location?.address ?? "—"}</span>
+            Location: <span className="font-semibold text-gray-900">{location?.address ?? "—"}</span>
           </div>
         </div>
 
@@ -173,11 +173,11 @@ export default function EmployeeDashboard() {
         {/* Access + Token */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="rounded-2xl bg-white border p-5 shadow-sm space-y-4">
-            <h3 className="font-semibold text-foreground">Your Access</h3>
+            <h3 className="font-semibold text-gray-900">Your Access</h3>
             <div>
               <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-2">You can</div>
               {CAN_DO.map(item => (
-                <div key={item} className="flex items-center gap-2 py-1.5 text-sm text-foreground">
+                <div key={item} className="flex items-center gap-2 py-1.5 text-sm text-gray-800">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />{item}
                 </div>
               ))}

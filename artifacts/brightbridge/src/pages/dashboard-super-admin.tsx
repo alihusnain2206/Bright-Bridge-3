@@ -143,7 +143,7 @@ export default function SuperAdminDashboard() {
             <div key={co.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-foreground">{co.name}</h3>
+                  <h3 className="font-semibold text-gray-900">{co.name}</h3>
                   <p className="text-xs text-muted-foreground">Daycare Centre</p>
                 </div>
                 <Building2 className="h-5 w-5 text-[#E8622A]" />

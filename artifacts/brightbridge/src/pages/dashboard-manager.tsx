@@ -123,7 +123,7 @@ export default function ManagerDashboard() {
         <div className="rounded-2xl bg-white border p-5 shadow-sm">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <h2 className="font-bold text-lg text-foreground">{company?.name}</h2>
+              <h2 className="font-bold text-lg text-gray-900">{company?.name}</h2>
               <p className="text-sm text-muted-foreground">Your managed location</p>
             </div>
             <Building2 className="h-6 w-6 text-[#E8622A]" />
@@ -173,11 +173,11 @@ export default function ManagerDashboard() {
         {/* Access comparison + Token side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           <div className="rounded-2xl bg-white border p-5 shadow-sm space-y-4">
-            <h3 className="font-semibold text-foreground">Access for Managers</h3>
+            <h3 className="font-semibold text-gray-900">Access for Managers</h3>
             <div>
               <div className="text-xs font-semibold text-emerald-600 uppercase tracking-wide mb-2">You can</div>
               {CAN_DO.map(item => (
-                <div key={item} className="flex items-center gap-2 py-1.5 text-sm text-foreground">
+                <div key={item} className="flex items-center gap-2 py-1.5 text-sm text-gray-800">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />{item}
                 </div>
               ))}

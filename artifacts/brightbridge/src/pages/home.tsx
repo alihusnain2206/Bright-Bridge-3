@@ -170,7 +170,7 @@ export default function Home() {
 
                 <div className="flex-1 space-y-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-base text-foreground">{label}</span>
+                    <span className="font-semibold text-base text-gray-900">{label}</span>
                     <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border text-muted-foreground"
                       style={{ borderColor: "hsl(var(--border))" }}>
                       {tagline}

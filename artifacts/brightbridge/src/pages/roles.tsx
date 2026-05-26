@@ -71,7 +71,7 @@ export default function Roles() {
             <tbody>
               {FEATURES.map((f, i) => (
                 <tr key={f.label} className={i % 2 === 0 ? "bg-white" : "bg-muted/30"}>
-                  <td className="px-5 py-3 text-sm font-medium text-foreground">{f.label}</td>
+                  <td className="px-5 py-3 text-sm font-medium text-gray-800">{f.label}</td>
                   <td className="px-4 py-3 text-center">{f.super_admin}</td>
                   <td className="px-4 py-3 text-center">{f.manager}</td>
                   <td className="px-4 py-3 text-center">{f.employee}</td>
