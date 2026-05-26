@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
@@ -33,6 +33,8 @@ const ALL_LOCATIONS = [
   { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
 ];
 
+const LAUNCH_ORG = { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" };
+
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
 
@@ -53,23 +55,13 @@ export default function SuperAdminDashboard() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [selectedPage, setSelectedPage] = useState<Pages>(Pages.TIMESHEET);
-  const [launched, setLaunched] = useState(false);
   const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [companies] = useState<Company[]>([
     { id: "ORG-SUNSHINE", name: "Sunshine Daycare Centre", type: "daycare", address: "123 Main St, Newark NJ" },
     { id: "ORG-RAINBOW", name: "Rainbow Kids Daycare", type: "daycare", address: "456 Oak Ave, Jersey City NJ" },
   ]);
-  const launched$ = useRef(false);
 
-  useEasyTeamLauncher(
-    "admin-et-container",
-    launched && tokenData ? tokenData.token : null,
-    selectedPage,
-    undefined,
-    ALL_EMPLOYEES,
-    { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
-    ALL_LOCATIONS
-  );
+  const { launch } = useEasyTeamLauncher("admin-et-container");
 
   useEffect(() => {
     fetchEvents();
@@ -82,6 +74,13 @@ export default function SuperAdminDashboard() {
       const d = await fetch("/api/easyteam/webhooks", { credentials: "include" }).then(r => r.json()) as { events: WebhookEvent[] };
       setEvents((d.events ?? []).slice(0, 10));
     } catch { /* ignore */ }
+  };
+
+  const handlePageChange = (newPage: Pages) => {
+    setSelectedPage(newPage);
+    if (tokenData) {
+      launch(tokenData.token, { page: newPage, employees: ALL_EMPLOYEES, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+    }
   };
 
   const generateToken = async () => {
@@ -98,7 +97,7 @@ export default function SuperAdminDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      if (!launched$.current) { launched$.current = true; setLaunched(true); }
+      launch(data.token, { page: selectedPage, employees: ALL_EMPLOYEES, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
@@ -170,7 +169,7 @@ export default function SuperAdminDashboard() {
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex gap-1">
               {PAGE_OPTIONS.map(({ value, label }) => (
-                <button key={String(value)} onClick={() => setSelectedPage(value)}
+                <button key={String(value)} onClick={() => handlePageChange(value)}
                   className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${selectedPage === value ? "bg-white text-[#284362]" : "text-white/60 hover:text-white hover:bg-white/10"}`}>
                   {label}
                 </button>
@@ -190,13 +189,15 @@ export default function SuperAdminDashboard() {
             <AlertTriangle className="h-4 w-4" />{tokenError}
           </div>
         )}
-        {!tokenData && !tokenLoading && (
-          <div className="px-6 py-16 text-center">
-            <Play className="h-10 w-10 text-white/20 mx-auto mb-3" />
-            <p className="text-white/40 text-sm">Click "Generate Token & Launch" to open the EasyTeam admin panel.</p>
-          </div>
-        )}
-        {tokenData && <div id="admin-et-container" className="min-h-[520px]" />}
+        <div className="relative min-h-[520px]">
+          {!tokenData && !tokenLoading && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
+              <Play className="h-10 w-10 text-white/20" />
+              <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open the EasyTeam admin panel.</p>
+            </div>
+          )}
+          <div id="admin-et-container" className="w-full h-full min-h-[520px]" />
+        </div>
       </div>
 
       {/* Token decode */}

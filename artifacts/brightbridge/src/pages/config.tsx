@@ -6,7 +6,17 @@ import { Settings, Shield, Server, Plug, CheckCircle2, XCircle, Key, Globe } fro
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SANDBOX_BASE_URL, SANDBOX_API_URL, TEST_EMPLOYEES, TEST_LOCATIONS, TEST_ORGANIZATION } from "@/hooks/useEasyTeamLauncher";
+import { SANDBOX_BASE_URL, SANDBOX_API_URL } from "@/hooks/useEasyTeamLauncher";
+
+const TEST_ORGANIZATION = { id: "SANDBOX-ORG-001", name: "BrightBridge Sandbox" };
+const TEST_LOCATIONS = [
+  { id: "SANDBOX-LOC-001", name: "Sandbox Test Location", latitude: 40.7128, longitude: -74.006, employees: { "EMP-TEST-001": {}, "EMP-TEST-002": {}, "EMP-TEST-003": {} } },
+];
+const TEST_EMPLOYEES = [
+  { id: "EMP-TEST-001", name: "John Smith", role: "manager", timeTrackingEnabled: true, wage: 1500, wageType: "hourly" },
+  { id: "EMP-TEST-002", name: "Mary Johnson", role: "assistant", timeTrackingEnabled: true, wage: 1200, wageType: "hourly" },
+  { id: "EMP-TEST-003", name: "Carlos Rivera", role: "cashier", timeTrackingEnabled: true, wage: 1000, wageType: "hourly" },
+];
 
 export default function Config() {
   const { data: status, isLoading: statusLoading } = useGetEasyTeamStatus();

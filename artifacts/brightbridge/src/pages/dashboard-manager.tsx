@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
@@ -44,21 +44,11 @@ export default function ManagerDashboard() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
-  const [launched, setLaunched] = useState(false);
-  const launched$ = useRef(false);
 
   const companyEmployees = COMPANY_EMPLOYEES[user?.companyId ?? ""] ?? [];
   const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
 
-  useEasyTeamLauncher(
-    "mgr-et-container",
-    launched && tokenData ? tokenData.token : null,
-    Pages.TIMESHEET,
-    undefined,
-    companyEmployees,
-    company ? { id: company.id, name: company.name } : undefined,
-    companyLocations
-  );
+  const { launch } = useEasyTeamLauncher("mgr-et-container");
 
   useEffect(() => {
     fetchEvents();
@@ -87,7 +77,13 @@ export default function ManagerDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      if (!launched$.current) { launched$.current = true; setLaunched(true); }
+
+      launch(data.token, {
+        page: Pages.TIMESHEET,
+        employees: companyEmployees,
+        organization: company ? { id: company.id, name: company.name } : { id: user.companyId ?? "", name: "" },
+        locations: companyLocations,
+      });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
@@ -165,18 +161,19 @@ export default function ManagerDashboard() {
               <AlertTriangle className="h-4 w-4" />{tokenError}
             </div>
           )}
-          {!tokenData && !tokenLoading && (
-            <div className="px-6 py-16 text-center">
-              <Play className="h-10 w-10 text-white/20 mx-auto mb-3" />
-              <p className="text-white/40 text-sm">Click "Generate Token & Launch" to open your manager panel.</p>
-            </div>
-          )}
-          {tokenData && <div id="mgr-et-container" className="min-h-[520px]" />}
+          <div className="relative min-h-[520px]">
+            {!tokenData && !tokenLoading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
+                <Play className="h-10 w-10 text-white/20" />
+                <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your manager panel.</p>
+              </div>
+            )}
+            <div id="mgr-et-container" className="w-full h-full min-h-[520px]" />
+          </div>
         </div>
 
         {/* Access comparison + Token side by side */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          {/* Can/Cannot */}
           <div className="rounded-2xl bg-white border p-5 shadow-sm space-y-4">
             <h3 className="font-semibold text-foreground">Access for Managers</h3>
             <div>
@@ -197,7 +194,6 @@ export default function ManagerDashboard() {
             </div>
           </div>
 
-          {/* Token */}
           {tokenData ? (
             <div className="rounded-2xl overflow-hidden border" style={PANEL}>
               <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">

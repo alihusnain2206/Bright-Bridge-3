@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
@@ -32,23 +32,8 @@ export default function EmployeeDashboard() {
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
-  const [launched, setLaunched] = useState(false);
-  const launched$ = useRef(false);
 
-  const myEmployees = user && user.employeeId ? [
-    { id: user.employeeId, name: user.name, role: user.position.toLowerCase(), timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
-  ] : [];
-  const myLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
-
-  useEasyTeamLauncher(
-    "emp-et-container",
-    launched && tokenData ? tokenData.token : null,
-    Pages.TIME_CLOCK,
-    undefined,
-    myEmployees,
-    company ? { id: company.id, name: company.name } : undefined,
-    myLocations
-  );
+  const { launch } = useEasyTeamLauncher("emp-et-container");
 
   useEffect(() => {
     fetchEvents();
@@ -77,7 +62,18 @@ export default function EmployeeDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      if (!launched$.current) { launched$.current = true; setLaunched(true); }
+
+      const myEmployees = user.employeeId ? [
+        { id: user.employeeId, name: user.name, role: user.position.toLowerCase(), timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
+      ] : [];
+      const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? [];
+
+      launch(data.token, {
+        page: Pages.TIME_CLOCK,
+        employees: myEmployees,
+        organization: company ? { id: company.id, name: company.name } : { id: user.companyId ?? "", name: "" },
+        locations: myLocations,
+      });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
@@ -165,13 +161,15 @@ export default function EmployeeDashboard() {
               <AlertTriangle className="h-4 w-4" />{tokenError}
             </div>
           )}
-          {!tokenData && !tokenLoading && (
-            <div className="px-6 py-16 text-center">
-              <Clock className="h-10 w-10 text-white/20 mx-auto mb-3" />
-              <p className="text-white/40 text-sm">Click "Generate Token & Launch" to open your time clock.</p>
-            </div>
-          )}
-          {tokenData && <div id="emp-et-container" className="min-h-[480px]" />}
+          <div className="relative min-h-[480px]">
+            {!tokenData && !tokenLoading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
+                <Clock className="h-10 w-10 text-white/20" />
+                <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your time clock.</p>
+              </div>
+            )}
+            <div id="emp-et-container" className="w-full h-full min-h-[480px]" />
+          </div>
         </div>
 
         {/* Access + Token */}

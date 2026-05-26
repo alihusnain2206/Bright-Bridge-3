@@ -25,9 +25,6 @@ export default function TimeClock() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [events, setEvents] = useState<EasyTeamEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [launcherEmployees, setLauncherEmployees] = useState<Array<{ id: string; name: string; role: string; timeTrackingEnabled: boolean }>>([]);
-  const [launcherOrg, setLauncherOrg] = useState<{ id: string; name: string } | undefined>();
-  const [launcherLocations, setLauncherLocations] = useState<Array<{ id: string; name: string; latitude: number; longitude: number }>>([]);
 
   const isInitialClientChange = useRef(true);
   const autoLaunched = useRef(false);
@@ -36,50 +33,54 @@ export default function TimeClock() {
   const { data: employeesData } = useListClientEmployees(clientId);
   const generateToken = useGenerateEasyTeamToken();
 
+  const handleEvent = useCallback((event: EasyTeamEvent) => {
+    setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
+  }, []);
+
+  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent);
+
+  const employees = employeesData?.employees ?? [];
+  const selectedClient = clientsData?.clients.find((c) => c.id === clientId);
+  const selectedEmployee = employees.find((e) => e.id === employeeId);
+
   useEffect(() => {
     if (isInitialClientChange.current) { isInitialClientChange.current = false; return; }
     setEmployeeId(""); setAccessToken(null); setError(null);
   }, [clientId]);
+
+  const handleLaunch = useCallback(async (cId = clientId, eId = employeeId, empList = employees) => {
+    if (!cId) return;
+    setError(null);
+    const client = clientsData?.clients.find((c) => c.id === cId);
+    const emp = empList.find((e) => e.id === eId) ?? empList[0];
+    try {
+      const data = await generateToken.mutateAsync({
+        data: { employee_id: eId || (empList[0]?.id ?? ""), client_id: cId, role_name: emp?.roleName, access_role: emp?.role },
+      });
+      if (data.success && data.token) {
+        if (client) {
+          launch(data.token, {
+            page: Pages.TIME_CLOCK,
+            organization: { id: client.id, name: client.name },
+            locations: [{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
+            employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })),
+          });
+        }
+        setAccessToken(data.token);
+      } else {
+        setError((data as { error?: string }).error ?? "Token generation failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Request failed");
+    }
+  }, [clientId, employeeId, employees, clientsData, generateToken, launch]);
 
   useEffect(() => {
     if (urlClientId && urlEmployeeId && employeesData && !autoLaunched.current) {
       autoLaunched.current = true;
       handleLaunch(urlClientId, urlEmployeeId, employeesData.employees ?? []);
     }
-  }, [urlClientId, urlEmployeeId, employeesData]);
-
-  const handleEvent = useCallback((event: EasyTeamEvent) => {
-    setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
-  }, []);
-
-  const employees = employeesData?.employees ?? [];
-  const selectedClient = clientsData?.clients.find((c) => c.id === clientId);
-  const selectedEmployee = employees.find((e) => e.id === employeeId);
-
-  useEasyTeamLauncher(CONTAINER_ID, accessToken, Pages.TIME_CLOCK, handleEvent, launcherEmployees, launcherOrg, launcherLocations);
-
-  const handleLaunch = (cId = clientId, eId = employeeId, empList = employees) => {
-    if (!cId) return;
-    setError(null); setAccessToken(null);
-    const client = clientsData?.clients.find((c) => c.id === cId);
-    const emp = empList.find((e) => e.id === eId) ?? empList[0];
-    if (client) {
-      setLauncherOrg({ id: client.id, name: client.name });
-      setLauncherLocations([{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }]);
-      setLauncherEmployees(empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })));
-    }
-    generateToken.mutate(
-      { data: { employee_id: eId || (empList[0]?.id ?? ""), client_id: cId, role_name: emp?.roleName, access_role: emp?.role } },
-      {
-        onSuccess: (data) => {
-          if (data.success && data.token) {
-            setAccessToken(data.token);
-          } else { setError((data as { error?: string }).error ?? "Token generation failed"); }
-        },
-        onError: (err) => setError(err instanceof Error ? err.message : "Request failed"),
-      }
-    );
-  };
+  }, [urlClientId, urlEmployeeId, employeesData, handleLaunch]);
 
   return (
     <div className="space-y-6">
