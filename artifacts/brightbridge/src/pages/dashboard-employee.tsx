@@ -118,19 +118,19 @@ export default function EmployeeDashboard() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><User className="h-3.5 w-3.5" />Name</div>
-              <div className="font-semibold text-sm text-foreground">{user?.name}</div>
+              <div className="font-semibold text-sm text-gray-900">{user?.name}</div>
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Briefcase className="h-3.5 w-3.5" />Position</div>
-              <div className="font-semibold text-sm text-foreground">{user?.position}</div>
+              <div className="font-semibold text-sm text-gray-900">{user?.position}</div>
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><Building2 className="h-3.5 w-3.5" />Company</div>
-              <div className="font-semibold text-sm text-foreground truncate">{company?.name}</div>
+              <div className="font-semibold text-sm text-gray-900 truncate">{company?.name}</div>
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><DollarSign className="h-3.5 w-3.5" />Hourly Rate</div>
-              <div className="font-semibold text-sm text-foreground">
+              <div className="font-semibold text-sm text-gray-900">
                 {user?.hourlyWage ? `$${String(user.hourlyWage).slice(0, -2) || "0"}.${String(user.hourlyWage).slice(-2)}/hr` : "$–/hr"}
               </div>
             </div>
@@ -161,15 +161,13 @@ export default function EmployeeDashboard() {
               <AlertTriangle className="h-4 w-4" />{tokenError}
             </div>
           )}
-          <div className="relative min-h-[480px]">
-            {!tokenData && !tokenLoading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
-                <Clock className="h-10 w-10 text-white/20" />
-                <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your time clock.</p>
-              </div>
-            )}
-            <div id="emp-et-container" className="w-full h-full min-h-[480px]" />
-          </div>
+          {!tokenData && !tokenLoading && (
+            <div className="py-20 flex flex-col items-center justify-center gap-3">
+              <Clock className="h-10 w-10 text-white/20" />
+              <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your time clock.</p>
+            </div>
+          )}
+          <div id="emp-et-container" className="w-full" />
         </div>
 
         {/* Access + Token */}

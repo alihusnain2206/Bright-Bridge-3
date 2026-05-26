@@ -210,7 +210,7 @@ export default function Timesheets() {
 
         {/* Main iframe panel — dark */}
         <div className="lg:col-span-2">
-          <div className="rounded-xl border flex flex-col overflow-hidden" style={{ ...PANEL, minHeight: 620 }}>
+          <div className="rounded-xl border overflow-hidden" style={PANEL}>
             <div className="px-5 py-4 flex items-center gap-2 border-b border-white/10">
               <CalendarDays className="h-5 w-5 text-[#E8622A]" />
               <span className="text-white font-semibold text-base">
@@ -220,18 +220,16 @@ export default function Timesheets() {
                 <span className="text-sm font-normal text-white/40 ml-1">— {selectedEmployee.name}</span>
               )}
             </div>
-            <div className="flex-1 relative">
-              {!accessToken && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 z-10">
-                  <TimesheetIllustration />
-                  <div className="text-center text-white/50 max-w-xs px-6">
-                    <p className="text-sm font-medium text-white/70">Select a client and click Launch to load timesheets.</p>
-                    <p className="text-xs mt-1 text-white/35">Staff hours and attendance will appear in this panel.</p>
-                  </div>
+            {!accessToken && (
+              <div className="py-24 flex flex-col items-center justify-center gap-4">
+                <TimesheetIllustration />
+                <div className="text-center text-white/50 max-w-xs px-6">
+                  <p className="text-sm font-medium text-white/70">Select a client and click Launch to load timesheets.</p>
+                  <p className="text-xs mt-1 text-white/35">Staff hours and attendance will appear in this panel.</p>
                 </div>
-              )}
-              <div id={CONTAINER_ID} className="absolute inset-0 w-full h-full" />
-            </div>
+              </div>
+            )}
+            <div id={CONTAINER_ID} className="w-full" />
           </div>
         </div>
       </div>

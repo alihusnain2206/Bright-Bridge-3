@@ -161,15 +161,13 @@ export default function ManagerDashboard() {
               <AlertTriangle className="h-4 w-4" />{tokenError}
             </div>
           )}
-          <div className="relative min-h-[520px]">
-            {!tokenData && !tokenLoading && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 z-10">
-                <Play className="h-10 w-10 text-white/20" />
-                <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your manager panel.</p>
-              </div>
-            )}
-            <div id="mgr-et-container" className="w-full h-full min-h-[520px]" />
-          </div>
+          {!tokenData && !tokenLoading && (
+            <div className="py-20 flex flex-col items-center justify-center gap-3">
+              <Play className="h-10 w-10 text-white/20" />
+              <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your manager panel.</p>
+            </div>
+          )}
+          <div id="mgr-et-container" className="w-full" />
         </div>
 
         {/* Access comparison + Token side by side */}
