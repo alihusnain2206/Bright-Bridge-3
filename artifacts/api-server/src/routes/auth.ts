@@ -112,7 +112,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       employeeId: user.employeeId,
       organizationId: user.companyId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      accessRole: {
+      role: {
         name: "admin",
         permissions: ["timeclock", "timeclock.edit", "timesheet.view", "timesheet.edit", "schedule.view", "schedule.manage", "timeoff.view", "timeoff.manage", "reports.view"],
       },
@@ -124,7 +124,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       organizationId: user.companyId,
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      accessRole: {
+      role: {
         name: "manager",
         permissions: ["timeclock", "timesheet.view", "timesheet.edit", "schedule.view", "schedule.manage", "timeoff.view", "timeoff.manage"],
       },
@@ -136,9 +136,9 @@ router.post("/auth/token-by-role", async (req, res) => {
       organizationId: user.companyId,
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      role: { name: user.position, hourlyWage: user.hourlyWage ?? 1500 },
-      accessRole: {
+      role: {
         name: "employee",
+        hourlyWage: user.hourlyWage ?? 1500,
         permissions: ["timeclock", "timesheet.view", "timeoff.request", "timeoff.view"],
       },
       features: { geolocation: true, shiftNotes: false },

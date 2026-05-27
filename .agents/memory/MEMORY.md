@@ -1,0 +1,1 @@
+- [EasyTeam JWT role field](easyteam-jwt-role.md) — EasyTeam requires `role: {name}` not `accessRole`; exchange token fails silently without it
