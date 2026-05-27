@@ -112,11 +112,14 @@ router.post("/auth/token-by-role", async (req, res) => {
       employeeId: user.employeeId,
       organizationId: user.companyId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      role: {
+      accessRole: {
         name: "admin",
-        permissions: ["timeclock", "timeclock.edit", "timesheet.view", "timesheet.edit", "schedule.view", "schedule.manage", "timeoff.view", "timeoff.manage", "reports.view"],
+        permissions: ["ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
       },
-      features: { geolocation: false, shiftNotes: true },
+      role: { name: user.position, hourlyWage: 0 },
+      wage: 0,
+      wageType: "hourly",
+      features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "manager") {
     payload = {
@@ -124,11 +127,14 @@ router.post("/auth/token-by-role", async (req, res) => {
       organizationId: "ORG-BRIGHTBRIDGE",
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      role: {
+      accessRole: {
         name: "manager",
-        permissions: ["timeclock", "timesheet.view", "timesheet.edit", "schedule.view", "schedule.manage", "timeoff.view", "timeoff.manage"],
+        permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
       },
-      features: { geolocation: false, shiftNotes: true },
+      role: { name: user.position, hourlyWage: user.hourlyWage ?? 2500 },
+      wage: user.hourlyWage ?? 2500,
+      wageType: "hourly",
+      features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "employee") {
     payload = {
@@ -136,11 +142,13 @@ router.post("/auth/token-by-role", async (req, res) => {
       organizationId: "ORG-BRIGHTBRIDGE",
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-      role: {
+      accessRole: {
         name: "employee",
-        hourlyWage: user.hourlyWage ?? 1500,
-        permissions: ["timeclock", "timesheet.view", "timeoff.request", "timeoff.view"],
+        permissions: ["LOCATION_READ", "SHIFT_READ"],
       },
+      role: { name: user.position, hourlyWage: user.hourlyWage ?? 1500 },
+      wage: user.hourlyWage ?? 1500,
+      wageType: "hourly",
       features: { geolocation: true, shiftNotes: false },
     };
   } else {

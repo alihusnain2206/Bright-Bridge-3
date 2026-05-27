@@ -117,22 +117,23 @@ router.post("/easyteam/token", async (req, res) => {
     locationId: resolvedLocationId,
     organizationId: resolvedOrgId,
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-    role: {
+    accessRole: {
       name: resolvedAccessRole,
-      hourlyWage: resolvedWage,
       permissions: [
         "LOCATION_READ",
+        "LOCATION_ADMIN",
         "SHIFT_READ",
         "SHIFT_WRITE",
         "SHIFT_ADD",
         "SHIFT_UPDATE",
         "SCHEDULE_READ",
         "SCHEDULE_WRITE",
-        "TIME_OFF_READ",
-        "TIME_OFF_WRITE",
         "ORGANIZATION_ADMIN",
-        "LOCATION_ADMIN",
       ],
+    },
+    role: {
+      name: resolvedRoleName,
+      hourlyWage: resolvedWage,
     },
     wage: resolvedWage,
     wageType: "hourly",
