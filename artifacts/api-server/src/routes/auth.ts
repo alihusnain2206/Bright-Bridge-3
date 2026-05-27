@@ -121,7 +121,7 @@ router.post("/auth/token-by-role", async (req, res) => {
   } else if (user.role === "manager") {
     payload = {
       employeeId: user.employeeId,
-      organizationId: user.companyId,
+      organizationId: "ORG-BRIGHTBRIDGE",
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       role: {
@@ -133,7 +133,7 @@ router.post("/auth/token-by-role", async (req, res) => {
   } else if (user.role === "employee") {
     payload = {
       employeeId: user.employeeId,
-      organizationId: user.companyId,
+      organizationId: "ORG-BRIGHTBRIDGE",
       locationId: user.locationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       role: {

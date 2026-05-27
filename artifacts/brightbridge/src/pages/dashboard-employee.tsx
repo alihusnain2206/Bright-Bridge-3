@@ -64,14 +64,14 @@ export default function EmployeeDashboard() {
       setTokenData(data);
 
       const myEmployees = user.employeeId ? [
-        { id: user.employeeId, name: user.name, role: user.position.toLowerCase(), timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
+        { id: user.employeeId, name: user.name, role: "employee", timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
       ] : [];
       const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? [];
 
       launch(data.token, {
         page: Pages.TIME_CLOCK,
         employees: myEmployees,
-        organization: company ? { id: company.id, name: company.name } : { id: user.companyId ?? "", name: "" },
+        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations: myLocations,
       });
     } catch { setTokenError("Network error"); }

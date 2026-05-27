@@ -99,7 +99,7 @@ router.post("/easyteam/token", async (req, res) => {
     const client = store.getClient(client_id);
     if (client) {
       resolvedLocationId = client.id;
-      resolvedOrgId = client.id;
+      resolvedOrgId = "ORG-BRIGHTBRIDGE";
     }
   }
 
@@ -117,8 +117,9 @@ router.post("/easyteam/token", async (req, res) => {
     locationId: resolvedLocationId,
     organizationId: resolvedOrgId,
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-    accessRole: {
+    role: {
       name: resolvedAccessRole,
+      hourlyWage: resolvedWage,
       permissions: [
         "LOCATION_READ",
         "SHIFT_READ",
@@ -132,10 +133,6 @@ router.post("/easyteam/token", async (req, res) => {
         "ORGANIZATION_ADMIN",
         "LOCATION_ADMIN",
       ],
-    },
-    role: {
-      name: resolvedRoleName,
-      hourlyWage: resolvedWage,
     },
     wage: resolvedWage,
     wageType: "hourly",

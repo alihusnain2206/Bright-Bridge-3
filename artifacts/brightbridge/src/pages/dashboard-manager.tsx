@@ -81,7 +81,7 @@ export default function ManagerDashboard() {
       launch(data.token, {
         page: Pages.TIMESHEET,
         employees: companyEmployees,
-        organization: company ? { id: company.id, name: company.name } : { id: user.companyId ?? "", name: "" },
+        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations: companyLocations,
       });
     } catch { setTokenError("Network error"); }

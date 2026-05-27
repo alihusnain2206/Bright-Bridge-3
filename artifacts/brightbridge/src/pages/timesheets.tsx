@@ -64,7 +64,7 @@ export default function Timesheets() {
         if (client) {
           launch(data.token, {
             page,
-            organization: { id: client.id, name: client.name },
+            organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
             locations: [{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
             employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })),
           });
