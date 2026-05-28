@@ -1,0 +1,70 @@
+Ali husnain  [11:49 PM]
+Hi @Yaniv Gerber @Nir Tayeb
+Hi EasyTeam team,
+Following your previous support guidance, we've completed our sandbox integration and everything is now working correctly at https://bright-bridge-3.replit.app/.
+Here's a summary of what's been implemented and verified:
+What's working:
+
+RS256 JWT authentication with public/private key pair
+Role-based access across three tiers: Admin, Manager, and Employee
+EasyTeam iframes loading successfully for Time Clock, Timesheets, and Schedule pages
+Token exchange completing for all roles in the sandbox environment
+Organisation and location context being passed correctly via the SDK
+
+
+JWT structure we settled on:
+
+accessRolefield with valid permission enum values (LOCATION_READ,SHIFT_READ,ORGANIZATION_ADMIN, etc.) for access scoping
+rolefield with display name and hourly wage for UI presentation
+organizationId: "ORG-BRIGHTBRIDGE"consistently across all roles
+
+
+We'd appreciate your help with the following next steps:
+Now that the sandbox integration is working end-to-end, could you walk us through what's needed to move toward production? We want to make sure we follow the right process on your side and don't miss anything before going live.
+
+Thank you for your support so far — the documentation and SDK have been excellent to work with.
+Yaniv Gerber  [1:38 AM]
+Hi @Ali husnain good to hear!
+
+Next steps to consider:
+
+Events, analytics:
+Each Easyteam component emits callbacks for actions like clock-in/out, breaks, and timesheet edits. Subscribe to the ones you care about and pipe them into your analytics or marketing stack of choice. 
+Common events are detailed here: https://docs.easyteam.com/event-handling. Check code and type files for the full list.
+
+
+
+
+Server to server webhooks
+The 'Export' action on the Timesheets page kicks off a long-running async job. When a user requests an export, you'll receive the data via webhook, package it, and email it to them. 
+Share two webhook destination URLs with us — one for staging, one for production. 
+Setup instructions and examples are in the attached .zip.
+
+
+
+
+Production environment and server: To spin up your production server, we'll need to kick off the paid portion of the SOW. I can take this forward with Joanne. 
+
+
+
+Impersonation
+Lets your support and sales teams log in as a specific user to see exactly what that user sees - great for responding to tickets.
+To implement this, just follow the same steps and let your support team create the right combination of employees/locations and JWT parameters as your end users would.
+
+
+
+
+Feature flags in JWT
+Pick which features to enable for your users. Our recommended starting set, including a few recently released flags:
+
+
+
+"features": { "geolocation": false, "shiftNotes": true, "timesheet_badges" : true, "location_picker" : true, "timesheets_wages" : true }
+active features can change per session/user and are defined in the JWT for the current session
+
+
+
+Mobile app Decide whether you're launching web-only or rolling out the mobile integration at the same time.
+Theming Match the look and feel of your app - colors, sizing, and component styling are all configurable. Guide here: <link>
+Custom fonts Drop in the fonts your app already uses for a more native feel.
+Payroll integration - If you are moving forward with Rollfi or another provider, to run payroll, grab the time tracking data from our API and push to their API, don't forget to deduct unpaid breaks and not-approved shifts from API fetches.
