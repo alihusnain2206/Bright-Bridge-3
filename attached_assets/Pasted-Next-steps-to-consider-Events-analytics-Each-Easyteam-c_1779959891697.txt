@@ -1,0 +1,42 @@
+Next steps to consider:
+
+Events, analytics:
+Each Easyteam component emits callbacks for actions like clock-in/out, breaks, and timesheet edits. Subscribe to the ones you care about and pipe them into your analytics or marketing stack of choice. 
+Common events are detailed here: https://docs.easyteam.com/event-handling. Check code and type files for the full list.
+
+
+
+
+Server to server webhooks
+The 'Export' action on the Timesheets page kicks off a long-running async job. When a user requests an export, you'll receive the data via webhook, package it, and email it to them. 
+Share two webhook destination URLs with us — one for staging, one for production. 
+Setup instructions and examples are in the attached .zip.
+
+
+
+
+Production environment and server: To spin up your production server, we'll need to kick off the paid portion of the SOW. I can take this forward with Joanne. 
+
+
+
+Impersonation
+Lets your support and sales teams log in as a specific user to see exactly what that user sees - great for responding to tickets.
+To implement this, just follow the same steps and let your support team create the right combination of employees/locations and JWT parameters as your end users would.
+
+
+
+
+Feature flags in JWT
+Pick which features to enable for your users. Our recommended starting set, including a few recently released flags:
+
+
+
+"features": { "geolocation": false, "shiftNotes": true, "timesheet_badges" : true, "location_picker" : true, "timesheets_wages" : true }
+active features can change per session/user and are defined in the JWT for the current session
+
+
+
+Mobile app Decide whether you're launching web-only or rolling out the mobile integration at the same time.
+Theming Match the look and feel of your app - colors, sizing, and component styling are all configurable. Guide here: <link>
+Custom fonts Drop in the fonts your app already uses for a more native feel.
+Payroll integration - If you are moving forward with Rollfi or another provider, to run payroll, grab the time tracking data from our API and push to their API, don't forget to deduct unpaid breaks and not-approved shifts from API fetches
