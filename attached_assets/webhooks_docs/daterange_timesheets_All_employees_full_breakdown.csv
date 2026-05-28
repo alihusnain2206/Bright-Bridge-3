@@ -1,0 +1,15 @@
+Name,Work times,Hours,Hours formatted,Amount USD,Unpaid break times,Unpaid breaks,Unpaid breaks formatted
+John Smith,"Wednesday, May 15th 2024, 8:00 AM - Wednesday, May 15th 2024, 4:00 PM",7.5,7:30,$150,"Wednesday, May 15th 2024, 12:00 PM - Wednesday, May 15th 2024, 12:30 PM",0.5,0:30
+John Smith,"Thursday, May 16th 2024, 9:00 AM - Thursday, May 16th 2024, 5:00 PM",7.5,7:30,$150,"Thursday, May 16th 2024, 1:00 PM - Thursday, May 16th 2024, 1:30 PM",0.5,0:30
+John Smith,"Friday, May 17th 2024, 7:00 AM - Friday, May 17th 2024, 11:00 AM
+Friday, May 17th 2024, 6:00 PM - Friday, May 17th 2024, 10:00 PM",8,8:00,$160,"Friday, May 17th 2024, 9:00 AM - Friday, May 17th 2024, 9:15 AM",0.25,0:15
+Jane Doe,"Monday, May 20th 2024, 10:00 AM - Monday, May 20th 2024, 6:00 PM",7.5,7:30,$150,"Monday, May 20th 2024, 2:00 PM - Monday, May 20th 2024, 2:30 PM",0.5,0:30
+Jane Doe,"Tuesday, May 21st 2024, 8:00 AM - Tuesday, May 21st 2024, 4:00 PM",7.5,7:30,$150,"Tuesday, May 21st 2024, 12:00 PM - Tuesday, May 21st 2024, 12:30 PM",0.5,0:30
+Jane Doe,"Wednesday, May 22nd 2024, 9:00 AM - Wednesday, May 22nd 2024, 1:00 PM
+Wednesday, May 22nd 2024, 9:00 PM - Wednesday, May 22nd 2024, 11:00 PM",6,6:00,$120,"Wednesday, May 22nd 2024, 11:00 AM - Wednesday, May 22nd 2024, 11:30 AM
+Wednesday, May 22nd 2024, 9:30 PM - Wednesday, May 22nd 2024, 9:45 PM",0.75,0:45
+Mike Johnson,"Thursday, May 23rd 2024, 11:00 AM - Thursday, May 23rd 2024, 7:00 PM",7.5,7:30,$150,"Thursday, May 23rd 2024, 3:00 PM - Thursday, May 23rd 2024, 3:30 PM",0.5,0:30
+Mike Johnson,"Friday, May 24th 2024, 8:00 AM - Friday, May 24th 2024, 12:00 PM
+Friday, May 24th 2024, 5:00 PM - Friday, May 24th 2024, 9:00 PM",8,8:00,$160,"Friday, May 24th 2024, 10:00 AM - Friday, May 24th 2024, 10:15 AM
+Friday, May 24th 2024, 7:00 PM - Friday, May 24th 2024, 7:30 PM",0.75,0:45
+Mike Johnson,"Saturday, May 25th 2024, 10:00 AM - Saturday, May 25th 2024, 6:00 PM",7.5,7:30,$150,"Saturday, May 25th 2024, 1:00 PM - Saturday, May 25th 2024, 1:30 PM",0.5,0:30
