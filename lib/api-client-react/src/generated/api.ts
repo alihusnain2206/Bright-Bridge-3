@@ -27,6 +27,8 @@ import type {
   DeletedResponse,
   EasyTeamStatus,
   ErrorResponse,
+  ExportLogsResponse,
+  ExportWebhookPayload,
   GenerateTokenRequest,
   GenerateTokenResponse,
   HealthStatus,
@@ -368,6 +370,92 @@ export const useReceiveWebhook = <
 };
 
 /**
+ * @summary Receive export webhook from EasyTeam via Convoy
+ */
+export const getReceiveExportWebhookUrl = () => {
+  return `/api/easyteam/webhook/export`;
+};
+
+export const receiveExportWebhook = async (
+  exportWebhookPayload: ExportWebhookPayload,
+  options?: RequestInit,
+): Promise<WebhookAck> => {
+  return customFetch<WebhookAck>(getReceiveExportWebhookUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(exportWebhookPayload),
+  });
+};
+
+export const getReceiveExportWebhookMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof receiveExportWebhook>>,
+    TError,
+    { data: BodyType<ExportWebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof receiveExportWebhook>>,
+  TError,
+  { data: BodyType<ExportWebhookPayload> },
+  TContext
+> => {
+  const mutationKey = ["receiveExportWebhook"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof receiveExportWebhook>>,
+    { data: BodyType<ExportWebhookPayload> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return receiveExportWebhook(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReceiveExportWebhookMutationResult = NonNullable<
+  Awaited<ReturnType<typeof receiveExportWebhook>>
+>;
+export type ReceiveExportWebhookMutationBody = BodyType<ExportWebhookPayload>;
+export type ReceiveExportWebhookMutationError = ErrorType<void>;
+
+/**
+ * @summary Receive export webhook from EasyTeam via Convoy
+ */
+export const useReceiveExportWebhook = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof receiveExportWebhook>>,
+    TError,
+    { data: BodyType<ExportWebhookPayload> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof receiveExportWebhook>>,
+  TError,
+  { data: BodyType<ExportWebhookPayload> },
+  TContext
+> => {
+  return useMutation(getReceiveExportWebhookMutationOptions(options));
+};
+
+/**
  * @summary Get stored webhook event logs
  */
 export const getGetWebhookLogsUrl = () => {
@@ -434,6 +522,81 @@ export function useGetWebhookLogs<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetWebhookLogsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get stored export webhook logs
+ */
+export const getGetExportLogsUrl = () => {
+  return `/api/easyteam/exports`;
+};
+
+export const getExportLogs = async (
+  options?: RequestInit,
+): Promise<ExportLogsResponse> => {
+  return customFetch<ExportLogsResponse>(getGetExportLogsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetExportLogsQueryKey = () => {
+  return [`/api/easyteam/exports`] as const;
+};
+
+export const getGetExportLogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getExportLogs>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getExportLogs>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetExportLogsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getExportLogs>>> = ({
+    signal,
+  }) => getExportLogs({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getExportLogs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetExportLogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getExportLogs>>
+>;
+export type GetExportLogsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get stored export webhook logs
+ */
+
+export function useGetExportLogs<
+  TData = Awaited<ReturnType<typeof getExportLogs>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getExportLogs>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetExportLogsQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

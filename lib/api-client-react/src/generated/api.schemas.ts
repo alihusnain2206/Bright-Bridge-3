@@ -48,6 +48,54 @@ export interface WebhookAck {
   id: string;
 }
 
+export interface ExportShift {
+  id: string;
+  employeeId: string;
+  start: string;
+  end: string;
+  total_paid_hours_formatted?: string;
+  total_paid_hours_decimal?: string;
+  total_unpaid_hours_formatted?: string;
+  total_unpaid_hours_decimal?: string;
+}
+
+export interface ExportWebhookData {
+  type: string;
+  organizationId: string;
+  requestedBy: string;
+  startDate?: string;
+  endDate?: string;
+  locations?: string[];
+  employees?: string[];
+  roles?: string[];
+  url: string;
+}
+
+export interface ExportWebhookPayload {
+  event_type: string;
+  data: ExportWebhookData;
+}
+
+export interface ExportLogEntry {
+  id: string;
+  receivedAt: string;
+  requestedBy: string;
+  organizationId: string;
+  startDate?: string;
+  endDate?: string;
+  employeeCount?: number;
+  shiftCount?: number;
+  status: string;
+  signatureValid: boolean;
+  shifts?: ExportShift[];
+  error?: string;
+}
+
+export interface ExportLogsResponse {
+  exports: ExportLogEntry[];
+  total: number;
+}
+
 export type WebhookEventData = { [key: string]: unknown };
 
 export interface WebhookEvent {

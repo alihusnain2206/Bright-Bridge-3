@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
+import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
 
@@ -35,6 +36,53 @@ function normalizePemKey(raw: string | undefined): string | undefined {
 const EASYTEAM_API_KEY = normalizePemKey(process.env.EASYTEAM_API_KEY);
 const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/sandbox/embed";
+
+const CONVOY_WEBHOOK_SECRET = process.env.CONVOY_WEBHOOK_SECRET;
+
+function verifyConvoySignature(rawBody: string, signatureHeader: string | undefined, secret: string): boolean {
+  if (!signatureHeader) return false;
+  // Convoy Advanced Signature format: "v1=<hmac>,v1=<hmac>" (may have multiple)
+  const signatures = signatureHeader.split(",").map(s => s.trim());
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  return signatures.some(sig => {
+    const parts = sig.split("=");
+    if (parts.length < 2) return false;
+    const hash = parts.slice(1).join("=");
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(expected, "hex"));
+    } catch {
+      return false;
+    }
+  });
+}
+
+interface ExportShift {
+  id: string;
+  employeeId: string;
+  start: string;
+  end: string;
+  total_paid_hours_formatted?: string;
+  total_paid_hours_decimal?: string;
+  total_unpaid_hours_formatted?: string;
+  total_unpaid_hours_decimal?: string;
+}
+
+interface ExportLogEntry {
+  id: string;
+  receivedAt: string;
+  requestedBy: string;
+  organizationId: string;
+  startDate?: string;
+  endDate?: string;
+  employeeCount: number;
+  shiftCount: number;
+  status: "fetching" | "ready" | "error";
+  signatureValid: boolean;
+  shifts?: ExportShift[];
+  error?: string;
+}
+
+const exportLog: ExportLogEntry[] = [];
 
 const webhookLog: Array<{
   id: string;
@@ -234,6 +282,88 @@ router.post("/easyteam/webhook", (req, res) => {
 
 router.get("/easyteam/webhooks", (_req, res) => {
   res.json({ events: webhookLog, total: webhookLog.length });
+});
+
+router.post("/easyteam/webhook/export", async (req, res) => {
+  const rawBody = JSON.stringify(req.body);
+  const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
+
+  // Verify signature if secret is configured; log result but don't block if secret not yet set
+  let signatureValid = false;
+  if (CONVOY_WEBHOOK_SECRET) {
+    signatureValid = verifyConvoySignature(rawBody, signatureHeader, CONVOY_WEBHOOK_SECRET);
+    if (!signatureValid) {
+      req.log.warn({ signatureHeader }, "Export webhook signature verification failed");
+      res.status(401).json({ error: "Invalid signature" });
+      return;
+    }
+  } else {
+    // Secret not configured yet — accept but flag as unverified
+    signatureValid = false;
+    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification");
+  }
+
+  const payload = req.body as {
+    event_type?: string;
+    data?: {
+      type?: string;
+      organizationId?: string;
+      requestedBy?: string;
+      startDate?: string;
+      endDate?: string;
+      locations?: string[];
+      employees?: string[];
+      roles?: string[];
+      url?: string;
+    };
+  };
+
+  const data = payload.data ?? {};
+  const entryId = `exp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const entry: ExportLogEntry = {
+    id: entryId,
+    receivedAt: new Date().toISOString(),
+    requestedBy: data.requestedBy ?? "unknown",
+    organizationId: data.organizationId ?? "unknown",
+    startDate: data.startDate,
+    endDate: data.endDate,
+    employeeCount: data.employees?.length ?? 0,
+    shiftCount: 0,
+    status: "fetching",
+    signatureValid,
+  };
+
+  exportLog.unshift(entry);
+  if (exportLog.length > 20) exportLog.splice(20);
+
+  req.log.info({ id: entryId, requestedBy: data.requestedBy, url: data.url }, "Export webhook received — fetching data");
+
+  // Acknowledge immediately, then fetch data in background
+  res.json({ received: true, id: entryId });
+
+  if (data.url) {
+    try {
+      const response = await axios.get<ExportShift[]>(data.url, { timeout: 15000 });
+      const shifts = Array.isArray(response.data) ? response.data : [];
+      entry.shifts = shifts;
+      entry.shiftCount = shifts.length;
+      entry.status = "ready";
+      req.log.info({ id: entryId, shiftCount: shifts.length }, "Export data fetched successfully");
+    } catch (err) {
+      const error = err as Error;
+      entry.status = "error";
+      entry.error = error.message;
+      req.log.error({ id: entryId, error: error.message }, "Failed to fetch export data");
+    }
+  } else {
+    entry.status = "error";
+    entry.error = "No download URL provided in webhook payload";
+  }
+});
+
+router.get("/easyteam/exports", (_req, res) => {
+  res.json({ exports: exportLog, total: exportLog.length });
 });
 
 router.post("/easyteam/test-connection", async (req, res) => {

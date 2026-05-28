@@ -61,6 +61,29 @@ export const ReceiveWebhookResponse = zod.object({
 });
 
 /**
+ * @summary Receive export webhook from EasyTeam via Convoy
+ */
+export const ReceiveExportWebhookBody = zod.object({
+  event_type: zod.string(),
+  data: zod.object({
+    type: zod.string(),
+    organizationId: zod.string(),
+    requestedBy: zod.string(),
+    startDate: zod.string().optional(),
+    endDate: zod.string().optional(),
+    locations: zod.array(zod.string()).optional(),
+    employees: zod.array(zod.string()).optional(),
+    roles: zod.array(zod.string()).optional(),
+    url: zod.string(),
+  }),
+});
+
+export const ReceiveExportWebhookResponse = zod.object({
+  received: zod.boolean(),
+  id: zod.string(),
+});
+
+/**
  * @summary Get stored webhook event logs
  */
 export const GetWebhookLogsResponse = zod.object({
@@ -72,6 +95,42 @@ export const GetWebhookLogsResponse = zod.object({
       timestamp: zod.string(),
       data: zod.record(zod.string(), zod.unknown()).optional(),
       status: zod.string(),
+    }),
+  ),
+  total: zod.number(),
+});
+
+/**
+ * @summary Get stored export webhook logs
+ */
+export const GetExportLogsResponse = zod.object({
+  exports: zod.array(
+    zod.object({
+      id: zod.string(),
+      receivedAt: zod.string(),
+      requestedBy: zod.string(),
+      organizationId: zod.string(),
+      startDate: zod.string().optional(),
+      endDate: zod.string().optional(),
+      employeeCount: zod.number().optional(),
+      shiftCount: zod.number().optional(),
+      status: zod.string(),
+      signatureValid: zod.boolean(),
+      shifts: zod
+        .array(
+          zod.object({
+            id: zod.string(),
+            employeeId: zod.string(),
+            start: zod.string(),
+            end: zod.string(),
+            total_paid_hours_formatted: zod.string().optional(),
+            total_paid_hours_decimal: zod.string().optional(),
+            total_unpaid_hours_formatted: zod.string().optional(),
+            total_unpaid_hours_decimal: zod.string().optional(),
+          }),
+        )
+        .optional(),
+      error: zod.string().optional(),
     }),
   ),
   total: zod.number(),
