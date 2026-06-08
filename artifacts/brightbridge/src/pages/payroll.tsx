@@ -38,12 +38,12 @@ interface PayPeriod {
 // ── API helpers ──────────────────────────────────────────────
 
 const api = {
-  get: async <T>(path: string) => {
+  get: async <T,>(path: string) => {
     const r = await fetch(`/api${path}`, { credentials: "include" });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e as { error?: string }).error ?? r.statusText); }
     return r.json() as Promise<T>;
   },
-  post: async <T>(path: string, body: unknown) => {
+  post: async <T,>(path: string, body: unknown) => {
     const r = await fetch(`/api${path}`, {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
