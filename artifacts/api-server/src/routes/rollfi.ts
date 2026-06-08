@@ -79,6 +79,18 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   const existing = store.getRollfiCompany(companyId);
   if (existing) { res.json({ success: true, alreadyOnboarded: true, ...existing }); return; }
 
+  // Helper: recover an existing Rollfi company when EIN was already registered
+  async function findExistingRollfiCompany(name: string): Promise<{ companyID: string } | null> {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getCompanies`,
+      { method: "getCompanies" },
+      { headers: rollfiHeaders() }
+    );
+    const list = (r.data as { Company?: { company: string; companyID: string }[] }).Company ?? [];
+    const match = list.find((c) => c.company.toLowerCase() === name.toLowerCase());
+    return match ?? null;
+  }
+
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`,
@@ -167,6 +179,34 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       message: reg.message as string | undefined,
     });
   } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+
+    // "Ein already in use" means this company was registered in a previous server run.
+    // Recover by looking up the existing Rollfi company ID via getCompanies.
+    if (msg.toLowerCase().includes("ein already in use")) {
+      req.log.warn({ companyName: company.name }, "EIN already in use — looking up existing Rollfi company");
+      try {
+        const found = await findExistingRollfiCompany(company.name);
+        if (found) {
+          store.setRollfiCompany(companyId, {
+            rollfiCompanyId: found.companyID,
+            rollfiLocationId: "",
+            onboardedAt: new Date().toISOString(),
+          });
+          req.log.info({ rollfiCompanyId: found.companyID }, "Recovered existing Rollfi company");
+          res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID });
+          return;
+        }
+        req.log.error({ companyName: company.name }, "Could not find existing Rollfi company by name");
+        res.status(500).json({ error: "EIN already in use and could not find existing Rollfi company by name" });
+        return;
+      } catch (lookupErr: unknown) {
+        req.log.error({ lookupErr }, "getCompanies lookup failed");
+        res.status(500).json({ error: "EIN already in use; failed to recover existing company", details: String(lookupErr) });
+        return;
+      }
+    }
+
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi company onboarding failed");
     res.status(500).json({ error: "Rollfi company onboarding failed", details: e.response?.data ?? String(err) });
