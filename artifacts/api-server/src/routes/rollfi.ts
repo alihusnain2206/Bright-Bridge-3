@@ -91,6 +91,18 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     return match ?? null;
   }
 
+  // Helper: fetch the first work-location ID for a Rollfi company
+  async function fetchRollfiLocationId(rollfiCompanyId: string): Promise<string> {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+      { method: "getCompanyLocationInfo", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    const locs = (r.data as { CompanyLocation?: { companyLocationID: string; isWorkLocation?: boolean }[] }).CompanyLocation ?? [];
+    const work = locs.find((l) => l.isWorkLocation) ?? locs[0];
+    return work?.companyLocationID ?? "";
+  }
+
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`,
@@ -188,13 +200,14 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       try {
         const found = await findExistingRollfiCompany(company.name);
         if (found) {
+          const rollfiLocationId = await fetchRollfiLocationId(found.companyID);
           store.setRollfiCompany(companyId, {
             rollfiCompanyId: found.companyID,
-            rollfiLocationId: "",
+            rollfiLocationId,
             onboardedAt: new Date().toISOString(),
           });
-          req.log.info({ rollfiCompanyId: found.companyID }, "Recovered existing Rollfi company");
-          res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID });
+          req.log.info({ rollfiCompanyId: found.companyID, rollfiLocationId }, "Recovered existing Rollfi company");
+          res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID, rollfiLocationId });
           return;
         }
         req.log.error({ companyName: company.name }, "Could not find existing Rollfi company by name");
@@ -223,7 +236,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 
   const { employeeId, companyId } = req.body as { employeeId: string; companyId: string };
 
-  const rollfiCompany = store.getRollfiCompany(companyId);
+  let rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) {
     res.status(400).json({ error: "Company must be onboarded to Rollfi before adding employees" });
     return;
@@ -239,6 +252,29 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
   const firstName = nameParts[0];
   const lastName = nameParts.slice(1).join(" ") || "Staff";
   const wage = staffUser.hourlyWage ?? 1500;
+
+  // If location ID is missing (e.g. company was recovered via getCompanies), fetch it now
+  if (!rollfiCompany.rollfiLocationId) {
+    try {
+      const locationId = await (async () => {
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+          { method: "getCompanyLocationInfo", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        const locs = (r.data as { CompanyLocation?: { companyLocationID: string; isWorkLocation?: boolean }[] }).CompanyLocation ?? [];
+        const work = locs.find((l) => l.isWorkLocation) ?? locs[0];
+        return work?.companyLocationID ?? "";
+      })();
+      if (locationId) {
+        rollfiCompany = { ...rollfiCompany, rollfiLocationId: locationId };
+        store.setRollfiCompany(companyId, rollfiCompany);
+        req.log.info({ locationId }, "Lazily resolved Rollfi location ID");
+      }
+    } catch (locErr) {
+      req.log.warn({ locErr }, "Could not fetch Rollfi location ID — proceeding without it");
+    }
+  }
 
   try {
     const addUserResp = await axios.post(
