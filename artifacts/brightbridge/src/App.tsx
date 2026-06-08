@@ -14,6 +14,7 @@ import Timesheets from "@/pages/timesheets";
 import Schedule from "@/pages/schedule";
 import Webhooks from "@/pages/webhooks";
 import Config from "@/pages/config";
+import Payroll from "@/pages/payroll";
 import Roles from "@/pages/roles";
 import SuperAdminDashboard from "@/pages/dashboard-super-admin";
 import ManagerDashboard from "@/pages/dashboard-manager";
@@ -111,6 +112,9 @@ function Router() {
             </Route>
             <Route path="/config">
               <ProtectedRoute component={Config} roles={["super_admin"]} />
+            </Route>
+            <Route path="/payroll">
+              <ProtectedRoute component={Payroll} roles={["super_admin"]} />
             </Route>
             <Route path="/roles" component={Roles} />
             <Route component={NotFound} />

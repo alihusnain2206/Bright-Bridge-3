@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { FlaskConical, LayoutDashboard, Users, Clock, CalendarDays, Calendar, Webhook, Settings, LogOut, ShieldCheck, Scale, Building2 } from "lucide-react";
+import { FlaskConical, LayoutDashboard, Users, Clock, CalendarDays, Calendar, Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 
@@ -20,6 +20,7 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: "/timesheets", label: "Timesheets", icon: CalendarDays },
         { href: "/schedule", label: "Schedule", icon: Calendar },
         { href: "/roles", label: "Roles", icon: Scale },
+        { href: "/payroll", label: "Payroll", icon: DollarSign },
         { href: "/webhooks", label: "Webhooks", icon: Webhook },
         { href: "/config", label: "Config", icon: Settings },
       ];

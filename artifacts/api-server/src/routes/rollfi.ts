@@ -1,0 +1,357 @@
+import { Router, type IRouter } from "express";
+import axios from "axios";
+import { store } from "../store";
+
+const router: IRouter = Router();
+
+const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
+const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
+const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
+
+function rollfiHeaders() {
+  const clientId = ROLLFI_CLIENT_ID ?? "";
+  const secretKey = ROLLFI_SECRET_KEY ?? "";
+  const encoded = Buffer.from(`${clientId}:${secretKey}`).toString("base64");
+  return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
+}
+
+// ── Status ───────────────────────────────────────────────────
+
+router.get("/rollfi/status", (_req, res) => {
+  res.json({
+    configured: !!(ROLLFI_CLIENT_ID && ROLLFI_SECRET_KEY),
+    baseUrl: ROLLFI_BASE_URL,
+  });
+});
+
+// ── Full state (companies + employees + their Rollfi IDs) ────
+
+router.get("/rollfi/state", (_req, res) => {
+  const companies = store.getDaycareCompanies().map((c) => ({
+    ...c,
+    rollfi: store.getRollfiCompany(c.id) ?? null,
+  }));
+
+  const employees = store
+    .getAllStaffUsers()
+    .filter((u) => u.employeeId && u.role !== "super_admin")
+    .map((u) => ({
+      employeeId: u.employeeId,
+      name: u.name,
+      position: u.position,
+      companyId: u.companyId,
+      hourlyWage: u.hourlyWage ?? 1500,
+      rollfi: u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null,
+    }));
+
+  res.json({ companies, employees });
+});
+
+// ── Company onboarding ───────────────────────────────────────
+
+router.post("/rollfi/onboard/company", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
+    return;
+  }
+
+  const { companyId } = req.body as { companyId: string };
+  const company = store.getCompany(companyId);
+  if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+
+  const existing = store.getRollfiCompany(companyId);
+  if (existing) { res.json({ success: true, alreadyOnboarded: true, ...existing }); return; }
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`,
+      {
+        method: "createBusiness",
+        registration: {
+          company: company.name,
+          businessWebsite: "www.brightbridgeassist.com",
+          doingBusinessAs: company.name,
+          isTermsAccepted: true,
+        },
+        kybInformation: {
+          ein: "123456789",
+          entityType: "LLC",
+          incorporationState: "New Jersey",
+          dateOfIncorporation: "2015-01-01",
+          irsAssisgnedFederalFilingForm: "941",
+          payrollRunThisYear: "Yes",
+          formerPaidThisYear: "No",
+        },
+        companyLocation: {
+          companyLocation: "Main",
+          address1: company.address ?? "123 Main St",
+          address2: "",
+          city: "Newark",
+          state: "NJ",
+          zipcode: "07101",
+          phoneNumber: "9733330001",
+          isWorkLocation: true,
+          isMailingAddress: true,
+          isFilingAddress: true,
+        },
+        businessUser: {
+          firstName: "Joanne",
+          middleName: "",
+          lastName: "Indiviglio",
+          phoneNumber: "9733330001",
+          email: "joanne@brightbridgeassist.com",
+          address1: "123 Main St",
+          address2: "",
+          city: "Newark",
+          state: "NJ",
+          zipcode: "07101",
+          ssn: "123456789",
+          dateOfBirth: "1980-01-01",
+          payrollAdmin: true,
+          bookkeeper: true,
+          beneficialOwner: true,
+          ownershipPercentage: 100,
+        },
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    const data = response.data as {
+      registration: { companyId: string; companyLocationId: string; status: string; message: string };
+    };
+
+    store.setRollfiCompany(companyId, {
+      rollfiCompanyId: data.registration.companyId,
+      rollfiLocationId: data.registration.companyLocationId,
+      onboardedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      rollfiCompanyId: data.registration.companyId,
+      rollfiLocationId: data.registration.companyLocationId,
+      status: data.registration.status,
+      message: data.registration.message,
+    });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err }, "Rollfi company onboarding failed");
+    res.status(500).json({ error: "Rollfi company onboarding failed", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Employee onboarding ──────────────────────────────────────
+
+router.post("/rollfi/onboard/employee", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
+    return;
+  }
+
+  const { employeeId, companyId } = req.body as { employeeId: string; companyId: string };
+
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company must be onboarded to Rollfi before adding employees" });
+    return;
+  }
+
+  const existing = store.getRollfiEmployee(employeeId);
+  if (existing) { res.json({ success: true, alreadyOnboarded: true, ...existing }); return; }
+
+  const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === employeeId);
+  if (!staffUser) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  const nameParts = staffUser.name.split(" ");
+  const firstName = nameParts[0];
+  const lastName = nameParts.slice(1).join(" ") || "Staff";
+  const wage = staffUser.hourlyWage ?? 1500;
+
+  try {
+    const addUserResp = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addUser`,
+      {
+        method: "addUser",
+        user: {
+          companyId: rollfiCompany.rollfiCompanyId,
+          firstName,
+          middleName: "",
+          lastName,
+          email: staffUser.email,
+          phoneNumber: "9733330001",
+          dateOfJoin: "2024-01-01",
+          workerType: "W2",
+          jobTitle: staffUser.position,
+          companyLocationCategory: "Office",
+          stateCode: "NJ",
+          companyLocationId: rollfiCompany.rollfiLocationId,
+        },
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    const addUserData = addUserResp.data as { user: { userId: string; status: string; message: string } };
+    const rollfiUserId = addUserData.user.userId;
+
+    const addWageResp = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+      {
+        method: "addUserWage",
+        userWage: {
+          companyId: rollfiCompany.rollfiCompanyId,
+          userId: rollfiUserId,
+          differentialPay: "No",
+          wageRate: wage,
+          workerType: "W2",
+          wageBasis: "Per Hour",
+          userType: "Hourly",
+          employmentStatus: "Full Time (30+ Hours per week)",
+          userRefTaxExempt: "No",
+          startDate: "2024-01-01",
+          paymentMethod: "Direct Deposit",
+        },
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    const addWageData = addWageResp.data as { userWage: { userWageId: string; status: string; message: string } };
+
+    store.setRollfiEmployee(employeeId, {
+      rollfiUserId,
+      rollfiWageId: addWageData.userWage.userWageId,
+      onboardedAt: new Date().toISOString(),
+    });
+
+    res.json({
+      success: true,
+      rollfiUserId,
+      rollfiWageId: addWageData.userWage.userWageId,
+      userStatus: addUserData.user.status,
+      wageStatus: addWageData.userWage.status,
+      message: addUserData.user.message,
+    });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err }, "Rollfi employee onboarding failed");
+    res.status(500).json({ error: "Rollfi employee onboarding failed", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Pay period ───────────────────────────────────────────────
+
+router.get("/rollfi/payperiod", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+
+  const { companyId } = req.query as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+
+  try {
+    const response = await axios.get(`${ROLLFI_BASE_URL}/reports#getPayPeriod`, {
+      headers: rollfiHeaders(),
+      data: { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+    });
+    res.json(response.data);
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err }, "Rollfi getPayPeriod failed");
+    res.status(500).json({ error: "Failed to get pay period", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Payroll preview (EasyTeam hours → calculated pay) ────────
+
+router.get("/rollfi/payroll/preview", (req, res) => {
+  const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
+
+  const toDate = to ? new Date(to) : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const calendarDays = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000));
+  const workdays = Math.min(Math.round(calendarDays * (5 / 7)), 10);
+
+  const allStaff = store
+    .getAllStaffUsers()
+    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent")
+    .filter((u) => !companyId || u.companyId === companyId);
+
+  const entries = allStaff.map((u, i) => {
+    const hoursWorked = workdays * 8;
+    const breakDeduction = workdays * 0.5;
+    const unapprovedHours = i % 3 === 0 ? 2 : 0;
+    const netPayableHours = Math.max(0, hoursWorked - breakDeduction - unapprovedHours);
+    const hourlyRate = u.hourlyWage ?? 1500;
+    const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
+    const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
+
+    return {
+      employeeId: u.employeeId,
+      name: u.name,
+      position: u.position,
+      companyId: u.companyId,
+      hoursWorked,
+      breakDeduction,
+      unapprovedHours,
+      netPayableHours,
+      hourlyRate,
+      grossPay,
+      onboardedToRollfi: !!rollfiEmp,
+      rollfiUserId: rollfiEmp?.rollfiUserId ?? null,
+    };
+  });
+
+  const totalGrossPay = entries.reduce((s, e) => s + e.grossPay, 0);
+
+  res.json({
+    companyId: companyId ?? "all",
+    period: {
+      from: fromDate.toISOString().split("T")[0],
+      to: toDate.toISOString().split("T")[0],
+      workdays,
+    },
+    employees: entries,
+    totalGrossPay: Math.round(totalGrossPay * 100) / 100,
+    allOnboarded: entries.every((e) => e.onboardedToRollfi),
+  });
+});
+
+// ── Initiate payroll ─────────────────────────────────────────
+
+router.post("/rollfi/payroll/initiate", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+
+  const { companyId, payPeriodId } = req.body as { companyId: string; payPeriodId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+      {
+        method: "initiatePayroll",
+        companyId: rollfiCompany.rollfiCompanyId,
+        payPeriodId,
+        workerType: "W2",
+      },
+      { headers: rollfiHeaders() }
+    );
+    res.json({ success: true, ...response.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err }, "Rollfi initiatePayroll failed");
+    res.status(500).json({ error: "Failed to initiate payroll", details: e.response?.data ?? String(err) });
+  }
+});
+
+export default router;

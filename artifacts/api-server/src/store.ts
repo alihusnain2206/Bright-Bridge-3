@@ -69,6 +69,23 @@ function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ─── ROLLFI INTEGRATION STATE ─────────────────────────────────
+
+export interface RollfiCompanyRecord {
+  rollfiCompanyId: string;
+  rollfiLocationId: string;
+  onboardedAt: string;
+}
+
+export interface RollfiEmployeeRecord {
+  rollfiUserId: string;
+  rollfiWageId?: string;
+  onboardedAt: string;
+}
+
+const rollfiCompanies = new Map<string, RollfiCompanyRecord>();
+const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
+
 // ─── CLIENTS (existing + Rainbow) ───────────────────────────
 
 const clients: Client[] = [
@@ -200,6 +217,12 @@ export const store = {
   // ── Locations ──
   getLocation(id: string): Location | undefined { return locations.find((l) => l.id === id); },
   getLocations(): Location[] { return locations; },
+
+  // ── Rollfi ──
+  getRollfiCompany(companyId: string): RollfiCompanyRecord | undefined { return rollfiCompanies.get(companyId); },
+  setRollfiCompany(companyId: string, record: RollfiCompanyRecord): void { rollfiCompanies.set(companyId, record); },
+  getRollfiEmployee(employeeId: string): RollfiEmployeeRecord | undefined { return rollfiEmployees.get(employeeId); },
+  setRollfiEmployee(employeeId: string, record: RollfiEmployeeRecord): void { rollfiEmployees.set(employeeId, record); },
 
   // ── Children ──
   getChildrenForParent(parentId: string): Child[] { return children.filter((c) => c.parentId === parentId); },
