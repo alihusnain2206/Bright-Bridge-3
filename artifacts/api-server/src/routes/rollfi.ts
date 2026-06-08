@@ -303,14 +303,22 @@ router.get("/rollfi/payperiod", async (req, res) => {
   }
 
   try {
-    const response = await axios.get(`${ROLLFI_BASE_URL}/reports#getPayPeriod`, {
-      headers: rollfiHeaders(),
-      data: { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
-    });
-    res.json(response.data);
+    // Rollfi documents getPayPeriod as GET-with-body; we use POST to avoid proxies stripping the body
+    const response = await axios.post(`${ROLLFI_BASE_URL}/reports#getPayPeriod`, {
+      method: "getPayPeriod",
+      companyId: rollfiCompany.rollfiCompanyId,
+      workerType: "W2",
+    }, { headers: rollfiHeaders() });
+
+    req.log.info({ rollfiResponse: response.data }, "Rollfi getPayPeriod raw response");
+
+    const raw = response.data as Record<string, unknown>;
+    assertNoRollfiError(raw, "getPayPeriod");
+
+    res.json(raw);
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err }, "Rollfi getPayPeriod failed");
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi getPayPeriod failed");
     res.status(500).json({ error: "Failed to get pay period", details: e.response?.data ?? String(err) });
   }
 });
@@ -385,6 +393,8 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     return;
   }
 
+  req.log.info({ companyId, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId }, "Rollfi initiatePayroll request");
+
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
@@ -392,14 +402,20 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         method: "initiatePayroll",
         companyId: rollfiCompany.rollfiCompanyId,
         payPeriodId,
-        workerType: "W2",
+        runNow: false,
       },
       { headers: rollfiHeaders() }
     );
-    res.json({ success: true, ...response.data });
+
+    req.log.info({ rollfiResponse: response.data }, "Rollfi initiatePayroll raw response");
+
+    const raw = response.data as Record<string, unknown>;
+    assertNoRollfiError(raw, "initiatePayroll");
+
+    res.json({ success: true, ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err }, "Rollfi initiatePayroll failed");
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
     res.status(500).json({ error: "Failed to initiate payroll", details: e.response?.data ?? String(err) });
   }
 });
