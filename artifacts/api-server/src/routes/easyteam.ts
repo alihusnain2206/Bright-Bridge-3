@@ -35,7 +35,7 @@ function normalizePemKey(raw: string | undefined): string | undefined {
 
 const EASYTEAM_API_KEY = normalizePemKey(process.env.EASYTEAM_API_KEY);
 const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
-const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/sandbox/embed";
+const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/embed";
 
 const CONVOY_WEBHOOK_SECRET = process.env.CONVOY_WEBHOOK_SECRET;
 

@@ -2,8 +2,8 @@ import { useEffect, useRef, useCallback } from "react";
 import { EasyTeamEmbedLauncher, Pages } from "@easyteam/launcher";
 import { brightbridgeTheme } from "@/lib/easyteamTheme";
 
-export const SANDBOX_BASE_URL = "https://www.easyteam.io/sandbox/embed/iframe";
-export const SANDBOX_API_URL = "https://www.easyteam.io/sandbox/embed";
+export const SANDBOX_BASE_URL = "https://www.easyteam.io/embed/iframe";
+export const SANDBOX_API_URL = "https://www.easyteam.io/embed";
 
 export { Pages };
 
