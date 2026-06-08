@@ -116,26 +116,41 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    const data = response.data as {
-      registration: { companyId: string; companyLocationId: string; status: string; message: string };
-    };
+    // Log the raw response so we can see what Rollfi actually returns
+    req.log.info({ rollfiResponse: response.data }, "Rollfi createBusiness raw response");
+
+    const raw = response.data as Record<string, unknown>;
+
+    // Rollfi wraps success under `registration`, but may return a flat object on error
+    const reg = (raw.registration ?? raw) as Record<string, unknown>;
+    const rollfiCompanyId = (reg.companyId ?? reg.id) as string | undefined;
+    const rollfiLocationId = (reg.companyLocationId ?? reg.locationId) as string | undefined;
+
+    if (!rollfiCompanyId) {
+      req.log.error({ rollfiResponse: raw }, "Rollfi createBusiness returned unexpected shape");
+      res.status(500).json({
+        error: "Rollfi returned an unexpected response — missing companyId",
+        rollfiResponse: raw,
+      });
+      return;
+    }
 
     store.setRollfiCompany(companyId, {
-      rollfiCompanyId: data.registration.companyId,
-      rollfiLocationId: data.registration.companyLocationId,
+      rollfiCompanyId,
+      rollfiLocationId: rollfiLocationId ?? "",
       onboardedAt: new Date().toISOString(),
     });
 
     res.json({
       success: true,
-      rollfiCompanyId: data.registration.companyId,
-      rollfiLocationId: data.registration.companyLocationId,
-      status: data.registration.status,
-      message: data.registration.message,
+      rollfiCompanyId,
+      rollfiLocationId: rollfiLocationId ?? "",
+      status: reg.status as string | undefined,
+      message: reg.message as string | undefined,
     });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err }, "Rollfi company onboarding failed");
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi company onboarding failed");
     res.status(500).json({ error: "Rollfi company onboarding failed", details: e.response?.data ?? String(err) });
   }
 });
@@ -190,8 +205,20 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    const addUserData = addUserResp.data as { user: { userId: string; status: string; message: string } };
-    const rollfiUserId = addUserData.user.userId;
+    req.log.info({ rollfiResponse: addUserResp.data }, "Rollfi addUser raw response");
+
+    const addUserRaw = addUserResp.data as Record<string, unknown>;
+    const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
+    const rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
+
+    if (!rollfiUserId) {
+      req.log.error({ rollfiResponse: addUserRaw }, "Rollfi addUser returned unexpected shape");
+      res.status(500).json({
+        error: "Rollfi returned an unexpected response for addUser — missing userId",
+        rollfiResponse: addUserRaw,
+      });
+      return;
+    }
 
     const addWageResp = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
@@ -214,25 +241,29 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    const addWageData = addWageResp.data as { userWage: { userWageId: string; status: string; message: string } };
+    req.log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage raw response");
+
+    const addWageRaw = addWageResp.data as Record<string, unknown>;
+    const wageObj = (addWageRaw.userWage ?? addWageRaw) as Record<string, unknown>;
+    const rollfiWageId = (wageObj.userWageId ?? wageObj.id) as string | undefined;
 
     store.setRollfiEmployee(employeeId, {
       rollfiUserId,
-      rollfiWageId: addWageData.userWage.userWageId,
+      rollfiWageId: rollfiWageId ?? "",
       onboardedAt: new Date().toISOString(),
     });
 
     res.json({
       success: true,
       rollfiUserId,
-      rollfiWageId: addWageData.userWage.userWageId,
-      userStatus: addUserData.user.status,
-      wageStatus: addWageData.userWage.status,
-      message: addUserData.user.message,
+      rollfiWageId: rollfiWageId ?? "",
+      userStatus: userObj.status as string | undefined,
+      wageStatus: wageObj.status as string | undefined,
+      message: userObj.message as string | undefined,
     });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err }, "Rollfi employee onboarding failed");
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi employee onboarding failed");
     res.status(500).json({ error: "Rollfi employee onboarding failed", details: e.response?.data ?? String(err) });
   }
 });
