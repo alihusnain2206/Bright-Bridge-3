@@ -15,6 +15,23 @@ function rollfiHeaders() {
   return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
 }
 
+// Derive a stable 9-digit EIN from a company seed string so each company gets a unique EIN
+function deriveEin(seed: string): string {
+  let h = 5381;
+  for (let i = 0; i < seed.length; i++) {
+    h = ((h << 5) + h + seed.charCodeAt(i)) & 0x7fffffff;
+  }
+  return String(100000000 + (h % 900000000));
+}
+
+// Rollfi sometimes returns HTTP 200 with {error:{code,message}} instead of throwing
+function assertNoRollfiError(raw: Record<string, unknown>, label: string): void {
+  if (raw.error && typeof raw.error === "object") {
+    const e = raw.error as { code?: number; message?: string };
+    throw new Error(`Rollfi ${label} error (${e.code ?? "?"}): ${e.message ?? "Unknown error"}`);
+  }
+}
+
 // ── Status ───────────────────────────────────────────────────
 
 router.get("/rollfi/status", (_req, res) => {
@@ -74,7 +91,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
           isTermsAccepted: true,
         },
         kybInformation: {
-          ein: "123456789",
+          ein: deriveEin(company.id),
           entityType: "LLC",
           incorporationState: "New Jersey",
           dateOfIncorporation: "2015-01-01",
@@ -120,6 +137,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     req.log.info({ rollfiResponse: response.data }, "Rollfi createBusiness raw response");
 
     const raw = response.data as Record<string, unknown>;
+    assertNoRollfiError(raw, "createBusiness");
 
     // Rollfi wraps success under `registration`, but may return a flat object on error
     const reg = (raw.registration ?? raw) as Record<string, unknown>;
@@ -208,6 +226,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     req.log.info({ rollfiResponse: addUserResp.data }, "Rollfi addUser raw response");
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
+    assertNoRollfiError(addUserRaw, "addUser");
     const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
     const rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
 
