@@ -34,6 +34,11 @@ interface PayPeriod {
   payEndDate: string; payDate: string; deadLineToRunPayroll: string;
   payPeriodStatus: string; payrollAmount?: number;
 }
+interface CompanyTasks {
+  tasks: Array<{ task: string; description: string }>;
+  kybStatus: "ok" | "failed" | "pending" | "issue";
+  bankLinked: boolean;
+}
 
 // ── API helpers ──────────────────────────────────────────────
 
@@ -144,6 +149,13 @@ export default function Payroll() {
       api.post("/rollfi/payroll/initiate", { companyId, payPeriodId }),
     onSuccess: (data) => { setSubmitResult(JSON.stringify(data, null, 2)); },
     onError: (e) => { setSubmitResult(`Error: ${(e as Error).message}`); },
+  });
+
+  const { data: companyTasks } = useQuery<CompanyTasks>({
+    queryKey: ["rollfi-tasks", selectedCompanyId],
+    queryFn: () => api.get(`/rollfi/company-tasks?companyId=${selectedCompanyId}`),
+    enabled: selectedCompanyId !== "all" && !!(state?.companies ?? []).find(c => c.id === selectedCompanyId)?.rollfi && tab === 2,
+    staleTime: 30_000,
   });
 
   const companies = state?.companies ?? [];
@@ -381,6 +393,29 @@ export default function Payroll() {
               )}
             </div>
 
+            {/* KYB / onboarding status banner */}
+            {companyTasks && (companyTasks.kybStatus !== "ok" || !companyTasks.bankLinked) && (
+              <div className="mb-4 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+                  <span className="text-amber-300 text-sm font-semibold">Rollfi Sandbox Limitations</span>
+                  <span className="text-amber-400/50 text-xs">(does not affect production)</span>
+                </div>
+                <div className="grid gap-1 pl-6">
+                  {companyTasks.kybStatus !== "ok" && (
+                    <p className="text-amber-200/80 text-xs">
+                      <span className="font-semibold">KYB: {companyTasks.kybStatus}</span> — Sandbox KYB uses synthetic test data that cannot be verified against real business records. Payroll initiation will show this error.
+                    </p>
+                  )}
+                  {!companyTasks.bankLinked && (
+                    <p className="text-amber-200/80 text-xs">
+                      <span className="font-semibold">Bank account:</span> Not linked — blocked by KYB status above.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Pay period info */}
             {payPeriod && (
               <div className="mb-4 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex flex-wrap items-center gap-4">
@@ -399,6 +434,10 @@ export default function Payroll() {
                 <div>
                   <p className="text-emerald-300 text-xs font-semibold">Deadline</p>
                   <p className="text-white text-sm">{payPeriod.deadLineToRunPayroll}</p>
+                </div>
+                <div>
+                  <p className="text-emerald-300 text-xs font-semibold">Period ID</p>
+                  <p className="text-white/60 text-xs font-mono">{payPeriod.payPeriodId.slice(0, 8)}…</p>
                 </div>
               </div>
             )}

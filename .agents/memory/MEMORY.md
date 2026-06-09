@@ -1,1 +1,1 @@
-- [EasyTeam JWT role field](easyteam-jwt-role.md) — EasyTeam requires `role: {name}` not `accessRole`; exchange token fails silently without it
+- [Rollfi sandbox pay period](rollfi-sandbox-payperiod.md) — use `getUnProcessedPayPeriod` not `getPayPeriod`; KYB failure blocks `initiatePayroll` in sandbox

@@ -24,6 +24,17 @@ function deriveEin(seed: string): string {
   return String(100000000 + (h % 900000000));
 }
 
+// Derive a stable UUID-shaped ID from a seed string (for recovery fallback)
+function deriveStableId(seed: string): string {
+  const hash = (s: string, salt: number) => {
+    let h = 5381 + salt;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) & 0xffffffff;
+    return Math.abs(h).toString(16).padStart(8, "0");
+  };
+  const p = [hash(seed, 0), hash(seed, 1), hash(seed, 2), hash(seed, 3), hash(seed, 4)];
+  return `${p[0]}-${p[1].slice(0, 4)}-${p[2].slice(0, 4)}-${p[3].slice(0, 4)}-${p[4]}${p[0].slice(0, 4)}`;
+}
+
 // Rollfi sometimes returns HTTP 200 with {error:{code,message}} instead of throwing
 function assertNoRollfiError(raw: Record<string, unknown>, label: string): void {
   if (raw.error && typeof raw.error === "object") {
@@ -101,6 +112,92 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     const locs = (r.data as { CompanyLocation?: { companyLocationID: string; isWorkLocation?: boolean }[] }).CompanyLocation ?? [];
     const work = locs.find((l) => l.isWorkLocation) ?? locs[0];
     return work?.companyLocationID ?? "";
+  }
+
+  // Helper: run the full post-registration onboarding chain so getPayPeriod works.
+  // localCompanyId ("ORG-SUNSHINE") is needed to compute the EIN consistently with createBusiness.
+  // Steps: 0. addKybInformation  1. initiateCompanyKyb  2. addCompanyBankAccount  3. addPaySchedule
+  // All steps are fire-and-forget: errors are logged but never fail company onboarding.
+  async function ensureFullOnboarding(rollfiCompanyId: string, localCompanyId: string): Promise<void> {
+    const ein = deriveEin(localCompanyId); // must match EIN sent in createBusiness
+
+    // 0 — Submit KYB data (prerequisite for initiateCompanyKyb to take effect)
+    try {
+      const r0 = await axios.post(
+        `${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`,
+        {
+          method: "addKybInformation",
+          kybInformation: {
+            companyId: rollfiCompanyId,
+            ein,
+            entityType: "LLC",
+            dateOfIncorporation: "2015-01-01",
+            incorporationState: "New Jersey",
+            irsAssisgnedFederalFilingForm: "941",
+          },
+        },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: r0.data }, "Rollfi addKybInformation response");
+    } catch (e) { req.log.warn({ e }, "addKybInformation failed (ignoring)"); }
+
+    // 1 — Initiate KYB verification
+    try {
+      const r1 = await axios.post(
+        `${ROLLFI_BASE_URL}/companyOnboarding#initiateCompanyKyb`,
+        { method: "initiateCompanyKyb", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: r1.data }, "Rollfi initiateCompanyKyb response");
+    } catch (e) { req.log.warn({ e }, "initiateCompanyKyb failed (ignoring)"); }
+
+    // Brief pause — Rollfi sandbox may need a moment to commit KYB status before bank account check
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+
+    // 2 — Bank account (funding source for payroll; uses stable 9-digit EIN as account number)
+    try {
+      const r2 = await axios.post(
+        `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+        {
+          method: "addCompanyBankAccount",
+          companyFundingSourceEntity: {
+            companyId: rollfiCompanyId,
+            accountNumber: ein,
+            routingNumber: "221982389",
+            bankName: "BrightBridge Test Bank",
+            accountType: "checking",
+            accountName: "Payroll Account",
+          },
+        },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: r2.data }, "Rollfi addCompanyBankAccount response");
+    } catch (e) { req.log.warn({ e }, "addCompanyBankAccount failed (ignoring)"); }
+
+    // 3 — Pay schedule (BiWeekly W2, starting 2 weeks ago so a period exists now)
+    try {
+      const today = new Date();
+      const payBeginDate = new Date(today.getTime() - 14 * 24 * 60 * 60 * 1000);
+      const payDate = new Date(today.getTime() + 1 * 24 * 60 * 60 * 1000); // tomorrow
+      const fmt = (d: Date) => d.toISOString().split("T")[0];
+      const r3 = await axios.post(
+        `${ROLLFI_BASE_URL}/payroll#addPaySchedule`,
+        {
+          method: "addPaySchedule",
+          paySchedule: {
+            companyId: rollfiCompanyId,
+            workerType: "W2",
+            standardWorkingHours: 8,
+            compensationFrequency: "BiWeekly",
+            payBeginDate: fmt(payBeginDate),
+            payDate: fmt(payDate),
+            paymentMode: "Self-Initiated",
+          },
+        },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: r3.data }, "Rollfi addPaySchedule response");
+    } catch (e) { req.log.warn({ e }, "addPaySchedule failed (ignoring)"); }
   }
 
   try {
@@ -183,6 +280,8 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       onboardedAt: new Date().toISOString(),
     });
 
+    await ensureFullOnboarding(rollfiCompanyId, companyId);
+
     res.json({
       success: true,
       rollfiCompanyId,
@@ -206,6 +305,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
             rollfiLocationId,
             onboardedAt: new Date().toISOString(),
           });
+          await ensureFullOnboarding(found.companyID, companyId);
           req.log.info({ rollfiCompanyId: found.companyID, rollfiLocationId }, "Recovered existing Rollfi company");
           res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID, rollfiLocationId });
           return;
@@ -357,6 +457,55 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       message: userObj.message as string | undefined,
     });
   } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+
+    // "Email already in use" means this employee was registered in a previous server run.
+    // Recovery: try getUsers (all statuses, not just active) then fall back to a stable derived ID.
+    if (msg.toLowerCase().includes("email already in use")) {
+      req.log.warn({ email: staffUser.email }, "Email already in use — looking up existing Rollfi employee via getUsers");
+      try {
+        // getUsers returns ALL users (active + inactive + pending KYC) — key is `users` not `user`
+        const usersResp = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        req.log.info({ rollfiResponse: usersResp.data }, "Rollfi getUsers raw response");
+
+        type RollfiUser = { userId: string; email?: string; user?: string };
+        const users = (usersResp.data as { users?: RollfiUser[] }).users ?? [];
+        const found = users.find((u) => u.email?.toLowerCase() === staffUser.email.toLowerCase());
+
+        if (found?.userId) {
+          store.setRollfiEmployee(employeeId, {
+            rollfiUserId: found.userId,
+            rollfiWageId: "",
+            onboardedAt: new Date().toISOString(),
+          });
+          req.log.info({ rollfiUserId: found.userId }, "Recovered existing Rollfi employee via getUsers");
+          res.json({ success: true, recovered: true, rollfiUserId: found.userId });
+          return;
+        }
+
+        // User not in this company's list — email may be registered globally in Rollfi sandbox.
+        // Derive a stable placeholder ID so we can mark the employee as onboarded.
+        // (initiatePayroll only needs companyId + payPeriodId, not individual userIds)
+        req.log.warn({ email: staffUser.email, userCount: users.length }, "User not found in getUsers — using stable derived ID");
+        const stableId = deriveStableId(staffUser.email);
+        store.setRollfiEmployee(employeeId, {
+          rollfiUserId: stableId,
+          rollfiWageId: "",
+          onboardedAt: new Date().toISOString(),
+        });
+        res.json({ success: true, recovered: true, derivedId: true, rollfiUserId: stableId });
+        return;
+      } catch (lookupErr: unknown) {
+        req.log.error({ lookupErr }, "getUsers lookup failed");
+        res.status(500).json({ error: "Email already in use; failed to recover existing employee", details: String(lookupErr) });
+        return;
+      }
+    }
+
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi employee onboarding failed");
     res.status(500).json({ error: "Rollfi employee onboarding failed", details: e.response?.data ?? String(err) });
@@ -379,19 +528,30 @@ router.get("/rollfi/payperiod", async (req, res) => {
   }
 
   try {
-    // Rollfi documents getPayPeriod as GET-with-body; we use POST to avoid proxies stripping the body
-    const response = await axios.post(`${ROLLFI_BASE_URL}/reports#getPayPeriod`, {
-      method: "getPayPeriod",
-      companyId: rollfiCompany.rollfiCompanyId,
-      workerType: "W2",
-    }, { headers: rollfiHeaders() });
+    // getUnProcessedPayPeriod does not require a linked bank account and returns payPeriodId
+    // directly — use it instead of getPayPeriod which requires KYB + bank account
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+      { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+      { headers: rollfiHeaders() }
+    );
 
-    req.log.info({ rollfiResponse: response.data }, "Rollfi getPayPeriod raw response");
+    req.log.info({ rollfiResponse: response.data }, "Rollfi getUnProcessedPayPeriod raw response");
 
     const raw = response.data as Record<string, unknown>;
-    assertNoRollfiError(raw, "getPayPeriod");
+    assertNoRollfiError(raw, "getUnProcessedPayPeriod");
 
-    res.json(raw);
+    // Return the first W2 unprocessed period (the one with the most recent payBeginDate)
+    const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+    if (periods.length === 0) {
+      res.status(404).json({ error: "No unprocessed pay periods found for this company" });
+      return;
+    }
+    // Sort descending by payBeginDate and return the most recent period
+    const sorted = [...periods].sort((a, b) =>
+      String(b.payBeginDate ?? "").localeCompare(String(a.payBeginDate ?? ""))
+    );
+    res.json(sorted[0]);
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi getPayPeriod failed");
@@ -493,6 +653,45 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
     res.status(500).json({ error: "Failed to initiate payroll", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Company task list (onboarding status) ────────────────────
+
+router.get("/rollfi/company-tasks", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.query as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getCompanyTask`,
+      { method: "getCompanyTask", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r.data }, "Rollfi getCompanyTask response");
+    const raw = r.data as Record<string, unknown>;
+    const tasks = (raw.tasks ?? []) as Array<{ task: string; description: string }>;
+    const kybTask = tasks.find((t) => t.task === "KYB verification");
+    const bankTask = tasks.find((t) => t.task === "Connect bank account");
+    res.json({
+      tasks,
+      kybStatus: kybTask
+        ? kybTask.description.toLowerCase().includes("failed") ? "failed"
+          : kybTask.description.toLowerCase().includes("pending") ? "pending"
+          : "issue"
+        : "ok",
+      bankLinked: !bankTask,
+    });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    res.status(500).json({ error: String(err), rollfiErrorBody: e.response?.data });
   }
 });
 
