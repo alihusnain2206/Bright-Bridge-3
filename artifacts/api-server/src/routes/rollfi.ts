@@ -329,6 +329,120 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   }
 });
 
+// ── Bank account linking ─────────────────────────────────────
+
+router.post("/rollfi/onboard/bank-account", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.body as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+
+  const accountNumber = rollfiCompany.ein ?? randomNineDigits();
+
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+      {
+        method: "addCompanyBankAccount",
+        companyFundingSourceEntity: {
+          companyId: rollfiCompany.rollfiCompanyId,
+          accountNumber,
+          routingNumber: "221982389",
+          bankName: "BrightBridge Test Bank",
+          accountType: "checking",
+          accountName: "Payroll Account",
+        },
+      },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r.data }, "Rollfi addCompanyBankAccount response");
+    const raw = r.data as Record<string, unknown>;
+    // Rollfi returns 200 with error body when bank already linked — treat as success
+    const isAlreadyLinked = JSON.stringify(raw).toLowerCase().includes("already");
+    res.json({ success: true, alreadyLinked: isAlreadyLinked, ...raw });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "addCompanyBankAccount failed");
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
+// ── Funding source status + micro-deposit verification ───────
+
+router.post("/rollfi/onboard/verify-bank", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.body as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+  const rollfiCompanyId = rollfiCompany.rollfiCompanyId;
+
+  // Step 1: fetch current funding source to get its ID and status
+  let fundingSourceId: string | undefined;
+  let currentStatus: string | undefined;
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#getCompanyFundingSource`,
+      { method: "getCompanyFundingSource", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r.data }, "getCompanyFundingSource response");
+    const raw = r.data as Record<string, unknown>;
+    // Response may be a list or single object
+    const sources = Array.isArray(raw.fundingSources) ? raw.fundingSources
+      : Array.isArray(raw) ? raw
+      : raw.fundingSourceId ? [raw] : [];
+    const active = (sources as Array<Record<string, unknown>>).find((s) => s.status !== "Deactivated") ?? (sources as Array<Record<string, unknown>>)[0];
+    fundingSourceId = active?.fundingSourceId as string | undefined ?? active?.id as string | undefined;
+    currentStatus = active?.status as string | undefined;
+    req.log.info({ fundingSourceId, currentStatus }, "Funding source found");
+  } catch (e) {
+    req.log.warn({ e }, "getCompanyFundingSource failed");
+  }
+
+  if (!fundingSourceId) {
+    res.json({ status: "not_found", message: "No funding source found for this company", raw: undefined });
+    return;
+  }
+
+  if (currentStatus && !currentStatus.toLowerCase().includes("pending") && !currentStatus.toLowerCase().includes("micro")) {
+    res.json({ status: currentStatus, fundingSourceId, message: "Funding source already verified" });
+    return;
+  }
+
+  // Step 2: attempt micro-deposit verification with sandbox amounts (0.01, 0.01)
+  try {
+    const r2 = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposit`,
+      {
+        method: "verifyMicroDeposit",
+        companyId: rollfiCompanyId,
+        fundingSourceId,
+        amount1: 0.01,
+        amount2: 0.01,
+      },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r2.data }, "verifyMicroDeposit response");
+    res.json({ success: true, fundingSourceId, verifyResponse: r2.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposit failed");
+    res.json({ success: false, fundingSourceId, currentStatus, error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
 // ── Employee onboarding ──────────────────────────────────────
 
 router.post("/rollfi/onboard/employee", async (req, res) => {
