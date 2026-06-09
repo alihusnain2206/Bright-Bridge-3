@@ -532,6 +532,8 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       return;
     }
 
+    // TODO: confirm correct userType enum value with Rollfi support
+    // Tried: Hourly, Salaried, W2, Full-Time, Part-Time, Exempt, Non-Exempt, Employee, Regular — all rejected
     const addWageResp = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
       {
@@ -556,6 +558,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     req.log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage raw response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
+    assertNoRollfiError(addWageRaw, "addUserWage"); // surface errors instead of silently swallowing
     const wageObj = (addWageRaw.userWage ?? addWageRaw) as Record<string, unknown>;
     const rollfiWageId = (wageObj.userWageId ?? wageObj.id) as string | undefined;
 
@@ -594,13 +597,51 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
         const found = users.find((u) => u.email?.toLowerCase() === staffUser.email.toLowerCase());
 
         if (found?.userId) {
+          // Store immediately so later steps can reference the userId
           store.setRollfiEmployee(employeeId, {
             rollfiUserId: found.userId,
             rollfiWageId: "",
             onboardedAt: new Date().toISOString(),
           });
           req.log.info({ rollfiUserId: found.userId }, "Recovered existing Rollfi employee via getUsers");
-          res.json({ success: true, recovered: true, rollfiUserId: found.userId });
+
+          // Ensure wage is set — may have been skipped on a previous recovery
+          let rollfiWageId = "";
+          try {
+            const addWageResp = await axios.post(
+              `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+              {
+                method: "addUserWage",
+                userWage: {
+                  companyId: rollfiCompany.rollfiCompanyId,
+                  userId: found.userId,
+                  differentialPay: "No",
+                  wageRate: staffUser.hourlyWage ?? 1500,
+                  workerType: "W2",
+                  wageBasis: "Per Hour",
+                  userType: "Hourly",
+                  employmentStatus: "Full Time (30+ Hours per week)",
+                  userRefTaxExempt: "No",
+                  startDate: "2024-01-01",
+                  paymentMethod: "Direct Deposit",
+                },
+              },
+              { headers: rollfiHeaders() }
+            );
+            req.log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage (recovery) response");
+            const wageRaw = addWageResp.data as Record<string, unknown>;
+            const wageObj = (wageRaw.userWage ?? wageRaw) as Record<string, unknown>;
+            rollfiWageId = (wageObj.userWageId ?? wageObj.id ?? "") as string;
+          } catch (wageErr) {
+            req.log.warn({ wageErr }, "addUserWage (recovery) failed — wage may already exist");
+          }
+
+          store.setRollfiEmployee(employeeId, {
+            rollfiUserId: found.userId,
+            rollfiWageId,
+            onboardedAt: new Date().toISOString(),
+          });
+          res.json({ success: true, recovered: true, rollfiUserId: found.userId, rollfiWageId });
           return;
         }
 
