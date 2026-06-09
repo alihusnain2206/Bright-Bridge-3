@@ -15,13 +15,10 @@ function rollfiHeaders() {
   return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
 }
 
-// Derive a stable 9-digit EIN from a company seed string so each company gets a unique EIN
-function deriveEin(seed: string): string {
-  let h = 5381;
-  for (let i = 0; i < seed.length; i++) {
-    h = ((h << 5) + h + seed.charCodeAt(i)) & 0x7fffffff;
-  }
-  return String(100000000 + (h % 900000000));
+// Generate a random 9-digit number string (EIN or SSN format, no leading zeros)
+function randomNineDigits(): string {
+  const n = Math.floor(100_000_000 + Math.random() * 900_000_000);
+  return String(n);
 }
 
 // Derive a stable UUID-shaped ID from a seed string (for recovery fallback)
@@ -115,11 +112,11 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   }
 
   // Helper: run the full post-registration onboarding chain so getPayPeriod works.
-  // localCompanyId ("ORG-SUNSHINE") is needed to compute the EIN consistently with createBusiness.
   // Steps: 0. addKybInformation  1. initiateCompanyKyb  2. addCompanyBankAccount  3. addPaySchedule
   // All steps are fire-and-forget: errors are logged but never fail company onboarding.
   async function ensureFullOnboarding(rollfiCompanyId: string, localCompanyId: string): Promise<void> {
-    const ein = deriveEin(localCompanyId); // must match EIN sent in createBusiness
+    // Read the stored EIN (set by createBusiness before this is called)
+    const ein = store.getRollfiCompany(localCompanyId)?.ein ?? randomNineDigits();
 
     // 0 — Submit KYB data (prerequisite for initiateCompanyKyb to take effect)
     try {
@@ -200,6 +197,10 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     } catch (e) { req.log.warn({ e }, "addPaySchedule failed (ignoring)"); }
   }
 
+  // Generate fresh random EIN and owner SSN — avoids Rollfi's "EIN already in use" KYB rejection
+  const newEin = randomNineDigits();
+  const newOwnerSsn = randomNineDigits();
+
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`,
@@ -212,7 +213,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
           isTermsAccepted: true,
         },
         kybInformation: {
-          ein: deriveEin(company.id),
+          ein: newEin,
           entityType: "LLC",
           incorporationState: "New Jersey",
           dateOfIncorporation: "2015-01-01",
@@ -243,7 +244,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
           city: "Newark",
           state: "NJ",
           zipcode: "07101",
-          ssn: "123456789",
+          ssn: newOwnerSsn,
           dateOfBirth: "1980-01-01",
           payrollAdmin: true,
           bookkeeper: true,
@@ -278,6 +279,8 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       rollfiCompanyId,
       rollfiLocationId: rollfiLocationId ?? "",
       onboardedAt: new Date().toISOString(),
+      ein: newEin,
+      ownerSsn: newOwnerSsn,
     });
 
     await ensureFullOnboarding(rollfiCompanyId, companyId);
@@ -292,9 +295,9 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
 
-    // "Ein already in use" means this company was registered in a previous server run.
+    // "Ein already in use" or "Company already exists" means this company was registered in a previous server run.
     // Recover by looking up the existing Rollfi company ID via getCompanies.
-    if (msg.toLowerCase().includes("ein already in use")) {
+    if (msg.toLowerCase().includes("ein already in use") || msg.toLowerCase().includes("company already exists")) {
       req.log.warn({ companyName: company.name }, "EIN already in use — looking up existing Rollfi company");
       try {
         const found = await findExistingRollfiCompany(company.name);

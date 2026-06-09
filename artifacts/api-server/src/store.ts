@@ -75,6 +75,8 @@ export interface RollfiCompanyRecord {
   rollfiCompanyId: string;
   rollfiLocationId: string;
   onboardedAt: string;
+  ein?: string;
+  ownerSsn?: string;
 }
 
 export interface RollfiEmployeeRecord {
