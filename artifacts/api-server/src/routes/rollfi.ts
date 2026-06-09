@@ -652,7 +652,8 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
-    res.status(500).json({ error: "Failed to initiate payroll", details: e.response?.data ?? String(err) });
+    const rollfiMessage = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: rollfiMessage, details: e.response?.data });
   }
 });
 

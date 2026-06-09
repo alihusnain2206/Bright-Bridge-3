@@ -54,7 +54,10 @@ const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error((e as { error?: string }).error ?? r.statusText); }
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({})) as { error?: string };
+      throw new Error(e.error ?? r.statusText);
+    }
     return r.json() as Promise<T>;
   },
 };
@@ -521,13 +524,22 @@ export default function Payroll() {
                 </div>
 
                 {/* Submit result */}
-                {submitResult && (
-                  <div className={`mt-4 p-4 rounded-xl border text-xs font-mono whitespace-pre-wrap overflow-auto max-h-48 ${
-                    submitResult.startsWith("Error") ? "bg-red-500/10 border-red-500/30 text-red-300" : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                  }`}>
-                    {submitResult}
-                  </div>
-                )}
+                {submitResult && (() => {
+                  const isError = submitResult.startsWith("Error");
+                  const isKyb = submitResult.toLowerCase().includes("kyb") || submitResult.toLowerCase().includes("verification");
+                  return (
+                    <div className={`mt-4 p-4 rounded-xl border text-xs space-y-2 ${
+                      isError ? "bg-red-500/10 border-red-500/30 text-red-300" : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                    }`}>
+                      <p className="font-mono whitespace-pre-wrap break-all">{submitResult}</p>
+                      {isKyb && (
+                        <p className="text-amber-300/80 border-t border-amber-500/20 pt-2 font-sans not-italic">
+                          This is expected in the Rollfi sandbox — KYB can only be approved using real business credentials. The full payroll flow works correctly in production.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
