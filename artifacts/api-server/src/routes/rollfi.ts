@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
+import { db, rollfiWebhookEvents } from "@workspace/db";
+import { desc } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -1202,6 +1204,161 @@ router.get("/rollfi/company-tasks", async (req, res) => {
     const e = err as { response?: { data: unknown } };
     res.status(500).json({ error: String(err), rollfiErrorBody: e.response?.data });
   }
+});
+
+// ── Rollfi Webhook Receiver ────────────────────────────────────────────────
+
+type RollfiWebhookEvent = {
+  id: string;
+  eventType: string;
+  companyId: string | null;
+  rollfiCompanyId: string | null;
+  payPeriodId: string | null;
+  payload: string;
+  receivedAt: string;
+};
+
+const rollfiEventCache: RollfiWebhookEvent[] = [];
+let cacheLoadedFromDb = false;
+
+async function loadEventsFromDb(log: { warn: (...a: unknown[]) => void }) {
+  if (cacheLoadedFromDb) return;
+  cacheLoadedFromDb = true;
+  try {
+    const rows = await db
+      .select()
+      .from(rollfiWebhookEvents)
+      .orderBy(desc(rollfiWebhookEvents.id))
+      .limit(50);
+    rollfiEventCache.push(...rows.map((r) => ({ ...r, id: String(r.id) })));
+  } catch (err) {
+    log.warn({ err }, "Failed to load Rollfi webhook events from DB");
+  }
+}
+
+const KNOWN_COMPANY_IDS = ["ORG-SUNSHINE", "ORG-RAINBOW"];
+
+function resolveCompanyId(rollfiCompanyId: string | null): string | null {
+  if (!rollfiCompanyId) return null;
+  for (const cid of KNOWN_COMPANY_IDS) {
+    const rec = store.getRollfiCompany(cid);
+    if (rec?.rollfiCompanyId === rollfiCompanyId) return cid;
+  }
+  return null;
+}
+
+// POST /rollfi/webhook — public, called directly by Rollfi
+router.post("/rollfi/webhook", async (req, res) => {
+  const body = req.body as Record<string, unknown>;
+  const eventType =
+    (body.event as string) ||
+    (body.type as string) ||
+    (body.eventType as string) ||
+    "unknown";
+  const rollfiCompanyId =
+    (body.companyId as string) || (body.company_id as string) || null;
+  const payPeriodId =
+    (body.payPeriodId as string) || (body.pay_period_id as string) || null;
+
+  const event: RollfiWebhookEvent = {
+    id: Date.now().toString(),
+    eventType,
+    companyId: resolveCompanyId(rollfiCompanyId),
+    rollfiCompanyId,
+    payPeriodId,
+    payload: JSON.stringify(body),
+    receivedAt: new Date().toISOString(),
+  };
+
+  rollfiEventCache.unshift(event);
+  if (rollfiEventCache.length > 100) rollfiEventCache.pop();
+
+  try {
+    await db.insert(rollfiWebhookEvents).values({
+      eventType: event.eventType,
+      companyId: event.companyId ?? undefined,
+      rollfiCompanyId: event.rollfiCompanyId ?? undefined,
+      payPeriodId: event.payPeriodId ?? undefined,
+      payload: event.payload,
+      receivedAt: event.receivedAt,
+    });
+  } catch (err) {
+    req.log.warn({ err }, "Failed to persist Rollfi webhook event");
+  }
+
+  req.log.info({ eventType, rollfiCompanyId, payPeriodId }, "Rollfi webhook received");
+  res.json({ received: true });
+});
+
+// GET /rollfi/webhook/events — return stored events (requires session)
+router.get("/rollfi/webhook/events", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  await loadEventsFromDb(req.log);
+  res.json({ events: rollfiEventCache.slice(0, 50) });
+});
+
+// DELETE /rollfi/webhook/events — clear all stored events
+router.delete("/rollfi/webhook/events", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  rollfiEventCache.length = 0;
+  cacheLoadedFromDb = false;
+  try {
+    await db.delete(rollfiWebhookEvents);
+  } catch (err) {
+    req.log.warn({ err }, "Failed to clear Rollfi webhook events from DB");
+  }
+  res.json({ cleared: true });
+});
+
+// POST /rollfi/webhook/simulate — inject a fake event (for demos)
+router.post("/rollfi/webhook/simulate", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { eventType = "payroll.processed", companyId } = req.body as {
+    eventType?: string;
+    companyId?: string;
+  };
+
+  const rollfiRec = companyId ? store.getRollfiCompany(companyId) : undefined;
+  const rollfiCompanyId = rollfiRec?.rollfiCompanyId ?? null;
+
+  const fakePayload = {
+    event: eventType,
+    companyId: rollfiCompanyId ?? companyId ?? "DEMO",
+    payPeriodId: `PP-SIM-${Date.now()}`,
+    amount: 4250.0,
+    employeeCount: 3,
+    processedAt: new Date().toISOString(),
+    simulated: true,
+  };
+
+  const event: RollfiWebhookEvent = {
+    id: Date.now().toString(),
+    eventType,
+    companyId: companyId ?? null,
+    rollfiCompanyId,
+    payPeriodId: fakePayload.payPeriodId,
+    payload: JSON.stringify(fakePayload),
+    receivedAt: new Date().toISOString(),
+  };
+
+  rollfiEventCache.unshift(event);
+  if (rollfiEventCache.length > 100) rollfiEventCache.pop();
+
+  try {
+    await db.insert(rollfiWebhookEvents).values({
+      eventType: event.eventType,
+      companyId: event.companyId ?? undefined,
+      rollfiCompanyId: event.rollfiCompanyId ?? undefined,
+      payPeriodId: event.payPeriodId ?? undefined,
+      payload: event.payload,
+      receivedAt: event.receivedAt,
+    });
+  } catch (err) {
+    req.log.warn({ err }, "Failed to persist simulated Rollfi webhook event");
+  }
+
+  req.log.info({ eventType, companyId }, "Rollfi webhook simulated");
+  res.json({ received: true, event });
 });
 
 export default router;
