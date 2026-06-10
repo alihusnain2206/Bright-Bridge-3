@@ -3,8 +3,8 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
-  User, Briefcase, Clock, DollarSign, Building2, Zap, LogOut, Play,
-  Terminal, RefreshCw, CheckCircle2, XCircle, Scale, AlertTriangle,
+  User, Briefcase, Clock, DollarSign, Building2, Zap, Play,
+  Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -78,40 +78,15 @@ export default function EmployeeDashboard() {
     finally { setTokenLoading(false); }
   };
 
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
-    window.location.href = "/login";
-  };
-
   return (
-    <div className="min-h-screen" style={{ background: "linear-gradient(160deg, #f0f4fb 0%, #f7f8fc 60%, #fdf6f3 100%)" }}>
-      <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold text-white"
-        style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)" }}>
-        <Zap className="h-3.5 w-3.5 opacity-70" /><span className="opacity-80">SANDBOX</span>
-        <span className="opacity-40 mx-1">·</span><span className="opacity-70 font-normal">TEST ENVIRONMENT</span>
+    <div className="space-y-6 max-w-6xl">
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-[#284362]">Welcome, {user?.name}!</h1>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white" style={{ background: "#16a34a" }}>Employee</span>
+        </div>
+        <p className="text-sm text-muted-foreground mt-0.5">{company?.name} — {user?.position}</p>
       </div>
-
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <img src="/brightbridge-logo.png" alt="BrightBridge" className="h-9 object-contain" />
-          <div className="w-px h-8 bg-gray-100" />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-[#284362]">Welcome, {user?.name}!</h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white" style={{ background: "#16a34a" }}>Employee</span>
-            </div>
-            <p className="text-sm text-muted-foreground">{company?.name} — {user?.position}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/roles"><Button variant="outline" size="sm" className="gap-1.5 text-xs"><Scale className="h-3.5 w-3.5" />Roles</Button></Link>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-xs text-red-500 hover:bg-red-50 gap-1.5">
-            <LogOut className="h-3.5 w-3.5" />Logout
-          </Button>
-        </div>
-      </header>
-
-      <div className="px-6 py-6 max-w-6xl mx-auto space-y-6">
         {/* Employee info card */}
         <div className="rounded-2xl bg-white border p-5 shadow-sm">
           <h2 className="font-semibold text-gray-900 mb-4">Your Details</h2>
@@ -242,6 +217,5 @@ export default function EmployeeDashboard() {
           )}
         </div>
       </div>
-    </div>
   );
 }

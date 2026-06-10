@@ -3,8 +3,8 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
-  Building2, Users, MapPin, Zap, LogOut, Play,
-  Terminal, RefreshCw, CheckCircle2, XCircle, Scale, AlertTriangle,
+  Building2, Users, MapPin, Play, Zap,
+  Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -39,7 +39,7 @@ const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedu
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
 export default function ManagerDashboard() {
-  const { user, company, location, logout } = useAuth();
+  const { user, company, location } = useAuth();
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
@@ -88,37 +88,15 @@ export default function ManagerDashboard() {
     finally { setTokenLoading(false); }
   };
 
-  const handleLogout = async () => { await logout(); window.location.href = "/login"; };
-
   return (
-    <div className="min-h-screen" style={{ background: "linear-gradient(160deg, #f0f4fb 0%, #f7f8fc 60%, #fdf6f3 100%)" }}>
-      <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold text-white"
-        style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)" }}>
-        <Zap className="h-3.5 w-3.5 opacity-70" /><span className="opacity-80">SANDBOX</span>
-        <span className="opacity-40 mx-1">·</span><span className="opacity-70 font-normal">TEST ENVIRONMENT</span>
+    <div className="space-y-6 max-w-6xl">
+      <div>
+        <div className="flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-[#284362]">{company?.name ?? "Manager"} Dashboard</h1>
+          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white" style={{ background: "#d97706" }}>Manager</span>
+        </div>
+        <p className="text-sm text-muted-foreground mt-0.5">Welcome, {user?.name}</p>
       </div>
-
-      <header className="bg-white border-b px-6 py-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <img src="/brightbridge-logo.png" alt="BrightBridge" className="h-9 object-contain" />
-          <div className="w-px h-8 bg-gray-100" />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-lg font-bold text-[#284362]">{company?.name ?? "Manager"} Dashboard</h1>
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider text-white" style={{ background: "#d97706" }}>Manager</span>
-            </div>
-            <p className="text-sm text-muted-foreground">Welcome, {user?.name}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/roles"><Button variant="outline" size="sm" className="gap-1.5 text-xs"><Scale className="h-3.5 w-3.5" />Roles</Button></Link>
-          <Button variant="ghost" size="sm" onClick={handleLogout} className="text-xs text-red-500 hover:bg-red-50 gap-1.5">
-            <LogOut className="h-3.5 w-3.5" />Logout
-          </Button>
-        </div>
-      </header>
-
-      <div className="px-6 py-6 max-w-6xl mx-auto space-y-6">
         {/* Company info */}
         <div className="rounded-2xl bg-white border p-5 shadow-sm">
           <div className="flex items-start justify-between mb-4">
@@ -236,6 +214,5 @@ export default function ManagerDashboard() {
           )}
         </div>
       </div>
-    </div>
   );
 }

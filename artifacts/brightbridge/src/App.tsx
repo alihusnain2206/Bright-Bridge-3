@@ -76,24 +76,22 @@ function Router() {
       {/* Public */}
       <Route path="/login" component={Login} />
 
-      {/* Manager / Employee / Parent — standalone pages (own header + simple nav) */}
-      <Route path="/dashboard/manager">
-        <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
-      </Route>
-      <Route path="/dashboard/employee">
-        <ProtectedRoute component={EmployeeDashboard} roles={["employee"]} />
-      </Route>
-      <Route path="/dashboard/parent">
-        <ProtectedRoute component={ParentDashboard} roles={["parent"]} />
-      </Route>
-
-      {/* All super-admin pages + /roles share the AppLayout with full nav */}
+      {/* All pages share AppLayout with sidebar nav */}
       <Route>
         <AppLayout>
           <Switch>
             <Route path="/" component={RootRedirect} />
             <Route path="/dashboard/super-admin">
               <ProtectedRoute component={SuperAdminDashboard} roles={["super_admin"]} />
+            </Route>
+            <Route path="/dashboard/manager">
+              <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
+            </Route>
+            <Route path="/dashboard/employee">
+              <ProtectedRoute component={EmployeeDashboard} roles={["employee"]} />
+            </Route>
+            <Route path="/dashboard/parent">
+              <ProtectedRoute component={ParentDashboard} roles={["parent"]} />
             </Route>
             <Route path="/clients">
               <ProtectedRoute component={Clients} roles={["super_admin"]} />

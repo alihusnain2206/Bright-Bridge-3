@@ -279,7 +279,7 @@ function RollfiWebhookSection() {
                             {ev.payPeriodId}
                           </code>
                         )}
-                        {parsed?.simulated && (
+                        {!!parsed?.simulated && (
                           <span className="text-xs text-amber-600 flex items-center gap-1">
                             <Zap className="h-3 w-3" />simulated
                           </span>

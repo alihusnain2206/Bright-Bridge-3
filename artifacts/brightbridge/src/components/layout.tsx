@@ -1,6 +1,9 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { FlaskConical, LayoutDashboard, Users, Clock, CalendarDays, Calendar, Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign } from "lucide-react";
+import {
+  FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
+  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
+} from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 
@@ -15,34 +18,41 @@ function getNavItems(role: string | undefined): NavItem[] {
     case "super_admin":
       return [
         { href: "/dashboard/super-admin", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/clients", label: "Clients", icon: Building2 },
-        { href: "/timeclock", label: "Time Clock", icon: Clock },
-        { href: "/timesheets", label: "Timesheets", icon: CalendarDays },
-        { href: "/schedule", label: "Schedule", icon: Calendar },
-        { href: "/roles", label: "Roles", icon: Scale },
-        { href: "/payroll", label: "Payroll", icon: DollarSign },
-        { href: "/webhooks", label: "Webhooks", icon: Webhook },
-        { href: "/config", label: "Config", icon: Settings },
+        { href: "/clients",               label: "Clients",    icon: Building2 },
+        { href: "/timeclock",             label: "Time Clock", icon: Clock },
+        { href: "/timesheets",            label: "Timesheets", icon: CalendarDays },
+        { href: "/schedule",             label: "Schedule",   icon: Calendar },
+        { href: "/roles",                label: "Roles",      icon: Scale },
+        { href: "/payroll",              label: "Payroll",    icon: DollarSign },
+        { href: "/webhooks",             label: "Webhooks",   icon: Webhook },
+        { href: "/config",               label: "Config",     icon: Settings },
       ];
     case "manager":
       return [
-        { href: dashboardPath("manager"), label: "Dashboard", icon: LayoutDashboard },
-        { href: "/roles", label: "Role Comparison", icon: Scale },
+        { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
+        { href: "/roles",                 label: "Role Comparison", icon: Scale },
       ];
     case "employee":
       return [
-        { href: dashboardPath("employee"), label: "Dashboard", icon: LayoutDashboard },
-        { href: "/roles", label: "Role Comparison", icon: Scale },
+        { href: dashboardPath("employee"), label: "Dashboard",       icon: LayoutDashboard },
+        { href: "/roles",                  label: "Role Comparison", icon: Scale },
       ];
     case "parent":
       return [
-        { href: dashboardPath("parent"), label: "Dashboard", icon: LayoutDashboard },
-        { href: "/roles", label: "Role Comparison", icon: Scale },
+        { href: dashboardPath("parent"), label: "Dashboard",       icon: LayoutDashboard },
+        { href: "/roles",                label: "Role Comparison", icon: Scale },
       ];
     default:
       return [];
   }
 }
+
+const ROLE_COLOR: Record<string, string> = {
+  super_admin: "#dc2626",
+  manager:     "#d97706",
+  employee:    "#16a34a",
+  parent:      "#2563eb",
+};
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
@@ -60,84 +70,110 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "linear-gradient(160deg, #f0f4fb 0%, #f7f8fc 60%, #fdf6f3 100%)" }}>
+    <div className="flex flex-col h-screen overflow-hidden">
 
-      {/* Slim sandbox notice */}
-      <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide"
-        style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}>
+      {/* Sandbox banner — full width */}
+      <div
+        className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide shrink-0"
+        style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}
+      >
         <FlaskConical className="h-3.5 w-3.5 opacity-70" />
         <span className="opacity-80">SANDBOX</span>
         <span className="opacity-40 mx-1">·</span>
         <span className="opacity-70 font-normal">Testing environment — no real data or payments</span>
       </div>
 
-      {/* Navbar */}
-      <header className="sticky top-0 z-40 bg-white border-b border-gray-100"
-        style={{ boxShadow: "0 1px 3px rgba(40,67,98,0.07), 0 4px 12px rgba(40,67,98,0.04)" }}>
-        <div className="px-6 h-14 flex items-center gap-6">
+      {/* Body: sidebar + main */}
+      <div className="flex flex-1 min-h-0">
+
+        {/* ── Sidebar ── */}
+        <aside
+          className="w-56 flex flex-col shrink-0 overflow-y-auto"
+          style={{ background: "#1b3250" }}
+        >
           {/* Logo */}
-          <Link href={user ? dashboardPath(user.role) : "/"}>
-            <img src="/brightbridge-logo.png" alt="BrightBridge" className="h-8 object-contain cursor-pointer" />
-          </Link>
+          <div className="px-5 py-5 border-b border-white/10 shrink-0">
+            <Link href={user ? dashboardPath(user.role) : "/"}>
+              <img
+                src="/brightbridge-logo.png"
+                alt="BrightBridge"
+                className="h-7 object-contain cursor-pointer"
+              />
+            </Link>
+          </div>
 
-          <div className="w-px h-6 bg-gray-100" />
-
-          {/* Nav links */}
-          <nav className="flex items-center gap-1 flex-1 overflow-x-auto">
+          {/* Nav items */}
+          <nav className="flex-1 px-3 py-4 space-y-0.5">
             {navItems.map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href}>
-                <button className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors whitespace-nowrap ${
-                  isActive(href)
-                    ? "bg-[#E8622A] text-white"
-                    : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
-                }`}>
-                  <Icon className="h-3.5 w-3.5" />
+                <button
+                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
+                    isActive(href)
+                      ? "bg-[#E8622A] text-white shadow-sm"
+                      : "text-white/60 hover:text-white hover:bg-white/10"
+                  }`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
                   {label}
                 </button>
               </Link>
             ))}
           </nav>
 
-          {/* Right side */}
-          <div className="flex items-center gap-3 shrink-0">
-            {/* EasyTeam status */}
-            <div className="hidden md:flex items-center gap-1.5 text-xs border border-[#E8622A]/30 rounded-full px-3 py-1 text-[#E8622A] font-semibold">
+          {/* EasyTeam live indicator */}
+          <div className="px-4 pb-3 shrink-0">
+            <div className="flex items-center gap-1.5 text-xs border border-[#E8622A]/30 rounded-full px-3 py-1.5 text-[#E8622A] font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-[#E8622A] animate-pulse" />
               EasyTeam Live
             </div>
+          </div>
 
-            {/* User info + logout */}
+          {/* User + Logout */}
+          <div className="px-4 pt-3 pb-5 border-t border-white/10 shrink-0">
             {user && (
-              <div className="flex items-center gap-2">
-                <div className="hidden md:flex items-center gap-2 text-xs text-gray-500">
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span className="font-medium text-gray-700">{user.name.split(" ")[0]}</span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-gray-100 text-gray-500">
-                    {user.role.replace("_", " ")}
-                  </span>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-1">
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
+                    style={{ background: `${ROLE_COLOR[user.role] ?? "#E8622A"}30` }}
+                  >
+                    <ShieldCheck className="h-3.5 w-3.5" style={{ color: ROLE_COLOR[user.role] ?? "#E8622A" }} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-white text-xs font-semibold truncate">{user.name.split(" ")[0]}</div>
+                    <div className="text-white/40 text-[10px] uppercase tracking-wider truncate">
+                      {user.role.replace(/_/g, " ")}
+                    </div>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={handleLogout}
-                  className="h-7 px-2 text-xs text-gray-500 hover:text-red-500 hover:bg-red-50 gap-1"
+                  className="w-full justify-start h-7 text-xs text-white/50 hover:text-white hover:bg-white/10 gap-2 px-2"
                 >
                   <LogOut className="h-3.5 w-3.5" />
-                  <span className="hidden md:inline">Logout</span>
+                  Logout
                 </Button>
               </div>
             )}
           </div>
-        </div>
-      </header>
+        </aside>
 
-      <main className="flex-1 px-6 py-6 max-w-7xl mx-auto w-full">
-        {children}
-      </main>
+        {/* ── Main content ── */}
+        <main
+          className="flex-1 overflow-y-auto"
+          style={{ background: "linear-gradient(160deg, #f0f4fb 0%, #f7f8fc 60%, #fdf6f3 100%)" }}
+        >
+          <div className="px-6 py-6">
+            {children}
+          </div>
+          <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100/80">
+            BrightBridge Assist · EasyTeam Embedded SDK Integration Test
+          </footer>
+        </main>
 
-      <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100 bg-white/50">
-        BrightBridge Assist · EasyTeam Embedded SDK Integration Test
-      </footer>
+      </div>
     </div>
   );
 }
