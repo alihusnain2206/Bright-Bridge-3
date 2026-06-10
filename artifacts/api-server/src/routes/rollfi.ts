@@ -1025,6 +1025,146 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   }
 });
 
+// ── Payroll overview (all companies, current period) ─────────
+
+router.get("/rollfi/payroll/overview", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const daycareCompanies = store.getDaycareCompanies().filter((c) => store.getRollfiCompany(c.id));
+  const results = await Promise.all(
+    daycareCompanies.map(async (company) => {
+      const rollfiCompany = store.getRollfiCompany(company.id)!;
+      try {
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+          { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+          { headers: rollfiHeaders() }
+        );
+        const raw = r.data as Record<string, unknown>;
+        assertNoRollfiError(raw, "getUnProcessedPayPeriod");
+        const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+        const sorted = [...periods].sort((a, b) =>
+          String(b.payBeginDate ?? "").localeCompare(String(a.payBeginDate ?? ""))
+        );
+        return { companyId: company.id, companyName: company.name, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriod: sorted[0] ?? null };
+      } catch (e) {
+        return { companyId: company.id, companyName: company.name, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriod: null, error: String(e) };
+      }
+    })
+  );
+  res.json({ companies: results });
+});
+
+// ── Pay period history (processed periods) ───────────────────
+
+router.get("/rollfi/payperiod/history", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.query as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodsDetails`,
+      { method: "getProcessedPayperiodsDetails", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r.data }, "Rollfi getProcessedPayperiodsDetails response");
+    const raw = r.data as Record<string, unknown>;
+    const periods = (raw.processedPayperiods ?? raw.payPeriods ?? raw.periods ?? []) as Array<Record<string, unknown>>;
+    const sorted = [...periods].sort((a, b) =>
+      String(b.payBeginDate ?? b.payDate ?? "").localeCompare(String(a.payBeginDate ?? a.payDate ?? ""))
+    );
+    res.json({ periods: sorted.slice(0, 10), raw: r.data });
+  } catch (err) {
+    const e = err as { response?: { data: unknown } };
+    req.log.warn({ err }, "getProcessedPayperiodsDetails failed");
+    res.status(500).json({ error: "Failed to fetch pay period history", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Run all payroll (all onboarded companies in sequence) ─────
+
+router.post("/rollfi/payroll/run-all", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const daycareCompanies = store.getDaycareCompanies().filter((c) => store.getRollfiCompany(c.id));
+  const results: Array<Record<string, unknown>> = [];
+  const PAY_HOURS = 75;
+
+  for (const company of daycareCompanies) {
+    const rollfiCompany = store.getRollfiCompany(company.id)!;
+    try {
+      // Get current unprocessed period
+      const ppResp = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+        { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+        { headers: rollfiHeaders() }
+      );
+      const ppRaw = ppResp.data as Record<string, unknown>;
+      assertNoRollfiError(ppRaw, "getUnProcessedPayPeriod");
+      const periods = (ppRaw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+      if (periods.length === 0) {
+        results.push({ companyId: company.id, companyName: company.name, skipped: true, reason: "No unprocessed pay period" });
+        continue;
+      }
+      const period = [...periods].sort((a, b) => String(b.payBeginDate ?? "").localeCompare(String(a.payBeginDate ?? "")))[0];
+      const payPeriodId = period.payPeriodId as string;
+      const payPeriodStatus = ((period.payPeriodStatus as string) ?? "").toLowerCase();
+      if (!["new", "failed", "cancelled", ""].includes(payPeriodStatus)) {
+        results.push({ companyId: company.id, companyName: company.name, skipped: true, reason: `Already ${payPeriodStatus}` });
+        continue;
+      }
+
+      const staffUsers = store.getAllStaffUsers().filter(
+        (u) => u.employeeId && u.companyId === company.id && u.role !== "super_admin" && u.role !== "parent"
+      );
+      const onboarded = staffUsers.filter((u) => store.getRollfiEmployee(u.employeeId!)?.rollfiUserId);
+      if (onboarded.length === 0) {
+        results.push({ companyId: company.id, companyName: company.name, skipped: true, reason: "No onboarded employees" });
+        continue;
+      }
+
+      // Add employees to period (idempotent)
+      await axios.post(
+        `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId,
+          payrollLineItems: onboarded.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, paymentMethod: "Direct Deposit" })) },
+        { headers: rollfiHeaders() }
+      );
+
+      // Import hours
+      const importResp = await axios.post(
+        `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+        { method: "importRegularPayrollData", companyId: rollfiCompany.rollfiCompanyId, payPeriodId,
+          payrollData: onboarded.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, basicPay: { payHours: PAY_HOURS } })) },
+        { headers: rollfiHeaders() }
+      );
+      assertNoRollfiError(importResp.data as Record<string, unknown>, "importRegularPayrollData");
+
+      // Initiate
+      const initiateResp = await axios.post(
+        `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+        { method: "initiatePayroll", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, runNow: false },
+        { headers: rollfiHeaders() }
+      );
+      assertNoRollfiError(initiateResp.data as Record<string, unknown>, "initiatePayroll");
+
+      results.push({ companyId: company.id, companyName: company.name, success: true, payPeriodId, payPeriod: period });
+    } catch (err) {
+      results.push({ companyId: company.id, companyName: company.name, success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  res.json({ results });
+});
+
 // ── Company task list (onboarding status) ────────────────────
 
 router.get("/rollfi/company-tasks", async (req, res) => {
