@@ -21,6 +21,116 @@ function randomNineDigits(): string {
   return String(n);
 }
 
+// Format a 9-digit SSN string as XXX-XX-XXXX
+function formatSsn(n: string): string {
+  const d = n.replace(/\D/g, "").padStart(9, "0");
+  return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
+}
+
+// Run the mandatory employee KYC onboarding steps so status moves from "Invite Sent" to active.
+// Steps run sequentially; KYC identity must succeed before initiating KYC.
+// Non-fatal errors are logged (idempotent re-runs are fine).
+async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<void> {
+  const headers = rollfiHeaders();
+  // Rollfi expects raw 9 digits (no dashes)
+  const ssn = randomNineDigits();
+
+  // Step 1 — accept terms (PUT)
+  try {
+    const r = await axios.put(
+      `${ROLLFI_BASE_URL}/userOnboarding#acceptTermsAndCondition`,
+      { method: "acceptTermsAndCondition", userId: rollfiUserId },
+      { headers }
+    );
+    log.info({ rollfiResponse: r.data }, "Rollfi acceptTermsAndCondition response");
+  } catch (e) { log.warn({ e }, "acceptTermsAndCondition failed (ignoring)"); }
+
+  // Step 2 — KYC identity information (must succeed before initiateUserKyc)
+  let kycAdded = false;
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/userOnboarding#addKycInformation`,
+      {
+        method: "addKycInformation",
+        kycInformation: {
+          userId: rollfiUserId,
+          ssn,
+          dateOfBirth: "1990-01-15",
+          address1: "123 Main St",
+          address2: "",
+          city: "Newark",
+          state: "NJ",
+          zipcode: "07101",
+        },
+      },
+      { headers }
+    );
+    log.info({ rollfiResponse: r.data }, "Rollfi addKycInformation response");
+    const raw = r.data as Record<string, unknown>;
+    const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+    // "already exists" means KYC was submitted in a previous run — treat as success
+    kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
+  } catch (e) { log.warn({ e }, "addKycInformation failed (ignoring)"); }
+
+  // Step 3 — W4 federal tax withholding (independent of KYC)
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/userOnboarding#addW4Information`,
+      {
+        method: "addW4Information",
+        w4Information: {
+          userId: rollfiUserId,
+          w4FilingStatus: "Single",
+          haveMultipleJob: false,
+          dependents: 0,
+          dependentsAbove18: 0,
+          otherIncome: 0,
+          otherDeduction: 0,
+          extraWithholding: 0,
+        },
+      },
+      { headers }
+    );
+    log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
+  } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
+
+  // Step 4 — initiate KYC verification (only if KYC info was accepted)
+  if (!kycAdded) {
+    log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
+  } else {
+    try {
+      const r = await axios.post(
+        `${ROLLFI_BASE_URL}/userOnboarding#initiateUserKyc`,
+        { method: "initiateUserKyc", userId: rollfiUserId },
+        { headers }
+      );
+      log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
+    } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
+  }
+
+  // Step 5 — add employee bank account (required for Direct Deposit employees to become active)
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`,
+      {
+        method: "addUserBankAccount",
+        linkType: "Manual",
+        userPayAccountEntity: {
+          companyId: rollfiCompanyId,
+          userId: rollfiUserId,
+          accountNumber: "9889890989",
+          routingNumber: "122238242",
+          bankName: "Chase Bank",
+          accountType: "savings",
+          accountName: "default",
+        },
+      },
+      { headers }
+    );
+    log.info({ rollfiResponse: r.data }, "Rollfi addUserBankAccount response");
+  } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+}
+
 // Derive a stable UUID-shaped ID from a seed string (for recovery fallback)
 function deriveStableId(seed: string): string {
   const hash = (s: string, salt: number) => {
@@ -532,8 +642,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       return;
     }
 
-    // TODO: confirm correct userType enum value with Rollfi support
-    // Tried: Hourly, Salaried, W2, Full-Time, Part-Time, Exempt, Non-Exempt, Employee, Regular — all rejected
+    // Run KYC onboarding flow to move employee from "Invite Sent" → active status
+    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
+
     const addWageResp = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
       {
@@ -545,9 +656,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           wageRate: wage,
           workerType: "W2",
           wageBasis: "Per Hour",
-          userType: "Hourly",
+          userType: "Paid by the hour",
           employmentStatus: "Full Time (30+ Hours per week)",
-          userRefTaxExempt: "No",
+          userRefTaxExempt: "No, this employee is not tax exempt",
           startDate: "2024-01-01",
           paymentMethod: "Direct Deposit",
         },
@@ -605,6 +716,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           });
           req.log.info({ rollfiUserId: found.userId }, "Recovered existing Rollfi employee via getUsers");
 
+          // Run KYC onboarding to move "Invite Sent" → active (idempotent — safe to re-run)
+          await runEmployeeKycOnboarding(found.userId, rollfiCompany.rollfiCompanyId, req.log);
+
           // Ensure wage is set — may have been skipped on a previous recovery
           let rollfiWageId = "";
           try {
@@ -619,9 +733,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
                   wageRate: staffUser.hourlyWage ?? 1500,
                   workerType: "W2",
                   wageBasis: "Per Hour",
-                  userType: "Hourly",
+                  userType: "Paid by the hour",
                   employmentStatus: "Full Time (30+ Hours per week)",
-                  userRefTaxExempt: "No",
+                  userRefTaxExempt: "No, this employee is not tax exempt",
                   startDate: "2024-01-01",
                   paymentMethod: "Direct Deposit",
                 },
@@ -790,6 +904,66 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   req.log.info({ companyId, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId }, "Rollfi initiatePayroll request");
 
   try {
+    // Step 1: importRegularPayrollData — submit hours for each onboarded employee.
+    // Rollfi requires line items before initiatePayroll will accept the request.
+    const staffUsers = store
+      .getAllStaffUsers()
+      .filter((u) => u.employeeId && u.companyId === companyId && u.role !== "super_admin" && u.role !== "parent");
+
+    const onboardedStaff = staffUsers.filter((u) => {
+      const emp = store.getRollfiEmployee(u.employeeId!);
+      return emp?.rollfiUserId;
+    });
+
+    if (onboardedStaff.length === 0) {
+      res.status(400).json({ error: "No onboarded employees found for this company" });
+      return;
+    }
+
+    // Standard biweekly period: 10 workdays × 8h = 80h worked; 0.5h/day break = 5h; net = 75h
+    const PAY_HOURS = 75;
+
+    const payrollData = onboardedStaff.map((u) => ({
+      userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
+      basicPay: { payHours: PAY_HOURS },
+    }));
+
+    // Step 1a: addUsersToRegularPayPeriod — employees must be enrolled in the pay period
+    // before hours can be imported. This call is idempotent — re-enrolling is safe.
+    const addUsersResp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+      {
+        method: "addUsersToRegularPayPeriod",
+        companyId: rollfiCompany.rollfiCompanyId,
+        payPeriodId,
+        payrollLineItems: onboardedStaff.map((u) => ({
+          userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
+          paymentMethod: "Direct Deposit",
+        })),
+      },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod response");
+    // Don't assert error here — if users are already in the period Rollfi may return an error we can ignore
+
+    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: payrollData.length }, "Rollfi importRegularPayrollData request");
+
+    const importResp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+      {
+        method: "importRegularPayrollData",
+        companyId: rollfiCompany.rollfiCompanyId,
+        payPeriodId,
+        payrollData,
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    req.log.info({ rollfiResponse: importResp.data }, "Rollfi importRegularPayrollData response");
+    const importRaw = importResp.data as Record<string, unknown>;
+    assertNoRollfiError(importRaw, "importRegularPayrollData");
+
+    // Step 2: initiatePayroll
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
       {
@@ -806,7 +980,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
 
-    res.json({ success: true, ...raw });
+    res.json({ success: true, importResult: importRaw, ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
