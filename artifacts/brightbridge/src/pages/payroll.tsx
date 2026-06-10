@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2, XCircle, Loader2, Building2, Users, DollarSign,
-  AlertTriangle, ChevronRight, RefreshCw, Play, Clock,
+  AlertTriangle, ChevronRight, RefreshCw, Play, Clock, Zap,
+  ArrowRight, Activity,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────
@@ -34,11 +35,13 @@ interface PayPeriod {
   payEndDate: string; payDate: string; deadLineToRunPayroll: string;
   payPeriodStatus: string; payrollAmount?: number;
 }
-interface CompanyTasks {
-  tasks: Array<{ task: string; description: string }>;
-  kybStatus: "ok" | "failed" | "pending" | "issue";
-  bankLinked: boolean;
+interface PayrollResult {
+  success: boolean;
+  importResult?: { importRegularPayrollLData?: { status: string; message: string } };
+  payPeriod?: { payPeriodId: string; status: string; message: string };
+  error?: string;
 }
+interface EmpRollfiStatus { rollfiUserId: string; userStatus: string; kycStatus: string; }
 
 // ── API helpers ──────────────────────────────────────────────
 
@@ -95,12 +98,131 @@ function Steps({ current }: { current: number }) {
   );
 }
 
-// ── Status badge ─────────────────────────────────────────────
+// ── Onboard status badge ─────────────────────────────────────
 
 function StatusBadge({ onboarded }: { onboarded: boolean }) {
   return onboarded
     ? <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs gap-1"><CheckCircle2 className="h-3 w-3" />Onboarded</Badge>
     : <Badge className="bg-gray-100 text-gray-500 border-gray-200 text-xs gap-1"><XCircle className="h-3 w-3" />Not onboarded</Badge>;
+}
+
+// ── Rollfi user activation badge ─────────────────────────────
+
+function UserStatusBadge({ userStatus, kycStatus }: { userStatus: string; kycStatus: string }) {
+  const s = userStatus.toLowerCase().replace(/\s+/g, "");
+  if (s === "active") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+        <CheckCircle2 className="h-3 w-3" /> Active
+      </span>
+    );
+  }
+  if (s === "invitesent" && kycStatus === "passed") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+        <Activity className="h-3 w-3" /> KYC ✓
+      </span>
+    );
+  }
+  if (s === "invitesent") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+        <Clock className="h-3 w-3" /> Pending
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold bg-white/10 text-white/50 border border-white/20">
+      {userStatus}
+    </span>
+  );
+}
+
+// ── Pay period status badge ───────────────────────────────────
+
+function PayPeriodStatusBadge({ status }: { status: string }) {
+  const s = status.toLowerCase();
+  const configs: Record<string, { bg: string; text: string; border: string; label: string }> = {
+    new:       { bg: "bg-blue-500/20",    text: "text-blue-300",    border: "border-blue-500/30",    label: "New" },
+    submitted: { bg: "bg-amber-500/20",   text: "text-amber-300",   border: "border-amber-500/30",   label: "Submitted" },
+    inprocess: { bg: "bg-orange-500/20",  text: "text-orange-300",  border: "border-orange-500/30",  label: "Processing" },
+    processed: { bg: "bg-emerald-500/20", text: "text-emerald-300", border: "border-emerald-500/30", label: "Processed ✓" },
+    failed:    { bg: "bg-red-500/20",     text: "text-red-300",     border: "border-red-500/30",     label: "Failed" },
+    cancelled: { bg: "bg-gray-500/20",    text: "text-gray-300",    border: "border-gray-500/30",    label: "Cancelled" },
+    skipped:   { bg: "bg-gray-500/20",    text: "text-gray-300",    border: "border-gray-500/30",    label: "Skipped" },
+  };
+  const cfg = configs[s] ?? { bg: "bg-white/10", text: "text-white/50", border: "border-white/20", label: status };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${cfg.bg} ${cfg.text} border ${cfg.border}`}>
+      {cfg.label}
+    </span>
+  );
+}
+
+// ── Payroll result card ───────────────────────────────────────
+
+function PayrollResultCard({ result, onReset }: { result: PayrollResult; onReset: () => void }) {
+  if (!result.success) {
+    return (
+      <div className="mt-4 p-5 rounded-xl bg-red-500/10 border border-red-500/30">
+        <div className="flex items-center gap-2 mb-2">
+          <XCircle className="h-5 w-5 text-red-400 shrink-0" />
+          <p className="text-red-300 font-semibold">Payroll submission failed</p>
+        </div>
+        <p className="text-red-300/70 text-sm ml-7">{result.error}</p>
+        <button onClick={onReset} className="mt-3 ml-7 text-xs text-red-400/70 hover:text-red-300 underline">Dismiss</button>
+      </div>
+    );
+  }
+
+  const steps = [
+    {
+      label: "Hours Imported",
+      detail: result.importResult?.importRegularPayrollLData?.message ?? "Payroll data imported successfully",
+      done: true,
+    },
+    {
+      label: "Payroll Initiated",
+      detail: result.payPeriod?.message ?? "Pay period initiated successfully",
+      done: result.payPeriod?.status === "Success",
+    },
+  ];
+
+  return (
+    <div className="mt-4 p-5 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+      <div className="flex items-center gap-2 mb-4">
+        <div className="w-8 h-8 rounded-full bg-emerald-500/30 flex items-center justify-center">
+          <Zap className="h-4 w-4 text-emerald-400" />
+        </div>
+        <div>
+          <p className="text-emerald-300 font-semibold">Payroll submitted to Rollfi</p>
+          <p className="text-emerald-400/60 text-xs">Funds will be disbursed on the scheduled pay date</p>
+        </div>
+      </div>
+
+      <div className="space-y-2 mb-4">
+        {steps.map((step, i) => (
+          <div key={i} className="flex items-start gap-3">
+            <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${step.done ? "bg-emerald-500/40" : "bg-white/10"}`}>
+              {step.done ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" /> : <Clock className="h-3.5 w-3.5 text-white/40" />}
+            </div>
+            <div>
+              <p className={`text-sm font-semibold ${step.done ? "text-emerald-300" : "text-white/40"}`}>{step.label}</p>
+              <p className="text-white/40 text-xs">{step.detail}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {result.payPeriod?.payPeriodId && (
+        <div className="flex items-center gap-2 pt-3 border-t border-emerald-500/20">
+          <span className="text-white/30 text-xs">Pay Period ID</span>
+          <span className="text-white/50 text-xs font-mono">{result.payPeriod.payPeriodId.slice(0, 8)}…</span>
+          <button onClick={onReset} className="ml-auto text-xs text-emerald-400/50 hover:text-emerald-300">Dismiss</button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Main page ────────────────────────────────────────────────
@@ -110,7 +232,11 @@ export default function Payroll() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
   const [payPeriod, setPayPeriod] = useState<PayPeriod | null>(null);
   const [payPeriodCompanyId, setPayPeriodCompanyId] = useState<string>("");
-  const [submitResult, setSubmitResult] = useState<string | null>(null);
+  const [payrollResult, setPayrollResult] = useState<PayrollResult | null>(null);
+  const [empStatuses, setEmpStatuses] = useState<Record<string, EmpRollfiStatus[]>>({});
+  const [empStatusLoading, setEmpStatusLoading] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
+  const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
   const { data: state, isLoading: stateLoading, refetch: refetchState } = useQuery<RollfiState>({
@@ -125,6 +251,11 @@ export default function Payroll() {
     enabled: tab === 2,
   });
 
+  const companies = state?.companies ?? [];
+  const employees = state?.employees ?? [];
+  const allCompaniesOnboarded = companies.length > 0 && companies.every((c) => c.rollfi);
+  const employeesForCompany = (cId: string) => employees.filter((e) => e.companyId === cId);
+
   const onboardCompany = useMutation({
     mutationFn: (companyId: string) => api.post("/rollfi/onboard/company", { companyId }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["rollfi-state"] }); },
@@ -133,7 +264,10 @@ export default function Payroll() {
   const onboardEmployee = useMutation({
     mutationFn: ({ employeeId, companyId }: { employeeId: string; companyId: string }) =>
       api.post("/rollfi/onboard/employee", { employeeId, companyId }),
-    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["rollfi-state"] }); void qc.invalidateQueries({ queryKey: ["rollfi-preview"] }); },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["rollfi-state"] });
+      void qc.invalidateQueries({ queryKey: ["rollfi-preview"] });
+    },
   });
 
   const fetchPayPeriod = useCallback(async (companyId: string) => {
@@ -143,28 +277,90 @@ export default function Payroll() {
       setPayPeriod(data);
     } catch (e) {
       setPayPeriod(null);
-      alert(`Failed to get pay period: ${(e as Error).message}`);
+      console.warn("Failed to get pay period:", (e as Error).message);
     }
   }, []);
 
+  const fetchEmpStatuses = useCallback(async (cos: CompanyState[]) => {
+    const rollfiCos = cos.filter((c) => c.rollfi);
+    if (rollfiCos.length === 0) return;
+    setEmpStatusLoading(true);
+    try {
+      const results = await Promise.all(
+        rollfiCos.map((c) =>
+          api.get<{ employees: EmpRollfiStatus[] }>(`/rollfi/employees/status?companyId=${c.id}`)
+            .then((d) => [c.id, d.employees] as [string, EmpRollfiStatus[]])
+            .catch(() => [c.id, []] as [string, EmpRollfiStatus[]])
+        )
+      );
+      setEmpStatuses(Object.fromEntries(results));
+    } finally {
+      setEmpStatusLoading(false);
+    }
+  }, []);
+
+  // Auto-fetch employee statuses when entering tab 1
+  useEffect(() => {
+    if (tab === 1 && companies.length > 0) {
+      void fetchEmpStatuses(companies);
+    }
+  }, [tab, companies.length]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-fetch pay period when entering tab 2 with a company selected
+  useEffect(() => {
+    if (tab !== 2) return;
+    const compId = selectedCompanyId !== "all" ? selectedCompanyId : companies.find((c) => c.rollfi)?.id;
+    if (!compId || autoFetchedRef.current === compId) return;
+    const comp = companies.find((c) => c.id === compId);
+    if (!comp?.rollfi) return;
+    autoFetchedRef.current = compId;
+    if (selectedCompanyId === "all") setSelectedCompanyId(compId);
+    void fetchPayPeriod(compId);
+  }, [tab, selectedCompanyId, companies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch pay period when company selection changes on tab 2
+  useEffect(() => {
+    if (tab !== 2 || selectedCompanyId === "all") return;
+    const comp = companies.find((c) => c.id === selectedCompanyId);
+    if (!comp?.rollfi) return;
+    void fetchPayPeriod(selectedCompanyId);
+  }, [selectedCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll pay period status after submission
+  useEffect(() => {
+    if (!isPolling || !payPeriodCompanyId) return;
+    const timer = setInterval(async () => {
+      try {
+        const data = await api.get<PayPeriod>(`/rollfi/payperiod?companyId=${payPeriodCompanyId}`);
+        setPayPeriod(data);
+        const terminal = ["processed", "failed", "returned", "skipped"];
+        if (terminal.includes(data.payPeriodStatus.toLowerCase())) setIsPolling(false);
+      } catch { setIsPolling(false); }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [isPolling, payPeriodCompanyId]);
+
   const submitPayroll = useMutation({
     mutationFn: ({ companyId, payPeriodId }: { companyId: string; payPeriodId: string }) =>
-      api.post("/rollfi/payroll/initiate", { companyId, payPeriodId }),
-    onSuccess: (data) => { setSubmitResult(JSON.stringify(data, null, 2)); },
-    onError: (e) => { setSubmitResult(`Error: ${(e as Error).message}`); },
+      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId }),
+    onSuccess: (data) => {
+      setPayrollResult(data);
+      setIsPolling(true);
+      // Refresh pay period after a short delay to get updated status
+      setTimeout(() => { void fetchPayPeriod(selectedCompanyId); }, 1500);
+    },
+    onError: (e) => { setPayrollResult({ success: false, error: (e as Error).message }); },
   });
 
-  const { data: companyTasks } = useQuery<CompanyTasks>({
-    queryKey: ["rollfi-tasks", selectedCompanyId],
-    queryFn: () => api.get(`/rollfi/company-tasks?companyId=${selectedCompanyId}`),
-    enabled: selectedCompanyId !== "all" && !!(state?.companies ?? []).find(c => c.id === selectedCompanyId)?.rollfi && tab === 2,
-    staleTime: 30_000,
-  });
+  // Derived: can we submit? pay period must be in a submittable state
+  const submittableStatuses = ["new", "cancelled", "failed"];
+  const periodSubmittable = !payPeriod || submittableStatuses.includes(payPeriod.payPeriodStatus.toLowerCase());
 
-  const companies = state?.companies ?? [];
-  const employees = state?.employees ?? [];
-  const allCompaniesOnboarded = companies.length > 0 && companies.every((c) => c.rollfi);
-  const employeesForCompany = (cId: string) => employees.filter((e) => e.companyId === cId);
+  // Get rollfi status for a specific employee
+  const getRollfiStatus = (companyId: string, rollfiUserId: string | undefined) => {
+    if (!rollfiUserId) return null;
+    return empStatuses[companyId]?.find((s) => s.rollfiUserId.toUpperCase() === rollfiUserId.toUpperCase()) ?? null;
+  };
 
   return (
     <div className="min-h-screen" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, #1a2e45 100%)` }}>
@@ -261,9 +457,20 @@ export default function Payroll() {
           <div>
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-white font-semibold flex items-center gap-2"><Users className="h-4 w-4 text-orange-400" /> Staff Employees</h2>
-              <Button variant="ghost" size="sm" className="text-white/50 hover:text-white gap-1" onClick={() => setTab(0)}>
-                ← Back
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost" size="sm"
+                  className="text-white/40 hover:text-white/70 gap-1.5 h-7 text-xs"
+                  disabled={empStatusLoading}
+                  onClick={() => void fetchEmpStatuses(companies)}
+                >
+                  {empStatusLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  Sync Rollfi Status
+                </Button>
+                <Button variant="ghost" size="sm" className="text-white/50 hover:text-white gap-1" onClick={() => setTab(0)}>
+                  ← Back
+                </Button>
+              </div>
             </div>
 
             {!allCompaniesOnboarded && (
@@ -279,6 +486,9 @@ export default function Payroll() {
               {companies.map((company) => {
                 const compEmployees = employeesForCompany(company.id);
                 const allEmpOnboarded = compEmployees.length > 0 && compEmployees.every((e) => e.rollfi);
+                const statusList = empStatuses[company.id] ?? [];
+                const activeCount = statusList.filter((s) => s.userStatus.toLowerCase() === "active").length;
+
                 return (
                   <div key={company.id} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                     <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
@@ -286,6 +496,11 @@ export default function Payroll() {
                         <Building2 className="h-4 w-4 text-orange-400" />
                         <span className="text-white font-semibold text-sm">{company.name}</span>
                         <span className="text-white/30 text-xs">({compEmployees.length} staff)</span>
+                        {statusList.length > 0 && (
+                          <span className="text-emerald-400/60 text-xs">
+                            · {activeCount}/{statusList.length} active in Rollfi
+                          </span>
+                        )}
                       </div>
                       {company.rollfi && !allEmpOnboarded && (
                         <Button
@@ -303,33 +518,44 @@ export default function Payroll() {
                       )}
                     </div>
                     <div className="divide-y divide-white/5">
-                      {compEmployees.map((emp) => (
-                        <div key={emp.employeeId} className="px-5 py-3 flex items-center justify-between gap-4">
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <span className="text-white text-sm font-medium">{emp.name}</span>
-                              <StatusBadge onboarded={!!emp.rollfi} />
+                      {compEmployees.map((emp) => {
+                        const rollfiStatus = emp.rollfi?.rollfiUserId
+                          ? getRollfiStatus(company.id, emp.rollfi.rollfiUserId)
+                          : null;
+                        return (
+                          <div key={emp.employeeId} className="px-5 py-3 flex items-center justify-between gap-4">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-white text-sm font-medium">{emp.name}</span>
+                                <StatusBadge onboarded={!!emp.rollfi} />
+                                {rollfiStatus && (
+                                  <UserStatusBadge
+                                    userStatus={rollfiStatus.userStatus}
+                                    kycStatus={rollfiStatus.kycStatus}
+                                  />
+                                )}
+                              </div>
+                              <div className="flex items-center gap-3 mt-0.5">
+                                <span className="text-white/40 text-xs">{emp.position}</span>
+                                <span className="text-white/30 text-xs">·</span>
+                                <span className="text-white/40 text-xs">${emp.hourlyWage}/hr</span>
+                                {emp.rollfi && (
+                                  <span className="text-white/25 text-xs font-mono">ID: {emp.rollfi.rollfiUserId.slice(0, 8)}…</span>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex items-center gap-3 mt-0.5">
-                              <span className="text-white/40 text-xs">{emp.position}</span>
-                              <span className="text-white/30 text-xs">·</span>
-                              <span className="text-white/40 text-xs">${emp.hourlyWage}/hr</span>
-                              {emp.rollfi && (
-                                <span className="text-white/25 text-xs font-mono">ID: {emp.rollfi.rollfiUserId.slice(0, 8)}…</span>
-                              )}
-                            </div>
+                            <Button
+                              size="sm"
+                              disabled={!!emp.rollfi || !company.rollfi || onboardEmployee.isPending || !emp.employeeId}
+                              onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
+                              className="shrink-0 text-white text-xs"
+                              style={{ background: emp.rollfi ? "rgba(255,255,255,0.08)" : company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: (emp.rollfi || !company.rollfi) ? 0.5 : 1 }}
+                            >
+                              {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : emp.rollfi ? "Added ✓" : !company.rollfi ? "Register company first" : "Add to Rollfi"}
+                            </Button>
                           </div>
-                          <Button
-                            size="sm"
-                            disabled={!!emp.rollfi || !company.rollfi || onboardEmployee.isPending || !emp.employeeId}
-                            onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
-                            className="shrink-0 text-white text-xs"
-                            style={{ background: emp.rollfi ? "rgba(255,255,255,0.08)" : company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: (emp.rollfi || !company.rollfi) ? 0.5 : 1 }}
-                          >
-                            {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : emp.rollfi ? "Added ✓" : !company.rollfi ? "Register company first" : "Add to Rollfi"}
-                          </Button>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -369,7 +595,7 @@ export default function Payroll() {
                 <span className="text-white/40 text-xs">Company</span>
                 <select
                   value={selectedCompanyId}
-                  onChange={(e) => setSelectedCompanyId(e.target.value)}
+                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); autoFetchedRef.current = ""; }}
                   className="bg-transparent text-white text-sm outline-none"
                 >
                   <option value="all">All Companies</option>
@@ -385,62 +611,46 @@ export default function Payroll() {
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh Hours
               </Button>
 
-              {selectedCompanyId !== "all" && companies.find(c => c.id === selectedCompanyId)?.rollfi && (
+              {selectedCompanyId !== "all" && companies.find((c) => c.id === selectedCompanyId)?.rollfi && (
                 <Button
                   variant="ghost" size="sm"
                   className="text-white/60 hover:text-white gap-1.5 border border-white/10"
                   onClick={() => void fetchPayPeriod(selectedCompanyId)}
                 >
-                  <Clock className="h-3.5 w-3.5" /> Get Pay Period from Rollfi
+                  <Clock className="h-3.5 w-3.5" /> {payPeriod ? "Re-fetch Pay Period" : "Get Pay Period"}
                 </Button>
               )}
             </div>
 
-            {/* KYB / onboarding status banner */}
-            {companyTasks && (companyTasks.kybStatus !== "ok" || !companyTasks.bankLinked) && (
-              <div className="mb-4 p-3 rounded-lg border border-amber-500/30 bg-amber-500/10">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                  <span className="text-amber-300 text-sm font-semibold">Rollfi Sandbox Limitations</span>
-                  <span className="text-amber-400/50 text-xs">(does not affect production)</span>
-                </div>
-                <div className="grid gap-1 pl-6">
-                  {companyTasks.kybStatus !== "ok" && (
-                    <p className="text-amber-200/80 text-xs">
-                      <span className="font-semibold">KYB: {companyTasks.kybStatus}</span> — Sandbox KYB uses synthetic test data that cannot be verified against real business records. Payroll initiation will show this error.
-                    </p>
-                  )}
-                  {!companyTasks.bankLinked && (
-                    <p className="text-amber-200/80 text-xs">
-                      <span className="font-semibold">Bank account:</span> Not linked — blocked by KYB status above.
-                    </p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Pay period info */}
+            {/* Pay period card */}
             {payPeriod && (
-              <div className="mb-4 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex flex-wrap items-center gap-4">
-                <div>
-                  <p className="text-emerald-300 text-xs font-semibold">Current Pay Period</p>
-                  <p className="text-white text-sm">{payPeriod.payPeriod}</p>
-                </div>
-                <div>
-                  <p className="text-emerald-300 text-xs font-semibold">Pay Date</p>
-                  <p className="text-white text-sm">{payPeriod.payDate}</p>
-                </div>
-                <div>
-                  <p className="text-emerald-300 text-xs font-semibold">Status</p>
-                  <p className="text-white text-sm capitalize">{payPeriod.payPeriodStatus}</p>
-                </div>
-                <div>
-                  <p className="text-emerald-300 text-xs font-semibold">Deadline</p>
-                  <p className="text-white text-sm">{payPeriod.deadLineToRunPayroll}</p>
-                </div>
-                <div>
-                  <p className="text-emerald-300 text-xs font-semibold">Period ID</p>
-                  <p className="text-white/60 text-xs font-mono">{payPeriod.payPeriodId.slice(0, 8)}…</p>
+              <div className="mb-4 p-4 rounded-xl border border-white/10 bg-white/5">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <div>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Pay Period</p>
+                    <p className="text-white text-sm font-medium">{payPeriod.payPeriod}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Pay Date</p>
+                    <p className="text-white text-sm">{payPeriod.payDate}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Status</p>
+                    <PayPeriodStatusBadge status={payPeriod.payPeriodStatus} />
+                  </div>
+                  <div>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Deadline</p>
+                    <p className="text-white text-sm">{payPeriod.deadLineToRunPayroll}</p>
+                  </div>
+                  <div>
+                    <p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Period ID</p>
+                    <p className="text-white/40 text-xs font-mono">{payPeriod.payPeriodId.slice(0, 8)}…</p>
+                  </div>
+                  {isPolling && (
+                    <div className="ml-auto flex items-center gap-1.5 text-orange-300/70 text-xs">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Watching for status updates…
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -501,45 +711,64 @@ export default function Payroll() {
                   </table>
                 </div>
 
-                {/* Submit */}
+                {/* Submit area */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
-                    disabled={!payPeriod || !preview.allOnboarded || submitPayroll.isPending || selectedCompanyId === "all"}
+                    disabled={
+                      !payPeriod ||
+                      !preview.allOnboarded ||
+                      submitPayroll.isPending ||
+                      selectedCompanyId === "all" ||
+                      !periodSubmittable
+                    }
                     onClick={() => {
                       if (payPeriod && selectedCompanyId !== "all") {
-                        setSubmitResult(null);
+                        setPayrollResult(null);
                         submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId });
                       }
                     }}
                     className="gap-2 text-white font-semibold"
-                    style={{ background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all") ? "rgba(255,255,255,0.1)" : ORANGE }}
+                    style={{
+                      background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all" || !periodSubmittable)
+                        ? "rgba(255,255,255,0.1)" : ORANGE,
+                    }}
                   >
-                    {submitPayroll.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                    Submit Payroll to Rollfi
+                    {submitPayroll.isPending
+                      ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</>
+                      : <><Play className="h-4 w-4" /> Submit Payroll to Rollfi</>
+                    }
                   </Button>
 
-                  {!payPeriod && <p className="text-white/30 text-xs">Get pay period first</p>}
-                  {payPeriod && !preview.allOnboarded && <p className="text-white/30 text-xs">All employees must be onboarded</p>}
+                  {!payPeriod && <p className="text-white/30 text-xs">Fetching pay period…</p>}
+                  {payPeriod && !periodSubmittable && (
+                    <div className="flex items-center gap-1.5">
+                      <PayPeriodStatusBadge status={payPeriod.payPeriodStatus} />
+                      <p className="text-white/30 text-xs">— already submitted</p>
+                    </div>
+                  )}
+                  {payPeriod && periodSubmittable && !preview.allOnboarded && (
+                    <p className="text-white/30 text-xs">All employees must be onboarded first</p>
+                  )}
                   {selectedCompanyId === "all" && <p className="text-white/30 text-xs">Select a specific company to submit</p>}
                 </div>
 
-                {/* Submit result */}
-                {submitResult && (() => {
-                  const isError = submitResult.startsWith("Error");
-                  const isKyb = submitResult.toLowerCase().includes("kyb") || submitResult.toLowerCase().includes("verification");
-                  return (
-                    <div className={`mt-4 p-4 rounded-xl border text-xs space-y-2 ${
-                      isError ? "bg-red-500/10 border-red-500/30 text-red-300" : "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
-                    }`}>
-                      <p className="font-mono whitespace-pre-wrap break-all">{submitResult}</p>
-                      {isKyb && (
-                        <p className="text-amber-300/80 border-t border-amber-500/20 pt-2 font-sans not-italic">
-                          This is expected in the Rollfi sandbox — KYB can only be approved using real business credentials. The full payroll flow works correctly in production.
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
+                {/* Result card */}
+                {payrollResult && (
+                  <PayrollResultCard
+                    result={payrollResult}
+                    onReset={() => setPayrollResult(null)}
+                  />
+                )}
+
+                {/* Next pay period hint */}
+                {payPeriod && !periodSubmittable && (
+                  <div className="mt-4 p-3 rounded-lg bg-white/5 border border-white/10 flex items-center gap-3">
+                    <ArrowRight className="h-4 w-4 text-white/30 shrink-0" />
+                    <p className="text-white/40 text-xs">
+                      The current pay period is <strong className="text-white/60">{payPeriod.payPeriodStatus}</strong>. Once it processes, a new period will appear automatically — come back to submit the next payroll run.
+                    </p>
+                  </div>
+                )}
               </>
             )}
           </div>

@@ -831,6 +831,41 @@ router.get("/rollfi/payperiod", async (req, res) => {
   }
 });
 
+// ── Employee Rollfi activation status ────────────────────────
+
+router.get("/rollfi/employees/status", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.query as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
+    const users = ((r.data as { users?: RollfiUser[] }).users ?? []);
+    res.json({
+      employees: users.map((u) => ({
+        rollfiUserId: u.userId,
+        userStatus: u.status?.userStatus ?? "Unknown",
+        kycStatus: u.kycStatus ?? "unknown",
+      })),
+    });
+  } catch (err) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "getUsers failed");
+    res.status(500).json({ error: "Failed to fetch employee statuses", details: e.response?.data ?? String(err) });
+  }
+});
+
 // ── Payroll preview (EasyTeam hours → calculated pay) ────────
 
 router.get("/rollfi/payroll/preview", (req, res) => {
