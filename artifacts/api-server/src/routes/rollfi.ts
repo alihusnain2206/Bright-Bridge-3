@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import axios from "axios";
 import { store } from "../store";
+import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
 
 const router: IRouter = Router();
 
@@ -385,7 +386,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       return;
     }
 
-    store.setRollfiCompany(companyId, {
+    await persistRollfiCompany(companyId, {
       rollfiCompanyId,
       rollfiLocationId: rollfiLocationId ?? "",
       onboardedAt: new Date().toISOString(),
@@ -413,7 +414,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
         const found = await findExistingRollfiCompany(company.name);
         if (found) {
           const rollfiLocationId = await fetchRollfiLocationId(found.companyID);
-          store.setRollfiCompany(companyId, {
+          await persistRollfiCompany(companyId, {
             rollfiCompanyId: found.companyID,
             rollfiLocationId,
             onboardedAt: new Date().toISOString(),
@@ -595,7 +596,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       })();
       if (locationId) {
         rollfiCompany = { ...rollfiCompany, rollfiLocationId: locationId };
-        store.setRollfiCompany(companyId, rollfiCompany);
+        await persistRollfiCompany(companyId, rollfiCompany);
         req.log.info({ locationId }, "Lazily resolved Rollfi location ID");
       }
     } catch (locErr) {
@@ -673,7 +674,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     const wageObj = (addWageRaw.userWage ?? addWageRaw) as Record<string, unknown>;
     const rollfiWageId = (wageObj.userWageId ?? wageObj.id) as string | undefined;
 
-    store.setRollfiEmployee(employeeId, {
+    await persistRollfiEmployee(employeeId, {
       rollfiUserId,
       rollfiWageId: rollfiWageId ?? "",
       onboardedAt: new Date().toISOString(),
@@ -709,7 +710,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 
         if (found?.userId) {
           // Store immediately so later steps can reference the userId
-          store.setRollfiEmployee(employeeId, {
+          await persistRollfiEmployee(employeeId, {
             rollfiUserId: found.userId,
             rollfiWageId: "",
             onboardedAt: new Date().toISOString(),
@@ -750,7 +751,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
             req.log.warn({ wageErr }, "addUserWage (recovery) failed — wage may already exist");
           }
 
-          store.setRollfiEmployee(employeeId, {
+          await persistRollfiEmployee(employeeId, {
             rollfiUserId: found.userId,
             rollfiWageId,
             onboardedAt: new Date().toISOString(),
@@ -764,7 +765,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
         // (initiatePayroll only needs companyId + payPeriodId, not individual userIds)
         req.log.warn({ email: staffUser.email, userCount: users.length }, "User not found in getUsers — using stable derived ID");
         const stableId = deriveStableId(staffUser.email);
-        store.setRollfiEmployee(employeeId, {
+        await persistRollfiEmployee(employeeId, {
           rollfiUserId: stableId,
           rollfiWageId: "",
           onboardedAt: new Date().toISOString(),
