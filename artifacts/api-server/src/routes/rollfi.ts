@@ -932,7 +932,10 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     return;
   }
 
-  const { companyId, payPeriodId } = req.body as { companyId: string; payPeriodId: string };
+  type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
+  const { companyId, payPeriodId, adjustments = [] } = req.body as {
+    companyId: string; payPeriodId: string; adjustments?: AdjInput[];
+  };
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) {
     res.status(400).json({ error: "Company not onboarded to Rollfi" });
@@ -961,10 +964,14 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     // Standard biweekly period: 10 workdays × 8h = 80h worked; 0.5h/day break = 5h; net = 75h
     const PAY_HOURS = 75;
 
-    const payrollData = onboardedStaff.map((u) => ({
-      userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
-      basicPay: { payHours: PAY_HOURS },
-    }));
+    const payrollData = onboardedStaff.map((u) => {
+      const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
+      const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
+      const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours: PAY_HOURS } };
+      if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
+      if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
+      return entry;
+    });
 
     // Step 1a: addUsersToRegularPayPeriod — employees must be enrolled in the pay period
     // before hours can be imported. This call is idempotent — re-enrolling is safe.
@@ -1204,6 +1211,90 @@ router.get("/rollfi/company-tasks", async (req, res) => {
     const e = err as { response?: { data: unknown } };
     res.status(500).json({ error: String(err), rollfiErrorBody: e.response?.data });
   }
+});
+
+// ── Pay stubs (per-employee pay breakdown for a processed period) ─────────
+
+router.get("/rollfi/paystubs", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const { companyId, payPeriodId } = req.query as { companyId: string; payPeriodId?: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded" }); return; }
+
+  const staff = store.getAllStaffUsers().filter(
+    (u) => u.companyId === companyId && u.employeeId && u.role !== "super_admin" && u.role !== "parent"
+  );
+
+  let rollfiEmpDetails: Array<Record<string, unknown>> = [];
+  let rollfiRaw: unknown = null;
+
+  if (payPeriodId) {
+    try {
+      const r = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodEmpDetails`,
+        { method: "getProcessedPayperiodEmpDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: r.data }, "getProcessedPayperiodEmpDetails response");
+      rollfiRaw = r.data;
+      const raw = r.data as Record<string, unknown>;
+      rollfiEmpDetails = (
+        raw.employeePayPeriodDetails ?? raw.employeeDetails ?? raw.payrollDetails ?? raw.employees ?? []
+      ) as Array<Record<string, unknown>>;
+    } catch (e) {
+      req.log.warn({ e }, "getProcessedPayperiodEmpDetails failed — building from local data");
+    }
+  }
+
+  const PAY_HOURS = 75;
+
+  const stubs = staff.map((u) => {
+    const re = u.employeeId ? store.getRollfiEmployee(u.employeeId) : null;
+    const rollfiDetail = re?.rollfiUserId
+      ? rollfiEmpDetails.find((d) =>
+          String(d.userId ?? d.rollfiUserId ?? "").toUpperCase() === re.rollfiUserId.toUpperCase()
+        )
+      : null;
+
+    const hourlyRate = u.hourlyWage ?? 1500;
+    const grossPay = rollfiDetail
+      ? Number(rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? PAY_HOURS * hourlyRate)
+      : PAY_HOURS * hourlyRate;
+    const federalTax  = Math.round(grossPay * 0.12   * 100) / 100;
+    const stateTax    = Math.round(grossPay * 0.05   * 100) / 100;
+    const fica        = Math.round(grossPay * 0.0765 * 100) / 100;
+    const defaultDed  = Math.round((federalTax + stateTax + fica) * 100) / 100;
+    const deductions  = rollfiDetail
+      ? Number(rollfiDetail.deductions ?? rollfiDetail.totalDeductions ?? rollfiDetail.totalTax ?? defaultDed)
+      : defaultDed;
+    const netPay = rollfiDetail
+      ? Number(rollfiDetail.netPay ?? rollfiDetail.takeHomePay ?? grossPay - deductions)
+      : grossPay - deductions;
+    const ytdGross = rollfiDetail
+      ? Number(rollfiDetail.ytdGross ?? rollfiDetail.yearToDateGross ?? rollfiDetail.ytdTotalGross ?? grossPay)
+      : grossPay;
+
+    return {
+      employeeId: u.employeeId,
+      rollfiUserId: re?.rollfiUserId ?? null,
+      name: u.name,
+      position: u.position,
+      hourlyRate,
+      hoursWorked: PAY_HOURS,
+      grossPay:   Math.round(grossPay   * 100) / 100,
+      federalTax: rollfiDetail ? Number(rollfiDetail.federalTax ?? rollfiDetail.federalIncomeTax ?? federalTax) : federalTax,
+      stateTax:   rollfiDetail ? Number(rollfiDetail.stateTax   ?? rollfiDetail.stateIncomeTax   ?? stateTax)   : stateTax,
+      fica:       rollfiDetail ? Number(rollfiDetail.fica        ?? rollfiDetail.socialSecurity    ?? fica)       : fica,
+      deductions: Math.round(deductions * 100) / 100,
+      netPay:     Math.round(netPay     * 100) / 100,
+      ytdGross:   Math.round(ytdGross   * 100) / 100,
+      fromRollfi: !!rollfiDetail,
+    };
+  });
+
+  res.json({ payPeriodId: payPeriodId ?? null, companyId, stubs, rollfiRaw });
 });
 
 // ── Rollfi Webhook Receiver ────────────────────────────────────────────────

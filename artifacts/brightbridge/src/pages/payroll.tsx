@@ -6,6 +6,7 @@ import {
   CheckCircle2, XCircle, Loader2, Building2, Users, DollarSign,
   AlertTriangle, ChevronRight, RefreshCw, Play, Clock, Zap,
   ArrowRight, Activity, History, SkipForward,
+  SlidersHorizontal, ClipboardList, Receipt,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────
@@ -56,6 +57,16 @@ interface ProcessedPeriod {
   payEndDate?: string; payDate?: string; payPeriodStatus?: string;
   payrollAmount?: number; [key: string]: unknown;
 }
+interface CompanyTask { task: string; description: string; }
+interface CompanyTasksData { tasks: CompanyTask[]; kybStatus: string; bankLinked: boolean; }
+interface PayStub {
+  employeeId: string | null; rollfiUserId: string | null;
+  name: string; position: string; hourlyRate: number; hoursWorked: number;
+  grossPay: number; federalTax: number; stateTax: number; fica: number;
+  deductions: number; netPay: number; ytdGross: number; fromRollfi: boolean;
+}
+interface PayStubsData { payPeriodId: string | null; companyId: string; stubs: PayStub[]; }
+type AdjMap = Record<string, { bonusPay: number; overtimePay: number }>;
 
 // ── API helpers ──────────────────────────────────────────────
 
@@ -333,7 +344,12 @@ function PayrollOverviewPanel({
 
 // ── Pay period history section ────────────────────────────────
 
-function HistorySection({ periods, companyName }: { periods: ProcessedPeriod[]; companyName: string }) {
+function HistorySection({ periods, companyName, companyId, onViewStubs }: {
+  periods: ProcessedPeriod[];
+  companyName: string;
+  companyId: string;
+  onViewStubs: (p: ProcessedPeriod) => void;
+}) {
   if (periods.length === 0) return null;
   return (
     <div className="mt-6">
@@ -345,8 +361,8 @@ function HistorySection({ periods, companyName }: { periods: ProcessedPeriod[]; 
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-              {["Period", "Pay Date", "Status", "Amount"].map((h) => (
-                <th key={h} className="text-left px-4 py-2.5 text-white/40 font-semibold">{h}</th>
+              {["Period", "Pay Date", "Status", "Amount", ""].map((h, i) => (
+                <th key={i} className="text-left px-4 py-2.5 text-white/40 font-semibold">{h}</th>
               ))}
             </tr>
           </thead>
@@ -363,11 +379,173 @@ function HistorySection({ periods, companyName }: { periods: ProcessedPeriod[]; 
                 <td className="px-4 py-3 text-emerald-400 font-semibold">
                   {p.payrollAmount != null ? `$${Number(p.payrollAmount).toLocaleString()}` : "—"}
                 </td>
+                <td className="px-4 py-3">
+                  <button
+                    onClick={() => onViewStubs(p)}
+                    className="flex items-center gap-1 text-white/40 hover:text-orange-400 transition-colors text-xs font-medium"
+                  >
+                    <Receipt className="h-3 w-3" />Pay Stubs
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Company tasks panel (setup checklist per company) ─────────
+
+function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; rollfiCompanyId: string }) {
+  const [open, setOpen] = useState(false);
+  const { data, isLoading, refetch } = useQuery<CompanyTasksData>({
+    queryKey: ["rollfi-tasks", companyId],
+    queryFn: () => api.get(`/rollfi/company-tasks?companyId=${companyId}`),
+    enabled: open,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const tasks = data?.tasks ?? [];
+
+  return (
+    <div className="border-t border-white/5">
+      <button
+        onClick={() => { setOpen((o) => !o); if (!open) void refetch(); }}
+        className="w-full px-5 py-2.5 flex items-center gap-2 text-xs text-white/40 hover:text-white/70 transition-colors"
+      >
+        {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : <ClipboardList className="h-3 w-3" />}
+        <span className="font-semibold">Setup Checklist</span>
+        {data && tasks.length > 0 && (
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300">{tasks.length}</span>
+        )}
+        {data && tasks.length === 0 && <CheckCircle2 className="h-3 w-3 text-emerald-400" />}
+        <ChevronRight className={`h-3 w-3 ml-auto transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
+      </button>
+
+      {open && (
+        <div className="px-5 pb-4">
+          {isLoading && (
+            <div className="flex items-center gap-2 text-white/30 text-xs py-1"><Loader2 className="h-3 w-3 animate-spin" />Loading…</div>
+          )}
+          {data && tasks.length === 0 && (
+            <div className="flex items-center gap-2 text-emerald-400/80 text-xs py-1">
+              <CheckCircle2 className="h-3.5 w-3.5" />All setup tasks completed — payroll is fully configured
+            </div>
+          )}
+          <div className="space-y-1">
+            {tasks.map((task, i) => {
+              const isFailed  = task.description.toLowerCase().includes("failed") || task.description.toLowerCase().includes("error");
+              const isPending = task.description.toLowerCase().includes("pending") || task.description.toLowerCase().includes("waiting");
+              return (
+                <div key={i} className="flex items-start gap-2.5 py-1.5 border-t border-white/5 first:border-t-0">
+                  {isFailed
+                    ? <XCircle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                    : isPending
+                    ? <Clock className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+                    : <AlertTriangle className="h-3.5 w-3.5 text-amber-400/80 shrink-0 mt-0.5" />}
+                  <div>
+                    <p className="text-white/80 text-xs font-semibold">{task.task}</p>
+                    <p className="text-white/40 text-xs">{task.description}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 pt-2 border-t border-white/5 text-[10px] text-white/20 font-mono">{rollfiCompanyId}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Pay stubs drawer (per-employee breakdown for a period) ────
+
+function PayStubsDrawer({ companyId, period, onClose }: {
+  companyId: string;
+  period: ProcessedPeriod;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = useQuery<PayStubsData>({
+    queryKey: ["rollfi-stubs", companyId, period.payPeriodId],
+    queryFn: () => api.get(`/rollfi/paystubs?companyId=${companyId}&payPeriodId=${period.payPeriodId ?? ""}`),
+    staleTime: 120_000,
+    retry: false,
+  });
+
+  const stubs = data?.stubs ?? [];
+  const totalGross = stubs.reduce((s, e) => s + e.grossPay, 0);
+  const totalNet   = stubs.reduce((s, e) => s + e.netPay, 0);
+  const liveData   = stubs.some((s) => s.fromRollfi);
+
+  return (
+    <div className="mt-4 rounded-xl border border-orange-400/20 overflow-hidden" style={{ background: "rgba(40,67,98,0.5)" }}>
+      <div className="px-5 py-3.5 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
+        <div className="flex items-center gap-2.5">
+          <Receipt className="h-4 w-4 text-orange-400" />
+          <span className="text-white font-semibold text-sm">
+            Pay Stubs — {period.payPeriod ?? (period.payBeginDate ? `${period.payBeginDate} – ${period.payEndDate}` : "Selected Period")}
+          </span>
+          {liveData && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Live from Rollfi</span>
+          )}
+          {!liveData && !isLoading && (
+            <span className="text-[10px] text-amber-400/60 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Estimated</span>
+          )}
+        </div>
+        <button onClick={onClose} className="text-white/30 hover:text-white/60 text-xs">✕ Close</button>
+      </div>
+
+      {isLoading && <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 text-white/30 animate-spin" /></div>}
+      {error && <div className="px-5 py-4 text-red-300 text-sm">{(error as Error).message}</div>}
+
+      {!isLoading && stubs.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                {["Employee", "Hours", "Gross Pay", "Fed Tax", "State Tax", "FICA", "Total Ded.", "Net Pay", "YTD Gross"].map((h) => (
+                  <th key={h} className="text-left px-4 py-2.5 text-white/40 font-semibold whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {stubs.map((stub) => (
+                <tr key={stub.employeeId} className="hover:bg-white/5">
+                  <td className="px-4 py-3">
+                    <div className="text-white font-medium">{stub.name}</div>
+                    <div className="text-white/40 text-[11px]">{stub.position}</div>
+                  </td>
+                  <td className="px-4 py-3 text-white/70">{stub.hoursWorked}h</td>
+                  <td className="px-4 py-3 text-emerald-400 font-bold">${stub.grossPay.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-red-300/80">${stub.federalTax.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-red-300/80">${stub.stateTax.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-red-300/80">${stub.fica.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-red-400 font-semibold">−${stub.deductions.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-white font-bold">${stub.netPay.toLocaleString()}</td>
+                  <td className="px-4 py-3 text-white/40">${stub.ytdGross.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr style={{ background: "rgba(255,255,255,0.04)" }}>
+                <td className="px-4 py-3 text-white font-semibold" colSpan={2}>Totals</td>
+                <td className="px-4 py-3 text-emerald-400 font-bold">${totalGross.toLocaleString()}</td>
+                <td colSpan={4} />
+                <td className="px-4 py-3 text-white font-bold">${totalNet.toLocaleString()}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+          {!liveData && (
+            <p className="px-5 py-2.5 border-t border-white/5 text-[11px] text-white/30">
+              Estimated figures based on hours × rate. Rollfi detailed stub data requires a fully processed pay period.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -384,6 +562,9 @@ export default function Payroll() {
   const [empStatusLoading, setEmpStatusLoading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
   const [runAllResults, setRunAllResults] = useState<RunAllResult[] | null>(null);
+  const [adjustments, setAdjustments] = useState<AdjMap>({});
+  const [adjOpen, setAdjOpen] = useState(false);
+  const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -471,8 +652,8 @@ export default function Payroll() {
   });
 
   const submitPayroll = useMutation({
-    mutationFn: ({ companyId, payPeriodId }: { companyId: string; payPeriodId: string }) =>
-      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId }),
+    mutationFn: ({ companyId, payPeriodId, adjs }: { companyId: string; payPeriodId: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[] }) =>
+      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, adjustments: adjs }),
     onSuccess: (data) => {
       setPayrollResult(data);
       setIsPolling(true);
@@ -574,20 +755,25 @@ export default function Payroll() {
 
             <div className="grid gap-4">
               {companies.map((company) => (
-                <div key={company.id} className="rounded-xl p-5 border border-white/10 bg-white/5 flex items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-white font-semibold">{company.name}</span>
-                      <StatusBadge onboarded={!!company.rollfi} />
+                <div key={company.id} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
+                  <div className="p-5 flex items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-white font-semibold">{company.name}</span>
+                        <StatusBadge onboarded={!!company.rollfi} />
+                      </div>
+                      {company.address && <p className="text-white/40 text-xs">{company.address}</p>}
+                      {company.rollfi && <p className="text-white/30 text-xs mt-1 font-mono">Rollfi ID: {company.rollfi.rollfiCompanyId}</p>}
                     </div>
-                    {company.address && <p className="text-white/40 text-xs">{company.address}</p>}
-                    {company.rollfi && <p className="text-white/30 text-xs mt-1 font-mono">Rollfi ID: {company.rollfi.rollfiCompanyId}</p>}
+                    <Button size="sm" disabled={!!company.rollfi || onboardCompany.isPending} onClick={() => onboardCompany.mutate(company.id)}
+                      className="shrink-0 text-white font-semibold"
+                      style={{ background: company.rollfi ? "rgba(255,255,255,0.1)" : ORANGE, opacity: company.rollfi ? 0.6 : 1 }}>
+                      {onboardCompany.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : company.rollfi ? "Registered ✓" : "Register with Rollfi"}
+                    </Button>
                   </div>
-                  <Button size="sm" disabled={!!company.rollfi || onboardCompany.isPending} onClick={() => onboardCompany.mutate(company.id)}
-                    className="shrink-0 text-white font-semibold"
-                    style={{ background: company.rollfi ? "rgba(255,255,255,0.1)" : ORANGE, opacity: company.rollfi ? 0.6 : 1 }}>
-                    {onboardCompany.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : company.rollfi ? "Registered ✓" : "Register with Rollfi"}
-                  </Button>
+                  {company.rollfi && (
+                    <CompanyTasksPanel companyId={company.id} rollfiCompanyId={company.rollfi.rollfiCompanyId} />
+                  )}
                 </div>
               ))}
             </div>
@@ -786,11 +972,94 @@ export default function Payroll() {
                   </table>
                 </div>
 
+                {/* Adjustments */}
+                <div className="mb-4">
+                  <button
+                    onClick={() => setAdjOpen((o) => !o)}
+                    className="flex items-center gap-2 text-sm text-white/50 hover:text-white/80 transition-colors mb-2"
+                  >
+                    <SlidersHorizontal className="h-4 w-4" />
+                    <span className="font-semibold">Payroll Adjustments</span>
+                    {Object.values(adjustments).some((a) => a.bonusPay > 0 || a.overtimePay > 0) && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/20">Active</span>
+                    )}
+                    <ChevronRight className={`h-3.5 w-3.5 ml-1 transition-transform duration-200 ${adjOpen ? "rotate-90" : ""}`} />
+                  </button>
+                  {adjOpen && (
+                    <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
+                      <div className="px-5 py-3 border-b border-white/10" style={{ background: "rgba(255,255,255,0.04)" }}>
+                        <p className="text-white/40 text-xs">Add one-time bonuses or overtime hours for this pay run. These are sent to Rollfi when you submit.</p>
+                      </div>
+                      <div className="divide-y divide-white/5">
+                        {preview.employees.filter((e) => e.onboardedToRollfi && e.rollfiUserId).map((emp) => {
+                          const key = emp.rollfiUserId!;
+                          const adj = adjustments[key] ?? { bonusPay: 0, overtimePay: 0 };
+                          const hasAdj = adj.bonusPay > 0 || adj.overtimePay > 0;
+                          return (
+                            <div key={emp.employeeId} className="px-5 py-3 flex items-center gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-white text-sm font-medium">{emp.name}</div>
+                                <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate}/hr</div>
+                              </div>
+                              <div className="flex items-center gap-3 shrink-0">
+                                <label className="flex items-center gap-1.5">
+                                  <span className="text-white/40 text-xs whitespace-nowrap">Bonus $</span>
+                                  <input
+                                    type="number" min="0" step="50"
+                                    value={adj.bonusPay || ""}
+                                    placeholder="0"
+                                    onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, bonusPay: Number(e.target.value) || 0 } }))}
+                                    className="w-24 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 transition-colors"
+                                  />
+                                </label>
+                                <label className="flex items-center gap-1.5">
+                                  <span className="text-white/40 text-xs whitespace-nowrap">OT hrs</span>
+                                  <input
+                                    type="number" min="0" step="0.5"
+                                    value={adj.overtimePay || ""}
+                                    placeholder="0"
+                                    onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, overtimePay: Number(e.target.value) || 0 } }))}
+                                    className="w-20 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 transition-colors"
+                                  />
+                                </label>
+                                {hasAdj && (
+                                  <button
+                                    onClick={() => setAdjustments((prev) => { const n = { ...prev }; delete n[key]; return n; })}
+                                    className="text-white/20 hover:text-white/50 text-xs px-1"
+                                  >✕</button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {Object.values(adjustments).some((a) => a.bonusPay > 0 || a.overtimePay > 0) && (
+                        <div className="px-5 py-2.5 border-t border-white/10 flex items-center justify-between text-xs" style={{ background: "rgba(255,255,255,0.02)" }}>
+                          <span className="text-white/40">
+                            Bonus total: <span className="text-orange-400 font-semibold">${Object.values(adjustments).reduce((s, a) => s + (a.bonusPay || 0), 0).toLocaleString()}</span>
+                            <span className="mx-2 text-white/20">·</span>
+                            OT hours: <span className="text-orange-400 font-semibold">{Object.values(adjustments).reduce((s, a) => s + (a.overtimePay || 0), 0)}h</span>
+                          </span>
+                          <button onClick={() => setAdjustments({})} className="text-white/30 hover:text-white/60 transition-colors">Clear all</button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {/* Submit area */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     disabled={!payPeriod || !preview.allOnboarded || submitPayroll.isPending || selectedCompanyId === "all" || !periodSubmittable}
-                    onClick={() => { if (payPeriod && selectedCompanyId !== "all") { setPayrollResult(null); submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId }); } }}
+                    onClick={() => {
+                      if (payPeriod && selectedCompanyId !== "all") {
+                        setPayrollResult(null);
+                        const adjs = Object.entries(adjustments)
+                          .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
+                          .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
+                        submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, adjs });
+                      }
+                    }}
                     className="gap-2 text-white font-semibold"
                     style={{ background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all" || !periodSubmittable) ? "rgba(255,255,255,0.1)" : ORANGE }}>
                     {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Submit Payroll to Rollfi</>}
@@ -816,7 +1085,21 @@ export default function Payroll() {
 
                 {/* History */}
                 {history && history.periods.length > 0 && (
-                  <HistorySection periods={history.periods} companyName={selectedCompanyName} />
+                  <>
+                    <HistorySection
+                      periods={history.periods}
+                      companyName={selectedCompanyName}
+                      companyId={selectedCompanyId}
+                      onViewStubs={(p) => setStubsPeriod((prev) => prev?.payPeriodId === p.payPeriodId ? null : p)}
+                    />
+                    {stubsPeriod && (
+                      <PayStubsDrawer
+                        companyId={selectedCompanyId}
+                        period={stubsPeriod}
+                        onClose={() => setStubsPeriod(null)}
+                      />
+                    )}
+                  </>
                 )}
               </>
             )}
