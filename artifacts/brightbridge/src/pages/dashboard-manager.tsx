@@ -120,17 +120,17 @@ export default function ManagerDashboard() {
           </div>
         </div>
 
-        {/* EasyTeam section */}
+        {/* Approve Timesheets section */}
         <div className="rounded-2xl overflow-hidden border" style={PANEL}>
           <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
             <div>
-              <h2 className="text-white font-semibold text-base">EasyTeam Manager View</h2>
-              <p className="text-white/50 text-sm">You can see only <span className="text-white/80 font-semibold">{company?.name}</span> staff</p>
+              <h2 className="text-white font-semibold text-base">Approve Timesheets</h2>
+              <p className="text-white/50 text-sm">Review and approve hours for <span className="text-white/80 font-semibold">{company?.name}</span> staff — feeds directly into payroll</p>
             </div>
             <Button onClick={generateToken} disabled={tokenLoading} size="sm"
               className="gap-1.5 text-sm font-semibold text-white border-0" style={{ background: ORANGE }}>
               <Play className="h-3.5 w-3.5" />
-              {tokenLoading ? "Generating…" : tokenData ? "Refresh Token" : "Generate Token & Launch"}
+              {tokenLoading ? "Loading…" : tokenData ? "Reload" : "Open Timesheet Approval"}
             </Button>
           </div>
 
@@ -141,8 +141,9 @@ export default function ManagerDashboard() {
           )}
           {!tokenData && !tokenLoading && (
             <div className="py-20 flex flex-col items-center justify-center gap-3">
-              <Play className="h-10 w-10 text-white/20" />
-              <p className="text-white/40 text-sm">Click "Generate Token &amp; Launch" to open your manager panel.</p>
+              <CheckCircle2 className="h-10 w-10 text-white/20" />
+              <p className="text-white/40 text-sm">Click "Open Timesheet Approval" to review and approve staff hours.</p>
+              <p className="text-white/25 text-xs">Approved hours are synced to payroll automatically.</p>
             </div>
           )}
           <div id="mgr-et-container" className="w-full" />

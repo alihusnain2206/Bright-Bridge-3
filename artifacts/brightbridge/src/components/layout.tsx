@@ -30,6 +30,7 @@ function getNavItems(role: string | undefined): NavItem[] {
     case "manager":
       return [
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
+        { href: "/timesheets",            label: "Timesheets",      icon: CalendarDays },
         { href: "/roles",                 label: "Role Comparison", icon: Scale },
       ];
     case "employee":
