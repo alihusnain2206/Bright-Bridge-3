@@ -257,6 +257,77 @@ router.get("/easyteam/timesheets", (_req, res) => {
   });
 });
 
+// ── Trigger EasyTeam export programmatically (replicates "Email Report" button) ──────
+async function triggerEasyTeamExportForLocation(locationId: string): Promise<boolean> {
+  if (!EASYTEAM_API_KEY) return false;
+  const managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+  if (!managerUser?.employeeId) return false;
+
+  try {
+    const adminJwt = jwt.sign(
+      {
+        employeeId: managerUser.employeeId,
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: {
+          name: "manager",
+          permissions: [
+            "LOCATION_ADMIN", "LOCATION_READ",
+            "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+            "SCHEDULE_READ", "SCHEDULE_WRITE",
+            "TIMESHEET_READ", "TIMESHEET_WRITE",
+          ],
+        },
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 2500 },
+        wage: 2500, wageType: "hourly",
+        features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256", expiresIn: "8h" }
+    );
+
+    const exchangeResp = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    const accessToken = exchangeResp.data.accessToken;
+
+    let internalOrgId = "ORG-BRIGHTBRIDGE";
+    let internalLocId = locationId;
+    try {
+      const parts = accessToken.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+        if (typeof payload.organizationId === "string") internalOrgId = payload.organizationId;
+        if (typeof payload.locationId === "string") internalLocId = payload.locationId;
+      }
+    } catch { /* keep defaults */ }
+
+    const headers = { Authorization: `Bearer ${accessToken}` };
+    const orgLocBase = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
+
+    // Try export endpoint patterns — EasyTeam fires our registered webhook when an export is triggered
+    const exportEndpoints = [
+      `${orgLocBase}/timesheets/export`,
+      `${orgLocBase}/timesheets/email`,
+      `${orgLocBase}/export`,
+      `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/timesheets/export`,
+    ];
+
+    for (const endpoint of exportEndpoints) {
+      try {
+        await axios.post(endpoint, {}, { headers, timeout: 5000 });
+        return true;
+      } catch { /* try next endpoint */ }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // ── Sync EasyTeam hours → Rollfi bridge ──────────────────────
 
 router.post("/easyteam/hours/sync", async (req, res) => {
@@ -265,25 +336,28 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // ── Step 1: Export webhook data (in-memory; set when manager clicks "Email Report") ──
-  const recentExport = exportLog.find(
-    (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
-      (!e.startDate || new Date(e.startDate) <= toDate) &&
-      (!e.endDate   || new Date(e.endDate)   >= fromDate)
-  );
+  const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
+  const etEmps   = store.listClients().flatMap((c) => store.listEmployees(c.id));
 
-  if (recentExport?.shifts && recentExport.shifts.length > 0) {
-    const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
-    const easyteamEmps = store.listClients().flatMap((c) => store.listEmployees(c.id));
-    const hoursByEmp = new Map<string, number>();
+  // Helper: scan exportLog for a matching entry and write timesheet entries to the store.
+  // Returns the number of entries written, or 0 if no usable export data was found.
+  function applyExportIfFound(): number {
+    const found = exportLog.find(
+      (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
+        (!e.startDate || new Date(e.startDate) <= toDate) &&
+        (!e.endDate   || new Date(e.endDate)   >= fromDate)
+    );
+    if (!found?.shifts || found.shifts.length === 0) return 0;
+
+    const hoursByEmp  = new Map<string, number>();
     const breaksByEmp = new Map<string, number>();
-
-    for (const shift of recentExport.shifts) {
+    for (const shift of found.shifts) {
       if (companyId) {
-        const matchedUser = allStaff.find((u) => u.employeeId === shift.employeeId);
-        const etEmp = easyteamEmps.find((e) => e.id === shift.employeeId);
-        const rollfiUser = etEmp ? allStaff.find((u) => u.name.toLowerCase() === etEmp.name.toLowerCase()) : matchedUser;
-        if (!rollfiUser || rollfiUser.companyId !== companyId) continue;
+        const etEmp = etEmps.find((e) => e.id === shift.employeeId);
+        const ru = etEmp
+          ? allStaff.find((u) => u.name.toLowerCase() === etEmp.name.toLowerCase())
+          : allStaff.find((u) => u.employeeId === shift.employeeId);
+        if (!ru || ru.companyId !== companyId) continue;
       }
       const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
       const b = parseFloat(shift.total_unpaid_hours_decimal ?? "0");
@@ -291,35 +365,61 @@ router.post("/easyteam/hours/sync", async (req, res) => {
       breaksByEmp.set(shift.employeeId, (breaksByEmp.get(shift.employeeId) ?? 0) + b);
     }
 
-    if (hoursByEmp.size > 0) {
-      const easyteamEmpsAll = store.listClients().flatMap((c) => store.listEmployees(c.id));
-      let synced = 0;
-      for (const [etEmpId, hours] of hoursByEmp) {
-        const etEmp = easyteamEmpsAll.find((e) => e.id === etEmpId);
-        const rollfiUser = allStaff.find((u) =>
-          u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
-        );
-        const resolvedCompanyId = rollfiUser?.companyId ?? companyId ?? "unknown";
-        const breakH = breaksByEmp.get(etEmpId) ?? 0;
-        store.setTimesheetEntry({
-          employeeId: rollfiUser?.employeeId ?? etEmpId,
-          companyId: resolvedCompanyId,
-          periodKey,
-          hoursWorked: hours,
-          breakDeduction: breakH,
-          approvedHours: Math.max(0, hours - breakH),
-          source: "easyteam",
-          syncedAt: new Date().toISOString(),
-        });
-        synced++;
+    let synced = 0;
+    for (const [etEmpId, hours] of hoursByEmp) {
+      const etEmp = etEmps.find((e) => e.id === etEmpId);
+      const rollfiUser = allStaff.find((u) =>
+        u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
+      );
+      const breakH = breaksByEmp.get(etEmpId) ?? 0;
+      store.setTimesheetEntry({
+        employeeId: rollfiUser?.employeeId ?? etEmpId,
+        companyId:  rollfiUser?.companyId  ?? companyId ?? "unknown",
+        periodKey,
+        hoursWorked:   hours,
+        breakDeduction: breakH,
+        approvedHours:  Math.max(0, hours - breakH),
+        source: "easyteam",
+        syncedAt: new Date().toISOString(),
+      });
+      synced++;
+    }
+    return synced;
+  }
+
+  // ── Step 1: In-memory exportLog (populated by previous webhook or trigger) ──
+  const step1 = applyExportIfFound();
+  if (step1 > 0) {
+    req.log.info({ periodKey, companyId, synced: step1 }, "Sync: used cached export webhook data");
+    res.json({ success: true, source: "easyteam", periodKey, synced: step1 });
+    return;
+  }
+
+  // ── Step 2: Trigger EasyTeam export + poll for incoming webhook (up to 4 s) ──
+  // Replicates what "Email Report" does inside the iframe — EasyTeam fires our webhook endpoint.
+  if (EASYTEAM_API_KEY && companyId) {
+    const co = store.getCompany(companyId);
+    if (co?.locationId) {
+      req.log.info({ locationId: co.locationId }, "Sync: triggering EasyTeam export programmatically");
+      const triggered = await triggerEasyTeamExportForLocation(co.locationId);
+      req.log.info({ triggered, locationId: co.locationId }, "Sync: export trigger result");
+
+      if (triggered) {
+        for (let i = 0; i < 8; i++) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 500));
+          const synced = applyExportIfFound();
+          if (synced > 0) {
+            req.log.info({ periodKey, companyId, synced, pollAttempt: i + 1 }, "Sync: webhook arrived after export trigger");
+            res.json({ success: true, source: "easyteam", periodKey, synced });
+            return;
+          }
+        }
+        req.log.info({ periodKey, companyId }, "Sync: webhook did not arrive within 4 s after trigger");
       }
-      req.log.info({ periodKey, companyId, synced }, "Sync: used export webhook data");
-      res.json({ success: true, source: "easyteam", periodKey, synced });
-      return;
     }
   }
 
-  // ── Step 2: EasyTeam REST API (live fetch — works even after server restart) ──
+  // ── Step 3: EasyTeam REST API direct fetch ──
   const allClientIds = companyId ? [companyId] : store.listClients().map((c) => c.id);
   const companiesToSync = allClientIds
     .map((id) => store.getCompany(id))
@@ -329,36 +429,33 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   for (const co of companiesToSync) {
     const locId = co.locationId!;
     const result = await fetchEasyTeamShiftsForLocation(locId);
-    req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: EasyTeam REST API result");
+    req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
 
     if ("shifts" in result && result.shifts.length > 0) {
       const inRange = result.shifts.filter((s) => {
-        if (!s.startTime) return true; // include if no timestamp (sandbox may omit)
+        if (!s.startTime) return true;
         const start = new Date(s.startTime);
         return start >= fromDate && start <= toDate;
       });
-
       const shiftsToProcess = inRange.length > 0 ? inRange : result.shifts;
-      const minutesByEmployee = new Map<string, number>();
-      const breaksByEmployee  = new Map<string, number>();
-      for (const shift of shiftsToProcess) {
-        minutesByEmployee.set(shift.employeeId, (minutesByEmployee.get(shift.employeeId) ?? 0) + shift.payableDuration);
-        breaksByEmployee.set(shift.employeeId,  (breaksByEmployee.get(shift.employeeId)  ?? 0) + shift.totalUnpaidBreaks);
+      const minutesByEmp = new Map<string, number>();
+      const breaksByEmp2 = new Map<string, number>();
+      for (const s of shiftsToProcess) {
+        minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + s.payableDuration);
+        breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + s.totalUnpaidBreaks);
       }
-
       const companyUsers = store.getUsersForCompany(co.id);
-      for (const [etEmployeeId, totalMinutes] of minutesByEmployee) {
-        const matchedUser = companyUsers.find((u) => u.employeeId === etEmployeeId);
-        const resolvedCompanyId = matchedUser?.companyId ?? co.id;
+      for (const [etEmpId, totalMinutes] of minutesByEmp) {
+        const matched = companyUsers.find((u) => u.employeeId === etEmpId);
         const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
-        const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
+        const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 100) / 100;
         store.setTimesheetEntry({
-          employeeId: etEmployeeId,
-          companyId: resolvedCompanyId,
+          employeeId: etEmpId,
+          companyId:  matched?.companyId ?? co.id,
           periodKey,
           hoursWorked,
           breakDeduction: breakHours,
-          approvedHours: Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
+          approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
           source: "easyteam",
           syncedAt: new Date().toISOString(),
         });
@@ -373,10 +470,10 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     return;
   }
 
-  // ── Step 3: Seed fallback ──
-  req.log.info({ periodKey, companyId }, "Sync: no live data found — seeding fallback hours");
+  // ── Step 4: Seed fallback ──
+  req.log.info({ periodKey, companyId }, "Sync: no live data — seeding fallback hours");
   const seeded = store.seedTimesheetHours(periodKey);
-  res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data available — seeded demo hours" });
+  res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data — seeded demo hours" });
 });
 
 router.get("/easyteam/hours", (req, res) => {
