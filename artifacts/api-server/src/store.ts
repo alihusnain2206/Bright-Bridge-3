@@ -69,6 +69,21 @@ function uid() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// ─── EASYTEAM HOURS BRIDGE ───────────────────────────────────
+
+export interface TimesheetEntry {
+  employeeId: string;
+  companyId: string;
+  periodKey: string; // "YYYY-MM-DD/YYYY-MM-DD"
+  hoursWorked: number;
+  breakDeduction: number;
+  approvedHours: number;
+  source: "easyteam" | "seeded" | "estimated";
+  syncedAt: string;
+}
+
+const timesheetHours = new Map<string, TimesheetEntry>(); // key: `${employeeId}::${periodKey}`
+
 // ─── ROLLFI INTEGRATION STATE ─────────────────────────────────
 
 export interface RollfiCompanyRecord {
@@ -209,6 +224,48 @@ export const store = {
   },
   getRawUser(id: string): TestUser | undefined {
     return testUsers.find((u) => u.id === id);
+  },
+
+  // ── EasyTeam Hours Bridge ──
+  getTimesheetKey(employeeId: string, periodKey: string): string { return `${employeeId}::${periodKey}`; },
+  getTimesheetEntry(employeeId: string, periodKey: string): TimesheetEntry | undefined {
+    return timesheetHours.get(`${employeeId}::${periodKey}`);
+  },
+  setTimesheetEntry(entry: TimesheetEntry): void {
+    timesheetHours.set(`${entry.employeeId}::${entry.periodKey}`, entry);
+  },
+  getTimesheetEntriesForPeriod(periodKey: string): TimesheetEntry[] {
+    return Array.from(timesheetHours.values()).filter((e) => e.periodKey === periodKey);
+  },
+  seedTimesheetHours(periodKey: string): TimesheetEntry[] {
+    const staff = testUsers.filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
+    const seeded: TimesheetEntry[] = [];
+    const baseHours = [76, 80, 72, 78, 74, 82, 68];
+    staff.forEach((u, i) => {
+      const hoursWorked = baseHours[i % baseHours.length]!;
+      const breakDeduction = Math.round(hoursWorked / 8) * 0.5;
+      const approvedHours = Math.max(0, hoursWorked - breakDeduction);
+      const entry: TimesheetEntry = {
+        employeeId: u.employeeId!,
+        companyId: u.companyId,
+        periodKey,
+        hoursWorked,
+        breakDeduction,
+        approvedHours,
+        source: "seeded",
+        syncedAt: new Date().toISOString(),
+      };
+      timesheetHours.set(`${u.employeeId!}::${periodKey}`, entry);
+      seeded.push(entry);
+    });
+    return seeded;
+  },
+  clearTimesheetHours(periodKey?: string): void {
+    if (periodKey) {
+      for (const key of timesheetHours.keys()) { if (key.endsWith(`::${periodKey}`)) timesheetHours.delete(key); }
+    } else {
+      timesheetHours.clear();
+    }
   },
 
   // ── Staff Users (payroll employees) ──

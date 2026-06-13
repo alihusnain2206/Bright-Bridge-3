@@ -927,11 +927,16 @@ router.get("/rollfi/payroll/preview", (req, res) => {
     .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent")
     .filter((u) => !companyId || u.companyId === companyId);
 
+  const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
+
   const entries = allStaff.map((u, i) => {
-    const hoursWorked = workdays * 8;
-    const breakDeduction = workdays * 0.5;
-    const unapprovedHours = i % 3 === 0 ? 2 : 0;
-    const netPayableHours = Math.max(0, hoursWorked - breakDeduction - unapprovedHours);
+    // Prefer EasyTeam synced hours, fall back to workdays estimate
+    const synced = u.employeeId ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined;
+    const hoursWorked     = synced ? synced.hoursWorked     : workdays * 8;
+    const breakDeduction  = synced ? synced.breakDeduction  : workdays * 0.5;
+    const unapprovedHours = synced ? 0                      : (i % 3 === 0 ? 2 : 0);
+    const netPayableHours = synced ? synced.approvedHours   : Math.max(0, hoursWorked - breakDeduction - unapprovedHours);
+    const hoursSource     = synced ? synced.source          : "estimated";
     const hourlyRate = u.hourlyWage ?? 1500;
     const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
     const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
@@ -947,6 +952,7 @@ router.get("/rollfi/payroll/preview", (req, res) => {
       netPayableHours,
       hourlyRate,
       grossPay,
+      hoursSource,
       onboardedToRollfi: !!rollfiEmp,
       rollfiUserId: rollfiEmp?.rollfiUserId ?? null,
     };
