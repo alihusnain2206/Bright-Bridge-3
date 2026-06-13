@@ -1124,7 +1124,7 @@ export default function Payroll() {
                           <td className="px-4 py-3 text-amber-400/80">−{emp.breakDeduction}h</td>
                           <td className="px-4 py-3 text-red-400/80">{emp.unapprovedHours > 0 ? `−${emp.unapprovedHours}h` : "—"}</td>
                           <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
-                          <td className="px-4 py-3 text-white/70">${emp.hourlyRate}</td>
+                          <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
                           <td className="px-4 py-3 text-emerald-400 font-bold">${emp.grossPay.toLocaleString()}</td>
                           <td className="px-4 py-3">{emp.onboardedToRollfi ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-white/20" />}</td>
                         </tr>
@@ -1166,7 +1166,7 @@ export default function Payroll() {
                             <div key={emp.employeeId} className="px-5 py-3 flex items-center gap-4">
                               <div className="flex-1 min-w-0">
                                 <div className="text-white text-sm font-medium">{emp.name}</div>
-                                <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate}/hr</div>
+                                <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate.toFixed(2)}/hr</div>
                               </div>
                               <div className="flex items-center gap-3 shrink-0">
                                 <label className="flex items-center gap-1.5">

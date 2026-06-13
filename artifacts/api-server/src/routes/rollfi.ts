@@ -937,7 +937,8 @@ router.get("/rollfi/payroll/preview", (req, res) => {
     const unapprovedHours = synced ? 0                      : (i % 3 === 0 ? 2 : 0);
     const netPayableHours = synced ? synced.approvedHours   : Math.max(0, hoursWorked - breakDeduction - unapprovedHours);
     const hoursSource     = synced ? synced.source          : "estimated";
-    const hourlyRate = u.hourlyWage ?? 1500;
+    const hourlyRateCents = u.hourlyWage ?? 1500;
+    const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
     const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
 
@@ -1307,7 +1308,8 @@ router.get("/rollfi/paystubs", async (req, res) => {
         )
       : null;
 
-    const hourlyRate = u.hourlyWage ?? 1500;
+    const hourlyRateCents = u.hourlyWage ?? 1500;
+    const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = rollfiDetail
       ? Number(rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? PAY_HOURS * hourlyRate)
       : PAY_HOURS * hourlyRate;
