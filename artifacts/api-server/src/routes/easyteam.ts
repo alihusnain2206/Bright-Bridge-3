@@ -322,7 +322,66 @@ router.get("/easyteam/hours", (req, res) => {
   res.json({ periodKey, entries, synced: entries.length > 0 });
 });
 
-router.post("/easyteam/hours/approve", (req, res) => {
+const EASYTEAM_REST_API = "https://www.easyteam.io";
+
+interface EasyTeamShift {
+  id: string;
+  employeeId: string;
+  locationId: string;
+  startTime: string;
+  endTime: string | null;
+  payableDuration: number; // minutes
+  totalUnpaidBreaks: number; // minutes
+  active: boolean;
+}
+
+async function fetchEasyTeamShiftsForLocation(locationId: string): Promise<{ shifts: EasyTeamShift[]; source: "api" } | { error: string }> {
+  if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
+
+  try {
+    // Generate admin-level JWT
+    const adminJwt = jwt.sign(
+      {
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        employeeId: "ADMIN-JOANNE",
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: {
+          name: "manager",
+          permissions: ["ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE"],
+        },
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256" }
+    );
+
+    // Exchange for access token
+    const exchangeResp = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    const accessToken = exchangeResp.data.accessToken;
+
+    // Fetch timesheets from REST API (fetch up to 200 shifts)
+    const shiftsResp = await axios.get<EasyTeamShift[]>(
+      `${EASYTEAM_REST_API}/api/organizations/ORG-BRIGHTBRIDGE/locations/${locationId}/timesheets`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        params: { limit: 200, page: 1 },
+        timeout: 10000,
+      }
+    );
+
+    const shifts = Array.isArray(shiftsResp.data) ? shiftsResp.data : [];
+    return { shifts, source: "api" };
+  } catch (err) {
+    const error = err as Error;
+    return { error: error.message };
+  }
+}
+
+router.post("/easyteam/hours/approve", async (req, res) => {
   const userId = req.session?.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
 
@@ -333,17 +392,78 @@ router.post("/easyteam/hours/approve", (req, res) => {
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // If no entries exist yet, seed them first so the manager has something to approve
-  let entries = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
-  if (entries.length === 0) {
+  // Look up location for this company
+  const company = store.getCompany(companyId);
+  const locationId = company?.locationId;
+
+  let dataSource: "easyteam" | "seeded" = "seeded";
+
+  if (locationId) {
+    // Attempt to pull real hours from EasyTeam REST API
+    const result = await fetchEasyTeamShiftsForLocation(locationId);
+
+    if ("shifts" in result && result.shifts.length > 0) {
+      // Filter to the requested date range
+      const inRange = result.shifts.filter((s) => {
+        const start = new Date(s.startTime);
+        return start >= fromDate && start <= toDate;
+      });
+
+      if (inRange.length > 0) {
+        // Aggregate payableDuration (minutes) per employeeId
+        const minutesByEmployee = new Map<string, number>();
+        const breaksByEmployee = new Map<string, number>();
+        for (const shift of inRange) {
+          minutesByEmployee.set(shift.employeeId, (minutesByEmployee.get(shift.employeeId) ?? 0) + shift.payableDuration);
+          breaksByEmployee.set(shift.employeeId, (breaksByEmployee.get(shift.employeeId) ?? 0) + shift.totalUnpaidBreaks);
+        }
+
+        // Match EasyTeam employeeIds to our store users for this company
+        const companyUsers = store.getUsersForCompany(companyId);
+
+        for (const [etEmployeeId, totalMinutes] of minutesByEmployee) {
+          // Our employeeIds (EMP-RAINBOW-001 etc.) are passed to EasyTeam as-is
+          const matchedUser = companyUsers.find((u) => u.employeeId === etEmployeeId);
+          const resolvedCompanyId = matchedUser?.companyId ?? companyId;
+
+          const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
+          const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
+          const approvedHours = Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100);
+
+          store.setTimesheetEntry({
+            employeeId: etEmployeeId,
+            companyId: resolvedCompanyId,
+            periodKey,
+            hoursWorked,
+            breakDeduction: breakHours,
+            approvedHours,
+            source: "easyteam",
+            syncedAt: new Date().toISOString(),
+          });
+        }
+
+        dataSource = "easyteam";
+        req.log.info({ periodKey, companyId, locationId, shifts: inRange.length }, "Fetched real EasyTeam hours for approval");
+      } else {
+        req.log.info({ periodKey, locationId }, "EasyTeam returned shifts but none in the requested date range — falling back to seed");
+      }
+    } else {
+      const errMsg = "error" in result ? result.error : "No shifts returned";
+      req.log.warn({ periodKey, locationId, error: errMsg }, "Could not fetch EasyTeam hours — falling back to seed");
+    }
+  }
+
+  // Fall back: seed hours if we still have nothing stored for this period+company
+  const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
+  if (existing.length === 0) {
     const all = store.seedTimesheetHours(periodKey);
-    entries = all.filter((e) => e.companyId === companyId);
+    req.log.info({ count: all.length }, "Seeded fallback hours for approval");
   }
 
   const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
 
-  req.log.info({ periodKey, companyId, count: approved.length, userId }, "Manager approved timesheet hours");
-  res.json({ success: true, periodKey, approved: approved.length, entries: approved });
+  req.log.info({ periodKey, companyId, count: approved.length, userId, dataSource }, "Manager approved timesheet hours");
+  res.json({ success: true, periodKey, approved: approved.length, dataSource, entries: approved });
 });
 
 router.post("/easyteam/webhook", (req, res) => {

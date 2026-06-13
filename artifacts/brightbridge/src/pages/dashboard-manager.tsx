@@ -75,6 +75,7 @@ export default function ManagerDashboard() {
   const [approving, setApproving] = useState(false);
   const [approvalDone, setApprovalDone] = useState(false);
   const [approvedAt, setApprovedAt] = useState<string | null>(null);
+  const [approvalDataSource, setApprovalDataSource] = useState<"easyteam" | "seeded" | null>(null);
 
   const period = getPeriodDates();
 
@@ -110,11 +111,12 @@ export default function ManagerDashboard() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from: period.from, to: period.to, companyId: user.companyId }),
-      }).then(r => r.json()) as { success: boolean; entries: TimesheetEntry[] };
+      }).then(r => r.json()) as { success: boolean; dataSource?: "easyteam" | "seeded"; entries: TimesheetEntry[] };
       if (d.success) {
         setHours(d.entries);
         setApprovalDone(true);
         setApprovedAt(new Date().toISOString());
+        setApprovalDataSource(d.dataSource ?? null);
       }
     } catch { /* ignore */ }
     finally { setApproving(false); }
@@ -269,7 +271,15 @@ export default function ManagerDashboard() {
             <div className="mx-6 mt-4 flex items-center gap-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
               <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
               <div>
-                <p className="text-emerald-300 font-semibold text-sm">Hours approved and queued for payroll</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-emerald-300 font-semibold text-sm">Hours approved and queued for payroll</p>
+                  {approvalDataSource === "easyteam" && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-orange-500/20 text-orange-400 border border-orange-500/20">Live EasyTeam data</span>
+                  )}
+                  {approvalDataSource === "seeded" && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/40 border border-white/10">Demo data</span>
+                  )}
+                </div>
                 <p className="text-emerald-400/60 text-xs mt-0.5">
                   Approved {approvedAt ? new Date(approvedAt).toLocaleString() : "just now"} · Super Admin can now sync these hours in the Payroll tab
                 </p>
