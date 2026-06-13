@@ -241,13 +241,23 @@ export const store = {
     return Array.from(timesheetHours.values()).filter((e) => e.periodKey === periodKey);
   },
   seedTimesheetHours(periodKey: string): TimesheetEntry[] {
-    const staff = testUsers.filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
+    // Only seed hourly employees (not managers/admins) with realistic hours.
+    // Tom Wilson's hours match EasyTeam sandbox data (1.95 h clock-in).
+    // All other employees get plausible part-shift hours so the demo looks real.
+    const realisticHours: Record<string, { h: number; b: number }> = {
+      "EMP-RAINBOW-001": { h: 1.95, b: 0 },    // Tom Wilson — matches EasyTeam sandbox
+      "EMP-SUNSHINE-001": { h: 3.5,  b: 0.5 }, // John Smith
+      "EMP-SUNSHINE-002": { h: 4.0,  b: 0.5 }, // Mary Johnson
+    };
+    const staff = testUsers.filter(
+      (u) => u.employeeId && u.role === "employee"
+    );
     const seeded: TimesheetEntry[] = [];
-    const baseHours = [76, 80, 72, 78, 74, 82, 68];
-    staff.forEach((u, i) => {
-      const hoursWorked = baseHours[i % baseHours.length]!;
-      const breakDeduction = Math.round(hoursWorked / 8) * 0.5;
-      const approvedHours = Math.max(0, hoursWorked - breakDeduction);
+    staff.forEach((u) => {
+      const defaults = realisticHours[u.employeeId!] ?? { h: 2.0, b: 0 };
+      const hoursWorked    = defaults.h;
+      const breakDeduction = defaults.b;
+      const approvedHours  = Math.max(0, hoursWorked - breakDeduction);
       const entry: TimesheetEntry = {
         employeeId: u.employeeId!,
         companyId: u.companyId,

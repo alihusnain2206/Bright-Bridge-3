@@ -3,6 +3,7 @@ import * as jwt from "jsonwebtoken";
 import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
+import { upsertTimesheetEntry } from "../lib/easyteam-persist.js";
 
 const router: IRouter = Router();
 
@@ -339,9 +340,9 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
   const etEmps   = store.listClients().flatMap((c) => store.listEmployees(c.id));
 
-  // Helper: scan exportLog for a matching entry and write timesheet entries to the store.
-  // Returns the number of entries written, or 0 if no usable export data was found.
-  function applyExportIfFound(): number {
+  // Helper: scan exportLog for a matching entry, write to store + persist to DB.
+  // Returns the number of entries persisted, or 0 if no usable export data was found.
+  async function applyExportIfFound(): Promise<number> {
     const found = exportLog.find(
       (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
         (!e.startDate || new Date(e.startDate) <= toDate) &&
@@ -366,29 +367,31 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     }
 
     let synced = 0;
-    for (const [etEmpId, hours] of hoursByEmp) {
-      const etEmp = etEmps.find((e) => e.id === etEmpId);
-      const rollfiUser = allStaff.find((u) =>
-        u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
-      );
-      const breakH = breaksByEmp.get(etEmpId) ?? 0;
-      store.setTimesheetEntry({
-        employeeId: rollfiUser?.employeeId ?? etEmpId,
-        companyId:  rollfiUser?.companyId  ?? companyId ?? "unknown",
-        periodKey,
-        hoursWorked:   hours,
-        breakDeduction: breakH,
-        approvedHours:  Math.max(0, hours - breakH),
-        source: "easyteam",
-        syncedAt: new Date().toISOString(),
-      });
-      synced++;
-    }
+    await Promise.all(
+      Array.from(hoursByEmp.entries()).map(async ([etEmpId, hours]) => {
+        const etEmp = etEmps.find((e) => e.id === etEmpId);
+        const rollfiUser = allStaff.find((u) =>
+          u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
+        );
+        const breakH = breaksByEmp.get(etEmpId) ?? 0;
+        await upsertTimesheetEntry({
+          employeeId: rollfiUser?.employeeId ?? etEmpId,
+          companyId:  rollfiUser?.companyId  ?? companyId ?? "unknown",
+          periodKey,
+          hoursWorked:   hours,
+          breakDeduction: breakH,
+          approvedHours:  Math.max(0, hours - breakH),
+          source: "easyteam",
+          syncedAt: new Date().toISOString(),
+        });
+        synced++;
+      })
+    );
     return synced;
   }
 
   // ── Step 1: In-memory exportLog (populated by previous webhook or trigger) ──
-  const step1 = applyExportIfFound();
+  const step1 = await applyExportIfFound();
   if (step1 > 0) {
     req.log.info({ periodKey, companyId, synced: step1 }, "Sync: used cached export webhook data");
     res.json({ success: true, source: "easyteam", periodKey, synced: step1 });
@@ -407,7 +410,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
       if (triggered) {
         for (let i = 0; i < 8; i++) {
           await new Promise<void>((resolve) => setTimeout(resolve, 500));
-          const synced = applyExportIfFound();
+          const synced = await applyExportIfFound();
           if (synced > 0) {
             req.log.info({ periodKey, companyId, synced, pollAttempt: i + 1 }, "Sync: webhook arrived after export trigger");
             res.json({ success: true, source: "easyteam", periodKey, synced });
@@ -449,7 +452,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
         const matched = companyUsers.find((u) => u.employeeId === etEmpId);
         const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
         const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 100) / 100;
-        store.setTimesheetEntry({
+        await upsertTimesheetEntry({
           employeeId: etEmpId,
           companyId:  matched?.companyId ?? co.id,
           periodKey,
@@ -635,9 +638,9 @@ router.post("/easyteam/hours/approve", async (req, res) => {
     }
 
     if (hoursByEmp.size > 0) {
-      for (const [empId, hours] of hoursByEmp) {
+      await Promise.all(Array.from(hoursByEmp.entries()).map(async ([empId, hours]) => {
         const breakH = breaksByEmp.get(empId) ?? 0;
-        store.setTimesheetEntry({
+        await upsertTimesheetEntry({
           employeeId: empId,
           companyId,
           periodKey,
@@ -647,7 +650,7 @@ router.post("/easyteam/hours/approve", async (req, res) => {
           source: "easyteam",
           syncedAt: new Date().toISOString(),
         });
-      }
+      }));
       dataSource = "easyteam";
       req.log.info({ periodKey, companyId, employees: hoursByEmp.size }, "Used export webhook data for approval");
     }
@@ -680,7 +683,7 @@ router.post("/easyteam/hours/approve", async (req, res) => {
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
           const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
           const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
-          store.setTimesheetEntry({
+          await upsertTimesheetEntry({
             employeeId: etEmployeeId,
             companyId: resolvedCompanyId,
             periodKey,
@@ -710,6 +713,9 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   }
 
   const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
+
+  // Persist approval state to DB so it survives server restarts
+  await Promise.all(approved.map((entry) => upsertTimesheetEntry(entry)));
 
   req.log.info({ periodKey, companyId, count: approved.length, userId, dataSource }, "Manager approved timesheet hours");
   res.json({ success: true, periodKey, approved: approved.length, dataSource, entries: approved });

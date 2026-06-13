@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, real } from "drizzle-orm/pg-core";
 
 export const rollfiCompanyRecords = pgTable("rollfi_company_records", {
   companyId:        text("company_id").primaryKey(),
@@ -24,4 +24,19 @@ export const rollfiWebhookEvents = pgTable("rollfi_webhook_events", {
   payPeriodId:     text("pay_period_id"),
   payload:         text("payload").notNull(),
   receivedAt:      text("received_at").notNull(),
+});
+
+export const timesheetEntries = pgTable("timesheet_entries", {
+  id:              serial("id").primaryKey(),
+  employeeId:      text("employee_id").notNull(),
+  companyId:       text("company_id").notNull(),
+  periodKey:       text("period_key").notNull(),
+  hoursWorked:     real("hours_worked").notNull(),
+  breakDeduction:  real("break_deduction").notNull().default(0),
+  approvedHours:   real("approved_hours").notNull(),
+  source:          text("source").notNull().default("easyteam"),
+  syncedAt:        text("synced_at").notNull(),
+  managerApproved: boolean("manager_approved").default(false),
+  approvedAt:      text("approved_at"),
+  approvedByUserId: text("approved_by_user_id"),
 });

@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
+import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 
 const rawPort = process.env["PORT"];
 
@@ -14,12 +15,16 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-loadRollfiStateFromDb()
-  .then(({ companies, employees }) => {
+Promise.all([
+  loadRollfiStateFromDb().then(({ companies, employees }) => {
     logger.info({ companies, employees }, "Rollfi state restored from DB");
-  })
+  }),
+  loadTimesheetEntriesFromDb().then((count) => {
+    logger.info({ count }, "EasyTeam timesheet entries restored from DB");
+  }),
+])
   .catch((err) => {
-    logger.warn({ err }, "Could not load Rollfi state from DB — starting with empty state");
+    logger.warn({ err }, "Could not fully load state from DB — starting with partial state");
   })
   .finally(() => {
     app.listen(port, (err) => {
