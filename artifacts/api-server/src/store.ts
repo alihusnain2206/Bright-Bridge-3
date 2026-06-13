@@ -80,6 +80,9 @@ export interface TimesheetEntry {
   approvedHours: number;
   source: "easyteam" | "seeded" | "estimated";
   syncedAt: string;
+  managerApproved?: boolean;
+  approvedAt?: string;
+  approvedByUserId?: string;
 }
 
 const timesheetHours = new Map<string, TimesheetEntry>(); // key: `${employeeId}::${periodKey}`
@@ -259,6 +262,19 @@ export const store = {
       seeded.push(entry);
     });
     return seeded;
+  },
+  approveTimesheetEntries(periodKey: string, companyId: string, approvedByUserId: string): TimesheetEntry[] {
+    const entries = Array.from(timesheetHours.values()).filter(
+      (e) => e.periodKey === periodKey && e.companyId === companyId
+    );
+    const now = new Date().toISOString();
+    for (const entry of entries) {
+      entry.managerApproved = true;
+      entry.approvedAt = now;
+      entry.approvedByUserId = approvedByUserId;
+      timesheetHours.set(`${entry.employeeId}::${periodKey}`, entry);
+    }
+    return entries;
   },
   clearTimesheetHours(periodKey?: string): void {
     if (periodKey) {

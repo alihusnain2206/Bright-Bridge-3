@@ -322,6 +322,30 @@ router.get("/easyteam/hours", (req, res) => {
   res.json({ periodKey, entries, synced: entries.length > 0 });
 });
 
+router.post("/easyteam/hours/approve", (req, res) => {
+  const userId = req.session?.userId;
+  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+
+  const toDate   = to   ? new Date(to)   : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
+
+  // If no entries exist yet, seed them first so the manager has something to approve
+  let entries = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
+  if (entries.length === 0) {
+    const all = store.seedTimesheetHours(periodKey);
+    entries = all.filter((e) => e.companyId === companyId);
+  }
+
+  const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
+
+  req.log.info({ periodKey, companyId, count: approved.length, userId }, "Manager approved timesheet hours");
+  res.json({ success: true, periodKey, approved: approved.length, entries: approved });
+});
+
 router.post("/easyteam/webhook", (req, res) => {
   const payload = req.body as {
     event?: string;

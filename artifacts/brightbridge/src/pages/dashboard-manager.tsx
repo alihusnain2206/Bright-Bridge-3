@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
   Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
+  Clock, ThumbsUp, Loader2, ArrowRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -13,6 +14,21 @@ const ORANGE = "#E8622A";
 
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string }
+interface TimesheetEntry {
+  employeeId: string; companyId: string; periodKey: string;
+  hoursWorked: number; breakDeduction: number; approvedHours: number;
+  source: string; syncedAt: string; managerApproved?: boolean; approvedAt?: string;
+}
+
+function getPeriodDates() {
+  const to = new Date();
+  const from = new Date(to.getTime() - 14 * 24 * 60 * 60 * 1000);
+  return {
+    from: from.toISOString().split("T")[0]!,
+    to: to.toISOString().split("T")[0]!,
+    label: `${from.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${to.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
+  };
+}
 
 function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
@@ -38,6 +54,14 @@ const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitu
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
+const EMPLOYEE_NAMES: Record<string, string> = {
+  "EMP-SUNSHINE-001": "John Smith",
+  "EMP-SUNSHINE-002": "Mary Johnson",
+  "MGR-SUNSHINE-001": "Susan Manager",
+  "EMP-RAINBOW-001": "Tom Wilson",
+  "MGR-RAINBOW-001": "Mike Manager",
+};
+
 export default function ManagerDashboard() {
   const { user, company, location } = useAuth();
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
@@ -45,16 +69,64 @@ export default function ManagerDashboard() {
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
 
+  // Approval state
+  const [hours, setHours] = useState<TimesheetEntry[]>([]);
+  const [hoursLoading, setHoursLoading] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [approvalDone, setApprovalDone] = useState(false);
+  const [approvedAt, setApprovedAt] = useState<string | null>(null);
+
+  const period = getPeriodDates();
+
   const companyEmployees = COMPANY_EMPLOYEES[user?.companyId ?? ""] ?? [];
   const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
 
   const { launch } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
+
+  const fetchHours = useCallback(async () => {
+    if (!user?.companyId) return;
+    setHoursLoading(true);
+    try {
+      const d = await fetch(
+        `/api/easyteam/hours?from=${period.from}&to=${period.to}&companyId=${user.companyId}`,
+        { credentials: "include" }
+      ).then(r => r.json()) as { entries: TimesheetEntry[]; synced: boolean };
+      setHours(d.entries ?? []);
+      const alreadyApproved = (d.entries ?? []).some(e => e.managerApproved);
+      if (alreadyApproved) {
+        setApprovalDone(true);
+        setApprovedAt((d.entries ?? []).find(e => e.approvedAt)?.approvedAt ?? null);
+      }
+    } catch { /* ignore */ }
+    finally { setHoursLoading(false); }
+  }, [user?.companyId, period.from, period.to]);
+
+  const handleApprove = async () => {
+    if (!user?.companyId) return;
+    setApproving(true);
+    try {
+      const d = await fetch("/api/easyteam/hours/approve", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: period.from, to: period.to, companyId: user.companyId }),
+      }).then(r => r.json()) as { success: boolean; entries: TimesheetEntry[] };
+      if (d.success) {
+        setHours(d.entries);
+        setApprovalDone(true);
+        setApprovedAt(new Date().toISOString());
+      }
+    } catch { /* ignore */ }
+    finally { setApproving(false); }
+  };
 
   useEffect(() => {
     fetchEvents();
     const iv = setInterval(fetchEvents, 10000);
     return () => clearInterval(iv);
   }, []);
+
+  useEffect(() => { void fetchHours(); }, [fetchHours]);
 
   const fetchEvents = async () => {
     try {
@@ -147,6 +219,105 @@ export default function ManagerDashboard() {
             </div>
           )}
           <div id="mgr-et-container" className="w-full" />
+        </div>
+
+        {/* Approve Hours for Payroll panel */}
+        <div className="rounded-2xl overflow-hidden border" style={PANEL}>
+          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <ThumbsUp className="h-4 w-4 text-white/50" />
+                <h2 className="text-white font-semibold text-base">Approve Hours for Payroll</h2>
+                {approvalDone && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/20">Approved</span>
+                )}
+              </div>
+              <p className="text-white/50 text-sm mt-0.5">
+                <Clock className="h-3 w-3 inline mr-1 opacity-50" />
+                Pay period: <span className="text-white/70">{period.label}</span>
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button onClick={() => void fetchHours()} className="text-white/30 hover:text-white/60 transition-colors">
+                <RefreshCw className={`h-3.5 w-3.5 ${hoursLoading ? "animate-spin" : ""}`} />
+              </button>
+              {!approvalDone ? (
+                <Button
+                  onClick={() => void handleApprove()}
+                  disabled={approving}
+                  size="sm"
+                  className="gap-1.5 text-sm font-semibold text-white border-0"
+                  style={{ background: ORANGE }}
+                >
+                  {approving
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Approving…</>
+                    : <><ThumbsUp className="h-3.5 w-3.5" /> Approve All Hours</>}
+                </Button>
+              ) : (
+                <button
+                  onClick={() => { setApprovalDone(false); setHours([]); void fetchHours(); }}
+                  className="text-white/30 hover:text-white/50 text-xs underline underline-offset-2"
+                >
+                  Re-approve
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Approved banner */}
+          {approvalDone && (
+            <div className="mx-6 mt-4 flex items-center gap-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+              <div>
+                <p className="text-emerald-300 font-semibold text-sm">Hours approved and queued for payroll</p>
+                <p className="text-emerald-400/60 text-xs mt-0.5">
+                  Approved {approvedAt ? new Date(approvedAt).toLocaleString() : "just now"} · Super Admin can now sync these hours in the Payroll tab
+                </p>
+              </div>
+              <ArrowRight className="h-4 w-4 text-emerald-400/40 ml-auto" />
+            </div>
+          )}
+
+          {/* Hours table */}
+          <div className="px-6 py-4">
+            {hoursLoading && hours.length === 0 ? (
+              <div className="py-8 flex items-center justify-center gap-2 text-white/30 text-sm">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading hours…
+              </div>
+            ) : hours.length === 0 ? (
+              <div className="py-8 text-center text-white/30 text-sm space-y-2">
+                <p>No hours synced for this period yet.</p>
+                <p className="text-white/20 text-xs">Click "Approve All Hours" — it will load the current period's hours and mark them as approved.</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-white/30 text-xs uppercase tracking-wide border-b border-white/10">
+                    <th className="text-left pb-2 font-medium">Employee</th>
+                    <th className="text-right pb-2 font-medium">Hours worked</th>
+                    <th className="text-right pb-2 font-medium">Breaks</th>
+                    <th className="text-right pb-2 font-medium">Approved hrs</th>
+                    <th className="text-right pb-2 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {hours.map((e) => (
+                    <tr key={e.employeeId}>
+                      <td className="py-2.5 text-white/80">{EMPLOYEE_NAMES[e.employeeId] ?? e.employeeId}</td>
+                      <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
+                      <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
+                      <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>
+                      <td className="py-2.5 text-right">
+                        {e.managerApproved
+                          ? <span className="text-emerald-400 text-xs font-medium flex items-center justify-end gap-1"><CheckCircle2 className="h-3 w-3" /> Approved</span>
+                          : <span className="text-white/25 text-xs">Pending</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         </div>
 
         {/* Access comparison + Token side by side */}
