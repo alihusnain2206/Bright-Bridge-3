@@ -5,7 +5,7 @@ import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
   Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
-  Clock, ThumbsUp, Loader2, ArrowRight,
+  Clock, ThumbsUp, Loader2, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -72,6 +72,7 @@ export default function ManagerDashboard() {
   // Approval state
   const [hours, setHours] = useState<TimesheetEntry[]>([]);
   const [hoursLoading, setHoursLoading] = useState(false);
+  const [pulling, setPulling] = useState(false);
   const [approving, setApproving] = useState(false);
   const [approvalDone, setApprovalDone] = useState(false);
   const [approvedAt, setApprovedAt] = useState<string | null>(null);
@@ -121,6 +122,23 @@ export default function ManagerDashboard() {
     } catch { /* ignore */ }
     finally { setApproving(false); }
   };
+
+  const handlePullHours = useCallback(async () => {
+    if (!user?.companyId) return;
+    setPulling(true);
+    setApprovalDone(false);
+    setApprovalDataSource(null);
+    try {
+      await fetch("/api/easyteam/hours/sync", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: period.from, to: period.to }),
+      });
+      await fetchHours();
+    } catch { /* ignore */ }
+    finally { setPulling(false); }
+  }, [user?.companyId, period.from, period.to, fetchHours]);
 
   useEffect(() => {
     fetchEvents();
@@ -194,138 +212,144 @@ export default function ManagerDashboard() {
           </div>
         </div>
 
-        {/* Approve Timesheets section */}
+        {/* Timesheets & Approval — combined panel */}
         <div className="rounded-2xl overflow-hidden border" style={PANEL}>
-          <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <h2 className="text-white font-semibold text-base">Approve Timesheets</h2>
-              <p className="text-white/50 text-sm">Review and approve hours for <span className="text-white/80 font-semibold">{company?.name}</span> staff — feeds directly into payroll. <span className="text-orange-400/70">For real hours: click "Email Report" above first.</span></p>
-            </div>
-            <Button onClick={generateToken} disabled={tokenLoading} size="sm"
-              className="gap-1.5 text-sm font-semibold text-white border-0" style={{ background: ORANGE }}>
-              <Play className="h-3.5 w-3.5" />
-              {tokenLoading ? "Loading…" : tokenData ? "Reload" : "Open Timesheet Approval"}
-            </Button>
-          </div>
 
-          {tokenError && (
-            <div className="mx-6 mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/20">
-              <AlertTriangle className="h-4 w-4" />{tokenError}
-            </div>
-          )}
-          {!tokenData && !tokenLoading && (
-            <div className="py-20 flex flex-col items-center justify-center gap-3">
-              <CheckCircle2 className="h-10 w-10 text-white/20" />
-              <p className="text-white/40 text-sm">Click "Open Timesheet Approval" to review and approve staff hours.</p>
-              <p className="text-white/25 text-xs">Approved hours are synced to payroll automatically.</p>
-            </div>
-          )}
-          <div id="mgr-et-container" className="w-full" />
-        </div>
-
-        {/* Approve Hours for Payroll panel */}
-        <div className="rounded-2xl overflow-hidden border" style={PANEL}>
+          {/* Header */}
           <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
             <div>
               <div className="flex items-center gap-2">
                 <ThumbsUp className="h-4 w-4 text-white/50" />
-                <h2 className="text-white font-semibold text-base">Approve Hours for Payroll</h2>
+                <h2 className="text-white font-semibold text-base">Timesheets &amp; Approval</h2>
                 {approvalDone && (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/20">Approved</span>
                 )}
               </div>
               <p className="text-white/50 text-sm mt-0.5">
                 <Clock className="h-3 w-3 inline mr-1 opacity-50" />
-                Pay period: <span className="text-white/70">{period.label}</span>
+                <span className="text-white/70 font-medium">{company?.name}</span> · Pay period: <span className="text-white/70">{period.label}</span>
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={() => void fetchHours()} className="text-white/30 hover:text-white/60 transition-colors">
-                <RefreshCw className={`h-3.5 w-3.5 ${hoursLoading ? "animate-spin" : ""}`} />
-              </button>
-              {!approvalDone ? (
-                <Button
-                  onClick={() => void handleApprove()}
-                  disabled={approving}
-                  size="sm"
-                  className="gap-1.5 text-sm font-semibold text-white border-0"
-                  style={{ background: ORANGE }}
-                >
-                  {approving
-                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Approving…</>
-                    : <><ThumbsUp className="h-3.5 w-3.5" /> Approve All Hours</>}
-                </Button>
-              ) : (
-                <button
-                  onClick={() => { setApprovalDone(false); setHours([]); void fetchHours(); }}
-                  className="text-white/30 hover:text-white/50 text-xs underline underline-offset-2"
-                >
-                  Re-approve
-                </button>
-              )}
+              <Button
+                onClick={() => void handlePullHours()}
+                disabled={pulling || hoursLoading}
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-sm font-medium bg-white/5 border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
+              >
+                {pulling
+                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Pulling…</>
+                  : <><Download className="h-3.5 w-3.5" /> Pull Hours</>}
+              </Button>
+              <Button onClick={() => void generateToken()} disabled={tokenLoading} size="sm"
+                className="gap-1.5 text-sm font-semibold text-white border-0" style={{ background: ORANGE }}>
+                <Play className="h-3.5 w-3.5" />
+                {tokenLoading ? "Loading…" : tokenData ? "Reload EasyTeam" : "Open EasyTeam"}
+              </Button>
             </div>
           </div>
 
-          {/* Approved banner */}
-          {approvalDone && (
-            <div className="mx-6 mt-4 flex items-center gap-2.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="text-emerald-300 font-semibold text-sm">Hours approved and queued for payroll</p>
-                  {approvalDataSource === "easyteam" && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-orange-500/20 text-orange-400 border border-orange-500/20">Live EasyTeam data</span>
-                  )}
-                  {approvalDataSource === "seeded" && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/40 border border-white/10">Demo data</span>
-                  )}
-                </div>
-                <p className="text-emerald-400/60 text-xs mt-0.5">
-                  Approved {approvedAt ? new Date(approvedAt).toLocaleString() : "just now"} · Super Admin can now sync these hours in the Payroll tab
-                </p>
-              </div>
-              <ArrowRight className="h-4 w-4 text-emerald-400/40 ml-auto" />
+          {/* EasyTeam iframe area */}
+          {tokenError && (
+            <div className="mx-6 mt-4 flex items-center gap-2 text-sm text-red-300 bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/20">
+              <AlertTriangle className="h-4 w-4" />{tokenError}
             </div>
           )}
+          {!tokenData && !tokenLoading && !tokenError && (
+            <div className="py-10 flex flex-col items-center justify-center gap-2 border-b border-white/10">
+              <Play className="h-8 w-8 text-white/15" />
+              <p className="text-white/35 text-sm">Click <span className="text-white/60 font-medium">Open EasyTeam</span> to review timesheets in the iframe</p>
+              <p className="text-white/20 text-xs">— or click <span className="text-white/40 font-medium">Pull Hours</span> to fetch hours directly without opening the iframe</p>
+            </div>
+          )}
+          <div id="mgr-et-container" className={`w-full ${tokenData ? "border-b border-white/10" : ""}`} />
 
-          {/* Hours table */}
-          <div className="px-6 py-4">
+          {/* Hours section */}
+          <div className="px-6 py-5">
+
+            {/* Approved banner */}
+            {approvalDone && (
+              <div className="mb-5 flex items-start gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-emerald-300 font-semibold text-sm">Hours approved and queued for payroll</p>
+                    {approvalDataSource === "easyteam" && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-orange-500/20 text-orange-400 border border-orange-500/20">Live EasyTeam data</span>
+                    )}
+                    {approvalDataSource === "seeded" && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-white/10 text-white/40 border border-white/10">Demo data</span>
+                    )}
+                  </div>
+                  <p className="text-emerald-400/60 text-xs mt-0.5">
+                    Approved {approvedAt ? new Date(approvedAt).toLocaleString() : "just now"} · Super Admin can now sync these hours in the Payroll tab
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setApprovalDone(false); setApprovalDataSource(null); setHours([]); void fetchHours(); }}
+                  className="text-white/30 hover:text-white/50 text-xs underline underline-offset-2 shrink-0"
+                >
+                  Re-approve
+                </button>
+              </div>
+            )}
+
+            {/* Hours table or empty state */}
             {hoursLoading && hours.length === 0 ? (
               <div className="py-8 flex items-center justify-center gap-2 text-white/30 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading hours…
               </div>
             ) : hours.length === 0 ? (
-              <div className="py-8 text-center text-white/30 text-sm space-y-2">
-                <p>No hours synced for this period yet.</p>
-                <p className="text-white/20 text-xs">Click "Approve All Hours" — it will load the current period's hours and mark them as approved.</p>
+              <div className="py-6 text-center text-white/30 text-sm space-y-1">
+                <p>No hours loaded for this period yet.</p>
+                <p className="text-white/20 text-xs">Use <span className="text-white/35">Pull Hours</span> or click <span className="text-white/35">Email Report</span> inside EasyTeam above.</p>
               </div>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-white/30 text-xs uppercase tracking-wide border-b border-white/10">
-                    <th className="text-left pb-2 font-medium">Employee</th>
-                    <th className="text-right pb-2 font-medium">Hours worked</th>
-                    <th className="text-right pb-2 font-medium">Breaks</th>
-                    <th className="text-right pb-2 font-medium">Approved hrs</th>
-                    <th className="text-right pb-2 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {hours.map((e) => (
-                    <tr key={e.employeeId}>
-                      <td className="py-2.5 text-white/80">{EMPLOYEE_NAMES[e.employeeId] ?? e.employeeId}</td>
-                      <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
-                      <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
-                      <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>
-                      <td className="py-2.5 text-right">
-                        {e.managerApproved
-                          ? <span className="text-emerald-400 text-xs font-medium flex items-center justify-end gap-1"><CheckCircle2 className="h-3 w-3" /> Approved</span>
-                          : <span className="text-white/25 text-xs">Pending</span>}
-                      </td>
+              <>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-white/30 text-xs uppercase tracking-wide border-b border-white/10">
+                      <th className="text-left pb-2 font-medium">Employee</th>
+                      <th className="text-right pb-2 font-medium">Hours worked</th>
+                      <th className="text-right pb-2 font-medium">Breaks</th>
+                      <th className="text-right pb-2 font-medium">Approved hrs</th>
+                      <th className="text-right pb-2 font-medium">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {hours.map((e) => (
+                      <tr key={e.employeeId}>
+                        <td className="py-2.5 text-white/80">{EMPLOYEE_NAMES[e.employeeId] ?? e.employeeId}</td>
+                        <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
+                        <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
+                        <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>
+                        <td className="py-2.5 text-right">
+                          {e.managerApproved
+                            ? <span className="text-emerald-400 text-xs font-medium flex items-center justify-end gap-1"><CheckCircle2 className="h-3 w-3" /> Approved</span>
+                            : <span className="text-white/25 text-xs">Pending</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Approve button — appears below the table when hours are loaded and not yet approved */}
+                {!approvalDone && (
+                  <div className="mt-5 flex justify-end border-t border-white/10 pt-4">
+                    <Button
+                      onClick={() => void handleApprove()}
+                      disabled={approving}
+                      className="gap-2 text-sm font-semibold text-white border-0 px-5"
+                      style={{ background: ORANGE }}
+                    >
+                      {approving
+                        ? <><Loader2 className="h-4 w-4 animate-spin" /> Approving…</>
+                        : <><ThumbsUp className="h-4 w-4" /> Approve Hours</>}
+                    </Button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
