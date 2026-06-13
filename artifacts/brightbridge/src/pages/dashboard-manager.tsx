@@ -133,7 +133,7 @@ export default function ManagerDashboard() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: period.from, to: period.to }),
+        body: JSON.stringify({ from: period.from, to: period.to, companyId: user.companyId }),
       });
       await fetchHours();
     } catch { /* ignore */ }

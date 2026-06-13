@@ -259,13 +259,13 @@ router.get("/easyteam/timesheets", (_req, res) => {
 
 // ── Sync EasyTeam hours → Rollfi bridge ──────────────────────
 
-router.post("/easyteam/hours/sync", (req, res) => {
-  const { from, to } = req.body as { from?: string; to?: string };
+router.post("/easyteam/hours/sync", async (req, res) => {
+  const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Check if we have real EasyTeam export data for this period
+  // ── Step 1: Export webhook data (in-memory; set when manager clicks "Email Report") ──
   const recentExport = exportLog.find(
     (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
       (!e.startDate || new Date(e.startDate) <= toDate) &&
@@ -273,42 +273,110 @@ router.post("/easyteam/hours/sync", (req, res) => {
   );
 
   if (recentExport?.shifts && recentExport.shifts.length > 0) {
-    // Build hours from real EasyTeam export shifts — group by employeeId
-    const hoursByEmp = new Map<string, number>();
-    for (const shift of recentExport.shifts) {
-      const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
-      hoursByEmp.set(shift.employeeId, (hoursByEmp.get(shift.employeeId) ?? 0) + h);
-    }
-
-    // Map EasyTeam employee IDs to Rollfi employee IDs by name matching
     const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
     const easyteamEmps = store.listClients().flatMap((c) => store.listEmployees(c.id));
+    const hoursByEmp = new Map<string, number>();
+    const breaksByEmp = new Map<string, number>();
 
-    let synced = 0;
-    for (const [etEmpId, hours] of hoursByEmp) {
-      const etEmp = easyteamEmps.find((e) => e.id === etEmpId);
-      if (!etEmp) continue;
-      const rollfiUser = allStaff.find((u) => u.name.toLowerCase() === etEmp.name.toLowerCase());
-      if (!rollfiUser?.employeeId) continue;
-      const breakDed = Math.round(hours / 8) * 0.5;
-      store.setTimesheetEntry({
-        employeeId: rollfiUser.employeeId,
-        companyId: rollfiUser.companyId,
-        periodKey,
-        hoursWorked: hours,
-        breakDeduction: breakDed,
-        approvedHours: Math.max(0, hours - breakDed),
-        source: "easyteam",
-        syncedAt: new Date().toISOString(),
-      });
-      synced++;
+    for (const shift of recentExport.shifts) {
+      if (companyId) {
+        const matchedUser = allStaff.find((u) => u.employeeId === shift.employeeId);
+        const etEmp = easyteamEmps.find((e) => e.id === shift.employeeId);
+        const rollfiUser = etEmp ? allStaff.find((u) => u.name.toLowerCase() === etEmp.name.toLowerCase()) : matchedUser;
+        if (!rollfiUser || rollfiUser.companyId !== companyId) continue;
+      }
+      const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
+      const b = parseFloat(shift.total_unpaid_hours_decimal ?? "0");
+      hoursByEmp.set(shift.employeeId, (hoursByEmp.get(shift.employeeId) ?? 0) + h);
+      breaksByEmp.set(shift.employeeId, (breaksByEmp.get(shift.employeeId) ?? 0) + b);
     }
-    res.json({ success: true, source: "easyteam", periodKey, synced, total: hoursByEmp.size });
-  } else {
-    // No real export data — seed with realistic hours for demo purposes
-    const seeded = store.seedTimesheetHours(periodKey);
-    res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam export data found for this period — seeded realistic hours for demo" });
+
+    if (hoursByEmp.size > 0) {
+      const easyteamEmpsAll = store.listClients().flatMap((c) => store.listEmployees(c.id));
+      let synced = 0;
+      for (const [etEmpId, hours] of hoursByEmp) {
+        const etEmp = easyteamEmpsAll.find((e) => e.id === etEmpId);
+        const rollfiUser = allStaff.find((u) =>
+          u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
+        );
+        const resolvedCompanyId = rollfiUser?.companyId ?? companyId ?? "unknown";
+        const breakH = breaksByEmp.get(etEmpId) ?? 0;
+        store.setTimesheetEntry({
+          employeeId: rollfiUser?.employeeId ?? etEmpId,
+          companyId: resolvedCompanyId,
+          periodKey,
+          hoursWorked: hours,
+          breakDeduction: breakH,
+          approvedHours: Math.max(0, hours - breakH),
+          source: "easyteam",
+          syncedAt: new Date().toISOString(),
+        });
+        synced++;
+      }
+      req.log.info({ periodKey, companyId, synced }, "Sync: used export webhook data");
+      res.json({ success: true, source: "easyteam", periodKey, synced });
+      return;
+    }
   }
+
+  // ── Step 2: EasyTeam REST API (live fetch — works even after server restart) ──
+  const allClientIds = companyId ? [companyId] : store.listClients().map((c) => c.id);
+  const companiesToSync = allClientIds
+    .map((id) => store.getCompany(id))
+    .filter((c): c is NonNullable<typeof c> => c != null && !!c.locationId);
+
+  let restSynced = 0;
+  for (const co of companiesToSync) {
+    const locId = co.locationId!;
+    const result = await fetchEasyTeamShiftsForLocation(locId);
+    req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: EasyTeam REST API result");
+
+    if ("shifts" in result && result.shifts.length > 0) {
+      const inRange = result.shifts.filter((s) => {
+        if (!s.startTime) return true; // include if no timestamp (sandbox may omit)
+        const start = new Date(s.startTime);
+        return start >= fromDate && start <= toDate;
+      });
+
+      const shiftsToProcess = inRange.length > 0 ? inRange : result.shifts;
+      const minutesByEmployee = new Map<string, number>();
+      const breaksByEmployee  = new Map<string, number>();
+      for (const shift of shiftsToProcess) {
+        minutesByEmployee.set(shift.employeeId, (minutesByEmployee.get(shift.employeeId) ?? 0) + shift.payableDuration);
+        breaksByEmployee.set(shift.employeeId,  (breaksByEmployee.get(shift.employeeId)  ?? 0) + shift.totalUnpaidBreaks);
+      }
+
+      const companyUsers = store.getUsersForCompany(co.id);
+      for (const [etEmployeeId, totalMinutes] of minutesByEmployee) {
+        const matchedUser = companyUsers.find((u) => u.employeeId === etEmployeeId);
+        const resolvedCompanyId = matchedUser?.companyId ?? co.id;
+        const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
+        const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
+        store.setTimesheetEntry({
+          employeeId: etEmployeeId,
+          companyId: resolvedCompanyId,
+          periodKey,
+          hoursWorked,
+          breakDeduction: breakHours,
+          approvedHours: Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
+          source: "easyteam",
+          syncedAt: new Date().toISOString(),
+        });
+        restSynced++;
+      }
+    }
+  }
+
+  if (restSynced > 0) {
+    req.log.info({ periodKey, companyId, restSynced }, "Sync: used EasyTeam REST API data");
+    res.json({ success: true, source: "easyteam", periodKey, synced: restSynced });
+    return;
+  }
+
+  // ── Step 3: Seed fallback ──
+  req.log.info({ periodKey, companyId }, "Sync: no live data found — seeding fallback hours");
+  const seeded = store.seedTimesheetHours(periodKey);
+  res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data available — seeded demo hours" });
 });
 
 router.get("/easyteam/hours", (req, res) => {
