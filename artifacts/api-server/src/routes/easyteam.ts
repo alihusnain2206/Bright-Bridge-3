@@ -335,27 +335,54 @@ interface EasyTeamShift {
   active: boolean;
 }
 
+const EASYTEAM_EMBED_API = "https://www.easyteam.io/embed/api";
+
+function extractArrayFromResponse(data: unknown): EasyTeamShift[] {
+  if (Array.isArray(data)) return data as EasyTeamShift[];
+  if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    const nested = obj.data ?? obj.timesheets ?? obj.shifts ?? obj.items ?? obj.records ?? [];
+    if (Array.isArray(nested)) return nested as EasyTeamShift[];
+  }
+  return [];
+}
+
 async function fetchEasyTeamShiftsForLocation(locationId: string): Promise<{ shifts: EasyTeamShift[]; source: "api" } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
+  // Find the manager for this location — must use their real employeeId or EasyTeam rejects the JWT
+  const managerUser = store.getAllStaffUsers().find(
+    (u) => u.locationId === locationId && u.role === "manager"
+  );
+  if (!managerUser?.employeeId) return { error: `No manager found for locationId=${locationId}` };
+
   try {
-    // Generate admin-level JWT
+    // Include TIMESHEET_READ + SHIFT_READ to access both timesheets and shifts endpoints
     const adminJwt = jwt.sign(
       {
+        employeeId: managerUser.employeeId,
         organizationId: "ORG-BRIGHTBRIDGE",
         locationId,
-        employeeId: "ADMIN-JOANNE",
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
           name: "manager",
-          permissions: ["ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE"],
+          permissions: [
+            "LOCATION_ADMIN", "LOCATION_READ",
+            "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+            "SCHEDULE_READ", "SCHEDULE_WRITE",
+            "TIMESHEET_READ", "TIMESHEET_WRITE",
+          ],
         },
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 2500 },
+        wage: 2500,
+        wageType: "hourly",
+        features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
       },
       EASYTEAM_API_KEY,
-      { algorithm: "RS256" }
+      { algorithm: "RS256", expiresIn: "8h" }
     );
 
-    // Exchange for access token
+    // Exchange for access token — extract internal EasyTeam UUIDs from the returned JWT
     const exchangeResp = await axios.post<{ accessToken: string }>(
       `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
       { token: adminJwt },
@@ -363,21 +390,42 @@ async function fetchEasyTeamShiftsForLocation(locationId: string): Promise<{ shi
     );
     const accessToken = exchangeResp.data.accessToken;
 
-    // Fetch timesheets from REST API (fetch up to 200 shifts)
-    const shiftsResp = await axios.get<EasyTeamShift[]>(
-      `${EASYTEAM_REST_API}/api/organizations/ORG-BRIGHTBRIDGE/locations/${locationId}/timesheets`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        params: { limit: 200, page: 1 },
-        timeout: 10000,
+    // Decode the access token to get EasyTeam's internal UUIDs
+    let internalOrgId = "ORG-BRIGHTBRIDGE";
+    let internalLocId = locationId;
+    try {
+      const parts = accessToken.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, unknown>;
+        if (typeof payload.organizationId === "string") internalOrgId = payload.organizationId;
+        if (typeof payload.locationId === "string") internalLocId = payload.locationId;
       }
-    );
+    } catch { /* keep defaults */ }
 
-    const shifts = Array.isArray(shiftsResp.data) ? shiftsResp.data : [];
+    const headers = { Authorization: `Bearer ${accessToken}` };
+    const baseUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
+
+    // Try /shifts first (raw clock-in/out records), then fall back to /timesheets
+    let shifts: EasyTeamShift[] = [];
+    for (const endpoint of ["/shifts", "/timesheets"]) {
+      try {
+        const r = await axios.get(`${baseUrl}${endpoint}`, {
+          headers,
+          params: { limit: 200, page: 1 },
+          timeout: 10000,
+        });
+        const found = extractArrayFromResponse(r.data);
+        if (found.length > 0) { shifts = found; break; }
+      } catch { /* try next endpoint */ }
+    }
+
     return { shifts, source: "api" };
   } catch (err) {
-    const error = err as Error;
-    return { error: error.message };
+    const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
+    const detail = axErr.response
+      ? `HTTP ${axErr.response.status}: ${JSON.stringify(axErr.response.data)}`
+      : (axErr.message ?? "Unknown error");
+    return { error: detail };
   }
 }
 
@@ -398,19 +446,61 @@ router.post("/easyteam/hours/approve", async (req, res) => {
 
   let dataSource: "easyteam" | "seeded" = "seeded";
 
-  if (locationId) {
-    // Attempt to pull real hours from EasyTeam REST API
+  // ── Step 1: Export webhook data (set when manager clicks "Email Report" in EasyTeam) ──
+  const recentExport = exportLog.find(
+    (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
+      (!e.startDate || new Date(e.startDate) <= toDate) &&
+      (!e.endDate   || new Date(e.endDate)   >= fromDate)
+  );
+
+  if (recentExport?.shifts && recentExport.shifts.length > 0) {
+    // Sum hours from real export data, filtered to this company's employees
+    const companyUsers = store.getUsersForCompany(companyId);
+    const hoursByEmp = new Map<string, number>();
+    const breaksByEmp = new Map<string, number>();
+
+    for (const shift of recentExport.shifts) {
+      const matched = companyUsers.find((u) => u.employeeId === shift.employeeId);
+      if (!matched) continue;
+      const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
+      const b = parseFloat(shift.total_unpaid_hours_decimal ?? "0");
+      hoursByEmp.set(shift.employeeId, (hoursByEmp.get(shift.employeeId) ?? 0) + h);
+      breaksByEmp.set(shift.employeeId, (breaksByEmp.get(shift.employeeId) ?? 0) + b);
+    }
+
+    if (hoursByEmp.size > 0) {
+      for (const [empId, hours] of hoursByEmp) {
+        const breakH = breaksByEmp.get(empId) ?? 0;
+        store.setTimesheetEntry({
+          employeeId: empId,
+          companyId,
+          periodKey,
+          hoursWorked: hours,
+          breakDeduction: breakH,
+          approvedHours: Math.max(0, hours - breakH),
+          source: "easyteam",
+          syncedAt: new Date().toISOString(),
+        });
+      }
+      dataSource = "easyteam";
+      req.log.info({ periodKey, companyId, employees: hoursByEmp.size }, "Used export webhook data for approval");
+    }
+  }
+
+  // ── Step 2: REST API attempt (EasyTeam REST timesheets endpoint) ──
+  // Note: in sandbox, this returns [] because timesheets only appear after formal submission.
+  // This path will succeed in production when timesheets are submitted by employees.
+  if (dataSource !== "easyteam" && locationId) {
     const result = await fetchEasyTeamShiftsForLocation(locationId);
+    req.log.info({ locationId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "EasyTeam REST API fetch result");
 
     if ("shifts" in result && result.shifts.length > 0) {
-      // Filter to the requested date range
       const inRange = result.shifts.filter((s) => {
         const start = new Date(s.startTime);
         return start >= fromDate && start <= toDate;
       });
 
       if (inRange.length > 0) {
-        // Aggregate payableDuration (minutes) per employeeId
         const minutesByEmployee = new Map<string, number>();
         const breaksByEmployee = new Map<string, number>();
         for (const shift of inRange) {
@@ -418,42 +508,35 @@ router.post("/easyteam/hours/approve", async (req, res) => {
           breaksByEmployee.set(shift.employeeId, (breaksByEmployee.get(shift.employeeId) ?? 0) + shift.totalUnpaidBreaks);
         }
 
-        // Match EasyTeam employeeIds to our store users for this company
         const companyUsers = store.getUsersForCompany(companyId);
-
         for (const [etEmployeeId, totalMinutes] of minutesByEmployee) {
-          // Our employeeIds (EMP-RAINBOW-001 etc.) are passed to EasyTeam as-is
           const matchedUser = companyUsers.find((u) => u.employeeId === etEmployeeId);
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
-
           const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
           const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
-          const approvedHours = Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100);
-
           store.setTimesheetEntry({
             employeeId: etEmployeeId,
             companyId: resolvedCompanyId,
             periodKey,
             hoursWorked,
             breakDeduction: breakHours,
-            approvedHours,
+            approvedHours: Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
             source: "easyteam",
             syncedAt: new Date().toISOString(),
           });
         }
-
         dataSource = "easyteam";
-        req.log.info({ periodKey, companyId, locationId, shifts: inRange.length }, "Fetched real EasyTeam hours for approval");
+        req.log.info({ periodKey, companyId, locationId, shifts: inRange.length }, "Fetched real EasyTeam REST hours for approval");
       } else {
-        req.log.info({ periodKey, locationId }, "EasyTeam returned shifts but none in the requested date range — falling back to seed");
+        req.log.info({ periodKey, locationId }, "EasyTeam REST: no shifts in date range");
       }
     } else {
-      const errMsg = "error" in result ? result.error : "No shifts returned";
-      req.log.warn({ periodKey, locationId, error: errMsg }, "Could not fetch EasyTeam hours — falling back to seed");
+      const errMsg = "error" in result ? result.error : "Empty timesheets (not yet submitted in EasyTeam)";
+      req.log.info({ periodKey, locationId, note: errMsg }, "EasyTeam REST API returned no data — falling back to seed");
     }
   }
 
-  // Fall back: seed hours if we still have nothing stored for this period+company
+  // ── Step 3: Seed fallback ──
   const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
   if (existing.length === 0) {
     const all = store.seedTimesheetHours(periodKey);
@@ -464,6 +547,90 @@ router.post("/easyteam/hours/approve", async (req, res) => {
 
   req.log.info({ periodKey, companyId, count: approved.length, userId, dataSource }, "Manager approved timesheet hours");
   res.json({ success: true, periodKey, approved: approved.length, dataSource, entries: approved });
+});
+
+// Debug-only endpoint — shows raw EasyTeam REST API response for a given location
+router.get("/easyteam/debug/shifts", async (req, res) => {
+  const locationId = (req.query.locationId as string) || "LOC-RAINBOW";
+  if (!EASYTEAM_API_KEY) { res.status(500).json({ error: "No API key" }); return; }
+
+  let exchangeToken: string | null = null;
+  let exchangeError: string | null = null;
+  let rawResponse: unknown = null;
+  let rawError: string | null = null;
+
+  // Step 1: exchange — use the manager for this location (same JWT structure as auth.ts)
+  const mgr = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+  if (!mgr?.employeeId) { res.json({ error: `No manager for ${locationId}` }); return; }
+
+  try {
+    const adminJwt = jwt.sign(
+      {
+        employeeId: mgr.employeeId,
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: { name: "manager", permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"] },
+        role: { name: mgr.position ?? "Daycare Manager", hourlyWage: 2500 },
+        wage: 2500,
+        wageType: "hourly",
+        features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256", expiresIn: "8h" }
+    );
+    const ex = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    exchangeToken = ex.data.accessToken ? "ok" : "empty";
+
+    // Step 2: decode the access token to extract EasyTeam's internal org UUID
+    const bearerToken = ex.data.accessToken;
+    let decodedToken: Record<string, unknown> = {};
+    try {
+      const parts = bearerToken.split(".");
+      if (parts.length === 3) {
+        const payload = Buffer.from(parts[1], "base64url").toString("utf8");
+        decodedToken = JSON.parse(payload) as Record<string, unknown>;
+      }
+    } catch { /* ignore decode errors */ }
+
+    // Step 3: try different org ID forms and base paths
+    const internalOrgId = (decodedToken.organizationId ?? decodedToken.org_id ?? decodedToken.sub ?? "ORG-BRIGHTBRIDGE") as string;
+    const internalLocId = (decodedToken.locationId ?? decodedToken.location_id ?? locationId) as string;
+
+    const base = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
+    const candidateUrls = [
+      `${base}/timesheets`,
+      `${base}/shifts`,
+      `${base}/clock-ins`,
+      `${base}/time-entries`,
+    ];
+
+    const trialResults: Record<string, unknown> = { decodedToken, internalOrgId, internalLocId };
+    for (const url of candidateUrls) {
+      try {
+        const r = await axios.get(url, {
+          headers: { Authorization: `Bearer ${bearerToken}` },
+          params: { limit: 10, page: 1 },
+          timeout: 8000,
+          validateStatus: () => true,
+        });
+        trialResults[url] = { status: r.status, data: typeof r.data === "string" ? r.data.slice(0, 200) : r.data };
+      } catch (e2) {
+        const e = e2 as { message?: string };
+        trialResults[url] = { error: e.message };
+      }
+    }
+    rawResponse = trialResults;
+  } catch (e) {
+    const err = e as { message?: string; response?: { status?: number; data?: unknown } };
+    exchangeError = err.response ? `HTTP ${err.response.status}: ${JSON.stringify(err.response.data)}` : (err.message ?? "Unknown");
+  }
+
+  res.json({ locationId, exchangeToken, exchangeError, rawResponse, rawError });
 });
 
 router.post("/easyteam/webhook", (req, res) => {

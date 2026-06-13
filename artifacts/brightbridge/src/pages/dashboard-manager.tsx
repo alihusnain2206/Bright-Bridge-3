@@ -199,7 +199,7 @@ export default function ManagerDashboard() {
           <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between flex-wrap gap-3">
             <div>
               <h2 className="text-white font-semibold text-base">Approve Timesheets</h2>
-              <p className="text-white/50 text-sm">Review and approve hours for <span className="text-white/80 font-semibold">{company?.name}</span> staff — feeds directly into payroll</p>
+              <p className="text-white/50 text-sm">Review and approve hours for <span className="text-white/80 font-semibold">{company?.name}</span> staff — feeds directly into payroll. <span className="text-orange-400/70">For real hours: click "Email Report" above first.</span></p>
             </div>
             <Button onClick={generateToken} disabled={tokenLoading} size="sm"
               className="gap-1.5 text-sm font-semibold text-white border-0" style={{ background: ORANGE }}>
