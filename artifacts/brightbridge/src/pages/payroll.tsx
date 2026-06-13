@@ -6,7 +6,7 @@ import {
   CheckCircle2, XCircle, Loader2, Building2, Users, DollarSign,
   AlertTriangle, ChevronRight, RefreshCw, Play, Clock, Zap,
   ArrowRight, Activity, History, SkipForward,
-  SlidersHorizontal, ClipboardList, Receipt,
+  SlidersHorizontal, ClipboardList, Receipt, UserPlus, Trash2,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ interface RollfiCompanyRecord { rollfiCompanyId: string; rollfiLocationId: strin
 interface RollfiEmployeeRecord { rollfiUserId: string; rollfiWageId?: string; onboardedAt: string; }
 interface CompanyState { id: string; name: string; address?: string; rollfi: RollfiCompanyRecord | null; }
 interface EmployeeState {
-  employeeId: string | null; name: string; position: string; companyId: string;
+  userId: string; employeeId: string | null; name: string; position: string; companyId: string;
   hourlyWage: number; rollfi: RollfiEmployeeRecord | null;
 }
 interface RollfiState { companies: CompanyState[]; employees: EmployeeState[]; }
@@ -87,6 +87,11 @@ const api = {
       throw new Error(e.error ?? r.statusText);
     }
     return r.json() as Promise<T>;
+  },
+  delete: async (path: string) => {
+    const r = await fetch(`/api${path}`, { method: "DELETE", credentials: "include" });
+    if (!r.ok) { const e = await r.json().catch(() => ({})) as { error?: string }; throw new Error(e.error ?? r.statusText); }
+    return r.json();
   },
 };
 
@@ -550,6 +555,94 @@ function PayStubsDrawer({ companyId, period, onClose }: {
   );
 }
 
+// ── Add Employee inline form ──────────────────────────────────
+
+const POSITION_OPTIONS = [
+  { value: "Teacher", label: "Teacher" },
+  { value: "Lead Teacher", label: "Lead Teacher" },
+  { value: "Teaching Assistant", label: "Teaching Assistant" },
+  { value: "Center Manager", label: "Center Manager" },
+  { value: "Supervisor", label: "Supervisor" },
+  { value: "Staff", label: "Staff" },
+];
+
+function AddEmployeeForm({ companyId, onDone }: { companyId: string; onDone: () => void }) {
+  const [name, setName]           = useState("");
+  const [email, setEmail]         = useState("");
+  const [position, setPosition]   = useState("Teacher");
+  const [wage, setWage]           = useState("1800");
+  const [error, setError]         = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: (data: { name: string; email: string; position: string; hourlyWage: number; companyId: string }) =>
+      api.post("/rollfi/employees", data),
+    onSuccess: onDone,
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const handleSubmit = (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setError(null);
+    if (!name.trim() || !email.trim()) { setError("Name and email are required."); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address."); return; }
+    create.mutate({ name: name.trim(), email: email.trim(), position, hourlyWage: Number(wage) || 1800, companyId });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-white/10" style={{ background: "rgba(232,98,42,0.04)" }}>
+      <div className="flex items-center gap-2 mb-3">
+        <UserPlus className="h-3.5 w-3.5 text-orange-400" />
+        <span className="text-white text-xs font-semibold">New Employee</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label className="text-white/40 text-xs block mb-1">Full Name *</label>
+          <input
+            type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" required
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder:text-white/20 outline-none focus:border-orange-400/50 transition-colors"
+          />
+        </div>
+        <div>
+          <label className="text-white/40 text-xs block mb-1">Work Email *</label>
+          <input
+            type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@sunshine.com" required
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder:text-white/20 outline-none focus:border-orange-400/50 transition-colors"
+          />
+        </div>
+        <div>
+          <label className="text-white/40 text-xs block mb-1">Position *</label>
+          <select
+            value={position} onChange={(e) => setPosition(e.target.value)}
+            className="w-full bg-[#1b3250] border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm outline-none focus:border-orange-400/50 transition-colors"
+          >
+            {POSITION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-white/40 text-xs block mb-1">Hourly Rate (¢) — e.g. 1800 = $18/hr</label>
+          <input
+            type="number" min="500" max="20000" step="100" value={wage} onChange={(e) => setWage(e.target.value)}
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm outline-none focus:border-orange-400/50 transition-colors"
+          />
+        </div>
+      </div>
+      {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
+      <div className="flex gap-2">
+        <button
+          type="submit" disabled={create.isPending}
+          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-white text-sm font-semibold transition-opacity disabled:opacity-50"
+          style={{ background: ORANGE }}
+        >
+          {create.isPending ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving…</> : <><UserPlus className="h-3.5 w-3.5" />Add Employee</>}
+        </button>
+        <button type="button" onClick={onDone} className="px-4 py-1.5 rounded-lg text-white/40 hover:text-white/70 text-sm transition-colors">
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────
 
 export default function Payroll() {
@@ -565,6 +658,7 @@ export default function Payroll() {
   const [adjustments, setAdjustments] = useState<AdjMap>({});
   const [adjOpen, setAdjOpen] = useState(false);
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
+  const [addingEmpForCompany, setAddingEmpForCompany] = useState<string | null>(null);
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -825,26 +919,34 @@ export default function Payroll() {
                 return (
                   <div key={company.id} className="rounded-xl border border-white/10 bg-white/5 overflow-hidden">
                     <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Building2 className="h-4 w-4 text-orange-400" />
                         <span className="text-white font-semibold text-sm">{company.name}</span>
                         <span className="text-white/30 text-xs">({compEmployees.length} staff)</span>
                         {statusList.length > 0 && <span className="text-emerald-400/60 text-xs">· {activeCount}/{statusList.length} active in Rollfi</span>}
                       </div>
-                      {company.rollfi && !allEmpOnboarded && (
-                        <Button size="sm" variant="ghost" className="text-xs text-orange-400 hover:text-orange-300 hover:bg-orange-400/10 h-7"
-                          disabled={onboardEmployee.isPending}
-                          onClick={async () => {
-                            for (const emp of compEmployees.filter((e) => !e.rollfi && e.employeeId))
-                              await onboardEmployee.mutateAsync({ employeeId: emp.employeeId!, companyId: company.id });
-                          }}>Add All to Rollfi</Button>
-                      )}
+                      <div className="flex items-center gap-2 shrink-0">
+                        {company.rollfi && !allEmpOnboarded && (
+                          <Button size="sm" variant="ghost" className="text-xs text-orange-400 hover:text-orange-300 hover:bg-orange-400/10 h-7"
+                            disabled={onboardEmployee.isPending}
+                            onClick={async () => {
+                              for (const emp of compEmployees.filter((e) => !e.rollfi && e.employeeId))
+                                await onboardEmployee.mutateAsync({ employeeId: emp.employeeId!, companyId: company.id });
+                            }}>Add All to Rollfi</Button>
+                        )}
+                        <Button size="sm" variant="ghost"
+                          className="text-xs text-white/50 hover:text-white hover:bg-white/10 h-7 gap-1"
+                          onClick={() => setAddingEmpForCompany(addingEmpForCompany === company.id ? null : company.id)}>
+                          <UserPlus className="h-3 w-3" />
+                          {addingEmpForCompany === company.id ? "Cancel" : "Add Employee"}
+                        </Button>
+                      </div>
                     </div>
                     <div className="divide-y divide-white/5">
                       {compEmployees.map((emp) => {
                         const rollfiStatus = emp.rollfi?.rollfiUserId ? getRollfiStatus(company.id, emp.rollfi.rollfiUserId) : null;
                         return (
-                          <div key={emp.employeeId} className="px-5 py-3 flex items-center justify-between gap-4">
+                          <div key={emp.employeeId} className="px-5 py-3 flex items-center justify-between gap-4 group">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-white text-sm font-medium">{emp.name}</span>
@@ -854,21 +956,42 @@ export default function Payroll() {
                               <div className="flex items-center gap-3 mt-0.5">
                                 <span className="text-white/40 text-xs">{emp.position}</span>
                                 <span className="text-white/30 text-xs">·</span>
-                                <span className="text-white/40 text-xs">${emp.hourlyWage}/hr</span>
+                                <span className="text-white/40 text-xs">${(emp.hourlyWage / 100).toFixed(2)}/hr</span>
                                 {emp.rollfi && <span className="text-white/25 text-xs font-mono">ID: {emp.rollfi.rollfiUserId.slice(0, 8)}…</span>}
                               </div>
                             </div>
-                            <Button size="sm"
-                              disabled={!!emp.rollfi || !company.rollfi || onboardEmployee.isPending || !emp.employeeId}
-                              onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
-                              className="shrink-0 text-white text-xs"
-                              style={{ background: emp.rollfi ? "rgba(255,255,255,0.08)" : company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: (emp.rollfi || !company.rollfi) ? 0.5 : 1 }}>
-                              {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : emp.rollfi ? "Added ✓" : !company.rollfi ? "Register company first" : "Add to Rollfi"}
-                            </Button>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {!emp.rollfi && (
+                                <button
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-white/20 hover:text-red-400 p-1"
+                                  title="Remove employee"
+                                  onClick={async () => {
+                                    if (!confirm(`Remove ${emp.name}?`)) return;
+                                    await api.delete(`/rollfi/employees/${emp.userId}`);
+                                    void refetchState();
+                                  }}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                              <Button size="sm"
+                                disabled={!!emp.rollfi || !company.rollfi || onboardEmployee.isPending || !emp.employeeId}
+                                onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
+                                className="text-white text-xs"
+                                style={{ background: emp.rollfi ? "rgba(255,255,255,0.08)" : company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: (emp.rollfi || !company.rollfi) ? 0.5 : 1 }}>
+                                {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : emp.rollfi ? "Added ✓" : !company.rollfi ? "Register company first" : "Add to Rollfi"}
+                              </Button>
+                            </div>
                           </div>
                         );
                       })}
                     </div>
+                    {addingEmpForCompany === company.id && (
+                      <AddEmployeeForm
+                        companyId={company.id}
+                        onDone={() => { setAddingEmpForCompany(null); void refetchState(); }}
+                      />
+                    )}
                   </div>
                 );
               })}

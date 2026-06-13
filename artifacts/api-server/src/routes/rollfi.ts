@@ -174,6 +174,7 @@ router.get("/rollfi/state", (_req, res) => {
     .getAllStaffUsers()
     .filter((u) => u.employeeId && u.role !== "super_admin")
     .map((u) => ({
+      userId: u.id,
       employeeId: u.employeeId,
       name: u.name,
       position: u.position,
@@ -183,6 +184,48 @@ router.get("/rollfi/state", (_req, res) => {
     }));
 
   res.json({ companies, employees });
+});
+
+// ── Create / delete payroll employee ─────────────────────────
+
+router.post("/rollfi/employees", (req, res) => {
+  const { name, email, position, hourlyWage, companyId } = req.body as {
+    name: string;
+    email: string;
+    position: string;
+    hourlyWage?: number;
+    companyId: string;
+  };
+
+  if (!name || !email || !position || !companyId) {
+    res.status(400).json({ error: "name, email, position, and companyId are required" });
+    return;
+  }
+
+  const company = store.getCompany(companyId);
+  if (!company) {
+    res.status(404).json({ error: "Company not found" });
+    return;
+  }
+
+  const existing = store.getUserByEmail(email);
+  if (existing) {
+    res.status(409).json({ error: "An employee with that email already exists" });
+    return;
+  }
+
+  const user = store.createStaffUser({ name, email, position, hourlyWage: hourlyWage ?? 1500, companyId });
+  res.status(201).json(user);
+});
+
+router.delete("/rollfi/employees/:userId", (req, res) => {
+  const { userId } = req.params;
+  const deleted = store.deleteStaffUser(userId);
+  if (!deleted) {
+    res.status(404).json({ error: "Employee not found or cannot be deleted" });
+    return;
+  }
+  res.json({ deleted: true, id: userId });
 });
 
 // ── Company onboarding ───────────────────────────────────────

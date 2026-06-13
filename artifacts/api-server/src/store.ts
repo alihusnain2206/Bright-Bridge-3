@@ -211,6 +211,35 @@ export const store = {
     return testUsers.find((u) => u.id === id);
   },
 
+  // ── Staff Users (payroll employees) ──
+  createStaffUser(data: { name: string; email: string; position: string; hourlyWage: number; companyId: string }): Omit<TestUser, "password"> {
+    const id = `USER-${uid().toUpperCase()}`;
+    const employeeId = `EMP-${uid().toUpperCase()}`;
+    const company = companies.find((c) => c.id === data.companyId);
+    const locationId = company?.locationId;
+    const newUser: TestUser = {
+      id,
+      name: data.name,
+      email: data.email,
+      password: "Staff123!",
+      role: "employee",
+      companyId: data.companyId,
+      locationId,
+      employeeId,
+      position: data.position,
+      hourlyWage: data.hourlyWage,
+    };
+    testUsers.push(newUser);
+    const { password: _p, ...safe } = newUser;
+    return safe;
+  },
+  deleteStaffUser(userId: string): boolean {
+    const idx = testUsers.findIndex((u) => u.id === userId && u.role === "employee");
+    if (idx === -1) return false;
+    testUsers.splice(idx, 1);
+    return true;
+  },
+
   // ── Companies ──
   getCompany(id: string): Company | undefined { return companies.find((c) => c.id === id); },
   getCompanies(): Company[] { return companies; },
