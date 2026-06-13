@@ -924,7 +924,7 @@ router.get("/rollfi/payroll/preview", (req, res) => {
 
   const allStaff = store
     .getAllStaffUsers()
-    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent")
+    .filter((u) => u.employeeId && u.role === "employee")
     .filter((u) => !companyId || u.companyId === companyId);
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
