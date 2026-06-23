@@ -64,9 +64,27 @@ export async function loadClientEmployeesFromDb(): Promise<{ count: number }> {
       createdAt:           row.createdAt,
     };
     if (existing) {
+      // Known ID — just refresh sync flags from DB
       store.updateEmployee(row.id, emp);
     } else {
-      store.insertEmployee(emp);
+      // ID not in seed data — check if a seeded employee with the same email+client
+      // already exists (happens when the user added an employee manually in a prior
+      // session and we later added them to seed data with a different ID).
+      const byEmail = row.email
+        ? store.listEmployees(row.clientId).find((e) => e.email === row.email)
+        : undefined;
+      if (byEmail) {
+        // Merge DB sync state onto the seeded record instead of inserting a duplicate.
+        store.updateEmployee(byEmail.id, {
+          easyteamSynced: row.easyteamSynced,
+          rollfiSynced:   row.rollfiSynced,
+          rollfiUserId:   row.rollfiUserId ?? undefined,
+          syncError:      row.syncError ?? undefined,
+          status:         (row.status as ClientEmployee["status"]) ?? "hired",
+        });
+      } else {
+        store.insertEmployee(emp);
+      }
     }
   }
 

@@ -287,7 +287,11 @@ export const store = {
     );
     const seeded: TimesheetEntry[] = [];
     staff.forEach((u) => {
-      const defaults = realisticHours[u.employeeId!] ?? { h: 2.0, b: 0 };
+      const defaults = realisticHours[u.employeeId!];
+      // Only seed employees with explicit realistic-hours data.
+      // Employees not in the map (e.g. newly added Ali, Lisa) start with 0 seeded hours
+      // so their real clocked time from EasyTeam is the only source of truth.
+      if (!defaults) return;
       const hoursWorked    = defaults.h;
       const breakDeduction = defaults.b;
       const approvedHours  = Math.max(0, hoursWorked - breakDeduction);

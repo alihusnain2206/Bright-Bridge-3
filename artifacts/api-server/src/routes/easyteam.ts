@@ -153,6 +153,7 @@ router.post("/easyteam/token", async (req, res) => {
     }
   }
 
+  let resolvedEtEmployeeId = employee_id;
   if (employee_id) {
     const emp = store.getEmployee(employee_id);
     if (emp) {
@@ -166,11 +167,19 @@ router.post("/easyteam/token", async (req, res) => {
       resolvedRoleName = emp.roleName;
       resolvedAccessRole = emp.role;
       resolvedWage = emp.wage;
+
+      // Resolve to the staffUser's canonical employeeId so every JWT path (Super Admin
+      // timesheets, Manager dashboard, Employee login, boot sync) maps to the same
+      // single EasyTeam record — preventing duplicate entries per person.
+      const staffUser = emp.email
+        ? store.getAllStaffUsers().find((u) => u.email === emp.email)
+        : undefined;
+      if (staffUser?.employeeId) resolvedEtEmployeeId = staffUser.employeeId;
     }
   }
 
   const payload = {
-    employeeId: employee_id,
+    employeeId: resolvedEtEmployeeId,
     locationId: resolvedLocationId,
     organizationId: resolvedOrgId,
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
