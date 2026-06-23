@@ -97,6 +97,8 @@ export async function onboardClientEmployeeToRollfi(
   const lastName = nameParts.slice(1).join(" ") || "Staff";
 
   try {
+    let rollfiUserId: string | undefined;
+
     const addUserResp = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUser`, {
       method: "addUser",
       user: {
@@ -116,11 +118,41 @@ export async function onboardClientEmployeeToRollfi(
     }, { headers: rollfiHeaders() });
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
-    const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
-    const rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
 
-    if (!rollfiUserId) {
-      return { success: false, error: `Rollfi addUser returned unexpected shape: ${JSON.stringify(addUserRaw).slice(0, 200)}` };
+    // Check if Rollfi says the email is already in use — look up the existing user
+    const errMsg = ((addUserRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+    if (errMsg.toLowerCase().includes("email already in use") || errMsg.toLowerCase().includes("already in use")) {
+      log.warn({ empId: emp.id, email: emp.email }, "Rollfi email already in use — looking up existing user");
+      try {
+        const getUsersResp = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        type RollfiUser = { userId: string; firstName?: string; lastName?: string; email?: string };
+        const users = ((getUsersResp.data as { users?: RollfiUser[] }).users ?? []);
+        const targetEmail = (emp.email ?? "").toLowerCase();
+        const targetName = emp.name.toLowerCase();
+        const match = users.find((u) =>
+          (u.email && u.email.toLowerCase() === targetEmail) ||
+          (`${u.firstName ?? ""} ${u.lastName ?? ""}`.trim().toLowerCase() === targetName)
+        );
+        if (match) {
+          rollfiUserId = match.userId;
+          log.info({ rollfiUserId, empId: emp.id }, "Resolved existing Rollfi user for re-sync");
+        }
+      } catch (lookupErr) {
+        log.warn({ lookupErr }, "getUsers lookup failed");
+      }
+      if (!rollfiUserId) {
+        return { success: false, error: `Rollfi email already in use and could not resolve existing user` };
+      }
+    } else {
+      const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
+      rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
+      if (!rollfiUserId) {
+        return { success: false, error: `Rollfi addUser returned unexpected shape: ${JSON.stringify(addUserRaw).slice(0, 200)}` };
+      }
     }
 
     await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log);
