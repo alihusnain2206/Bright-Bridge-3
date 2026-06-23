@@ -43,6 +43,8 @@ const COMPANY_EMPLOYEES: Record<string, Array<{ id: string; name: string; role: 
   "ORG-RAINBOW": [
     { id: "MGR-RAINBOW-001", name: "Mike Manager", role: "manager", timeTrackingEnabled: true, wage: 2500, wageType: "hourly" },
     { id: "EMP-RAINBOW-001", name: "Tom Wilson", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" },
+    { id: "EMP-RAINBOW-002", name: "Ali Husnain", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" },
+    { id: "EMP-RAINBOW-003", name: "Lisa Chen", role: "employee", timeTrackingEnabled: true, wage: 1400, wageType: "hourly" },
   ],
 };
 
@@ -60,6 +62,8 @@ const EMPLOYEE_NAMES: Record<string, string> = {
   "MGR-SUNSHINE-001": "Susan Manager",
   "EMP-RAINBOW-001": "Tom Wilson",
   "MGR-RAINBOW-001": "Mike Manager",
+  "EMP-RAINBOW-002": "Ali Husnain",
+  "EMP-RAINBOW-003": "Lisa Chen",
 };
 
 export default function ManagerDashboard() {
