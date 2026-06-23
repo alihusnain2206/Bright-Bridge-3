@@ -1289,6 +1289,30 @@ router.get("/rollfi/company-tasks", async (req, res) => {
   }
 });
 
+// ── Pay period details (real tax data from Rollfi after processing) ──────
+
+router.get("/rollfi/payperiod/details", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const { companyId, payPeriodId } = req.query as { companyId: string; payPeriodId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded" }); return; }
+  if (!payPeriodId) { res.status(400).json({ error: "payPeriodId required" }); return; }
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+      { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "getPayPeriodDetails response");
+    res.json(response.data);
+  } catch (err) {
+    req.log.error({ err }, "getPayPeriodDetails failed");
+    res.status(500).json({ error: "Failed to get pay period details" });
+  }
+});
+
 // ── Pay stubs (per-employee pay breakdown for a processed period) ─────────
 
 router.get("/rollfi/paystubs", async (req, res) => {

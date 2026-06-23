@@ -96,6 +96,28 @@ const api = {
   },
 };
 
+// ── Tax helpers ───────────────────────────────────────────────
+
+function r2(n: number) { return Math.round(n * 100) / 100; }
+function fmtD(n: number) { return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
+
+function calcEmpTax(gross: number) {
+  const federal  = r2(gross * 0.12);
+  const state    = r2(gross * 0.05);
+  const ss       = r2(gross * 0.062);
+  const medicare = r2(gross * 0.0145);
+  const total    = r2(federal + state + ss + medicare);
+  return { federal, state, ss, medicare, total, net: r2(gross - total) };
+}
+
+function calcErTax(gross: number) {
+  const ss       = r2(gross * 0.062);
+  const medicare = r2(gross * 0.0145);
+  const futa     = r2(gross * 0.006);
+  const njSui    = r2(gross * 0.005);
+  return { ss, medicare, futa, njSui, total: r2(ss + medicare + futa + njSui) };
+}
+
 // ── Colours ──────────────────────────────────────────────────
 
 const NAVY = "#284362";
@@ -367,36 +389,55 @@ function HistorySection({ periods, companyName, companyId, onViewStubs }: {
         <table className="w-full text-xs">
           <thead>
             <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-              {["Period", "Pay Date", "Status", "Amount", ""].map((h, i) => (
-                <th key={i} className="text-left px-4 py-2.5 text-white/40 font-semibold">{h}</th>
+              {["Period", "Pay Date", "Status", "Gross Pay", "Est. Taxes", "Est. Net", "Debit", ""].map((h, i) => (
+                <th key={i} className="text-left px-4 py-2.5 text-white/40 font-semibold whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {periods.map((p, i) => (
-              <tr key={p.payPeriodId ?? i} className="hover:bg-white/5">
-                <td className="px-4 py-3 text-white/70">
-                  {p.payPeriod ?? (p.payBeginDate && p.payEndDate ? `${p.payBeginDate} – ${p.payEndDate}` : "—")}
-                </td>
-                <td className="px-4 py-3 text-white/50">{p.payDate ?? "—"}</td>
-                <td className="px-4 py-3">
-                  {p.payPeriodStatus ? <PayPeriodStatusBadge status={p.payPeriodStatus} /> : <span className="text-white/30">—</span>}
-                </td>
-                <td className="px-4 py-3 text-emerald-400 font-semibold">
-                  {p.payrollAmount != null ? `$${Number(p.payrollAmount).toLocaleString()}` : "—"}
-                </td>
-                <td className="px-4 py-3">
-                  <button
-                    onClick={() => onViewStubs(p)}
-                    className="flex items-center gap-1 text-white/40 hover:text-orange-400 transition-colors text-xs font-medium"
-                  >
-                    <Receipt className="h-3 w-3" />Pay Stubs
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {periods.map((p, i) => {
+              const gross    = p.payrollAmount != null ? Number(p.payrollAmount) : null;
+              const empTax   = gross != null ? r2(gross * 0.2465) : null;
+              const net      = gross != null && empTax != null ? r2(gross - empTax) : null;
+              const erTax    = gross != null ? r2(gross * 0.0875) : null;
+              const debit    = gross != null && erTax != null ? r2(gross + erTax) : null;
+              return (
+                <tr key={p.payPeriodId ?? i} className="hover:bg-white/5">
+                  <td className="px-4 py-3 text-white/70">
+                    {p.payPeriod ?? (p.payBeginDate && p.payEndDate ? `${p.payBeginDate} – ${p.payEndDate}` : "—")}
+                  </td>
+                  <td className="px-4 py-3 text-white/50 whitespace-nowrap">{p.payDate ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    {p.payPeriodStatus ? <PayPeriodStatusBadge status={p.payPeriodStatus} /> : <span className="text-white/30">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-emerald-400 font-semibold">
+                    {gross != null ? fmtD(gross) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-red-300/80">
+                    {empTax != null ? `~${fmtD(empTax)}` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-white/70 font-semibold">
+                    {net != null ? `~${fmtD(net)}` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-amber-300 font-semibold">
+                    {debit != null ? `~${fmtD(debit)}` : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => onViewStubs(p)}
+                      className="flex items-center gap-1 text-white/40 hover:text-orange-400 transition-colors text-xs font-medium whitespace-nowrap"
+                    >
+                      <Receipt className="h-3 w-3" />Pay Stubs
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
+        <p className="px-4 py-2 border-t border-white/5 text-[10px] text-white/20">
+          Taxes and debit amounts are estimates based on standard NJ rates. Exact figures confirmed by Rollfi after processing.
+        </p>
       </div>
     </div>
   );
@@ -512,13 +553,18 @@ function PayStubsDrawer({ companyId, period, onClose }: {
           <table className="w-full text-xs">
             <thead>
               <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-                {["Employee", "Hours", "Gross Pay", "Fed Tax", "State Tax", "FICA", "Total Ded.", "Net Pay", "YTD Gross"].map((h) => (
+                {["Employee", "Hours", "Gross Pay", "Fed Tax", "State Tax", "FICA", "Total Ded.", "Net Pay", "YTD Gross", ""].map((h) => (
                   <th key={h} className="text-left px-4 py-2.5 text-white/40 font-semibold whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {stubs.map((stub) => (
+              {stubs.map((stub) => {
+                const empId = stub.employeeId ?? stub.rollfiUserId ?? "emp";
+                const periodId = period.payPeriodId ?? "";
+                const qp = new URLSearchParams({ period: period.payPeriod ?? "", payDate: period.payDate ?? "" }).toString();
+                const paystubHref = `/paystub/${companyId}/${empId}/${periodId}?${qp}`;
+                return (
                 <tr key={stub.employeeId} className="hover:bg-white/5">
                   <td className="px-4 py-3">
                     <div className="text-white font-medium">{stub.name}</div>
@@ -532,8 +578,19 @@ function PayStubsDrawer({ companyId, period, onClose }: {
                   <td className="px-4 py-3 text-red-400 font-semibold">−${stub.deductions.toLocaleString()}</td>
                   <td className="px-4 py-3 text-white font-bold">${stub.netPay.toLocaleString()}</td>
                   <td className="px-4 py-3 text-white/40">${stub.ytdGross.toLocaleString()}</td>
+                  <td className="px-4 py-3">
+                    <a
+                      href={paystubHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-white/30 hover:text-orange-400 transition-colors whitespace-nowrap text-[11px]"
+                    >
+                      <Receipt className="h-3 w-3" /> Paystub
+                    </a>
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
               <tr style={{ background: "rgba(255,255,255,0.04)" }}>
@@ -571,6 +628,8 @@ export default function Payroll() {
   const [adjustments, setAdjustments] = useState<AdjMap>({});
   const [adjOpen, setAdjOpen] = useState(false);
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
+  const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -993,50 +1052,161 @@ export default function Payroll() {
                   )}
                 </div>
 
+                {/* Tax status indicator — Change 7 */}
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[11px] font-semibold">
+                    <Clock className="h-3 w-3" /> Estimated Taxes
+                  </span>
+                  <span className="text-white/30 text-[11px]">Exact amounts confirmed after Rollfi processes payroll</span>
+                </div>
+
+                {/* Preview table — Change 1 & 2 */}
                 <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ background: "rgba(255,255,255,0.06)" }}>
-                        {["Employee", "Worked", "Breaks", "Unapproved", "Net Hrs", "Rate", "Gross Pay", "Rollfi"].map((h) => (
+                        {["Employee", "Worked", "Net Hrs", "Rate", "Gross Pay", "Est. Tax", "~Net Pay", "Rollfi"].map((h) => (
                           <th key={h} className="text-left px-4 py-3 text-white/50 font-semibold text-xs">{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {preview.employees.map((emp) => (
-                        <tr key={emp.employeeId} className="hover:bg-white/5 transition-colors">
-                          <td className="px-4 py-3"><div className="text-white font-medium">{emp.name}</div><div className="text-white/40 text-xs">{emp.position}</div></td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-white/70">{emp.hoursWorked}h</span>
-                              {emp.hoursSource === "easyteam" && (
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/20">EasyTeam</span>
-                              )}
-                              {emp.hoursSource === "seeded" && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Synced</span>
-                              )}
-                              {(!emp.hoursSource || emp.hoursSource === "estimated") && (
-                                <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-amber-400/80">−{emp.breakDeduction}h</td>
-                          <td className="px-4 py-3 text-red-400/80">{emp.unapprovedHours > 0 ? `−${emp.unapprovedHours}h` : "—"}</td>
-                          <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
-                          <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
-                          <td className="px-4 py-3 text-emerald-400 font-bold">${emp.grossPay.toLocaleString()}</td>
-                          <td className="px-4 py-3">{emp.onboardedToRollfi ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-white/20" />}</td>
-                        </tr>
-                      ))}
+                      {preview.employees.map((emp) => {
+                        const tax = calcEmpTax(emp.grossPay);
+                        const er  = calcErTax(emp.grossPay);
+                        const key = emp.employeeId ?? emp.name;
+                        const isExpanded = expandedEmp === key;
+                        return (
+                          <React.Fragment key={key}>
+                            <tr
+                              className="hover:bg-white/5 transition-colors cursor-pointer select-none"
+                              onClick={() => setExpandedEmp(isExpanded ? null : key)}
+                            >
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-white/30 text-[10px] w-3">{isExpanded ? "▲" : "▼"}</span>
+                                  <div>
+                                    <div className="text-white font-medium">{emp.name}</div>
+                                    <div className="text-white/40 text-xs">{emp.position}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-white/70">{emp.hoursWorked}h</span>
+                                  {emp.hoursSource === "easyteam" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/20">EasyTeam</span>}
+                                  {emp.hoursSource === "seeded" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Synced</span>}
+                                  {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
+                              <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
+                              <td className="px-4 py-3 text-emerald-400 font-bold">{fmtD(emp.grossPay)}</td>
+                              <td className="px-4 py-3 text-red-300/80 text-xs">~{fmtD(tax.total)}</td>
+                              <td className="px-4 py-3 text-white font-semibold text-xs">~{fmtD(tax.net)}</td>
+                              <td className="px-4 py-3">{emp.onboardedToRollfi ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-white/20" />}</td>
+                            </tr>
+                            {isExpanded && (
+                              <tr key={`${key}-exp`}>
+                                <td colSpan={8} className="px-4 py-0">
+                                  <div className="my-3 rounded-lg border border-white/10 overflow-hidden text-xs" style={{ background: "rgba(20,40,65,0.7)" }}>
+                                    <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between">
+                                      <span className="font-semibold text-white/80">{emp.name} — Full Pay Breakdown</span>
+                                      <span className="text-white/30 text-[10px]">{emp.position}</span>
+                                    </div>
+                                    <div className="px-4 py-3 grid grid-cols-2 gap-6">
+                                      <div className="space-y-0.5">
+                                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Earnings</p>
+                                        <div className="flex justify-between py-1"><span className="text-white/50">Regular: {emp.netPayableHours}h × ${emp.hourlyRate.toFixed(2)}</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                        <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Gross Pay</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mt-3 mb-2">Employee Deductions (estimated)</p>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Income Tax (12%)</span><span className="text-red-300">−{fmtD(tax.federal)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Tax (5%)</span><span className="text-red-300">−{fmtD(tax.state)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Social Security (6.2%)</span><span className="text-red-300">−{fmtD(tax.ss)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Medicare (1.45%)</span><span className="text-red-300">−{fmtD(tax.medicare)}</span></div>
+                                        <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Deductions</span><span className="text-red-400">−{fmtD(tax.total)}</span></div>
+                                        <div className="flex justify-between py-1 border-t border-white/10 font-bold"><span className="text-white">Net Pay (estimated)</span><span className="text-white">{fmtD(tax.net)}</span></div>
+                                      </div>
+                                      <div className="space-y-0.5">
+                                        <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employer Costs</p>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(er.ss)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(er.medicare)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(er.futa)}</span></div>
+                                        <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(er.njSui)}</span></div>
+                                        <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Employer Burden</span><span className="text-amber-300">+{fmtD(er.total)}</span></div>
+                                        <div className="mt-3 pt-3 border-t border-white/10">
+                                          <div className="flex justify-between font-bold"><span className="text-white">Total Cost (This Employee)</span><span className="text-white">{fmtD(r2(emp.grossPay + er.total))}</span></div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
                     </tbody>
                     <tfoot>
                       <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-                        <td className="px-4 py-3 text-white font-semibold" colSpan={6}>Total Gross Pay</td>
-                        <td className="px-4 py-3 text-emerald-400 font-bold text-base" colSpan={2}>${preview.totalGrossPay.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-white font-semibold" colSpan={4}>Total Gross Pay</td>
+                        <td className="px-4 py-3 text-emerald-400 font-bold text-base">{fmtD(preview.totalGrossPay)}</td>
+                        <td className="px-4 py-3 text-red-300/80 text-xs font-semibold">~{fmtD(r2(preview.totalGrossPay * 0.2465))}</td>
+                        <td className="px-4 py-3 text-white font-bold text-xs">~{fmtD(r2(preview.totalGrossPay * 0.7535))}</td>
+                        <td />
                       </tr>
                     </tfoot>
                   </table>
                 </div>
+
+                {/* Totals summary — Change 3 & 9 */}
+                {(() => {
+                  const totalGross  = preview.totalGrossPay;
+                  const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
+                  const totalNet    = r2(totalGross - totalEmpTax);
+                  const totalErTax  = r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
+                  const totalDebit  = r2(totalGross + totalErTax);
+                  const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
+                  return (
+                    <div className="mb-4 space-y-3">
+                      <div className="rounded-xl border border-white/10 overflow-hidden">
+                        <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
+                          <div>
+                            <p className="text-white font-semibold text-sm">Payroll Totals Summary</p>
+                            <p className="text-white/40 text-xs">{selectedCompanyName} · {preview.period.from} – {preview.period.to}</p>
+                          </div>
+                        </div>
+                        <div className="px-5 py-4 grid grid-cols-2 gap-6 text-xs border-b border-white/5">
+                          <div>
+                            <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employee Payments</p>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes (est.)</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
+                            <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Net Pay to Staff</span><span className="text-white">~{fmtD(totalNet)}</span></div>
+                          </div>
+                          <div>
+                            <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employer Tax Obligations</p>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.ss))}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.med))}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.futa))}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.nj))}</span></div>
+                            <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(totalErTax)}</span></div>
+                          </div>
+                        </div>
+                        <div className="px-5 py-4 flex items-center justify-between border-t border-amber-500/30" style={{ background: "rgba(232,98,42,0.08)" }}>
+                          <div className="flex items-center gap-2">
+                            <AlertTriangle className="h-4 w-4 text-amber-400" />
+                            <div>
+                              <p className="text-amber-300 font-bold text-sm">Estimated Total Bank Debit</p>
+                              {payPeriod?.payDate && <p className="text-amber-400/60 text-[11px]">Debited on {payPeriod.payDate}</p>}
+                            </div>
+                          </div>
+                          <p className="text-amber-300 font-bold text-2xl">~{fmtD(totalDebit)}</p>
+                        </div>
+                      </div>
+                      <p className="text-white/20 text-[10px] px-1">* Tax amounts are estimates. Exact amounts confirmed after Rollfi processes payroll.</p>
+                    </div>
+                  );
+                })()}
 
                 {/* Adjustments */}
                 <div className="mb-4">
@@ -1113,22 +1283,18 @@ export default function Payroll() {
                   )}
                 </div>
 
-                {/* Submit area */}
+                {/* Submit area — Change 5 (opens confirm dialog) */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     disabled={!payPeriod || !preview.allOnboarded || submitPayroll.isPending || selectedCompanyId === "all" || !periodSubmittable}
                     onClick={() => {
-                      if (payPeriod && selectedCompanyId !== "all") {
-                        setPayrollResult(null);
-                        const adjs = Object.entries(adjustments)
-                          .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
-                          .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
-                        submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, adjs });
+                      if (payPeriod && selectedCompanyId !== "all" && preview.allOnboarded && periodSubmittable) {
+                        setConfirmOpen(true);
                       }
                     }}
                     className="gap-2 text-white font-semibold"
                     style={{ background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all" || !periodSubmittable) ? "rgba(255,255,255,0.1)" : ORANGE }}>
-                    {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Submit Payroll to Rollfi</>}
+                    {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Review & Submit Payroll</>}
                   </Button>
                   {!payPeriod && <p className="text-white/30 text-xs">Fetching pay period…</p>}
                   {payPeriod && !periodSubmittable && (
@@ -1172,6 +1338,94 @@ export default function Payroll() {
           </div>
         )}
       </div>
+
+      {/* Confirm dialog — Change 5 */}
+      {confirmOpen && preview && payPeriod && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
+        >
+          <div className="w-full max-w-md mx-4 rounded-2xl border border-white/10 overflow-hidden shadow-2xl" style={{ background: "#1a2f4a" }}>
+            <div className="px-6 py-4 border-b border-white/10 flex items-center gap-3" style={{ background: "rgba(255,255,255,0.05)" }}>
+              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0" />
+              <div>
+                <p className="text-white font-bold">Confirm Payroll Submission</p>
+                <p className="text-white/40 text-xs">{selectedCompanyName} · {payPeriod.payPeriod}</p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-b border-white/10">
+              <p className="text-white/40 text-xs font-bold uppercase tracking-wide mb-3">Employee Summary</p>
+              <div className="space-y-1">
+                {preview.employees.map((emp) => {
+                  const t = calcEmpTax(emp.grossPay);
+                  return (
+                    <div key={emp.employeeId} className="flex items-center justify-between py-1.5 text-sm">
+                      <span className="text-white/70">{emp.name}</span>
+                      <div className="text-right">
+                        <span className="text-emerald-400 font-semibold">{fmtD(emp.grossPay)}</span>
+                        <span className="text-white/30 text-xs ml-2">→ ~{fmtD(t.net)} net</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {(() => {
+              const totalGross  = preview.totalGrossPay;
+              const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
+              const totalNet    = r2(totalGross - totalEmpTax);
+              const totalErTax  = r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
+              const totalDebit  = r2(totalGross + totalErTax);
+              return (
+                <div className="px-6 py-4 border-b border-white/10 space-y-1 text-sm">
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Est. Employee Taxes</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Net to Employees</span><span className="text-white font-semibold">~{fmtD(totalNet)}</span></div>
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Est. Employer Taxes</span><span className="text-amber-300">+{fmtD(totalErTax)}</span></div>
+                  <div className="mt-3 p-3 rounded-lg border border-amber-500/40 flex items-center justify-between" style={{ background: "rgba(232,98,42,0.12)" }}>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      <span className="text-amber-300 font-bold">Est. Bank Debit</span>
+                    </div>
+                    <span className="text-amber-300 font-bold text-xl">~{fmtD(totalDebit)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            <div className="px-6 py-4">
+              <p className="text-white/30 text-xs mb-4">
+                ⚠️ If any amounts seem wrong, click Cancel and review before submitting.
+                Tax figures are estimates — exact amounts confirmed by Rollfi after processing.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setConfirmOpen(false)}
+                  className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/60 hover:text-white/80 hover:border-white/20 text-sm font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmOpen(false);
+                    setPayrollResult(null);
+                    const adjs = Object.entries(adjustments)
+                      .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
+                      .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
+                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, adjs });
+                  }}
+                  className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                  style={{ background: ORANGE }}
+                >
+                  <Play className="h-4 w-4" /> Yes, Submit Payroll
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

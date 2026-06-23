@@ -21,6 +21,7 @@ import ManagerDashboard from "@/pages/dashboard-manager";
 import EmployeeDashboard from "@/pages/dashboard-employee";
 import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
+import Paystub from "@/pages/paystub";
 
 const queryClient = new QueryClient();
 
@@ -75,6 +76,9 @@ function Router() {
     <Switch>
       {/* Public */}
       <Route path="/login" component={Login} />
+
+      {/* Standalone pages (no AppLayout sidebar) */}
+      <Route path="/paystub/:companyId/:employeeId/:payPeriodId" component={Paystub} />
 
       {/* All pages share AppLayout with sidebar nav */}
       <Route>

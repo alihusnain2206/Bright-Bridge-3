@@ -1,0 +1,433 @@
+CONTEXT — What Rollfi Told Us:
+Rollfi's support team specifically flagged:
+
+1. Tax details not being displayed
+2. Net pay not shown per employee
+3. Total debit amount missing
+4. Paystubs need tax breakdowns
+
+The data already EXISTS in Rollfi's
+getPayPeriodDetails API response.
+We just need to pull it and display it.
+
+This is CRITICAL because:
+→ Gross pay ≠ what employee receives
+→ Company needs to know exact
+  debit from their bank account
+→ Legal requirement for paystubs
+
+CHANGE 1 — Update Payroll Preview Table:
+Currently the table shows:
+Employee | Worked | Breaks | Unapproved | Net Hrs | Rate | Gross Pay | Rollfi
+
+UPDATE to show:
+Employee | Worked | Net Hrs | Rate | Gross Pay | Est. Tax | Net Pay | Rollfi
+
+ADD a new "Est. Tax" column:
+Calculate estimated taxes client-side
+while waiting for Rollfi response:
+
+Federal Income Tax: 12% of gross
+State Tax (NJ): 5% of gross
+Social Security: 6.2% of gross
+Medicare: 1.45% of gross
+Total Employee Tax rate: 24.65%
+
+Estimated Net Pay = 
+Gross Pay × (1 - 0.2465)
+
+Show these as ESTIMATES:
+"~$332.78 est."
+
+With a note below table:
+"* Tax amounts are estimates.
+Exact amounts confirmed after
+Rollfi processes payroll."
+
+CHANGE 2 — Add Expandable Row Per Employee:
+Each employee row should be
+CLICKABLE to expand and show
+full tax breakdown:
+
+DEFAULT VIEW (collapsed):
+John Smith | 75h | 75h | $18/hr | $1,350 | ~$332 | ~$1,018 | ✅
+[▼ expand]
+
+EXPANDED VIEW (when clicked):
+┌─────────────────────────────────────┐
+│ John Smith — Full Pay Breakdown      │
+│ Teacher | Sunshine Daycare Centre    │
+├─────────────────────────────────────┤
+│ EARNINGS:                            │
+│ Regular Hours: 75h × $18.00         │
+│ Gross Pay:              $1,350.00   │
+├─────────────────────────────────────┤
+│ EMPLOYEE DEDUCTIONS (estimated):     │
+│ Federal Income Tax (12%): -$162.00  │
+│ NJ State Tax (5%):         -$67.50  │
+│ Social Security (6.2%):    -$83.70  │
+│ Medicare (1.45%):          -$19.58  │
+│ Total Deductions:         -$332.78  │
+├─────────────────────────────────────┤
+│ NET PAY (estimated):      $1,017.22 │
+├─────────────────────────────────────┤
+│ EMPLOYER COSTS:                      │
+│ Employer SS (6.2%):        +$83.70  │
+│ Employer Medicare (1.45%): +$19.58  │
+│ Federal Unemployment (0.6%): +$8.10 │
+│ NJ State Unemployment (0.5%): +$6.75│
+│ Total Employer Burden:    +$118.13  │
+├─────────────────────────────────────┤
+│ TOTAL COST FOR THIS EMPLOYEE:        │
+│                           $1,468.13 │
+└─────────────────────────────────────┘
+
+Add a [▲ collapse] button to close
+
+CHANGE 3 — Add Totals Summary Section:
+Below the employee table,
+add a clear TOTALS SECTION:
+
+┌─────────────────────────────────────┐
+│ PAYROLL TOTALS SUMMARY               │
+│ Rainbow Kids Daycare                 │
+│ Period: Jun 9 - Jun 22, 2026         │
+├─────────────────────────────────────┤
+│ EMPLOYEE PAYMENTS:                   │
+│ Total Gross Pay:         $3,735.00  │
+│ Total Employee Taxes:    -$920.68   │
+│ Total Net Pay to Staff:  $2,814.32  │
+├─────────────────────────────────────┤
+│ EMPLOYER COSTS:                      │
+│ Total Employer Taxes:    +$298.80   │
+├─────────────────────────────────────┤
+│ ⚠️ TOTAL DEBIT FROM YOUR ACCOUNT:   │
+│ $4,033.80                           │
+│                                      │
+│ This amount will be debited from     │
+│ your connected bank account on       │
+│ the pay date: June 24, 2026          │
+└─────────────────────────────────────┘
+
+Style the TOTAL DEBIT row:
+→ Larger font
+→ Bold
+→ Orange/amber background
+→ Warning icon ⚠️
+This is the MOST IMPORTANT number
+the employer needs to see!
+
+CHANGE 4 — Pull REAL Tax Data from Rollfi:
+After payroll is SUBMITTED,
+call getPayPeriodDetails to get
+REAL tax amounts from Rollfi:
+
+Add new backend endpoint:
+GET /api/rollfi/payperiod/details
+
+Code:
+router.get('/rollfi/payperiod/details', 
+async (req, res) => {
+  const { companyId, payPeriodId } = req.query;
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+      {
+        method: 'getPayPeriodDetails',
+        companyId: rollfiCompany.rollfiCompanyId,
+        payPeriodId
+      },
+      { headers: rollfiHeaders() }
+    );
+    
+    req.log.info(
+      { rollfiResponse: response.data },
+      'getPayPeriodDetails response'
+    );
+    
+    res.json(response.data);
+  } catch (err) {
+    req.log.error({ err }, 
+      'getPayPeriodDetails failed');
+    res.status(500).json({ 
+      error: 'Failed to get pay period details' 
+    });
+  }
+});
+
+Extract these fields from response:
+→ Per employee:
+   employeeId
+   grossPay
+   federalTax
+   stateTax
+   socialSecurity
+   medicare
+   totalDeductions
+   netPay
+   
+→ Overall totals:
+   totalGrossPay
+   totalEmployerTaxes
+   totalNetPay
+   totalDebitAmount (the "total" field)
+   
+When real Rollfi data is available:
+REPLACE the estimated amounts
+with REAL amounts from Rollfi
+Remove the "est." label
+Show "✅ Confirmed by Rollfi"
+
+CHANGE 5 — Update Confirmation Dialog:
+Update the existing confirmation 
+dialog that shows before submitting
+payroll to include tax breakdown:
+
+BEFORE (current):
+┌─────────────────────────────┐
+│ Confirm Payroll Submission   │
+│ Total: $3,735.00             │
+│ [Cancel] [Confirm & Submit]  │
+└─────────────────────────────┘
+
+AFTER (updated):
+┌─────────────────────────────────────┐
+│ ⚠️ CONFIRM PAYROLL SUBMISSION        │
+│ Rainbow Kids Daycare                 │
+│ Period: Jun 9 - Jun 22, 2026         │
+├─────────────────────────────────────┤
+│ Employee Summary:                    │
+│ Mike Manager:    Gross $1,350        │
+│                  Net   ~$1,017       │
+│ Tom Wilson:      Gross $35           │
+│                  Net   ~$26          │
+├─────────────────────────────────────┤
+│ Total Gross Pay:        $1,385.00   │
+│ Est. Employee Taxes:     -$341.40   │
+│ Total Net to Employees: $1,043.60   │
+│ Est. Employer Taxes:     +$110.80   │
+├─────────────────────────────────────┤
+│ ⚠️ ESTIMATED BANK DEBIT:            │
+│ $1,495.80                           │
+├─────────────────────────────────────┤
+│ Does this look correct?              │
+│                                      │
+│ ⚠️ If any amounts seem wrong,        │
+│ click Cancel and review before       │
+│ submitting.                          │
+│                                      │
+│ [Cancel]  [Yes, Submit Payroll]     │
+└─────────────────────────────────────┘
+
+CHANGE 6 — Build Paystub View:
+Create a new paystub component
+accessible from two places:
+1. Employee profile page
+2. After payroll is processed
+
+Route: /paystub/:employeeId/:payPeriodId
+
+PAYSTUB DESIGN:
+
+┌─────────────────────────────────────┐
+│  🏢 BrightBridge Assist              │
+│  EARNINGS STATEMENT                  │
+├───────────────────┬─────────────────┤
+│ Employee:         │ Pay Period:      │
+│ John Smith        │ Jun 9-22, 2026  │
+│                   │                  │
+│ Position:         │ Pay Date:        │
+│ Teacher           │ Jun 24, 2026    │
+│                   │                  │
+│ Company:          │ Employee ID:     │
+│ Sunshine Daycare  │ EMP-001         │
+├───────────────────┴─────────────────┤
+│ EARNINGS:                            │
+│ Regular: 75h @ $18.00   $1,350.00  │
+│ Overtime: 0h             $0.00      │
+│ Bonus:                   $0.00      │
+│ ─────────────────────────────────── │
+│ GROSS PAY:               $1,350.00 │
+├─────────────────────────────────────┤
+│ DEDUCTIONS:                          │
+│ Federal Income Tax       -$162.00   │
+│ NJ State Income Tax       -$67.50   │
+│ Social Security (6.2%)    -$83.70   │
+│ Medicare (1.45%)          -$19.58   │
+│ ─────────────────────────────────── │
+│ TOTAL DEDUCTIONS:        -$332.78   │
+├─────────────────────────────────────┤
+│ NET PAY:                 $1,017.22  │
+├─────────────────────────────────────┤
+│ YEAR TO DATE:                        │
+│ YTD Gross:               $8,100.00  │
+│ YTD Taxes:              -$1,996.68  │
+│ YTD Net:                 $6,103.32  │
+├─────────────────────────────────────┤
+│ PAYMENT METHOD:                      │
+│ Direct Deposit                       │
+│ Bank: Chase ****0989                 │
+├─────────────────────────────────────┤
+│ [🖨️ Print] [📥 Download PDF]        │
+└─────────────────────────────────────┘
+
+Style requirements:
+→ Clean professional design
+→ BrightBridge colors
+→ Clear sections with dividers
+→ Large NET PAY prominently shown
+→ Print-friendly layout
+→ Download as PDF option
+
+CHANGE 7 — Add Tax Status Indicator:
+Add a clear indicator on the
+payroll page showing whether
+tax amounts are:
+
+ESTIMATED (before submission):
+Yellow badge: "⏳ Estimated Taxes"
+Show tooltip: "Exact tax amounts 
+will be confirmed after 
+Rollfi processes payroll"
+
+CONFIRMED (after submission):
+Green badge: "✅ Taxes Confirmed by Rollfi"
+Show actual Rollfi amounts
+
+FAILED TO FETCH:
+Red badge: "⚠️ Using Estimates"
+Show tooltip: "Could not fetch 
+exact tax data from Rollfi. 
+Showing estimates only."
+
+CHANGE 8 — Add Tax Info to Payroll History:
+Update the payroll history section
+to show tax summary per past period:
+
+PAYROLL HISTORY TABLE:
+Period | Pay Date | Employees | Gross | Taxes | Net | Debit | Status
+
+Each row expandable to show:
+→ Full breakdown
+→ Per employee paystubs
+→ Tax filing status
+
+Add a "View Paystubs" button
+per completed payroll period
+
+CHANGE 9 — Employer Tax Summary Section:
+Add a new section specifically
+for employer tax visibility:
+
+Title: "Employer Tax Obligations"
+
+Show:
+┌─────────────────────────────────────┐
+│ EMPLOYER TAX SUMMARY                 │
+│ This Pay Period                      │
+├─────────────────────────────────────┤
+│ Employer Social Security (6.2%):    │
+│ $83.70 per employee = $167.40 total │
+│                                      │
+│ Employer Medicare (1.45%):          │
+│ $19.58 per employee = $39.16 total  │
+│                                      │
+│ Federal Unemployment (FUTA 0.6%):   │
+│ $8.10 per employee = $16.20 total   │
+│                                      │
+│ NJ State Unemployment (0.5%):       │
+│ $6.75 per employee = $13.50 total   │
+├─────────────────────────────────────┤
+│ TOTAL EMPLOYER TAXES: $236.26       │
+│                                      │
+│ Note: These are filed automatically  │
+│ by Rollfi on your behalf.            │
+└─────────────────────────────────────┘
+
+IMPORTANT TECHNICAL NOTES:
+1. TAX RATE CONSTANTS:
+   Create a constants file:
+   /server/lib/taxRates.js
+   
+   const TAX_RATES = {
+     federal: 0.12,
+     newJersey: 0.05,
+     newYork: 0.0685,
+     socialSecurity: 0.062,
+     medicare: 0.0145,
+     employerSocialSecurity: 0.062,
+     employerMedicare: 0.0145,
+     futa: 0.006,
+     njSuta: 0.005
+   };
+   
+   NOTE: These are ESTIMATES only!
+   Real amounts come from Rollfi!
+   Different for each employee
+   based on their W4 settings!
+
+2. ALWAYS LABEL ESTIMATES:
+   Never show estimated tax amounts
+   WITHOUT the "est." or "~" label
+   Real amounts only after Rollfi
+   confirms via getPayPeriodDetails
+
+3. REAL DATA PRIORITY:
+   If getPayPeriodDetails returns
+   real tax amounts from Rollfi:
+   → Use Rollfi amounts (more accurate)
+   → Remove "est." labels
+   → Show "Confirmed by Rollfi ✅"
+   
+   If getPayPeriodDetails fails or
+   payroll not yet submitted:
+   → Use estimated amounts
+   → Always show "est." label
+   → Never present estimates as real!
+
+4. NET PAY FORMULA (estimate):
+   netPay = grossPay - 
+   (grossPay × 0.12) -  // federal
+   (grossPay × 0.05) -  // NJ state
+   (grossPay × 0.062) - // SS
+   (grossPay × 0.0145)  // Medicare
+   = grossPay × 0.7535
+
+5. DEBIT AMOUNT FORMULA (estimate):
+   debitAmount = grossPay +
+   (grossPay × 0.062) +  // employer SS
+   (grossPay × 0.0145) + // employer Medicare
+   (grossPay × 0.006) +  // FUTA
+   (grossPay × 0.005)    // NJ SUTA
+   = grossPay × 1.0875
+   
+   Real debit amount from Rollfi:
+   getPayPeriodDetails "total" field
+
+TESTING CHECKLIST:
+After building, verify:
+
+✅ Payroll table shows Net Pay column
+✅ Clicking employee row expands
+   to show full tax breakdown
+✅ Totals section shows:
+   - Total Gross
+   - Total Employee Taxes
+   - Total Net Pay
+   - Total Employer Taxes
+   - TOTAL DEBIT AMOUNT (most important!)
+✅ Estimated amounts labeled with "~"
+✅ Confirmation dialog shows
+   updated breakdown with debit total
+✅ Paystub page accessible per employee
+✅ Paystub shows all deductions
+✅ Paystub has print/download option
+✅ Tax status badge shows correctly:
+   Estimated/Confirmed/Failed
+✅ After submission, system tries
+   to fetch real Rollfi tax data
+✅ YTD amounts show on paystubs
+✅ No raw $1800 format anywhere
+   Everything shows $18.00 format
