@@ -95,6 +95,26 @@ const webhookLog: Array<{
   status: string;
 }> = [];
 
+router.get("/easyteam/employees", (req, res) => {
+  const companyId = req.query.companyId as string | undefined;
+  if (!companyId) {
+    res.status(400).json({ error: "companyId query param required" });
+    return;
+  }
+  const users = store.getUsersForCompany(companyId);
+  const employees = users
+    .filter((u) => u.employeeId)
+    .map((u) => ({
+      id: u.employeeId as string,
+      name: u.name,
+      role: u.role,
+      timeTrackingEnabled: true,
+      wage: u.hourlyWage ?? 1500,
+      wageType: "hourly" as const,
+    }));
+  res.json({ employees });
+});
+
 router.get("/easyteam/status", (_req, res) => {
   const keyFirstLine = EASYTEAM_API_KEY?.split("\n")[0]?.slice(0, 40) ?? "";
   const keyLooksLikePem =

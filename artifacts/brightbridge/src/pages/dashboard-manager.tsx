@@ -34,19 +34,7 @@ function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
 
-const COMPANY_EMPLOYEES: Record<string, Array<{ id: string; name: string; role: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }>> = {
-  "ORG-SUNSHINE": [
-    { id: "MGR-SUNSHINE-001", name: "Susan Manager", role: "manager", timeTrackingEnabled: true, wage: 2500, wageType: "hourly" },
-    { id: "EMP-SUNSHINE-001", name: "John Smith", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" },
-    { id: "EMP-SUNSHINE-002", name: "Mary Johnson", role: "employee", timeTrackingEnabled: true, wage: 1500, wageType: "hourly" },
-  ],
-  "ORG-RAINBOW": [
-    { id: "MGR-RAINBOW-001", name: "Mike Manager", role: "manager", timeTrackingEnabled: true, wage: 2500, wageType: "hourly" },
-    { id: "EMP-RAINBOW-001", name: "Tom Wilson", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" },
-    { id: "EMP-RAINBOW-002", name: "Ali Husnain", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" },
-    { id: "EMP-RAINBOW-003", name: "Lisa Chen", role: "employee", timeTrackingEnabled: true, wage: 1400, wageType: "hourly" },
-  ],
-};
+interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
 
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
   "ORG-SUNSHINE": [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }],
@@ -56,22 +44,13 @@ const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitu
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
-const EMPLOYEE_NAMES: Record<string, string> = {
-  "EMP-SUNSHINE-001": "John Smith",
-  "EMP-SUNSHINE-002": "Mary Johnson",
-  "MGR-SUNSHINE-001": "Susan Manager",
-  "EMP-RAINBOW-001": "Tom Wilson",
-  "MGR-RAINBOW-001": "Mike Manager",
-  "EMP-RAINBOW-002": "Ali Husnain",
-  "EMP-RAINBOW-003": "Lisa Chen",
-};
-
 export default function ManagerDashboard() {
   const { user, company, location } = useAuth();
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
+  const [companyEmployees, setCompanyEmployees] = useState<EasyTeamEmployee[]>([]);
 
   // Approval state
   const [hours, setHours] = useState<TimesheetEntry[]>([]);
@@ -84,8 +63,10 @@ export default function ManagerDashboard() {
 
   const period = getPeriodDates();
 
-  const companyEmployees = COMPANY_EMPLOYEES[user?.companyId ?? ""] ?? [];
   const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
+
+  // Derived name lookup from live employee list
+  const employeeNames = Object.fromEntries(companyEmployees.map((e) => [e.id, e.name]));
 
   const { launch } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
 
@@ -143,6 +124,14 @@ export default function ManagerDashboard() {
     } catch { /* ignore */ }
     finally { setPulling(false); }
   }, [user?.companyId, period.from, period.to, fetchHours]);
+
+  useEffect(() => {
+    if (!user?.companyId) return;
+    fetch(`/api/easyteam/employees?companyId=${user.companyId}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { employees: EasyTeamEmployee[] }) => setCompanyEmployees(d.employees ?? []))
+      .catch(() => { /* ignore */ });
+  }, [user?.companyId]);
 
   useEffect(() => {
     fetchEvents();
@@ -324,7 +313,7 @@ export default function ManagerDashboard() {
                   <tbody className="divide-y divide-white/5">
                     {hours.map((e) => (
                       <tr key={e.employeeId}>
-                        <td className="py-2.5 text-white/80">{EMPLOYEE_NAMES[e.employeeId] ?? e.employeeId}</td>
+                        <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? e.employeeId}</td>
                         <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
                         <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
                         <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>
