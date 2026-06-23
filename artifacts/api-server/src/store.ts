@@ -261,6 +261,10 @@ export const store = {
   getRawUser(id: string): TestUser | undefined {
     return testUsers.find((u) => u.id === id);
   },
+  addTestUser(user: TestUser): void {
+    const existing = testUsers.find((u) => u.email.toLowerCase() === user.email.toLowerCase());
+    if (!existing) testUsers.push(user);
+  },
 
   // ── EasyTeam Hours Bridge ──
   getTimesheetKey(employeeId: string, periodKey: string): string { return `${employeeId}::${periodKey}`; },

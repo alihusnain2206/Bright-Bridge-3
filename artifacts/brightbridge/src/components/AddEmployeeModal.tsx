@@ -31,6 +31,9 @@ interface AddedEmployee {
   rollfiSynced: boolean;
   easyteamError?: string;
   rollfiError?: string;
+  loginCreated?: boolean;
+  loginEmail?: string;
+  loginPassword?: string;
 }
 
 interface Props {
@@ -104,6 +107,29 @@ export function AddEmployeeModal({ clientId, locationName, onClose, onSuccess }:
               <p className="font-semibold text-gray-900 mt-2">{added.name} added!</p>
               <p className="text-sm text-muted-foreground capitalize">{added.status}</p>
             </div>
+
+            {/* Login credentials */}
+            {added.loginCreated && added.loginEmail && added.loginPassword ? (
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 space-y-2">
+                <p className="text-xs font-semibold text-emerald-700 uppercase tracking-wide">Login Account Created</p>
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Email</span>
+                    <span className="text-xs font-mono font-semibold text-gray-800">{added.loginEmail}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">Password</span>
+                    <span className="text-xs font-mono font-semibold text-gray-800">{added.loginPassword}</span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-emerald-600">Share these credentials with the employee so they can log in.</p>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                <p className="text-xs text-amber-700">No email was provided — login account not created. Edit and add an email to enable login.</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <SyncBadge label="EasyTeam" synced={added.easyteamSynced} error={added.easyteamError} active={status === "active"} />
               <SyncBadge label="Rollfi" synced={added.rollfiSynced} error={added.rollfiError} active={status === "active"} />

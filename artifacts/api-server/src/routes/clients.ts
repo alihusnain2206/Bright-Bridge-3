@@ -149,7 +149,28 @@ router.post("/clients/:clientId/employees", async (req, res) => {
 
   const saved = store.getEmployee(employee.id) ?? employee;
   await persistClientEmployee(saved).catch(() => { /* non-fatal */ });
-  res.status(201).json(saved);
+
+  // Auto-create a login account if email is provided
+  let loginCreated = false;
+  const loginPassword = "Staff123!";
+  if (email) {
+    const company = client.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
+    store.addTestUser({
+      id: `USER-DYN-${Date.now()}`,
+      name,
+      email,
+      password: loginPassword,
+      role: "employee",
+      companyId: client.linkedCompanyId ?? "",
+      locationId: company?.locationId,
+      employeeId: employee.id,
+      position: roleName,
+      hourlyWage: wage,
+    });
+    loginCreated = true;
+  }
+
+  res.status(201).json({ ...saved, loginCreated, loginEmail: loginCreated ? email : undefined, loginPassword: loginCreated ? loginPassword : undefined });
 });
 
 router.delete("/clients/:clientId/employees/:employeeId", (req, res) => {
