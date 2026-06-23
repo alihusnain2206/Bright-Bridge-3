@@ -144,12 +144,12 @@ router.post("/auth/token-by-role", async (req, res) => {
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "employee",
-        permissions: ["LOCATION_READ", "SHIFT_READ"],
+        permissions: ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE"],
       },
       role: { name: user.position, hourlyWage: user.hourlyWage ?? 1500 },
       wage: user.hourlyWage ?? 1500,
       wageType: "hourly",
-      features: { geolocation: true, shiftNotes: false },
+      features: { geolocation: false, shiftNotes: false },
     };
   } else {
     res.json({ token: null, role: "parent", message: "Parents do not have EasyTeam access" });
