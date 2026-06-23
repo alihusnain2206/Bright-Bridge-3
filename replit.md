@@ -56,15 +56,17 @@ Sandbox testing app for the EasyTeam Embedded SDK. Tests JWT auth (RS256), role-
 
 ## Test Credentials
 
-| Role | Email | Password |
-|------|-------|----------|
-| Super Admin | joanne@brightbridgeassist.com | Admin123! |
-| Manager (Sunshine) | manager@sunshine.com | Manager123! |
-| Manager (Rainbow) | manager@rainbow.com | Manager123! |
-| Employee | john@sunshine.com | Staff123! |
-| Employee | mary@sunshine.com | Staff123! |
-| Employee | tom@rainbow.com | Staff123! |
-| Parent | sarah@parent.com | Parent123! |
+| Role | Name | Email | Password |
+|------|------|-------|----------|
+| Super Admin | Joanne Indiviglio | joanne@brightbridgeassist.com | Admin123! |
+| Manager (Sunshine) | Susan Manager | manager@sunshine.com | Manager123! |
+| Manager (Rainbow) | Mike Manager | manager@rainbow.com | Manager123! |
+| Employee (Sunshine) | John Smith | john@sunshine.com | Staff123! |
+| Employee (Sunshine) | Mary Johnson | mary@sunshine.com | Staff123! |
+| Employee (Rainbow) | Tom Wilson | tom@rainbow.com | Staff123! |
+| Employee (Rainbow) | Ali Husnain | ali@rainbow.com | Staff123! |
+| Employee (Rainbow) | Lisa Chen | lisa.chen@rainbow.com | Staff123! |
+| Parent | Sarah Parent | sarah@parent.com | Parent123! |
 
 ## Gotchas
 

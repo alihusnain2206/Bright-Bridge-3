@@ -24,7 +24,9 @@ const QUICK_LOGINS = [
   { label: "Manager — Sunshine", email: "manager@sunshine.com", password: "Manager123!", color: "#d97706", role: "manager" as UserRole },
   { label: "Manager — Rainbow", email: "manager@rainbow.com", password: "Manager123!", color: "#d97706", role: "manager" as UserRole },
   { label: "Employee — John", email: "john@sunshine.com", password: "Staff123!", color: "#16a34a", role: "employee" as UserRole },
-  { label: "Employee — Tom", email: "tom@rainbow.com", password: "Staff123!", color: "#16a34a", role: "employee" as UserRole },
+  { label: "Employee — Tom",  email: "tom@rainbow.com",      password: "Staff123!", color: "#16a34a", role: "employee" as UserRole },
+  { label: "Employee — Ali",  email: "ali@rainbow.com",      password: "Staff123!", color: "#16a34a", role: "employee" as UserRole },
+  { label: "Employee — Lisa", email: "lisa.chen@rainbow.com",password: "Staff123!", color: "#16a34a", role: "employee" as UserRole },
   { label: "Parent — Sarah", email: "sarah@parent.com", password: "Parent123!", color: "#2563eb", role: "parent" as UserRole },
 ];
 

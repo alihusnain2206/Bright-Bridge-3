@@ -157,6 +157,8 @@ const testUsers: TestUser[] = [
   { id: "USER-004", name: "John Smith", email: "john@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-001", position: "Teacher", hourlyWage: 1800 },
   { id: "USER-005", name: "Mary Johnson", email: "mary@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-002", position: "Assistant", hourlyWage: 1500 },
   { id: "USER-006", name: "Tom Wilson", email: "tom@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-001", position: "Teacher", hourlyWage: 1800 },
+  { id: "USER-008", name: "Ali Husnain", email: "ali@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-002", position: "Lead Teacher", hourlyWage: 1800 },
+  { id: "USER-009", name: "Lisa Chen", email: "lisa.chen@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-003", position: "Teaching Assistant", hourlyWage: 1400 },
   { id: "USER-007", name: "Sarah Parent", email: "sarah@parent.com", password: "Parent123!", role: "parent", companyId: "ORG-SUNSHINE", employeeId: null, position: "Parent" },
 ];
 

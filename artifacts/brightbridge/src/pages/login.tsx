@@ -11,8 +11,10 @@ const QUICK_LOGINS = [
   { label: "Manager — Sunshine",   email: "manager@sunshine.com",          password: "Manager123!", dot: "#f59e0b" },
   { label: "Manager — Rainbow",    email: "manager@rainbow.com",           password: "Manager123!", dot: "#f59e0b" },
   { label: "Employee — John Smith",email: "john@sunshine.com",             password: "Staff123!",   dot: "#22c55e" },
-  { label: "Employee — Tom Wilson",email: "tom@rainbow.com",               password: "Staff123!",   dot: "#22c55e" },
-  { label: "Parent — Sarah",       email: "sarah@parent.com",              password: "Parent123!",  dot: "#3b82f6" },
+  { label: "Employee — Tom Wilson",  email: "tom@rainbow.com",           password: "Staff123!",   dot: "#22c55e" },
+  { label: "Employee — Ali Husnain",email: "ali@rainbow.com",             password: "Staff123!",   dot: "#22c55e" },
+  { label: "Employee — Lisa Chen",   email: "lisa.chen@rainbow.com",      password: "Staff123!",   dot: "#22c55e" },
+  { label: "Parent — Sarah",         email: "sarah@parent.com",           password: "Parent123!",  dot: "#3b82f6" },
 ];
 
 /* ── Canvas mesh animation ── */
