@@ -86,6 +86,16 @@ router.delete("/clients/:clientId", (req, res) => {
   res.json({ deleted: true, id: clientId });
 });
 
+router.get("/clients/by-company/:companyId", (req, res) => {
+  const { companyId } = req.params;
+  const client = store.listClients().find((c) => c.linkedCompanyId === companyId);
+  if (!client) {
+    res.status(404).json({ error: "No client found for this company" });
+    return;
+  }
+  res.json(client);
+});
+
 router.get("/clients/:clientId/employees", (req, res) => {
   const { clientId } = req.params;
   const client = store.getClient(clientId);

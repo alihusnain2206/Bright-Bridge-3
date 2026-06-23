@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
+import { AddEmployeeModal } from "@/components/AddEmployeeModal";
 import {
   Building2, Users, MapPin, Shield,
   Terminal, RefreshCw, Play, Clock, CalendarDays, Calendar,
-  CheckCircle2, AlertTriangle, Scale, Zap,
+  CheckCircle2, AlertTriangle, Scale, Zap, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -19,15 +20,6 @@ const PAGE_OPTIONS = [
   { value: Pages.WEEKLY_SCHEDULE, label: "Schedule", icon: Calendar },
 ];
 
-const ALL_EMPLOYEES = [
-  { id: "ADMIN-JOANNE", name: "Joanne Indiviglio", role: "admin", timeTrackingEnabled: true, wage: 0, wageType: "hourly" as const },
-  { id: "MGR-SUNSHINE-001", name: "Susan Manager", role: "manager", timeTrackingEnabled: true, wage: 2500, wageType: "hourly" as const },
-  { id: "MGR-RAINBOW-001", name: "Mike Manager", role: "manager", timeTrackingEnabled: true, wage: 2500, wageType: "hourly" as const },
-  { id: "EMP-SUNSHINE-001", name: "John Smith", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" as const },
-  { id: "EMP-SUNSHINE-002", name: "Mary Johnson", role: "employee", timeTrackingEnabled: true, wage: 1500, wageType: "hourly" as const },
-  { id: "EMP-RAINBOW-001", name: "Tom Wilson", role: "employee", timeTrackingEnabled: true, wage: 1800, wageType: "hourly" as const },
-];
-
 const ALL_LOCATIONS = [
   { id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 },
   { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
@@ -37,13 +29,8 @@ const LAUNCH_ORG = { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" };
 
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
-
-interface Company {
-  id: string;
-  name: string;
-  type: string;
-  address?: string;
-}
+interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
+interface Client { id: string; name: string; linkedCompanyId?: string; locationName?: string; address?: string }
 
 function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
@@ -56,18 +43,30 @@ export default function SuperAdminDashboard() {
   const [tokenError, setTokenError] = useState("");
   const [selectedPage, setSelectedPage] = useState<Pages>(Pages.TIMESHEET);
   const [events, setEvents] = useState<WebhookEvent[]>([]);
-  const [companies] = useState<Company[]>([
-    { id: "ORG-SUNSHINE", name: "Sunshine Daycare Centre", type: "daycare", address: "123 Main St, Newark NJ" },
-    { id: "ORG-RAINBOW", name: "Rainbow Kids Daycare", type: "daycare", address: "456 Oak Ave, Jersey City NJ" },
-  ]);
+  const [allEmployees, setAllEmployees] = useState<EasyTeamEmployee[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [addingForClient, setAddingForClient] = useState<Client | null>(null);
 
   const { launch } = useEasyTeamLauncher("admin-et-container", undefined, 700);
 
+  const fetchEmployees = useCallback(async () => {
+    const d = await fetch("/api/easyteam/employees", { credentials: "include" }).then(r => r.json()) as { employees: EasyTeamEmployee[] };
+    setAllEmployees(d.employees ?? []);
+    return d.employees ?? [];
+  }, []);
+
+  const fetchClients = useCallback(async () => {
+    const d = await fetch("/api/clients", { credentials: "include" }).then(r => r.json()) as { clients: Client[] };
+    setClients(d.clients ?? []);
+  }, []);
+
   useEffect(() => {
+    void fetchEmployees();
+    void fetchClients();
     fetchEvents();
     const iv = setInterval(fetchEvents, 10000);
     return () => clearInterval(iv);
-  }, []);
+  }, [fetchEmployees, fetchClients]);
 
   const fetchEvents = async () => {
     try {
@@ -79,7 +78,7 @@ export default function SuperAdminDashboard() {
   const handlePageChange = (newPage: Pages) => {
     setSelectedPage(newPage);
     if (tokenData) {
-      launch(tokenData.token, { page: newPage, employees: ALL_EMPLOYEES, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+      launch(tokenData.token, { page: newPage, employees: allEmployees, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
     }
   };
 
@@ -97,12 +96,25 @@ export default function SuperAdminDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      launch(data.token, { page: selectedPage, employees: ALL_EMPLOYEES, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+      launch(data.token, { page: selectedPage, employees: allEmployees, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
 
-  const companyStaffCounts: Record<string, number> = { "ORG-SUNSHINE": 3, "ORG-RAINBOW": 2 };
+  const handleEmployeeAdded = async () => {
+    setAddingForClient(null);
+    const updated = await fetchEmployees();
+    void fetchClients();
+    if (tokenData) {
+      launch(tokenData.token, { page: selectedPage, employees: updated, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+    }
+  };
+
+  const staffCountForClient = (clientId: string) =>
+    allEmployees.filter((e) => {
+      const client = clients.find((c) => c.id === clientId);
+      return client?.linkedCompanyId && e.companyId === client.linkedCompanyId;
+    }).length;
 
   return (
     <div className="space-y-6">
@@ -130,29 +142,41 @@ export default function SuperAdminDashboard() {
         </div>
         <div className="flex-1 flex flex-wrap gap-2">
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">✓ EasyTeam Connected</span>
-          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-blue-400/20 text-blue-300 border border-blue-400/30">🧪 Sandbox Mode</span>
           <span className="px-3 py-1 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/20">Org: ORG-BRIGHTBRIDGE</span>
+          <span className="px-3 py-1 rounded-full text-xs font-semibold bg-white/10 text-white/60 border border-white/20">{allEmployees.length} total staff</span>
         </div>
       </div>
 
-      {/* Companies */}
+      {/* Partner Companies */}
       <div>
         <h2 className="text-lg font-bold text-[#284362] mb-3">Partner Companies</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {companies.map((co) => (
-            <div key={co.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
+          {clients.map((client) => (
+            <div key={client.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-gray-900">{co.name}</h3>
+                  <h3 className="font-semibold text-gray-900">{client.name}</h3>
                   <p className="text-xs text-muted-foreground">Daycare Centre</p>
                 </div>
                 <Building2 className="h-5 w-5 text-[#E8622A]" />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <MapPin className="h-3.5 w-3.5" />{co.address}
-              </div>
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Users className="h-3.5 w-3.5" />{companyStaffCounts[co.id] ?? 0} staff members
+              {client.address && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <MapPin className="h-3.5 w-3.5" />{client.address}
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Users className="h-3.5 w-3.5" />{staffCountForClient(client.id)} staff members
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => setAddingForClient(client)}
+                  className="h-7 text-xs gap-1 text-white border-0"
+                  style={{ background: ORANGE }}
+                >
+                  <UserPlus className="h-3 w-3" />Add Employee
+                </Button>
               </div>
             </div>
           ))}
@@ -254,6 +278,15 @@ export default function SuperAdminDashboard() {
         <Link href="/roles" className="ml-auto text-[#284362] underline underline-offset-2 hover:no-underline">View Role Comparison →</Link>
       </div>
 
+      {/* Add Employee Modal */}
+      {addingForClient && (
+        <AddEmployeeModal
+          clientId={addingForClient.id}
+          locationName={addingForClient.name}
+          onClose={() => setAddingForClient(null)}
+          onSuccess={handleEmployeeAdded}
+        />
+      )}
     </div>
   );
 }

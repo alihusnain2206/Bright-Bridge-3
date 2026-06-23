@@ -97,17 +97,16 @@ const webhookLog: Array<{
 
 router.get("/easyteam/employees", (req, res) => {
   const companyId = req.query.companyId as string | undefined;
-  if (!companyId) {
-    res.status(400).json({ error: "companyId query param required" });
-    return;
-  }
-  const users = store.getUsersForCompany(companyId);
+  const users = companyId
+    ? store.getUsersForCompany(companyId)
+    : store.getAllStaffUsers();
   const employees = users
     .filter((u) => u.employeeId)
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
       role: u.role,
+      companyId: u.companyId,
       timeTrackingEnabled: true,
       wage: u.hourlyWage ?? 1500,
       wageType: "hourly" as const,

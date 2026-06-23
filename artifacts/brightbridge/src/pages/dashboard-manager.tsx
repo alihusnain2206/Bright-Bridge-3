@@ -5,9 +5,10 @@ import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
   Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
-  Clock, ThumbsUp, Loader2, Download,
+  Clock, ThumbsUp, Loader2, Download, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AddEmployeeModal } from "@/components/AddEmployeeModal";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
@@ -51,6 +52,8 @@ export default function ManagerDashboard() {
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [companyEmployees, setCompanyEmployees] = useState<EasyTeamEmployee[]>([]);
+  const [clientId, setClientId] = useState<string | null>(null);
+  const [showAddEmployee, setShowAddEmployee] = useState(false);
 
   // Approval state
   const [hours, setHours] = useState<TimesheetEntry[]>([]);
@@ -125,11 +128,22 @@ export default function ManagerDashboard() {
     finally { setPulling(false); }
   }, [user?.companyId, period.from, period.to, fetchHours]);
 
+  const fetchCompanyEmployees = useCallback(async () => {
+    if (!user?.companyId) return [];
+    const d = await fetch(`/api/easyteam/employees?companyId=${user.companyId}`, { credentials: "include" })
+      .then(r => r.json()) as { employees: EasyTeamEmployee[] };
+    const list = d.employees ?? [];
+    setCompanyEmployees(list);
+    return list;
+  }, [user?.companyId]);
+
+  useEffect(() => { void fetchCompanyEmployees(); }, [fetchCompanyEmployees]);
+
   useEffect(() => {
     if (!user?.companyId) return;
-    fetch(`/api/easyteam/employees?companyId=${user.companyId}`, { credentials: "include" })
+    fetch(`/api/clients/by-company/${user.companyId}`, { credentials: "include" })
       .then(r => r.json())
-      .then((d: { employees: EasyTeamEmployee[] }) => setCompanyEmployees(d.employees ?? []))
+      .then((c: { id: string }) => setClientId(c.id))
       .catch(() => { /* ignore */ });
   }, [user?.companyId]);
 
@@ -146,6 +160,19 @@ export default function ManagerDashboard() {
       const d = await fetch("/api/easyteam/webhooks", { credentials: "include" }).then(r => r.json()) as { events: WebhookEvent[] };
       setEvents((d.events ?? []).slice(0, 10));
     } catch { /* ignore */ }
+  };
+
+  const handleEmployeeAdded = async () => {
+    setShowAddEmployee(false);
+    const updated = await fetchCompanyEmployees();
+    if (tokenData) {
+      launch(tokenData.token, {
+        page: Pages.TIMESHEET,
+        employees: updated,
+        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+        locations: companyLocations,
+      });
+    }
   };
 
   const generateToken = async () => {
@@ -189,7 +216,19 @@ export default function ManagerDashboard() {
               <h2 className="font-bold text-lg text-gray-900">{company?.name}</h2>
               <p className="text-sm text-muted-foreground">Your managed location</p>
             </div>
-            <Building2 className="h-6 w-6 text-[#E8622A]" />
+            <div className="flex items-center gap-2">
+              {clientId && (
+                <Button
+                  size="sm"
+                  onClick={() => setShowAddEmployee(true)}
+                  className="gap-1.5 text-xs text-white border-0 h-8"
+                  style={{ background: ORANGE }}
+                >
+                  <UserPlus className="h-3.5 w-3.5" />Add Employee
+                </Button>
+              )}
+              <Building2 className="h-6 w-6 text-[#E8622A]" />
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -412,6 +451,15 @@ export default function ManagerDashboard() {
             </div>
           )}
         </div>
+
+      {showAddEmployee && clientId && (
+        <AddEmployeeModal
+          clientId={clientId}
+          locationName={company?.name ?? "Your Location"}
+          onClose={() => setShowAddEmployee(false)}
+          onSuccess={handleEmployeeAdded}
+        />
+      )}
       </div>
   );
 }
