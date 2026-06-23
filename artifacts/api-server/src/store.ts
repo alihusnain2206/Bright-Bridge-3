@@ -6,7 +6,10 @@ export interface Client {
   longitude: number;
   timezone: string;
   createdAt: string;
+  linkedCompanyId?: string;
 }
+
+export type EmployeeStatus = "hired" | "onboarding" | "active" | "terminated";
 
 export interface ClientEmployee {
   id: string;
@@ -18,6 +21,12 @@ export interface ClientEmployee {
   wageType: "hourly" | "weekly" | "monthly";
   timeTrackingEnabled: boolean;
   createdAt: string;
+  email?: string;
+  status: EmployeeStatus;
+  easyteamSynced: boolean;
+  rollfiSynced: boolean;
+  rollfiUserId?: string;
+  syncError?: string;
 }
 
 // ─── ROLE-BASED DATA ────────────────────────────────────────
@@ -117,6 +126,7 @@ const clients: Client[] = [
     longitude: -74.1724,
     timezone: "America/New_York",
     createdAt: new Date().toISOString(),
+    linkedCompanyId: "ORG-SUNSHINE",
   },
   {
     id: "client-rainbow-001",
@@ -126,15 +136,16 @@ const clients: Client[] = [
     longitude: -74.0431,
     timezone: "America/New_York",
     createdAt: new Date().toISOString(),
+    linkedCompanyId: "ORG-RAINBOW",
   },
 ];
 
 const employees: ClientEmployee[] = [
-  { id: "emp-sunshine-001", clientId: "client-sunshine-001", name: "Sarah Mitchell", role: "manager", roleName: "Center Manager", wage: 2500, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString() },
-  { id: "emp-sunshine-002", clientId: "client-sunshine-001", name: "James Lee", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString() },
-  { id: "emp-sunshine-003", clientId: "client-sunshine-001", name: "Maria Gonzalez", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString() },
-  { id: "emp-rainbow-001", clientId: "client-rainbow-001", name: "Tom Wilson", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString() },
-  { id: "emp-rainbow-002", clientId: "client-rainbow-001", name: "Lisa Chen", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString() },
+  { id: "emp-sunshine-001", clientId: "client-sunshine-001", name: "Sarah Mitchell", email: "sarah.mitchell@sunshine.com", role: "manager", roleName: "Center Manager", wage: 2500, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: true, rollfiSynced: false },
+  { id: "emp-sunshine-002", clientId: "client-sunshine-001", name: "James Lee", email: "james.lee@sunshine.com", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: true, rollfiSynced: false },
+  { id: "emp-sunshine-003", clientId: "client-sunshine-001", name: "Maria Gonzalez", email: "maria.gonzalez@sunshine.com", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: true, rollfiSynced: false },
+  { id: "emp-rainbow-001", clientId: "client-rainbow-001", name: "Tom Wilson", email: "tom@rainbow.com", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: true, rollfiSynced: false },
+  { id: "emp-rainbow-002", clientId: "client-rainbow-001", name: "Lisa Chen", email: "lisa.chen@rainbow.com", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: true, rollfiSynced: false },
 ];
 
 // ─── TEST USERS ──────────────────────────────────────────────
@@ -195,9 +206,23 @@ export const store = {
   listEmployees(clientId: string): ClientEmployee[] { return employees.filter((e) => e.clientId === clientId); },
   getEmployee(id: string): ClientEmployee | undefined { return employees.find((e) => e.id === id); },
   createEmployee(clientId: string, data: Omit<ClientEmployee, "id" | "clientId" | "createdAt">): ClientEmployee {
-    const employee: ClientEmployee = { id: `emp-${uid()}`, clientId, ...data, createdAt: new Date().toISOString() };
+    const employee: ClientEmployee = {
+      id: `emp-${uid()}`,
+      clientId,
+      ...data,
+      status: data.status ?? "hired",
+      easyteamSynced: data.easyteamSynced ?? false,
+      rollfiSynced: data.rollfiSynced ?? false,
+      createdAt: new Date().toISOString(),
+    };
     employees.push(employee);
     return employee;
+  },
+  updateEmployee(id: string, updates: Partial<Omit<ClientEmployee, "id" | "clientId" | "createdAt">>): ClientEmployee | undefined {
+    const emp = employees.find((e) => e.id === id);
+    if (!emp) return undefined;
+    Object.assign(emp, updates);
+    return emp;
   },
   deleteEmployee(clientId: string, employeeId: string): boolean {
     const idx = employees.findIndex((e) => e.id === employeeId && e.clientId === clientId);

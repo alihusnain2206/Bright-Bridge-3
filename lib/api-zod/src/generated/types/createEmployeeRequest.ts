@@ -5,12 +5,15 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EmployeeStatus } from "./employeeStatus";
 
 export interface CreateEmployeeRequest {
   name: string;
+  email?: string;
   role: string;
   roleName: string;
   wage?: number;
   wageType?: string;
   timeTrackingEnabled?: boolean;
+  status?: EmployeeStatus;
 }

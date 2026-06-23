@@ -26,12 +26,14 @@ import type {
   CreateEmployeeRequest,
   DeletedResponse,
   EasyTeamStatus,
+  EmployeeSyncResponse,
   ErrorResponse,
   ExportLogsResponse,
   ExportWebhookPayload,
   GenerateTokenRequest,
   GenerateTokenResponse,
   HealthStatus,
+  UpdateEmployeeStatusRequest,
   WebhookAck,
   WebhookLogsResponse,
   WebhookPayload,
@@ -1199,4 +1201,215 @@ export const useDeleteClientEmployee = <
   TContext
 > => {
   return useMutation(getDeleteClientEmployeeMutationOptions(options));
+};
+
+/**
+ * @summary Update an employee's status (hired/onboarding/active/terminated)
+ */
+export const getUpdateClientEmployeeStatusUrl = (
+  clientId: string,
+  employeeId: string,
+) => {
+  return `/api/clients/${clientId}/employees/${employeeId}/status`;
+};
+
+export const updateClientEmployeeStatus = async (
+  clientId: string,
+  employeeId: string,
+  updateEmployeeStatusRequest: UpdateEmployeeStatusRequest,
+  options?: RequestInit,
+): Promise<ClientEmployee> => {
+  return customFetch<ClientEmployee>(
+    getUpdateClientEmployeeStatusUrl(clientId, employeeId),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateEmployeeStatusRequest),
+    },
+  );
+};
+
+export const getUpdateClientEmployeeStatusMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClientEmployeeStatus>>,
+    TError,
+    {
+      clientId: string;
+      employeeId: string;
+      data: BodyType<UpdateEmployeeStatusRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateClientEmployeeStatus>>,
+  TError,
+  {
+    clientId: string;
+    employeeId: string;
+    data: BodyType<UpdateEmployeeStatusRequest>;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateClientEmployeeStatus"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateClientEmployeeStatus>>,
+    {
+      clientId: string;
+      employeeId: string;
+      data: BodyType<UpdateEmployeeStatusRequest>;
+    }
+  > = (props) => {
+    const { clientId, employeeId, data } = props ?? {};
+
+    return updateClientEmployeeStatus(
+      clientId,
+      employeeId,
+      data,
+      requestOptions,
+    );
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateClientEmployeeStatusMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateClientEmployeeStatus>>
+>;
+export type UpdateClientEmployeeStatusMutationBody =
+  BodyType<UpdateEmployeeStatusRequest>;
+export type UpdateClientEmployeeStatusMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update an employee's status (hired/onboarding/active/terminated)
+ */
+export const useUpdateClientEmployeeStatus = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateClientEmployeeStatus>>,
+    TError,
+    {
+      clientId: string;
+      employeeId: string;
+      data: BodyType<UpdateEmployeeStatusRequest>;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateClientEmployeeStatus>>,
+  TError,
+  {
+    clientId: string;
+    employeeId: string;
+    data: BodyType<UpdateEmployeeStatusRequest>;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateClientEmployeeStatusMutationOptions(options));
+};
+
+/**
+ * @summary Retry Rollfi and EasyTeam sync for an employee
+ */
+export const getSyncClientEmployeeUrl = (
+  clientId: string,
+  employeeId: string,
+) => {
+  return `/api/clients/${clientId}/employees/${employeeId}/sync`;
+};
+
+export const syncClientEmployee = async (
+  clientId: string,
+  employeeId: string,
+  options?: RequestInit,
+): Promise<EmployeeSyncResponse> => {
+  return customFetch<EmployeeSyncResponse>(
+    getSyncClientEmployeeUrl(clientId, employeeId),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getSyncClientEmployeeMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncClientEmployee>>,
+    TError,
+    { clientId: string; employeeId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof syncClientEmployee>>,
+  TError,
+  { clientId: string; employeeId: string },
+  TContext
+> => {
+  const mutationKey = ["syncClientEmployee"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof syncClientEmployee>>,
+    { clientId: string; employeeId: string }
+  > = (props) => {
+    const { clientId, employeeId } = props ?? {};
+
+    return syncClientEmployee(clientId, employeeId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SyncClientEmployeeMutationResult = NonNullable<
+  Awaited<ReturnType<typeof syncClientEmployee>>
+>;
+
+export type SyncClientEmployeeMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Retry Rollfi and EasyTeam sync for an employee
+ */
+export const useSyncClientEmployee = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof syncClientEmployee>>,
+    TError,
+    { clientId: string; employeeId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof syncClientEmployee>>,
+  TError,
+  { clientId: string; employeeId: string },
+  TContext
+> => {
+  return useMutation(getSyncClientEmployeeMutationOptions(options));
 };

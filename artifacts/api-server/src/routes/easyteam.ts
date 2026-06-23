@@ -156,6 +156,13 @@ router.post("/easyteam/token", async (req, res) => {
   if (employee_id) {
     const emp = store.getEmployee(employee_id);
     if (emp) {
+      if (emp.status !== "active") {
+        res.status(403).json({
+          success: false,
+          error: `Employee is not yet active (status: ${emp.status}). Activate them first before launching the time clock.`,
+        });
+        return;
+      }
       resolvedRoleName = emp.roleName;
       resolvedAccessRole = emp.role;
       resolvedWage = emp.wage;

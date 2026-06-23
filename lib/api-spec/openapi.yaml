@@ -261,6 +261,61 @@ paths:
               schema:
                 $ref: "#/components/schemas/DeletedResponse"
 
+  /clients/{clientId}/employees/{employeeId}/status:
+    patch:
+      operationId: updateClientEmployeeStatus
+      tags: [clients]
+      summary: Update an employee's status (hired/onboarding/active/terminated)
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateEmployeeStatusRequest"
+      responses:
+        "200":
+          description: Employee with updated status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientEmployee"
+
+  /clients/{clientId}/employees/{employeeId}/sync:
+    post:
+      operationId: syncClientEmployee
+      tags: [clients]
+      summary: Retry Rollfi and EasyTeam sync for an employee
+      parameters:
+        - name: clientId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sync result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeeSyncResponse"
+
+
 components:
   schemas:
     HealthStatus:
@@ -584,6 +639,10 @@ components:
       required:
         - clients
 
+    EmployeeStatus:
+      type: string
+      enum: [hired, onboarding, active, terminated]
+
     ClientEmployee:
       type: object
       properties:
@@ -592,6 +651,8 @@ components:
         clientId:
           type: string
         name:
+          type: string
+        email:
           type: string
         role:
           type: string
@@ -605,6 +666,16 @@ components:
           type: boolean
         createdAt:
           type: string
+        status:
+          $ref: "#/components/schemas/EmployeeStatus"
+        easyteamSynced:
+          type: boolean
+        rollfiSynced:
+          type: boolean
+        rollfiUserId:
+          type: string
+        syncError:
+          type: string
       required:
         - id
         - clientId
@@ -612,11 +683,16 @@ components:
         - role
         - roleName
         - createdAt
+        - status
+        - easyteamSynced
+        - rollfiSynced
 
     CreateEmployeeRequest:
       type: object
       properties:
         name:
+          type: string
+        email:
           type: string
         role:
           type: string
@@ -628,10 +704,38 @@ components:
           type: string
         timeTrackingEnabled:
           type: boolean
+        status:
+          $ref: "#/components/schemas/EmployeeStatus"
       required:
         - name
         - role
         - roleName
+
+    UpdateEmployeeStatusRequest:
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/EmployeeStatus"
+      required:
+        - status
+
+    EmployeeSyncResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        rollfiSynced:
+          type: boolean
+        easyteamSynced:
+          type: boolean
+        rollfiUserId:
+          type: string
+        error:
+          type: string
+      required:
+        - success
+        - rollfiSynced
+        - easyteamSynced
 
     ClientEmployeesListResponse:
       type: object

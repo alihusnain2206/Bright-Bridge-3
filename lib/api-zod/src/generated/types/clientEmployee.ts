@@ -5,15 +5,22 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EmployeeStatus } from "./employeeStatus";
 
 export interface ClientEmployee {
   id: string;
   clientId: string;
   name: string;
+  email?: string;
   role: string;
   roleName: string;
   wage?: number;
   wageType?: string;
   timeTrackingEnabled?: boolean;
   createdAt: string;
+  status: EmployeeStatus;
+  easyteamSynced: boolean;
+  rollfiSynced: boolean;
+  rollfiUserId?: string;
+  syncError?: string;
 }

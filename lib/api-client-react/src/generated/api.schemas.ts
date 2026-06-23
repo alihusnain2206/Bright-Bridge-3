@@ -148,25 +148,55 @@ export interface ClientsListResponse {
   clients: Client[];
 }
 
+export type EmployeeStatus =
+  (typeof EmployeeStatus)[keyof typeof EmployeeStatus];
+
+export const EmployeeStatus = {
+  hired: "hired",
+  onboarding: "onboarding",
+  active: "active",
+  terminated: "terminated",
+} as const;
+
 export interface ClientEmployee {
   id: string;
   clientId: string;
   name: string;
+  email?: string;
   role: string;
   roleName: string;
   wage?: number;
   wageType?: string;
   timeTrackingEnabled?: boolean;
   createdAt: string;
+  status: EmployeeStatus;
+  easyteamSynced: boolean;
+  rollfiSynced: boolean;
+  rollfiUserId?: string;
+  syncError?: string;
 }
 
 export interface CreateEmployeeRequest {
   name: string;
+  email?: string;
   role: string;
   roleName: string;
   wage?: number;
   wageType?: string;
   timeTrackingEnabled?: boolean;
+  status?: EmployeeStatus;
+}
+
+export interface UpdateEmployeeStatusRequest {
+  status: EmployeeStatus;
+}
+
+export interface EmployeeSyncResponse {
+  success: boolean;
+  rollfiSynced: boolean;
+  easyteamSynced: boolean;
+  rollfiUserId?: string;
+  error?: string;
 }
 
 export interface ClientEmployeesListResponse {

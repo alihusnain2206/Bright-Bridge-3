@@ -199,12 +199,18 @@ export const ListClientEmployeesResponse = zod.object({
       id: zod.string(),
       clientId: zod.string(),
       name: zod.string(),
+      email: zod.string().optional(),
       role: zod.string(),
       roleName: zod.string(),
       wage: zod.number().optional(),
       wageType: zod.string().optional(),
       timeTrackingEnabled: zod.boolean().optional(),
       createdAt: zod.string(),
+      status: zod.enum(["hired", "onboarding", "active", "terminated"]),
+      easyteamSynced: zod.boolean(),
+      rollfiSynced: zod.boolean(),
+      rollfiUserId: zod.string().optional(),
+      syncError: zod.string().optional(),
     }),
   ),
 });
@@ -218,11 +224,13 @@ export const CreateClientEmployeeParams = zod.object({
 
 export const CreateClientEmployeeBody = zod.object({
   name: zod.string(),
+  email: zod.string().optional(),
   role: zod.string(),
   roleName: zod.string(),
   wage: zod.number().optional(),
   wageType: zod.string().optional(),
   timeTrackingEnabled: zod.boolean().optional(),
+  status: zod.enum(["hired", "onboarding", "active", "terminated"]).optional(),
 });
 
 /**
@@ -236,4 +244,50 @@ export const DeleteClientEmployeeParams = zod.object({
 export const DeleteClientEmployeeResponse = zod.object({
   deleted: zod.boolean(),
   id: zod.string(),
+});
+
+/**
+ * @summary Update an employee's status (hired/onboarding/active/terminated)
+ */
+export const UpdateClientEmployeeStatusParams = zod.object({
+  clientId: zod.coerce.string(),
+  employeeId: zod.coerce.string(),
+});
+
+export const UpdateClientEmployeeStatusBody = zod.object({
+  status: zod.enum(["hired", "onboarding", "active", "terminated"]),
+});
+
+export const UpdateClientEmployeeStatusResponse = zod.object({
+  id: zod.string(),
+  clientId: zod.string(),
+  name: zod.string(),
+  email: zod.string().optional(),
+  role: zod.string(),
+  roleName: zod.string(),
+  wage: zod.number().optional(),
+  wageType: zod.string().optional(),
+  timeTrackingEnabled: zod.boolean().optional(),
+  createdAt: zod.string(),
+  status: zod.enum(["hired", "onboarding", "active", "terminated"]),
+  easyteamSynced: zod.boolean(),
+  rollfiSynced: zod.boolean(),
+  rollfiUserId: zod.string().optional(),
+  syncError: zod.string().optional(),
+});
+
+/**
+ * @summary Retry Rollfi and EasyTeam sync for an employee
+ */
+export const SyncClientEmployeeParams = zod.object({
+  clientId: zod.coerce.string(),
+  employeeId: zod.coerce.string(),
+});
+
+export const SyncClientEmployeeResponse = zod.object({
+  success: zod.boolean(),
+  rollfiSynced: zod.boolean(),
+  easyteamSynced: zod.boolean(),
+  rollfiUserId: zod.string().optional(),
+  error: zod.string().optional(),
 });
