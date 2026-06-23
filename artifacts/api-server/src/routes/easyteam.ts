@@ -148,7 +148,9 @@ router.post("/easyteam/token", async (req, res) => {
   if (client_id) {
     const client = store.getClient(client_id);
     if (client) {
-      resolvedLocationId = client.id;
+      // Resolve the real EasyTeam location via client → linkedCompany → locationId
+      const linkedCompany = client.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
+      resolvedLocationId = linkedCompany?.locationId ?? client.linkedCompanyId ?? client.id;
       resolvedOrgId = "ORG-BRIGHTBRIDGE";
     }
   }
