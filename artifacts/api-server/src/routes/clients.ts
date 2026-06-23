@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { store, type EmployeeStatus } from "../store";
 import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
 import { persistClientEmployee } from "../lib/client-employee-persist.js";
+import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import type { Logger } from "pino";
 
 const router: IRouter = Router();
@@ -18,7 +19,20 @@ async function attemptSync(employeeId: string, clientId: string, log: Logger) {
 
   const rollfiCompany = getRollfiCompanyForClient(clientId);
 
-  const easyteamSynced = emp.status === "active";
+  // Resolve the EasyTeam location for this client
+  const client = store.getClient(clientId);
+  const company = client?.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
+  const locationId = company?.locationId;
+
+  // Register in EasyTeam — only flag as synced after confirmed API success
+  let easyteamSynced = emp.easyteamSynced;
+  if (locationId && !emp.easyteamSynced) {
+    const etResult = await registerEmployeeInEasyTeam(emp, locationId, log);
+    easyteamSynced = etResult.success;
+    if (!etResult.success) {
+      log.warn({ employeeId, name: emp.name, reason: etResult.error }, "EasyTeam auto-registration did not confirm — employee will appear after first Time Clock use");
+    }
+  }
 
   if (rollfiCompany && !emp.rollfiSynced) {
     const result = await onboardClientEmployeeToRollfi(emp, rollfiCompany, log);
@@ -157,7 +171,8 @@ router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res)
   const wasNotActive = emp.status !== "active";
   store.updateEmployee(employeeId, {
     status,
-    easyteamSynced: status === "active",
+    // Keep existing easyteamSynced flag when activating — attemptSync below will update it after real API call
+    easyteamSynced: status === "active" ? emp.easyteamSynced : false,
   });
 
   if (status === "active" && wasNotActive) {
@@ -187,8 +202,17 @@ router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) =>
     return;
   }
 
-  const easyteamSynced = true;
   const rollfiCompany = getRollfiCompanyForClient(clientId);
+
+  // Register in EasyTeam
+  const client = store.getClient(clientId);
+  const company = client?.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
+  const locationId = company?.locationId;
+  let easyteamSynced = emp.easyteamSynced;
+  if (locationId) {
+    const etResult = await registerEmployeeInEasyTeam(emp, locationId, req.log as unknown as Logger);
+    easyteamSynced = etResult.success;
+  }
 
   let rollfiSynced = emp.rollfiSynced;
   let rollfiUserId = emp.rollfiUserId;
