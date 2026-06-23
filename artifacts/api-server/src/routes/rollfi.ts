@@ -1009,8 +1009,9 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   }
 
   type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
-  const { companyId, payPeriodId, adjustments = [] } = req.body as {
+  const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate } = req.body as {
     companyId: string; payPeriodId: string; adjustments?: AdjInput[];
+    payBeginDate?: string; payEndDate?: string;
   };
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) {
@@ -1037,13 +1038,15 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       return;
     }
 
-    // Standard biweekly period: 10 workdays × 8h = 80h worked; 0.5h/day break = 5h; net = 75h
-    const PAY_HOURS = 75;
+    const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
 
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours: PAY_HOURS } };
+      const synced = (periodKey && u.employeeId) ? store.getTimesheetEntry(u.employeeId, periodKey) : null;
+      const payHours = synced ? synced.approvedHours : 75;
+      if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced for this employee — using 75h fallback");
+      const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
       return entry;
@@ -1181,7 +1184,6 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
   }
   const daycareCompanies = store.getDaycareCompanies().filter((c) => store.getRollfiCompany(c.id));
   const results: Array<Record<string, unknown>> = [];
-  const PAY_HOURS = 75;
 
   for (const company of daycareCompanies) {
     const rollfiCompany = store.getRollfiCompany(company.id)!;
@@ -1224,11 +1226,16 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
         { headers: rollfiHeaders() }
       );
 
-      // Import hours
+      // Import hours — use EasyTeam synced hours per employee when available
+      const runAllPeriodKey = `${String(period.payBeginDate ?? "")}/${String(period.payEndDate ?? "")}`;
       const importResp = await axios.post(
         `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
         { method: "importRegularPayrollData", companyId: rollfiCompany.rollfiCompanyId, payPeriodId,
-          payrollData: onboarded.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, basicPay: { payHours: PAY_HOURS } })) },
+          payrollData: onboarded.map((u) => {
+            const synced = u.employeeId ? store.getTimesheetEntry(u.employeeId, runAllPeriodKey) : null;
+            const payHours = synced ? synced.approvedHours : 75;
+            return { userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, basicPay: { payHours } };
+          }) },
         { headers: rollfiHeaders() }
       );
       assertNoRollfiError(importResp.data as Record<string, unknown>, "importRegularPayrollData");
@@ -1319,7 +1326,8 @@ router.get("/rollfi/paystubs", async (req, res) => {
   if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
-  const { companyId, payPeriodId } = req.query as { companyId: string; payPeriodId?: string };
+  const { companyId, payPeriodId, payBeginDate: pbDate, payEndDate: peDate } = req.query as { companyId: string; payPeriodId?: string; payBeginDate?: string; payEndDate?: string };
+  const stubPeriodKey = pbDate && peDate ? `${pbDate}/${peDate}` : null;
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded" }); return; }
 
@@ -1348,8 +1356,6 @@ router.get("/rollfi/paystubs", async (req, res) => {
     }
   }
 
-  const PAY_HOURS = 75;
-
   const stubs = staff.map((u) => {
     const re = u.employeeId ? store.getRollfiEmployee(u.employeeId) : null;
     const rollfiDetail = re?.rollfiUserId
@@ -1358,11 +1364,14 @@ router.get("/rollfi/paystubs", async (req, res) => {
         )
       : null;
 
+    const synced = (stubPeriodKey && u.employeeId) ? store.getTimesheetEntry(u.employeeId, stubPeriodKey) : null;
+    const payHours = synced ? synced.approvedHours : 75;
+
     const hourlyRateCents = u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = rollfiDetail
-      ? Number(rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? PAY_HOURS * hourlyRate)
-      : PAY_HOURS * hourlyRate;
+      ? Number(rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? payHours * hourlyRate)
+      : payHours * hourlyRate;
     const federalTax  = Math.round(grossPay * 0.12   * 100) / 100;
     const stateTax    = Math.round(grossPay * 0.05   * 100) / 100;
     const fica        = Math.round(grossPay * 0.0765 * 100) / 100;
@@ -1383,7 +1392,8 @@ router.get("/rollfi/paystubs", async (req, res) => {
       name: u.name,
       position: u.position,
       hourlyRate,
-      hoursWorked: PAY_HOURS,
+      hoursWorked: synced ? synced.hoursWorked : payHours,
+      hoursSource: synced ? synced.source : "fallback",
       grossPay:   Math.round(grossPay   * 100) / 100,
       federalTax: rollfiDetail ? Number(rollfiDetail.federalTax ?? rollfiDetail.federalIncomeTax ?? federalTax) : federalTax,
       stateTax:   rollfiDetail ? Number(rollfiDetail.stateTax   ?? rollfiDetail.stateIncomeTax   ?? stateTax)   : stateTax,

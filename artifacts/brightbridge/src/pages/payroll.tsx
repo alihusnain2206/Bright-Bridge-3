@@ -517,7 +517,7 @@ function PayStubsDrawer({ companyId, period, onClose }: {
 }) {
   const { data, isLoading, error } = useQuery<PayStubsData>({
     queryKey: ["rollfi-stubs", companyId, period.payPeriodId],
-    queryFn: () => api.get(`/rollfi/paystubs?companyId=${companyId}&payPeriodId=${period.payPeriodId ?? ""}`),
+    queryFn: () => api.get(`/rollfi/paystubs?companyId=${companyId}&payPeriodId=${period.payPeriodId ?? ""}&payBeginDate=${period.payBeginDate ?? ""}&payEndDate=${period.payEndDate ?? ""}`),
     staleTime: 120_000,
     retry: false,
   });
@@ -723,8 +723,8 @@ export default function Payroll() {
   });
 
   const submitPayroll = useMutation({
-    mutationFn: ({ companyId, payPeriodId, adjs }: { companyId: string; payPeriodId: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[] }) =>
-      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, adjustments: adjs }),
+    mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[] }) =>
+      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs }),
     onSuccess: (data) => {
       setPayrollResult(data);
       setIsPolling(true);
@@ -1001,12 +1001,9 @@ export default function Payroll() {
                 disabled={syncHours.isPending}
                 className="text-orange-400/70 hover:text-orange-300 gap-1.5 border border-orange-400/20 hover:border-orange-400/40"
                 onClick={() => {
-                  const to = new Date();
-                  const from = new Date(to.getTime() - 14 * 24 * 60 * 60 * 1000);
-                  syncHours.mutate({
-                    from: from.toISOString().split("T")[0]!,
-                    to: to.toISOString().split("T")[0]!,
-                  });
+                  const from = payPeriod?.payBeginDate ?? new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]!;
+                  const to = payPeriod?.payEndDate ?? new Date().toISOString().split("T")[0]!;
+                  syncHours.mutate({ from, to });
                 }}
               >
                 {syncHours.isPending
@@ -1396,6 +1393,15 @@ export default function Payroll() {
             })()}
 
             <div className="px-6 py-4">
+              {preview.employees.some((e) => !e.hoursSource || e.hoursSource === "estimated") && (
+                <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 mb-4" style={{ background: "rgba(232,98,42,0.10)" }}>
+                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-amber-300 text-xs font-semibold">Hours not synced from EasyTeam</p>
+                    <p className="text-amber-300/60 text-xs mt-0.5">Some employees are using estimated hours. Close this dialog, click <span className="font-semibold">Sync Hours from EasyTeam</span>, then re-submit for accurate payroll.</p>
+                  </div>
+                </div>
+              )}
               <p className="text-white/30 text-xs mb-4">
                 ⚠️ If any amounts seem wrong, click Cancel and review before submitting.
                 Tax figures are estimates — exact amounts confirmed by Rollfi after processing.
@@ -1414,7 +1420,7 @@ export default function Payroll() {
                     const adjs = Object.entries(adjustments)
                       .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
                       .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
-                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, adjs });
+                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, payBeginDate: payPeriod.payBeginDate, payEndDate: payPeriod.payEndDate, adjs });
                   }}
                   className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
                   style={{ background: ORANGE }}
