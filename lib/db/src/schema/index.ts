@@ -44,6 +44,20 @@ export const rollfiWebhookEvents = pgTable("rollfi_webhook_events", {
   receivedAt:      text("received_at").notNull(),
 });
 
+export const userAccounts = pgTable("user_accounts", {
+  id:          text("id").primaryKey(),
+  name:        text("name").notNull(),
+  email:       text("email").notNull().unique(),
+  password:    text("password").notNull(),
+  role:        text("role").notNull().default("employee"),
+  companyId:   text("company_id").notNull().default(""),
+  locationId:  text("location_id"),
+  employeeId:  text("employee_id"),
+  position:    text("position"),
+  hourlyWage:  integer("hourly_wage"),
+  createdAt:   text("created_at").notNull(),
+});
+
 export const timesheetEntries = pgTable("timesheet_entries", {
   id:              serial("id").primaryKey(),
   employeeId:      text("employee_id").notNull(),

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { store, type EmployeeStatus } from "../store";
 import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
 import { persistClientEmployee } from "../lib/client-employee-persist.js";
+import { persistUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import type { Logger } from "pino";
 
@@ -168,6 +169,10 @@ router.post("/clients/:clientId/employees", async (req, res) => {
       hourlyWage: wage,
     });
     loginCreated = true;
+    const newUser = store.getUserByEmail(email);
+    if (newUser) {
+      await persistUserAccount(newUser).catch(() => { /* non-fatal */ });
+    }
   }
 
   res.status(201).json({ ...saved, loginCreated, loginEmail: loginCreated ? email : undefined, loginPassword: loginCreated ? loginPassword : undefined });

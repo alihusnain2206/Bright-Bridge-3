@@ -1,2 +1,3 @@
 - [Rollfi sandbox pay period](rollfi-sandbox-payperiod.md) — use `getUnProcessedPayPeriod` not `getPayPeriod`; KYB failure blocks `initiatePayroll` in sandbox
 - [Rollfi employee onboarding flow](rollfi-employee-onboarding.md) — full 5-step KYC sequence required before employees can join payroll; bank account is the final activation gate
+- [EasyTeam environment](easyteam-production.md) — EasyTeam is PRODUCTION not sandbox; use production URLs, never revert to /sandbox/ prefix

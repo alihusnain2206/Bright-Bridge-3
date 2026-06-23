@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 import { loadClientEmployeesFromDb } from "./lib/client-employee-persist.js";
+import { loadUserAccountsFromDb } from "./lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { store } from "./store.js";
 
@@ -55,6 +56,9 @@ Promise.all([
   }),
   loadClientEmployeesFromDb().then(({ count }) => {
     logger.info({ count }, "ClientEmployee records restored from DB");
+  }),
+  loadUserAccountsFromDb().then(({ count }) => {
+    logger.info({ count }, "User accounts restored from DB");
   }),
 ])
   .catch((err) => {
