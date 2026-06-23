@@ -170,18 +170,44 @@ router.get("/rollfi/state", (_req, res) => {
     rollfi: store.getRollfiCompany(c.id) ?? null,
   }));
 
-  const employees = store
+  // TestUser-based employees (existing payroll system)
+  const testUserEmployees = store
     .getAllStaffUsers()
     .filter((u) => u.employeeId && u.role !== "super_admin")
     .map((u) => ({
       userId: u.id,
       employeeId: u.employeeId,
       name: u.name,
+      email: u.email,
       position: u.position,
       companyId: u.companyId,
       hourlyWage: u.hourlyWage ?? 1500,
       rollfi: u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null,
+      source: "testuser" as const,
     }));
+
+  // ClientEmployee-based employees that have been Rollfi-synced
+  const existingEmails = new Set(testUserEmployees.map((e) => e.email?.toLowerCase()).filter(Boolean));
+  const clientEmployees = store.listClients().flatMap((client) => {
+    const linkedCompanyId = client.linkedCompanyId;
+    if (!linkedCompanyId) return [];
+    return store.listEmployees(client.id)
+      .filter((emp) => emp.rollfiSynced && emp.status === "active")
+      .filter((emp) => !emp.email || !existingEmails.has(emp.email.toLowerCase()))
+      .map((emp) => ({
+        userId: emp.id,
+        employeeId: emp.id,
+        name: emp.name,
+        email: emp.email,
+        position: emp.roleName,
+        companyId: linkedCompanyId,
+        hourlyWage: emp.wage,
+        rollfi: store.getRollfiEmployee(emp.id) ?? null,
+        source: "clientemployee" as const,
+      }));
+  });
+
+  const employees = [...testUserEmployees, ...clientEmployees];
 
   res.json({ companies, employees });
 });
