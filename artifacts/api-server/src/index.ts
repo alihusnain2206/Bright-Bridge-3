@@ -2,6 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
+import { loadClientEmployeesFromDb } from "./lib/client-employee-persist.js";
 
 const rawPort = process.env["PORT"];
 
@@ -21,6 +22,9 @@ Promise.all([
   }),
   loadTimesheetEntriesFromDb().then((count) => {
     logger.info({ count }, "EasyTeam timesheet entries restored from DB");
+  }),
+  loadClientEmployeesFromDb().then(({ count }) => {
+    logger.info({ count }, "ClientEmployee records restored from DB");
   }),
 ])
   .catch((err) => {

@@ -218,6 +218,11 @@ export const store = {
     employees.push(employee);
     return employee;
   },
+  insertEmployee(emp: ClientEmployee): void {
+    if (!employees.find((e) => e.id === emp.id)) {
+      employees.push(emp);
+    }
+  },
   updateEmployee(id: string, updates: Partial<Omit<ClientEmployee, "id" | "clientId" | "createdAt">>): ClientEmployee | undefined {
     const emp = employees.find((e) => e.id === id);
     if (!emp) return undefined;

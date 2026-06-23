@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { store, type EmployeeStatus } from "../store";
 import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
+import { persistClientEmployee } from "../lib/client-employee-persist.js";
 import type { Logger } from "pino";
 
 const router: IRouter = Router();
@@ -122,7 +123,9 @@ router.post("/clients/:clientId/employees", async (req, res) => {
     await attemptSync(employee.id, clientId, req.log as unknown as Logger);
   }
 
-  res.status(201).json(store.getEmployee(employee.id) ?? employee);
+  const saved = store.getEmployee(employee.id) ?? employee;
+  await persistClientEmployee(saved).catch(() => { /* non-fatal */ });
+  res.status(201).json(saved);
 });
 
 router.delete("/clients/:clientId/employees/:employeeId", (req, res) => {
@@ -165,7 +168,9 @@ router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res)
     store.updateEmployee(employeeId, { easyteamSynced: false });
   }
 
-  res.json(store.getEmployee(employeeId));
+  const updated = store.getEmployee(employeeId);
+  if (updated) await persistClientEmployee(updated).catch(() => { /* non-fatal */ });
+  res.json(updated);
 });
 
 router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) => {
@@ -199,6 +204,9 @@ router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) =>
   }
 
   store.updateEmployee(employeeId, { easyteamSynced, rollfiSynced, rollfiUserId, syncError });
+
+  const synced = store.getEmployee(employeeId);
+  if (synced) await persistClientEmployee(synced).catch(() => { /* non-fatal */ });
 
   res.json({
     success: rollfiSynced,

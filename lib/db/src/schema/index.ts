@@ -1,5 +1,23 @@
 import { pgTable, text, serial, integer, boolean, real } from "drizzle-orm/pg-core";
 
+export const clientEmployeeRecords = pgTable("client_employee_records", {
+  id:                  text("id").primaryKey(),
+  clientId:            text("client_id").notNull(),
+  name:                text("name").notNull(),
+  email:               text("email"),
+  role:                text("role").notNull(),
+  roleName:            text("role_name").notNull(),
+  wage:                integer("wage").notNull().default(1500),
+  wageType:            text("wage_type").notNull().default("hourly"),
+  timeTrackingEnabled: boolean("time_tracking_enabled").notNull().default(true),
+  status:              text("status").notNull().default("hired"),
+  easyteamSynced:      boolean("easyteam_synced").notNull().default(false),
+  rollfiSynced:        boolean("rollfi_synced").notNull().default(false),
+  rollfiUserId:        text("rollfi_user_id"),
+  syncError:           text("sync_error"),
+  createdAt:           text("created_at").notNull(),
+});
+
 export const rollfiCompanyRecords = pgTable("rollfi_company_records", {
   companyId:        text("company_id").primaryKey(),
   rollfiCompanyId:  text("rollfi_company_id").notNull(),

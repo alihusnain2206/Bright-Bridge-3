@@ -6,7 +6,7 @@ import {
   CheckCircle2, XCircle, Loader2, Building2, Users, DollarSign,
   AlertTriangle, ChevronRight, RefreshCw, Play, Clock, Zap,
   ArrowRight, Activity, History, SkipForward,
-  SlidersHorizontal, ClipboardList, Receipt, UserPlus, Trash2,
+  SlidersHorizontal, ClipboardList, Receipt, Trash2,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────
@@ -556,94 +556,6 @@ function PayStubsDrawer({ companyId, period, onClose }: {
   );
 }
 
-// ── Add Employee inline form ──────────────────────────────────
-
-const POSITION_OPTIONS = [
-  { value: "Teacher", label: "Teacher" },
-  { value: "Lead Teacher", label: "Lead Teacher" },
-  { value: "Teaching Assistant", label: "Teaching Assistant" },
-  { value: "Center Manager", label: "Center Manager" },
-  { value: "Supervisor", label: "Supervisor" },
-  { value: "Staff", label: "Staff" },
-];
-
-function AddEmployeeForm({ companyId, onDone }: { companyId: string; onDone: () => void }) {
-  const [name, setName]           = useState("");
-  const [email, setEmail]         = useState("");
-  const [position, setPosition]   = useState("Teacher");
-  const [wage, setWage]           = useState("1800");
-  const [error, setError]         = useState<string | null>(null);
-
-  const create = useMutation({
-    mutationFn: (data: { name: string; email: string; position: string; hourlyWage: number; companyId: string }) =>
-      api.post("/rollfi/employees", data),
-    onSuccess: onDone,
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const handleSubmit = (ev: React.FormEvent) => {
-    ev.preventDefault();
-    setError(null);
-    if (!name.trim() || !email.trim()) { setError("Name and email are required."); return; }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address."); return; }
-    create.mutate({ name: name.trim(), email: email.trim(), position, hourlyWage: Number(wage) || 1800, companyId });
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="px-5 py-4 border-t border-white/10" style={{ background: "rgba(232,98,42,0.04)" }}>
-      <div className="flex items-center gap-2 mb-3">
-        <UserPlus className="h-3.5 w-3.5 text-orange-400" />
-        <span className="text-white text-xs font-semibold">New Employee</span>
-      </div>
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <label className="text-white/40 text-xs block mb-1">Full Name *</label>
-          <input
-            type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" required
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder:text-white/20 outline-none focus:border-orange-400/50 transition-colors"
-          />
-        </div>
-        <div>
-          <label className="text-white/40 text-xs block mb-1">Work Email *</label>
-          <input
-            type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@sunshine.com" required
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder:text-white/20 outline-none focus:border-orange-400/50 transition-colors"
-          />
-        </div>
-        <div>
-          <label className="text-white/40 text-xs block mb-1">Position *</label>
-          <select
-            value={position} onChange={(e) => setPosition(e.target.value)}
-            className="w-full bg-[#1b3250] border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm outline-none focus:border-orange-400/50 transition-colors"
-          >
-            {POSITION_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
-        </div>
-        <div>
-          <label className="text-white/40 text-xs block mb-1">Hourly Rate (¢) — e.g. 1800 = $18/hr</label>
-          <input
-            type="number" min="500" max="20000" step="100" value={wage} onChange={(e) => setWage(e.target.value)}
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm outline-none focus:border-orange-400/50 transition-colors"
-          />
-        </div>
-      </div>
-      {error && <p className="text-red-400 text-xs mb-2">{error}</p>}
-      <div className="flex gap-2">
-        <button
-          type="submit" disabled={create.isPending}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-white text-sm font-semibold transition-opacity disabled:opacity-50"
-          style={{ background: ORANGE }}
-        >
-          {create.isPending ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving…</> : <><UserPlus className="h-3.5 w-3.5" />Add Employee</>}
-        </button>
-        <button type="button" onClick={onDone} className="px-4 py-1.5 rounded-lg text-white/40 hover:text-white/70 text-sm transition-colors">
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
-
 // ── Main page ────────────────────────────────────────────────
 
 export default function Payroll() {
@@ -659,7 +571,6 @@ export default function Payroll() {
   const [adjustments, setAdjustments] = useState<AdjMap>({});
   const [adjOpen, setAdjOpen] = useState(false);
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
-  const [addingEmpForCompany, setAddingEmpForCompany] = useState<string | null>(null);
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -941,12 +852,6 @@ export default function Payroll() {
                                 await onboardEmployee.mutateAsync({ employeeId: emp.employeeId!, companyId: company.id });
                             }}>Add All to Rollfi</Button>
                         )}
-                        <Button size="sm" variant="ghost"
-                          className="text-xs text-white/50 hover:text-white hover:bg-white/10 h-7 gap-1"
-                          onClick={() => setAddingEmpForCompany(addingEmpForCompany === company.id ? null : company.id)}>
-                          <UserPlus className="h-3 w-3" />
-                          {addingEmpForCompany === company.id ? "Cancel" : "Add Employee"}
-                        </Button>
                       </div>
                     </div>
                     <div className="divide-y divide-white/5">
@@ -993,12 +898,6 @@ export default function Payroll() {
                         );
                       })}
                     </div>
-                    {addingEmpForCompany === company.id && (
-                      <AddEmployeeForm
-                        companyId={company.id}
-                        onDone={() => { setAddingEmpForCompany(null); void refetchState(); }}
-                      />
-                    )}
                   </div>
                 );
               })}
