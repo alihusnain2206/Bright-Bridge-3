@@ -376,7 +376,7 @@ export default function ManagerDashboard() {
                   <tbody className="divide-y divide-white/5">
                     {hours.map((e) => (
                       <tr key={e.employeeId}>
-                        <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? e.employeeId}</td>
+                        <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}</td>
                         <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
                         <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
                         <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>

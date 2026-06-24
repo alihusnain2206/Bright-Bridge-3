@@ -3,7 +3,7 @@ import * as jwt from "jsonwebtoken";
 import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
-import { upsertTimesheetEntry } from "../lib/easyteam-persist.js";
+import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
 
 const router: IRouter = Router();
 
@@ -370,7 +370,7 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
 
 router.post("/easyteam/hours/sync", async (req, res) => {
   const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
-  const toDate   = to   ? new Date(to)   : new Date();
+  const toDate   = to   ? new Date(to + "T23:59:59.999Z") : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
@@ -475,25 +475,32 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     if ("shifts" in result) {
       restApiResponded = true; // API responded — don't fall through to seed even if 0 in range
       // Only count shifts that fall within the requested date range
+      const norm = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
       const inRange = result.shifts.filter((s) => {
-        if (!s.startTime) return false; // skip shifts with no timestamp
-        const start = new Date(s.startTime);
+        if (!s.startTime) return false;
+        const start = new Date(norm(s.startTime));
         return start >= fromDate && start <= toDate;
       });
       req.log.info({ locationId: locId, total: result.shifts.length, inRange: inRange.length, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
       const minutesByEmp = new Map<string, number>();
       const breaksByEmp2 = new Map<string, number>();
       for (const s of inRange) {
-        minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + s.payableDuration);
-        breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + s.totalUnpaidBreaks);
+        minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + shiftDurationMinutes(s));
+        breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + breakDurationMinutes(s));
+      }
+      // Clear stale entries for this company+period before writing fresh data
+      if (minutesByEmp.size > 0) {
+        await clearTimesheetEntriesForCompanyPeriod(co.id, periodKey);
       }
       const companyUsers = store.getUsersForCompany(co.id);
       for (const [etEmpId, totalMinutes] of minutesByEmp) {
-        const matched = companyUsers.find((u) => u.employeeId === etEmpId);
+        // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
+        const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
+        const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
         const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
         const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 100) / 100;
         await upsertTimesheetEntry({
-          employeeId: etEmpId,
+          employeeId: internalEmpId,
           companyId:  matched?.companyId ?? co.id,
           periodKey,
           hoursWorked,
@@ -539,9 +546,41 @@ interface EasyTeamShift {
   locationId: string;
   startTime: string;
   endTime: string | null;
-  payableDuration: number; // minutes
-  totalUnpaidBreaks: number; // minutes
-  active: boolean;
+  payableDuration?: number; // milliseconds in EasyTeam timesheets endpoint; may be absent
+  totalUnpaidBreaks?: number; // minutes; may be absent in timesheets response
+  breaks?: Array<{ startTime: string; endTime: string }>;
+  active?: boolean;
+}
+
+/** Returns worked minutes for a timesheet entry. Prefers startTime/endTime arithmetic
+ *  because EasyTeam's `payableDuration` field is in milliseconds (not minutes). */
+function shiftDurationMinutes(s: EasyTeamShift): number {
+  if (s.startTime && s.endTime) {
+    const norm = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
+    const start = new Date(norm(s.startTime));
+    const end   = new Date(norm(s.endTime));
+    if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+      return (end.getTime() - start.getTime()) / 60000;
+    }
+  }
+  if (s.payableDuration != null && s.payableDuration > 0) {
+    return s.payableDuration > 10000 ? s.payableDuration / 60000 : s.payableDuration;
+  }
+  return 0;
+}
+
+/** Returns total break minutes for a timesheet entry. */
+function breakDurationMinutes(s: EasyTeamShift): number {
+  if (s.totalUnpaidBreaks != null) return s.totalUnpaidBreaks;
+  if (s.breaks && s.breaks.length > 0) {
+    const norm = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
+    return s.breaks.reduce((sum, b) => {
+      const bs = new Date(norm(b.startTime));
+      const be = new Date(norm(b.endTime));
+      return sum + (isNaN(bs.getTime()) || isNaN(be.getTime()) ? 0 : (be.getTime() - bs.getTime()) / 60000);
+    }, 0);
+  }
+  return 0;
 }
 
 const EASYTEAM_EMBED_API = "https://www.easyteam.io/embed/api";
@@ -556,7 +595,11 @@ function extractArrayFromResponse(data: unknown): EasyTeamShift[] {
   return [];
 }
 
-async function fetchEasyTeamShiftsForLocation(locationId: string, fromDate?: Date, toDate?: Date): Promise<{ shifts: EasyTeamShift[]; source: "api" } | { error: string }> {
+async function fetchEasyTeamShiftsForLocation(
+  locationId: string,
+  _fromDate?: Date,
+  _toDate?: Date,
+): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
   // Find the manager for this location — must use their real employeeId or EasyTeam rejects the JWT
@@ -612,28 +655,13 @@ async function fetchEasyTeamShiftsForLocation(locationId: string, fromDate?: Dat
     } catch { /* keep defaults */ }
 
     const headers = { Authorization: `Bearer ${accessToken}` };
-    const baseUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
+    const timesheetsUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}/timesheets`;
 
-    // Try /shifts first (raw clock-in/out records), then fall back to /timesheets
-    // Pass date range so EasyTeam only returns data we need
-    const dateParams: Record<string, string> = {};
-    if (fromDate) dateParams.startDate = fromDate.toISOString().split("T")[0]!;
-    if (toDate)   dateParams.endDate   = toDate.toISOString().split("T")[0]!;
+    // Call /timesheets with NO extra params — additional params (limit, page, date filters) cause EasyTeam to return []
+    const r = await axios.get(timesheetsUrl, { headers, timeout: 10000 });
+    const shifts = extractArrayFromResponse(r.data);
 
-    let shifts: EasyTeamShift[] = [];
-    for (const endpoint of ["/shifts", "/timesheets"]) {
-      try {
-        const r = await axios.get(`${baseUrl}${endpoint}`, {
-          headers,
-          params: { limit: 200, page: 1, ...dateParams },
-          timeout: 10000,
-        });
-        const found = extractArrayFromResponse(r.data);
-        if (found.length > 0) { shifts = found; break; }
-      } catch { /* try next endpoint */ }
-    }
-
-    return { shifts, source: "api" };
+    return { shifts, source: "api", locationId };
   } catch (err) {
     const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
     const detail = axErr.response

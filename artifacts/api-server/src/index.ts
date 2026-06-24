@@ -35,6 +35,11 @@ async function bootEasyTeamSync() {
       const result = await registerEmployeeInEasyTeam(emp, locationId, logger);
       if (result.success) {
         store.updateEmployee(emp.id, { easyteamSynced: true });
+        if (result.easyteamEmployeeId) {
+          const staffUser = store.getAllStaffUsers().find((u) => u.email === emp.email);
+          const internalEmpId = staffUser?.employeeId ?? emp.id;
+          store.setEasyTeamUuidMapping(result.easyteamEmployeeId, internalEmpId);
+        }
         registered++;
         logger.info({ id: emp.id, name: emp.name, location: locationId }, "Boot sync: employee registered in EasyTeam");
       } else {

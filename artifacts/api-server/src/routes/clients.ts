@@ -248,6 +248,10 @@ router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) =>
   if (locationId) {
     const etResult = await registerEmployeeInEasyTeam(emp, locationId, req.log as unknown as Logger);
     easyteamSynced = etResult.success;
+    if (etResult.easyteamEmployeeId) {
+      const staffUser = store.getAllStaffUsers().find((u) => u.email === emp.email);
+      store.setEasyTeamUuidMapping(etResult.easyteamEmployeeId, staffUser?.employeeId ?? emp.id);
+    }
   }
 
   let rollfiSynced = emp.rollfiSynced;

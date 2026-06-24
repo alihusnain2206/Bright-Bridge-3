@@ -2,6 +2,16 @@ import { db, timesheetEntries } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { store, type TimesheetEntry } from "../store.js";
 
+export async function clearTimesheetEntriesForCompanyPeriod(companyId: string, periodKey: string): Promise<void> {
+  store.clearTimesheetEntriesForCompanyPeriod(companyId, periodKey);
+  await db
+    .delete(timesheetEntries)
+    .where(and(
+      eq(timesheetEntries.companyId, companyId),
+      eq(timesheetEntries.periodKey, periodKey),
+    ));
+}
+
 export async function persistTimesheetEntry(entry: TimesheetEntry): Promise<void> {
   store.setTimesheetEntry(entry);
   await db

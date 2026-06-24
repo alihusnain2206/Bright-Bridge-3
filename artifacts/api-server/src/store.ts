@@ -95,6 +95,7 @@ export interface TimesheetEntry {
 }
 
 const timesheetHours = new Map<string, TimesheetEntry>(); // key: `${employeeId}::${periodKey}`
+const etUuidToEmployeeId = new Map<string, string>(); // EasyTeam internal UUID → our internal employeeId
 
 // ─── ROLLFI INTEGRATION STATE ─────────────────────────────────
 
@@ -266,6 +267,14 @@ export const store = {
     if (!existing) testUsers.push(user);
   },
 
+  // ── EasyTeam UUID ↔ internal employee ID mapping ──
+  setEasyTeamUuidMapping(etUuid: string, internalEmployeeId: string): void {
+    etUuidToEmployeeId.set(etUuid, internalEmployeeId);
+  },
+  resolveEasyTeamUuid(etUuid: string): string {
+    return etUuidToEmployeeId.get(etUuid) ?? etUuid;
+  },
+
   // ── EasyTeam Hours Bridge ──
   getTimesheetKey(employeeId: string, periodKey: string): string { return `${employeeId}::${periodKey}`; },
   getTimesheetEntry(employeeId: string, periodKey: string): TimesheetEntry | undefined {
@@ -276,6 +285,13 @@ export const store = {
   },
   getTimesheetEntriesForPeriod(periodKey: string): TimesheetEntry[] {
     return Array.from(timesheetHours.values()).filter((e) => e.periodKey === periodKey);
+  },
+  clearTimesheetEntriesForCompanyPeriod(companyId: string, periodKey: string): void {
+    for (const [key, entry] of timesheetHours.entries()) {
+      if (entry.companyId === companyId && entry.periodKey === periodKey) {
+        timesheetHours.delete(key);
+      }
+    }
   },
   seedTimesheetHours(periodKey: string): TimesheetEntry[] {
     // Only seed hourly employees (not managers/admins) with realistic hours.
