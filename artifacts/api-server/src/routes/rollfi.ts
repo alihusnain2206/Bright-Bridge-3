@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
+import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { db, rollfiWebhookEvents } from "@workspace/db";
 import { desc } from "drizzle-orm";
 
@@ -244,11 +245,22 @@ router.post("/rollfi/employees", (req, res) => {
   res.status(201).json(user);
 });
 
-router.delete("/rollfi/employees/:userId", (req, res) => {
+router.delete("/rollfi/employees/:userId", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
   const { userId } = req.params;
   const deleted = store.deleteStaffUser(userId);
   if (!deleted) {
     res.status(404).json({ error: "Employee not found or cannot be deleted" });
+    return;
+  }
+  // Durable delete: remove from DB so it doesn't return on next restart.
+  // If the DB delete fails, surface an error — otherwise the row would
+  // silently reappear on the next server restart.
+  try {
+    await deleteUserAccount(userId);
+  } catch (err) {
+    req.log.error({ err, userId }, "Failed to delete user_account row from DB");
+    res.status(500).json({ error: "Employee removed from session but failed to delete from database; it may reappear after restart." });
     return;
   }
   res.json({ deleted: true, id: userId });

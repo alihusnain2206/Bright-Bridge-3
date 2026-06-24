@@ -1,6 +1,11 @@
+import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { userAccounts } from "@workspace/db/schema";
 import { store, type TestUser } from "../store.js";
+
+export async function deleteUserAccount(userId: string): Promise<void> {
+  await db.delete(userAccounts).where(eq(userAccounts.id, userId));
+}
 
 export async function persistUserAccount(user: TestUser): Promise<void> {
   await db

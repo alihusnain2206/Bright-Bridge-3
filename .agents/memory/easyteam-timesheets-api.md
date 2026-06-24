@@ -52,6 +52,16 @@ The approve endpoint fetches raw EasyTeam shifts. Apply the exact same rules:
 - Normalize timestamps with `normTs = (t) => t.includes("T") ? t : t.replace(" ", "T") + "Z"` before `new Date()`
 - Resolve UUID and skip unresolved entries
 
+## Staff deletion must be durable (DB + memory)
+
+`store.deleteStaffUser()` only removes from the in-memory `testUsers` array. The `DELETE /rollfi/employees/:userId` endpoint must ALSO call `deleteUserAccount(userId)` (deletes the `user_accounts` DB row) — otherwise boot's `loadUserAccountsFromDb()` re-adds the user on every restart and it reappears.
+
+**Why:** dynamically-added staff (via Add Employee) are persisted to `user_accounts`. Payroll preview lists `getAllStaffUsers()` = testUsers with non-null employeeId, so a stale persisted user shows as a phantom payroll row (e.g. duplicate "Arbab nasir" with estimated-hours fallback). Note `deleteStaffUser` only matches `role === "employee"` and returns false (→404, skipping the DB delete) if the user isn't already in memory.
+
+## Production has separate data from dev
+
+The published app (`*.replit.app`) uses its OWN production database. Dev queries can look clean while the user's screenshot (from production) shows extra rows. Always query `environment: "production"` to diagnose what the user actually sees. Prod DB is read-only via the skill — fixes must go through the deployed app's own write endpoints (e.g. the payroll Trash button) after publishing the code fix.
+
 ## Stale entry cleanup
 
 Always call `clearTimesheetEntriesForCompanyPeriod(companyId, periodKey)` before writing fresh REST API data, to prevent stale entries from accumulating when UUIDs change (e.g. before/after the mapping fix).
