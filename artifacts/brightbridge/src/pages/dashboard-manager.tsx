@@ -21,14 +21,21 @@ interface TimesheetEntry {
   source: string; syncedAt: string; managerApproved?: boolean; approvedAt?: string;
 }
 
-function getPeriodDates() {
-  const to = new Date();
-  const from = new Date(to.getTime() - 14 * 24 * 60 * 60 * 1000);
-  return {
-    from: from.toISOString().split("T")[0]!,
-    to: to.toISOString().split("T")[0]!,
-    label: `${from.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${to.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`,
-  };
+function getCurrentWeek(): { from: string; to: string } {
+  const today = new Date();
+  const day = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const fmt = (d: Date) => d.toISOString().split("T")[0]!;
+  return { from: fmt(monday), to: fmt(sunday) };
+}
+
+function formatDateLabel(from: string, to: string): string {
+  const f = new Date(from + "T12:00:00");
+  const t = new Date(to + "T12:00:00");
+  return `${f.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${t.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
 }
 
 function decodeJwt(token: string): Record<string, unknown> | null {
@@ -64,7 +71,9 @@ export default function ManagerDashboard() {
   const [approvedAt, setApprovedAt] = useState<string | null>(null);
   const [approvalDataSource, setApprovalDataSource] = useState<"easyteam" | "seeded" | null>(null);
 
-  const period = getPeriodDates();
+  const initWeek = getCurrentWeek();
+  const [fromDate, setFromDate] = useState(initWeek.from);
+  const [toDate, setToDate] = useState(initWeek.to);
 
   const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
 
