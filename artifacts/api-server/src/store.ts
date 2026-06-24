@@ -290,6 +290,16 @@ export const store = {
   getTimesheetEntriesForPeriod(periodKey: string): TimesheetEntry[] {
     return Array.from(timesheetHours.values()).filter((e) => e.periodKey === periodKey);
   },
+  /** Returns the most recently synced timesheet entry for an employee across ALL period keys. */
+  getLatestTimesheetEntry(employeeId: string, companyId?: string): TimesheetEntry | undefined {
+    let latest: TimesheetEntry | undefined;
+    for (const entry of timesheetHours.values()) {
+      if (entry.employeeId !== employeeId) continue;
+      if (companyId && entry.companyId !== companyId) continue;
+      if (!latest || entry.syncedAt > latest.syncedAt) latest = entry;
+    }
+    return latest;
+  },
   clearTimesheetEntriesForCompanyPeriod(companyId: string, periodKey: string): void {
     for (const [key, entry] of timesheetHours.entries()) {
       if (entry.companyId === companyId && entry.periodKey === periodKey) {

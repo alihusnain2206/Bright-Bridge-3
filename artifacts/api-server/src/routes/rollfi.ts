@@ -956,8 +956,10 @@ router.get("/rollfi/payroll/preview", (req, res) => {
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
   const entries = allStaff.map((u, i) => {
-    // Prefer EasyTeam synced hours, fall back to workdays estimate
-    const synced = u.employeeId ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined;
+    // Prefer EasyTeam synced hours: exact period key first, then most-recent across any period
+    const synced = u.employeeId
+      ? (store.getTimesheetEntry(u.employeeId, periodKey) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
+      : undefined;
     const hoursWorked     = synced ? synced.hoursWorked     : workdays * 8;
     const breakDeduction  = synced ? synced.breakDeduction  : workdays * 0.5;
     const unapprovedHours = synced ? 0                      : (i % 3 === 0 ? 2 : 0);
@@ -1043,7 +1045,9 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      const synced = (periodKey && u.employeeId) ? store.getTimesheetEntry(u.employeeId, periodKey) : null;
+      const synced = u.employeeId
+        ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
+        : null;
       const payHours = synced ? synced.approvedHours : 75;
       if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced for this employee — using 75h fallback");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
