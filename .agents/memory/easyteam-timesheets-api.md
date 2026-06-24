@@ -38,6 +38,20 @@ The `employeeId` in timesheets is EasyTeam's internal UUID, not our internal `em
 
 Employees added directly via the EasyTeam UI (not our app) will have unmapped UUIDs. Fix: add them to `testUsers` in store.ts and hardcode their UUID in the `etUuidToEmployeeId` map initialization. Arbab Nasir: UUID `2f1c0890-0eea-4eb6-9cb2-93ce5c45ba59` → `EMP-RAINBOW-004`.
 
+## Unresolved UUID guard (sync AND approve endpoints)
+
+After calling `store.resolveEasyTeamUuid(etEmpId)`, **always check** `if (internalEmpId === etEmpId) continue` before writing an entry. If the UUID wasn't mapped, `resolveEasyTeamUuid` returns the raw UUID as fallback — without this guard, EasyTeam employees not in our registry get stored verbatim and show as "External Staff" in the UI.
+
+Apply this guard in BOTH `/easyteam/hours/sync` (Step 3) AND `/easyteam/hours/approve` (Step 2).
+
+## Approve endpoint Step 2 — same rules as sync
+
+The approve endpoint fetches raw EasyTeam shifts. Apply the exact same rules:
+- Use `shiftDurationMinutes(s)` — NOT `shift.payableDuration` directly (payableDuration is ms)
+- Use `breakDurationMinutes(s)` — NOT `shift.totalUnpaidBreaks` directly
+- Normalize timestamps with `normTs = (t) => t.includes("T") ? t : t.replace(" ", "T") + "Z"` before `new Date()`
+- Resolve UUID and skip unresolved entries
+
 ## Stale entry cleanup
 
 Always call `clearTimesheetEntriesForCompanyPeriod(companyId, periodKey)` before writing fresh REST API data, to prevent stale entries from accumulating when UUIDs change (e.g. before/after the mapping fix).

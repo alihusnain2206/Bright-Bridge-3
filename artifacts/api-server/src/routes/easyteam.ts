@@ -742,8 +742,10 @@ router.post("/easyteam/hours/approve", async (req, res) => {
     req.log.info({ locationId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "EasyTeam REST API fetch result");
 
     if ("shifts" in result && result.shifts.length > 0) {
+      const normTs = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
       const inRange = result.shifts.filter((s) => {
-        const start = new Date(s.startTime);
+        if (!s.startTime) return false;
+        const start = new Date(normTs(s.startTime));
         return start >= fromDate && start <= toDate;
       });
 
@@ -751,18 +753,25 @@ router.post("/easyteam/hours/approve", async (req, res) => {
         const minutesByEmployee = new Map<string, number>();
         const breaksByEmployee = new Map<string, number>();
         for (const shift of inRange) {
-          minutesByEmployee.set(shift.employeeId, (minutesByEmployee.get(shift.employeeId) ?? 0) + shift.payableDuration);
-          breaksByEmployee.set(shift.employeeId, (breaksByEmployee.get(shift.employeeId) ?? 0) + shift.totalUnpaidBreaks);
+          // Use shiftDurationMinutes — handles ms vs minutes ambiguity in payableDuration
+          minutesByEmployee.set(shift.employeeId, (minutesByEmployee.get(shift.employeeId) ?? 0) + shiftDurationMinutes(shift));
+          breaksByEmployee.set(shift.employeeId, (breaksByEmployee.get(shift.employeeId) ?? 0) + breakDurationMinutes(shift));
         }
 
         const companyUsers = store.getUsersForCompany(companyId);
         for (const [etEmployeeId, totalMinutes] of minutesByEmployee) {
-          const matchedUser = companyUsers.find((u) => u.employeeId === etEmployeeId);
+          // Resolve EasyTeam UUID → internal ID; skip if not in our registry
+          const internalEmpId = store.resolveEasyTeamUuid(etEmployeeId);
+          if (internalEmpId === etEmployeeId) {
+            req.log.warn({ etEmployeeId }, "Approve: skipping shift for unrecognised EasyTeam UUID");
+            continue;
+          }
+          const matchedUser = companyUsers.find((u) => u.employeeId === internalEmpId);
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
           const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
           const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
           await upsertTimesheetEntry({
-            employeeId: etEmployeeId,
+            employeeId: internalEmpId,
             companyId: resolvedCompanyId,
             periodKey,
             hoursWorked,
