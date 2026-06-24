@@ -87,7 +87,7 @@ export default function ManagerDashboard() {
     setHoursLoading(true);
     try {
       const d = await fetch(
-        `/api/easyteam/hours?from=${period.from}&to=${period.to}&companyId=${user.companyId}`,
+        `/api/easyteam/hours?from=${fromDate}&to=${toDate}&companyId=${user.companyId}`,
         { credentials: "include" }
       ).then(r => r.json()) as { entries: TimesheetEntry[]; synced: boolean };
       setHours(d.entries ?? []);
@@ -98,7 +98,7 @@ export default function ManagerDashboard() {
       }
     } catch { /* ignore */ }
     finally { setHoursLoading(false); }
-  }, [user?.companyId, period.from, period.to]);
+  }, [user?.companyId, fromDate, toDate]);
 
   const handleApprove = async () => {
     if (!user?.companyId) return;
@@ -108,7 +108,7 @@ export default function ManagerDashboard() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: period.from, to: period.to, companyId: user.companyId }),
+        body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId }),
       }).then(r => r.json()) as { success: boolean; dataSource?: "easyteam" | "seeded"; entries: TimesheetEntry[] };
       if (d.success) {
         setHours(d.entries);
@@ -130,12 +130,12 @@ export default function ManagerDashboard() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: period.from, to: period.to, companyId: user.companyId }),
+        body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId }),
       });
       await fetchHours();
     } catch { /* ignore */ }
     finally { setPulling(false); }
-  }, [user?.companyId, period.from, period.to, fetchHours]);
+  }, [user?.companyId, fromDate, toDate, fetchHours]);
 
   const fetchCompanyEmployees = useCallback(async () => {
     if (!user?.companyId) return [];
@@ -268,10 +268,25 @@ export default function ManagerDashboard() {
               </div>
               <p className="text-white/50 text-sm mt-0.5">
                 <Clock className="h-3 w-3 inline mr-1 opacity-50" />
-                <span className="text-white/70 font-medium">{company?.name}</span> · Pay period: <span className="text-white/70">{period.label}</span>
+                <span className="text-white/70 font-medium">{company?.name}</span> · <span className="text-white/70">{formatDateLabel(fromDate, toDate)}</span>
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => { setFromDate(e.target.value); setHours([]); setApprovalDone(false); }}
+                  className="h-7 text-xs rounded border border-white/20 bg-white/10 text-white px-2 [color-scheme:dark]"
+                />
+                <span className="text-white/30 text-xs">→</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => { setToDate(e.target.value); setHours([]); setApprovalDone(false); }}
+                  className="h-7 text-xs rounded border border-white/20 bg-white/10 text-white px-2 [color-scheme:dark]"
+                />
+              </div>
               <Button
                 onClick={() => void handlePullHours()}
                 disabled={pulling || hoursLoading}
