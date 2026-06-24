@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
 import { store } from "../store";
+import { persistUserAccount } from "../lib/user-account-persist.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -168,6 +169,49 @@ router.post("/auth/token-by-role", async (req, res) => {
 
   // Return the signed JWT directly — EasyTeamLauncher handles token exchange internally
   res.json({ token: signedJwt, role: user.role, decoded: payload });
+});
+
+// ── Manager creation (super_admin only) ──────────────────────
+
+router.post("/auth/create-manager", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(403).json({ error: "Only super admins can create managers" });
+    return;
+  }
+
+  const { name, email, companyId, position } = req.body as {
+    name?: string; email?: string; companyId?: string; position?: string;
+  };
+
+  if (!name || !email || !companyId) {
+    res.status(400).json({ error: "name, email, and companyId are required" });
+    return;
+  }
+
+  const company = store.getCompany(companyId);
+  if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+
+  const existing = store.getUserByEmail(email);
+  if (existing) { res.status(409).json({ error: "A user with that email already exists" }); return; }
+
+  const { user, password } = store.createManagerUser({
+    name,
+    email,
+    position: position ?? "Daycare Manager",
+    companyId,
+  });
+
+  const fullUser = store.getUserByEmail(email);
+  if (fullUser) {
+    await persistUserAccount(fullUser).catch((err) => {
+      req.log.warn({ err }, "Failed to persist manager user account to DB");
+    });
+  }
+
+  req.log.info({ userId: user.id, name, companyId }, "Manager account created by super_admin");
+  res.status(201).json({ ...user, password, loginEmail: email });
 });
 
 // ── Children check-in (parent feature) ──────────────────────

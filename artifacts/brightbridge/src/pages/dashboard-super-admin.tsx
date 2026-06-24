@@ -6,9 +6,13 @@ import { AddEmployeeModal } from "@/components/AddEmployeeModal";
 import {
   Building2, Users, MapPin, Shield,
   Terminal, RefreshCw, Play, Clock, CalendarDays, Calendar,
-  CheckCircle2, AlertTriangle, Scale, Zap, UserPlus,
+  CheckCircle2, AlertTriangle, Scale, Zap, UserPlus, X, Loader2,
+  ShieldCheck, Copy, Eye, EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
@@ -31,10 +35,176 @@ interface TokenData { token: string; decoded: Record<string, unknown>; role: str
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
 interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
 interface Client { id: string; name: string; linkedCompanyId?: string; locationName?: string; address?: string }
+interface CreatedManager { id: string; name: string; email: string; companyId: string; role: string; password: string; loginEmail: string; position: string }
 
 function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
+
+// ── Create Manager Modal ──────────────────────────────────────
+
+interface CreateManagerModalProps {
+  clients: Client[];
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function CreateManagerModal({ clients, onClose, onSuccess }: CreateManagerModalProps) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [companyId, setCompanyId] = useState(clients[0]?.linkedCompanyId ?? "");
+  const [position, setPosition] = useState("Daycare Manager");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<CreatedManager | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [copied, setCopied] = useState<"email" | "password" | null>(null);
+
+  const companiesWithId = clients.filter((c) => c.linkedCompanyId);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name || !email || !companyId) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/create-manager", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, companyId, position }),
+      });
+      const data = await res.json() as CreatedManager & { error?: string };
+      if (!res.ok) { setError(data.error ?? "Failed to create manager"); return; }
+      setCreated(data);
+      onSuccess();
+    } catch { setError("Network error. Please try again."); }
+    finally { setSubmitting(false); }
+  };
+
+  const copyToClipboard = async (value: string, field: "email" | "password") => {
+    await navigator.clipboard.writeText(value);
+    setCopied(field);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.6)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "#284362" }}>
+              <ShieldCheck className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <h2 className="font-bold text-[#284362] text-base">Create Manager</h2>
+              <p className="text-xs text-muted-foreground">Grant manager access to a daycare center</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-gray-900 transition-colors rounded-lg p-1 hover:bg-gray-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {created ? (
+          <div className="px-6 py-6 space-y-4">
+            <div className="text-center space-y-1">
+              <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto" />
+              <p className="font-semibold text-gray-900 mt-2">{created.name} — Manager Created!</p>
+              <p className="text-sm text-muted-foreground">{created.position} · {clients.find((c) => c.linkedCompanyId === created.companyId)?.name ?? created.companyId}</p>
+            </div>
+
+            <div className="rounded-xl border border-[#284362]/20 bg-[#284362]/5 px-4 py-3 space-y-3">
+              <p className="text-xs font-semibold text-[#284362] uppercase tracking-wide">Login Credentials</p>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">Email</p>
+                    <p className="text-sm font-mono font-semibold text-gray-800">{created.loginEmail}</p>
+                  </div>
+                  <button onClick={() => copyToClipboard(created.loginEmail, "email")} className="p-1.5 rounded hover:bg-[#284362]/10 text-[#284362]/60 hover:text-[#284362] transition-colors">
+                    {copied === "email" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide">Password</p>
+                    <p className="text-sm font-mono font-semibold text-gray-800">{showPassword ? created.password : "••••••••••"}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setShowPassword((v) => !v)} className="p-1.5 rounded hover:bg-[#284362]/10 text-[#284362]/60 hover:text-[#284362] transition-colors">
+                      {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                    <button onClick={() => copyToClipboard(created.password, "password")} className="p-1.5 rounded hover:bg-[#284362]/10 text-[#284362]/60 hover:text-[#284362] transition-colors">
+                      {copied === "password" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-[#284362]/60 border-t border-[#284362]/10 pt-2">Share these credentials with the manager. They will land on the Manager Dashboard when they log in.</p>
+            </div>
+
+            <Button onClick={onClose} className="w-full text-white border-0" style={{ background: ORANGE }}>
+              Done
+            </Button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+            <div className="space-y-1.5">
+              <Label className="text-sm">Full Name *</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" autoFocus />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Email *</Label>
+              <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@daycare.com" type="email" />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Daycare Center *</Label>
+              <Select value={companyId} onValueChange={setCompanyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a daycare center" />
+                </SelectTrigger>
+                <SelectContent>
+                  {companiesWithId.map((c) => (
+                    <SelectItem key={c.linkedCompanyId!} value={c.linkedCompanyId!}>{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-sm">Position Title</Label>
+              <Input value={position} onChange={(e) => setPosition(e.target.value)} placeholder="Daycare Manager" />
+              <p className="text-[11px] text-muted-foreground">Defaults to "Daycare Manager" if left unchanged</p>
+            </div>
+
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex gap-2">
+              <ShieldCheck className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-amber-700">This creates a <strong>manager-level</strong> login — they'll see the Manager Dashboard with time approvals and staff oversight for their center only.</p>
+            </div>
+
+            {error && (
+              <p className="text-sm text-red-500 flex items-center gap-1.5">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />{error}
+              </p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button type="submit" disabled={!name || !email || !companyId || submitting} className="flex-1 text-white border-0" style={{ background: ORANGE }}>
+                {submitting ? <><Loader2 className="h-4 w-4 animate-spin mr-1.5" />Creating…</> : <><ShieldCheck className="h-4 w-4 mr-1.5" />Create Manager</>}
+              </Button>
+              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main Dashboard ────────────────────────────────────────────
 
 export default function SuperAdminDashboard() {
   const { user } = useAuth();
@@ -46,6 +216,7 @@ export default function SuperAdminDashboard() {
   const [allEmployees, setAllEmployees] = useState<EasyTeamEmployee[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [addingForClient, setAddingForClient] = useState<Client | null>(null);
+  const [creatingManager, setCreatingManager] = useState(false);
 
   const { launch } = useEasyTeamLauncher("admin-et-container", undefined, 700);
 
@@ -129,6 +300,14 @@ export default function SuperAdminDashboard() {
           <p className="text-sm text-muted-foreground mt-0.5">Welcome, {user?.name} — full access to all companies and EasyTeam features</p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            onClick={() => setCreatingManager(true)}
+            size="sm"
+            className="gap-1.5 text-xs text-white border-0"
+            style={{ background: "#284362" }}
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />Create Manager
+          </Button>
           <Link href="/clients"><Button variant="outline" size="sm" className="gap-1.5 text-xs"><Building2 className="h-3.5 w-3.5" />Manage Clients</Button></Link>
           <Link href="/roles"><Button variant="outline" size="sm" className="gap-1.5 text-xs"><Scale className="h-3.5 w-3.5" />Role Comparison</Button></Link>
         </div>
@@ -149,7 +328,15 @@ export default function SuperAdminDashboard() {
 
       {/* Partner Companies */}
       <div>
-        <h2 className="text-lg font-bold text-[#284362] mb-3">Partner Companies</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-bold text-[#284362]">Partner Companies</h2>
+          <button
+            onClick={() => setCreatingManager(true)}
+            className="text-xs text-[#284362] hover:underline flex items-center gap-1 font-medium"
+          >
+            <ShieldCheck className="h-3.5 w-3.5" />Add manager to a center
+          </button>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {clients.map((client) => (
             <div key={client.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
@@ -285,6 +472,15 @@ export default function SuperAdminDashboard() {
           locationName={addingForClient.name}
           onClose={() => setAddingForClient(null)}
           onSuccess={handleEmployeeAdded}
+        />
+      )}
+
+      {/* Create Manager Modal */}
+      {creatingManager && (
+        <CreateManagerModal
+          clients={clients}
+          onClose={() => setCreatingManager(false)}
+          onSuccess={() => { /* manager created, modal stays open to show credentials */ }}
         />
       )}
     </div>

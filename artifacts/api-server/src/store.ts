@@ -387,8 +387,29 @@ export const store = {
     const { password: _p, ...safe } = newUser;
     return safe;
   },
+  createManagerUser(data: { name: string; email: string; position: string; companyId: string }): { user: Omit<TestUser, "password">; password: string } {
+    const id = `USER-DYN-${Date.now()}`;
+    const employeeId = `MGR-${uid().toUpperCase()}`;
+    const company = companies.find((c) => c.id === data.companyId);
+    const locationId = company?.locationId;
+    const password = "Manager123!";
+    const newUser: TestUser = {
+      id,
+      name: data.name,
+      email: data.email,
+      password,
+      role: "manager",
+      companyId: data.companyId,
+      locationId,
+      employeeId,
+      position: data.position,
+    };
+    testUsers.push(newUser);
+    const { password: _p, ...safe } = newUser;
+    return { user: safe, password };
+  },
   deleteStaffUser(userId: string): boolean {
-    const idx = testUsers.findIndex((u) => u.id === userId && u.role === "employee");
+    const idx = testUsers.findIndex((u) => u.id === userId && (u.role === "employee" || u.role === "manager"));
     if (idx === -1) return false;
     testUsers.splice(idx, 1);
     return true;
