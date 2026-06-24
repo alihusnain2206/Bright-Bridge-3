@@ -466,21 +466,24 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     .filter((c): c is NonNullable<typeof c> => c != null && !!c.locationId);
 
   let restSynced = 0;
+  let restApiResponded = false;
   for (const co of companiesToSync) {
     const locId = co.locationId!;
-    const result = await fetchEasyTeamShiftsForLocation(locId);
+    const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate);
     req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
 
-    if ("shifts" in result && result.shifts.length > 0) {
+    if ("shifts" in result) {
+      restApiResponded = true; // API responded — don't fall through to seed even if 0 in range
+      // Only count shifts that fall within the requested date range
       const inRange = result.shifts.filter((s) => {
-        if (!s.startTime) return true;
+        if (!s.startTime) return false; // skip shifts with no timestamp
         const start = new Date(s.startTime);
         return start >= fromDate && start <= toDate;
       });
-      const shiftsToProcess = inRange.length > 0 ? inRange : result.shifts;
+      req.log.info({ locationId: locId, total: result.shifts.length, inRange: inRange.length, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
       const minutesByEmp = new Map<string, number>();
       const breaksByEmp2 = new Map<string, number>();
-      for (const s of shiftsToProcess) {
+      for (const s of inRange) {
         minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + s.payableDuration);
         breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + s.totalUnpaidBreaks);
       }
@@ -504,14 +507,14 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     }
   }
 
-  if (restSynced > 0) {
+  if (restApiResponded) {
     req.log.info({ periodKey, companyId, restSynced }, "Sync: used EasyTeam REST API data");
     res.json({ success: true, source: "easyteam", periodKey, synced: restSynced });
     return;
   }
 
-  // ── Step 4: Seed fallback ──
-  req.log.info({ periodKey, companyId }, "Sync: no live data — seeding fallback hours");
+  // ── Step 4: Seed fallback — only if REST API never responded ──
+  req.log.info({ periodKey, companyId }, "Sync: EasyTeam REST API unavailable — seeding fallback hours");
   const seeded = store.seedTimesheetHours(periodKey);
   res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data — seeded demo hours" });
 });
@@ -553,7 +556,7 @@ function extractArrayFromResponse(data: unknown): EasyTeamShift[] {
   return [];
 }
 
-async function fetchEasyTeamShiftsForLocation(locationId: string): Promise<{ shifts: EasyTeamShift[]; source: "api" } | { error: string }> {
+async function fetchEasyTeamShiftsForLocation(locationId: string, fromDate?: Date, toDate?: Date): Promise<{ shifts: EasyTeamShift[]; source: "api" } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
   // Find the manager for this location — must use their real employeeId or EasyTeam rejects the JWT
@@ -612,12 +615,17 @@ async function fetchEasyTeamShiftsForLocation(locationId: string): Promise<{ shi
     const baseUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
 
     // Try /shifts first (raw clock-in/out records), then fall back to /timesheets
+    // Pass date range so EasyTeam only returns data we need
+    const dateParams: Record<string, string> = {};
+    if (fromDate) dateParams.startDate = fromDate.toISOString().split("T")[0]!;
+    if (toDate)   dateParams.endDate   = toDate.toISOString().split("T")[0]!;
+
     let shifts: EasyTeamShift[] = [];
     for (const endpoint of ["/shifts", "/timesheets"]) {
       try {
         const r = await axios.get(`${baseUrl}${endpoint}`, {
           headers,
-          params: { limit: 200, page: 1 },
+          params: { limit: 200, page: 1, ...dateParams },
           timeout: 10000,
         });
         const found = extractArrayFromResponse(r.data);
