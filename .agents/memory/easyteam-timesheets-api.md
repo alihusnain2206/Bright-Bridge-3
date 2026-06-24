@@ -36,7 +36,7 @@ The `employeeId` in timesheets is EasyTeam's internal UUID, not our internal `em
 
 **Fix**: during boot sync and dynamic employee add, decode the access token returned from `exchangeToken` — it contains the EasyTeam UUID. Store that mapping in `store.setEasyTeamUuidMapping(etUuid, internalEmpId)`. Use `store.resolveEasyTeamUuid(etEmpId)` in sync step 3.
 
-Employees added dynamically (not in boot sync) will have unmapped UUIDs — display as "External Staff" in the frontend.
+Employees added directly via the EasyTeam UI (not our app) will have unmapped UUIDs. Fix: add them to `testUsers` in store.ts and hardcode their UUID in the `etUuidToEmployeeId` map initialization. Arbab Nasir: UUID `2f1c0890-0eea-4eb6-9cb2-93ce5c45ba59` → `EMP-RAINBOW-004`.
 
 ## Stale entry cleanup
 

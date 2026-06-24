@@ -66,6 +66,7 @@ Sandbox testing app for the EasyTeam Embedded SDK. Tests JWT auth (RS256), role-
 | Employee (Rainbow) | Tom Wilson | tom@rainbow.com | Staff123! |
 | Employee (Rainbow) | Ali Husnain | ali@rainbow.com | Staff123! |
 | Employee (Rainbow) | Lisa Chen | lisa.chen@rainbow.com | Staff123! |
+| Employee (Rainbow) | Arbab Nasir | arbab@rainbow.com | Staff123! |
 | Parent | Sarah Parent | sarah@parent.com | Parent123! |
 
 ## Gotchas

@@ -95,7 +95,10 @@ export interface TimesheetEntry {
 }
 
 const timesheetHours = new Map<string, TimesheetEntry>(); // key: `${employeeId}::${periodKey}`
-const etUuidToEmployeeId = new Map<string, string>(); // EasyTeam internal UUID → our internal employeeId
+const etUuidToEmployeeId = new Map<string, string>([
+  // Arbab Nasir was added directly via EasyTeam UI (not our app), so his UUID is known but boot sync won't register him
+  ["2f1c0890-0eea-4eb6-9cb2-93ce5c45ba59", "EMP-RAINBOW-004"],
+]);
 
 // ─── ROLLFI INTEGRATION STATE ─────────────────────────────────
 
@@ -161,6 +164,7 @@ const testUsers: TestUser[] = [
   { id: "USER-006", name: "Tom Wilson", email: "tom@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-001", position: "Teacher", hourlyWage: 1800 },
   { id: "USER-008", name: "Ali Husnain", email: "ali@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-002", position: "Lead Teacher", hourlyWage: 1800 },
   { id: "USER-009", name: "Lisa Chen", email: "lisa.chen@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-003", position: "Teaching Assistant", hourlyWage: 1400 },
+  { id: "USER-010", name: "Arbab Nasir", email: "arbab@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-004", position: "Staff", hourlyWage: 1500 },
   { id: "USER-007", name: "Sarah Parent", email: "sarah@parent.com", password: "Parent123!", role: "parent", companyId: "ORG-SUNSHINE", employeeId: null, position: "Parent" },
 ];
 

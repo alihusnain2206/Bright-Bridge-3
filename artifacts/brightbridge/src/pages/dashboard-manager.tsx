@@ -13,6 +13,16 @@ import { AddEmployeeModal } from "@/components/AddEmployeeModal";
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
 
+/** Format decimal hours into human-readable "Xm" / "Xh Ym" — matches EasyTeam's display style */
+function formatHours(h: number): string {
+  const totalMin = Math.floor(h * 60);
+  if (totalMin === 0) return "0m";
+  if (totalMin < 60) return `${totalMin}m`;
+  const hrs = Math.floor(totalMin / 60);
+  const min = totalMin % 60;
+  return min === 0 ? `${hrs}h` : `${hrs}h ${min}m`;
+}
+
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string }
 interface TimesheetEntry {
@@ -377,9 +387,9 @@ export default function ManagerDashboard() {
                     {hours.map((e) => (
                       <tr key={e.employeeId}>
                         <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}</td>
-                        <td className="py-2.5 text-right text-white/60">{e.hoursWorked}h</td>
-                        <td className="py-2.5 text-right text-amber-400/60">−{e.breakDeduction}h</td>
-                        <td className="py-2.5 text-right text-white font-semibold">{e.approvedHours}h</td>
+                        <td className="py-2.5 text-right text-white/60">{formatHours(e.hoursWorked)}</td>
+                        <td className="py-2.5 text-right text-amber-400/60">−{formatHours(e.breakDeduction)}</td>
+                        <td className="py-2.5 text-right text-white font-semibold">{formatHours(e.approvedHours)}</td>
                         <td className="py-2.5 text-right">
                           {e.managerApproved
                             ? <span className="text-emerald-400 text-xs font-medium flex items-center justify-end gap-1"><CheckCircle2 className="h-3 w-3" /> Approved</span>
