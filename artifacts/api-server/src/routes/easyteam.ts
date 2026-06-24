@@ -496,6 +496,11 @@ router.post("/easyteam/hours/sync", async (req, res) => {
       for (const [etEmpId, totalMinutes] of minutesByEmp) {
         // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
         const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
+        // Skip entries whose UUID we can't map — they belong to employees outside our system
+        if (internalEmpId === etEmpId) {
+          req.log.warn({ etEmpId }, "Sync: skipping shift for unrecognised EasyTeam UUID (not in our employee registry)");
+          continue;
+        }
         const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
         const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
         const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 100) / 100;
