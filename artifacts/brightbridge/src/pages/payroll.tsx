@@ -738,6 +738,11 @@ export default function Payroll() {
     },
   });
 
+  const fixWage = useMutation({
+    mutationFn: ({ rollfiUserId, companyId }: { rollfiUserId: string; companyId: string }) =>
+      api.post(`/rollfi/employees/${rollfiUserId}/fix-wage`, { companyId }),
+  });
+
   const checkSingleEmpStatus = useCallback(async (rollfiUserId: string, companyId: string) => {
     setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { ...prev[rollfiUserId], rollfiUserId, userStatus: "", kycStatus: "", loading: true } }));
     try {
@@ -1115,6 +1120,26 @@ export default function Payroll() {
                                       {rollfiStatus?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                                       Check Rollfi Status
                                     </Button>
+                                  )}
+                                  {emp.rollfi?.rollfiUserId && (
+                                    <Button size="sm" variant="ghost"
+                                      className="text-xs text-white/60 hover:text-white border border-white/10 h-7 gap-1.5"
+                                      disabled={fixWage.isPending && fixWage.variables?.rollfiUserId === emp.rollfi.rollfiUserId}
+                                      title={`Correct wage to $${(emp.hourlyWage / 100).toFixed(2)}/hr in Rollfi`}
+                                      onClick={() => fixWage.mutate({ rollfiUserId: emp.rollfi!.rollfiUserId, companyId: company.id })}>
+                                      {fixWage.isPending && fixWage.variables?.rollfiUserId === emp.rollfi.rollfiUserId
+                                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                                        : <DollarSign className="h-3 w-3" />}
+                                      Fix Wage
+                                    </Button>
+                                  )}
+                                  {fixWage.isSuccess && fixWage.variables?.rollfiUserId === emp.rollfi?.rollfiUserId && (
+                                    <span className="text-emerald-400/70 text-xs flex items-center gap-1">
+                                      <CheckCircle2 className="h-3 w-3" /> Wage corrected to ${(emp.hourlyWage / 100).toFixed(2)}/hr
+                                    </span>
+                                  )}
+                                  {fixWage.isError && fixWage.variables?.rollfiUserId === emp.rollfi?.rollfiUserId && (
+                                    <span className="text-red-400/70 text-xs">{(fixWage.error as Error)?.message ?? "Wage fix failed"}</span>
                                   )}
                                   {emp.rollfi?.rollfiUserId && rollfiStatus && !rollfiStatus.loading && (rollfiStatus.kycStatus?.toLowerCase() === "new" || rollfiStatus.userStatus?.toLowerCase() === "pending") && (
                                     <Button size="sm"

@@ -1058,6 +1058,100 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 // Useful when addKycInformation failed on the first onboard attempt,
 // leaving KYC in "new" state and account stuck on "Pending".
 
+// ── Fix wage rate already sent to Rollfi at wrong amount (100x) ─────────
+// Called when an employee was onboarded before the cents→dollars fix.
+// Tries editUserWage first (update in-place), then addUserWage (add new record).
+
+router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const { rollfiUserId } = req.params;
+  const { companyId } = req.body as { companyId: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+  // Find the staff user whose rollfi record matches this rollfiUserId
+  const allUsers = store.getAllStaffUsers().filter(u => u.companyId === companyId);
+  const staffUser = allUsers.find(u => {
+    const rec = u.employeeId ? store.getRollfiEmployee(u.employeeId) : null;
+    return rec?.rollfiUserId === rollfiUserId;
+  });
+  const wageRateDollars = (staffUser?.hourlyWage ?? 1800) / 100;
+  const rollfiWageId = staffUser?.employeeId ? store.getRollfiEmployee(staffUser.employeeId)?.rollfiWageId : undefined;
+
+  req.log.info({ rollfiUserId, wageRateDollars, rollfiWageId }, "Fixing wage rate in Rollfi");
+
+  const headers = rollfiHeaders();
+
+  // Attempt 1: editUserWage (update existing record in-place)
+  if (rollfiWageId) {
+    try {
+      const r = await axios.post(
+        `${ROLLFI_BASE_URL}/adminPortal#editUserWage`,
+        {
+          method: "editUserWage",
+          userWage: {
+            companyId: rollfiCompany.rollfiCompanyId,
+            userId: rollfiUserId,
+            userWageId: rollfiWageId,
+            wageRate: wageRateDollars,
+            wageBasis: "Per Hour",
+            workerType: "W2",
+            differentialPay: "No",
+            userType: "Paid by the hour",
+            employmentStatus: "Full Time (30+ Hours per week)",
+            userRefTaxExempt: "No, this employee is not tax exempt",
+            paymentMethod: "Direct Deposit",
+          },
+        },
+        { headers }
+      );
+      req.log.info({ rollfiResponse: r.data }, "fix-wage: editUserWage response");
+      const raw = r.data as Record<string, unknown>;
+      if (!raw.error) {
+        res.json({ success: true, method: "editUserWage", wageRateDollars, rollfiResponse: raw });
+        return;
+      }
+    } catch (e) {
+      req.log.warn({ e }, "fix-wage: editUserWage failed — falling back to addUserWage");
+    }
+  }
+
+  // Attempt 2: addUserWage with correct amount (Rollfi may create a new record or update)
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+      {
+        method: "addUserWage",
+        userWage: {
+          companyId: rollfiCompany.rollfiCompanyId,
+          userId: rollfiUserId,
+          differentialPay: "No",
+          wageRate: wageRateDollars,
+          workerType: "W2",
+          wageBasis: "Per Hour",
+          userType: "Paid by the hour",
+          employmentStatus: "Full Time (30+ Hours per week)",
+          userRefTaxExempt: "No, this employee is not tax exempt",
+          startDate: "2024-01-01",
+          paymentMethod: "Direct Deposit",
+        },
+      },
+      { headers }
+    );
+    req.log.info({ rollfiResponse: r.data }, "fix-wage: addUserWage response");
+    const raw = r.data as Record<string, unknown>;
+    res.json({ success: true, method: "addUserWage", wageRateDollars, rollfiResponse: raw });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "fix-wage: addUserWage also failed");
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
 router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
   if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
