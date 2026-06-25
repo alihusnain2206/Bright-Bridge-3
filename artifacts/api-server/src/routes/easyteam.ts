@@ -4,6 +4,8 @@ import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
+import { db, companies as companiesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -101,7 +103,7 @@ router.get("/easyteam/employees", (req, res) => {
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
   const employees = users
-    .filter((u) => u.employeeId)
+    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent")
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
@@ -461,14 +463,33 @@ router.post("/easyteam/hours/sync", async (req, res) => {
 
   // ── Step 3: EasyTeam REST API direct fetch ──
   const allClientIds = companyId ? [companyId] : store.listClients().map((c) => c.id);
-  const companiesToSync = allClientIds
+  const storeCompaniesToSync = allClientIds
     .map((id) => store.getCompany(id))
     .filter((c): c is NonNullable<typeof c> => c != null && !!c.locationId);
+
+  // Fall back to DB for companies not in the in-memory store (wizard-created companies)
+  const storeIds = new Set(storeCompaniesToSync.map((c) => c.id));
+  const missingIds = allClientIds.filter((id) => !storeIds.has(id));
+  type SyncableCompany = { id: string; locationId: string };
+  const dbFallback: SyncableCompany[] = [];
+  for (const id of missingIds) {
+    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, id)).catch(() => [undefined]);
+    if (dbCo) {
+      // Use rollfiLocationId if set, otherwise derive a stable EasyTeam locationId from company ID
+      const locationId = dbCo.rollfiLocationId || `LOC-${id}`;
+      dbFallback.push({ id, locationId });
+    }
+  }
+
+  const companiesToSync: SyncableCompany[] = [
+    ...storeCompaniesToSync.map((c) => ({ id: c.id, locationId: c.locationId! })),
+    ...dbFallback,
+  ];
 
   let restSynced = 0;
   let restApiResponded = false;
   for (const co of companiesToSync) {
-    const locId = co.locationId!;
+    const locId = co.locationId;
     const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate);
     req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
 
@@ -607,11 +628,11 @@ async function fetchEasyTeamShiftsForLocation(
 ): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
-  // Find the manager for this location — must use their real employeeId or EasyTeam rejects the JWT
-  const managerUser = store.getAllStaffUsers().find(
-    (u) => u.locationId === locationId && u.role === "manager"
-  );
-  if (!managerUser?.employeeId) return { error: `No manager found for locationId=${locationId}` };
+  // Find the manager for this location — fall back to super_admin if none registered for this location yet
+  const managerUser =
+    store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager") ??
+    store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+  if (!managerUser?.employeeId) return { error: `No user found for locationId=${locationId}` };
 
   try {
     // Include TIMESHEET_READ + SHIFT_READ to access both timesheets and shifts endpoints
