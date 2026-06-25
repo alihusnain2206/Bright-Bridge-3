@@ -9,6 +9,9 @@ import { AppLayout } from "@/components/layout";
 import Login from "@/pages/login";
 import Home from "@/pages/home";
 import Clients from "@/pages/clients";
+import ClientsNew from "@/pages/clients-new";
+import ClientDetail from "@/pages/client-detail";
+import ClientEmployeesNew from "@/pages/client-employees-new";
 import TimeClock from "@/pages/timeclock";
 import Timesheets from "@/pages/timesheets";
 import Schedule from "@/pages/schedule";
@@ -97,9 +100,21 @@ function Router() {
             <Route path="/dashboard/parent">
               <ProtectedRoute component={ParentDashboard} roles={["parent"]} />
             </Route>
+
+            {/* Clients — super_admin only — ORDER MATTERS: specific routes before :param routes */}
+            <Route path="/clients/new">
+              <ProtectedRoute component={ClientsNew} roles={["super_admin"]} />
+            </Route>
+            <Route path="/clients/:companyId/employees/new">
+              <ProtectedRoute component={ClientEmployeesNew} roles={["super_admin"]} />
+            </Route>
+            <Route path="/clients/:companyId">
+              <ProtectedRoute component={ClientDetail} roles={["super_admin"]} />
+            </Route>
             <Route path="/clients">
               <ProtectedRoute component={Clients} roles={["super_admin"]} />
             </Route>
+
             <Route path="/timeclock">
               <ProtectedRoute component={TimeClock} roles={["super_admin"]} />
             </Route>

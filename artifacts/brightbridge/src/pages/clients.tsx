@@ -1,498 +1,201 @@
 import React, { useState } from "react";
 import { Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
-  useListClients,
-  useCreateClient,
-  useDeleteClient,
-  useListClientEmployees,
-  useCreateClientEmployee,
-  useDeleteClientEmployee,
-  useUpdateClientEmployeeStatus,
-  useSyncClientEmployee,
-} from "@workspace/api-client-react";
-import type { ClientEmployee } from "@workspace/api-client-react";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+  Building2, Users, Plus, CheckCircle2, Clock, AlertTriangle,
+  XCircle, Search, ChevronRight, MapPin, Package,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Building2,
-  Users,
-  UserPlus,
-  Plus,
-  Trash2,
-  Clock,
-  CalendarDays,
-  Calendar,
-  ChevronDown,
-  ChevronUp,
-  MapPin,
-  RefreshCw,
-  CheckCircle2,
-  XCircle,
-  AlertCircle,
-} from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 
-const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
-const PANEL_INNER = { background: "rgba(255,255,255,0.07)", borderColor: "rgba(255,255,255,0.12)" } as const;
-const PANEL_DIVIDER = { borderColor: "rgba(255,255,255,0.1)" } as const;
+const ORANGE = "#E8622A";
+const NAVY = "#284362";
 
-const ROLE_OPTIONS = [
-  { value: "manager", label: "Manager" },
-  { value: "teacher", label: "Teacher" },
-  { value: "assistant", label: "Teaching Assistant" },
-  { value: "cashier", label: "Cashier" },
-  { value: "supervisor", label: "Supervisor" },
-  { value: "staff", label: "Staff" },
-];
+interface Company {
+  id: string; name: string; doingBusinessAs?: string; phone: string;
+  industry: string; package: string; status: string;
+  address1: string; city: string; state: string; zipcode: string;
+  kybStatus: string; bankAccountAdded: boolean; payScheduleAdded: boolean;
+  payFrequency?: string; rollfiCompanyId?: string;
+  createdAt: string; employeeCount?: number;
+}
 
-const ROLE_NAMES: Record<string, string> = {
-  manager: "Center Manager",
-  teacher: "Lead Teacher",
-  assistant: "Teaching Assistant",
-  cashier: "Cashier",
-  supervisor: "Supervisor",
-  staff: "Staff Member",
+const STATUS_CFG: Record<string, { label: string; dot: string; text: string }> = {
+  active:      { label: "Active",      dot: "bg-emerald-500", text: "text-emerald-700" },
+  setting_up:  { label: "Setting Up",  dot: "bg-yellow-500",  text: "text-yellow-700" },
+  pending:     { label: "Pending",     dot: "bg-orange-500",  text: "text-orange-700" },
+  suspended:   { label: "Suspended",   dot: "bg-red-500",     text: "text-red-700" },
 };
 
-const STATUS_CONFIG = {
-  hired: { label: "Hired", color: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
-  onboarding: { label: "Onboarding", color: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  active: { label: "Active", color: "bg-green-500/20 text-green-300 border-green-500/30" },
-  terminated: { label: "Terminated", color: "bg-red-500/20 text-red-300 border-red-500/30" },
-} as const;
+const INDUSTRY_LABEL: Record<string, string> = {
+  daycare: "Daycare Centre", retail: "Retail", medical: "Medical",
+  construction: "Construction", other: "Other",
+};
 
-function StatusBadge({ status }: { status: ClientEmployee["status"] }) {
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.hired;
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium border ${cfg.color}`}>
-      {cfg.label}
-    </span>
-  );
-}
+const PKG_LABEL: Record<string, string> = {
+  full_daycare: "Full Daycare", payroll_only: "Payroll Only", payroll_hr_workforce: "Payroll + HR",
+};
 
-function SyncBadge({ synced, label }: { synced: boolean; label: string }) {
-  return (
-    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border ${synced ? "bg-green-500/15 text-green-300 border-green-500/25" : "bg-white/5 text-white/30 border-white/10"}`}>
-      {synced ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
-      {label}
-    </span>
-  );
-}
+function CompanyCard({ company }: { company: Company }) {
+  const cfg = STATUS_CFG[company.status] ?? STATUS_CFG.pending;
+  const hasRollfi = !!company.rollfiCompanyId;
 
-function AddClientForm({ onDone }: { onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [locationName, setLocationName] = useState("");
-  const [timezone, setTimezone] = useState("America/New_York");
-  const createClient = useCreateClient();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !locationName) return;
-    createClient.mutate(
-      { data: { name, locationName, timezone, latitude: 40.7128, longitude: -74.006 } },
-      { onSuccess: onDone }
-    );
-  };
+  const onboardingItems = [
+    { done: true,                       label: "BrightBridge account" },
+    { done: hasRollfi,                  label: "Rollfi registered" },
+    { done: company.kybStatus === "verified", label: "KYB verified" },
+    { done: company.bankAccountAdded,   label: "Bank account" },
+    { done: company.payScheduleAdded,   label: "Pay schedule" },
+  ];
+  const doneCount = onboardingItems.filter((i) => i.done).length;
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs">Center Name *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Sunshine Daycare" className="h-8 text-sm" />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Location Name *</Label>
-          <Input value={locationName} onChange={(e) => setLocationName(e.target.value)} placeholder="Main Branch" className="h-8 text-sm" />
-        </div>
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs">Timezone</Label>
-        <Select value={timezone} onValueChange={setTimezone}>
-          <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="America/New_York">Eastern (New York)</SelectItem>
-            <SelectItem value="America/Chicago">Central (Chicago)</SelectItem>
-            <SelectItem value="America/Denver">Mountain (Denver)</SelectItem>
-            <SelectItem value="America/Los_Angeles">Pacific (Los Angeles)</SelectItem>
-            <SelectItem value="America/Phoenix">Arizona</SelectItem>
-            <SelectItem value="America/Anchorage">Alaska</SelectItem>
-            <SelectItem value="Pacific/Honolulu">Hawaii</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="flex gap-2 pt-1">
-        <Button type="submit" size="sm" disabled={!name || !locationName || createClient.isPending} className="flex-1">
-          {createClient.isPending ? "Adding…" : "Add Client"}
-        </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onDone}>Cancel</Button>
-      </div>
-    </form>
-  );
-}
-
-function AddEmployeeForm({ clientId, onDone }: { clientId: string; onDone: () => void }) {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [role, setRole] = useState("teacher");
-  const [wage, setWage] = useState("18.00");
-  const [status, setStatus] = useState<"hired" | "onboarding" | "active">("hired");
-  const createEmployee = useCreateClientEmployee();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name || !role) return;
-    const wageInCents = Math.round(parseFloat(wage) * 100);
-    createEmployee.mutate(
-      {
-        clientId,
-        data: {
-          name,
-          email: email || undefined,
-          role,
-          roleName: ROLE_NAMES[role] || role,
-          wage: wageInCents,
-          wageType: "hourly",
-          timeTrackingEnabled: true,
-          status,
-        },
-      },
-      { onSuccess: onDone }
-    );
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="mt-3 p-3 rounded-lg border border-dashed border-white/20 space-y-2" style={{ background: "rgba(255,255,255,0.05)" }}>
-      <div className="text-xs font-medium text-white/50 mb-2">Add Employee</div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1">
-          <Label className="text-xs text-white/70">Full Name *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Jane Smith" className="h-7 text-xs bg-white/10 border-white/20 text-white placeholder:text-white/30" />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-white/70">Role *</Label>
-          <Select value={role} onValueChange={setRole}>
-            <SelectTrigger className="h-7 text-xs bg-white/10 border-white/20 text-white"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {ROLE_OPTIONS.map((r) => (
-                <SelectItem key={r.value} value={r.value} className="text-xs">{r.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-1">
-          <Label className="text-xs text-white/70">Email</Label>
-          <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@daycare.com" type="email" className="h-7 text-xs bg-white/10 border-white/20 text-white placeholder:text-white/30" />
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-white/70">Hourly Wage ($)</Label>
-          <Input value={wage} onChange={(e) => setWage(e.target.value)} placeholder="18.00" className="h-7 text-xs bg-white/10 border-white/20 text-white" type="number" step="0.01" min="0" />
-        </div>
-      </div>
-      <div className="space-y-1">
-        <Label className="text-xs text-white/70">Starting Status</Label>
-        <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
-          <SelectTrigger className="h-7 text-xs bg-white/10 border-white/20 text-white"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="hired" className="text-xs">Hired — offer accepted, not started</SelectItem>
-            <SelectItem value="onboarding" className="text-xs">Onboarding — completing paperwork</SelectItem>
-            <SelectItem value="active" className="text-xs">Active — ready to clock in & receive payroll</SelectItem>
-          </SelectContent>
-        </Select>
-        {status === "active" && (
-          <p className="text-[10px] text-green-300/70 mt-1">Will auto-sync to EasyTeam and Rollfi on save.</p>
-        )}
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={!name || createEmployee.isPending} className="h-7 text-xs flex-1 bg-[#E8622A] hover:bg-[#d4571f] text-white border-0">
-          {createEmployee.isPending ? "Adding…" : "Add Employee"}
-        </Button>
-        <Button type="button" size="sm" variant="outline" onClick={onDone} className="h-7 text-xs border-white/20 text-white/70 hover:bg-white/10 bg-transparent">Cancel</Button>
-      </div>
-    </form>
-  );
-}
-
-function EmployeeRow({ emp, clientId, onRefresh }: { emp: ClientEmployee; clientId: string; onRefresh: () => void }) {
-  const updateStatus = useUpdateClientEmployeeStatus();
-  const syncEmployee = useSyncClientEmployee();
-  const deleteEmployee = useDeleteClientEmployee();
-  const [showActions, setShowActions] = useState(false);
-
-  const handleStatusChange = (newStatus: string) => {
-    updateStatus.mutate(
-      { clientId, employeeId: emp.id, data: { status: newStatus as ClientEmployee["status"] } },
-      { onSuccess: () => onRefresh() }
-    );
-  };
-
-  const handleSync = () => {
-    syncEmployee.mutate({ clientId, employeeId: emp.id }, { onSuccess: () => onRefresh() });
-  };
-
-  const handleDelete = () => {
-    deleteEmployee.mutate({ clientId, employeeId: emp.id }, { onSuccess: () => onRefresh() });
-  };
-
-  const isActive = emp.status === "active";
-  const isTerminated = emp.status === "terminated";
-
-  return (
-    <div className="rounded-md border overflow-hidden" style={PANEL_INNER}>
-      <div className="flex items-center justify-between p-2 group">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0" style={{ background: isTerminated ? "#555" : "#E8622A" }}>
-            {emp.name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
+    <div className="bg-white rounded-2xl border shadow-sm hover:shadow-md transition-shadow overflow-hidden">
+      <div className="px-5 py-4 border-b bg-gray-50/50 flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${ORANGE}15` }}>
+            <Building2 className="h-5 w-5" style={{ color: ORANGE }} />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-sm font-medium text-white truncate">{emp.name}</span>
-              <StatusBadge status={emp.status} />
-            </div>
-            <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-              <span className="text-[10px] text-white/40">{emp.roleName}</span>
-              {emp.email && <span className="text-[10px] text-white/30">· {emp.email}</span>}
-            </div>
-            <div className="flex items-center gap-1 mt-0.5">
-              <SyncBadge synced={emp.easyteamSynced} label="EasyTeam" />
-              <SyncBadge synced={emp.rollfiSynced} label="Rollfi" />
-              {emp.syncError && (
-                <span className="inline-flex items-center gap-0.5 text-[10px] text-red-300/70" title={emp.syncError}>
-                  <AlertCircle className="h-2.5 w-2.5" /> sync error
-                </span>
-              )}
-            </div>
+            <h3 className="font-bold text-gray-900 truncate">{company.name}</h3>
+            {company.doingBusinessAs && company.doingBusinessAs !== company.name && (
+              <p className="text-xs text-gray-400">dba {company.doingBusinessAs}</p>
+            )}
           </div>
         </div>
-
-        <div className="flex items-center gap-1 shrink-0 ml-2">
-          {isActive && (
-            <>
-              <Link href={`/timeclock?clientId=${clientId}&employeeId=${emp.id}`}>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
-                  <Clock className="h-3 w-3" /> Clock
-                </Button>
-              </Link>
-              <Link href={`/timesheets?clientId=${clientId}&employeeId=${emp.id}`}>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
-                  <CalendarDays className="h-3 w-3" /> Sheets
-                </Button>
-              </Link>
-              <Link href={`/schedule?clientId=${clientId}&employeeId=${emp.id}`}>
-                <Button size="sm" variant="outline" className="h-6 px-2 text-[10px] gap-1 border-white/20 text-white/70 hover:bg-[#E8622A] hover:text-white hover:border-[#E8622A] bg-transparent">
-                  <Calendar className="h-3 w-3" /> Sched
-                </Button>
-              </Link>
-            </>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-white/40 hover:text-white bg-transparent"
-            onClick={() => setShowActions(!showActions)}
-          >
-            {showActions ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          </Button>
+        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 ${cfg.text} shrink-0`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+          {cfg.label}
         </div>
       </div>
 
-      {showActions && (
-        <div className="px-2 pb-2 pt-1 border-t border-white/5 flex flex-wrap gap-1.5 items-center">
-          <span className="text-[10px] text-white/30 mr-1">Change status:</span>
-          {(["hired", "onboarding", "active", "terminated"] as const).filter((s) => s !== emp.status).map((s) => (
-            <Button
-              key={s}
-              size="sm"
-              variant="outline"
-              disabled={updateStatus.isPending}
-              className="h-5 px-2 text-[10px] border-white/15 text-white/50 hover:bg-white/10 bg-transparent capitalize"
-              onClick={() => handleStatusChange(s)}
-            >
-              {s}
-            </Button>
+      <div className="px-5 py-4 space-y-3">
+        <div className="flex items-center gap-4 text-xs text-gray-500">
+          <span className="flex items-center gap-1"><MapPin className="h-3 w-3" />{company.city}, {company.state}</span>
+          <span className="flex items-center gap-1"><Package className="h-3 w-3" />{PKG_LABEL[company.package] ?? company.package}</span>
+          <span className="px-1.5 py-0.5 rounded bg-[#284362]/8 text-[#284362] text-[10px] font-medium">{INDUSTRY_LABEL[company.industry] ?? company.industry}</span>
+        </div>
+
+        <div className="flex items-center gap-4 text-sm">
+          <div className="flex items-center gap-1.5 text-gray-600">
+            <Users className="h-3.5 w-3.5 text-gray-400" />
+            <span className="font-semibold">{company.employeeCount ?? 0}</span>
+            <span className="text-gray-400">employees</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-gray-600">
+            <CheckCircle2 className="h-3.5 w-3.5 text-gray-400" />
+            <span className="font-semibold">{doneCount}/5</span>
+            <span className="text-gray-400">setup done</span>
+          </div>
+          {company.payFrequency && (
+            <div className="flex items-center gap-1.5 text-gray-600">
+              <Clock className="h-3.5 w-3.5 text-gray-400" />
+              <span className="text-gray-400">{company.payFrequency}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Onboarding mini checklist */}
+        <div className="flex gap-1.5 flex-wrap">
+          {onboardingItems.map((item) => (
+            <span key={item.label} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${item.done ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-gray-50 text-gray-400 border-gray-200"}`}>
+              {item.done ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+              {item.label}
+            </span>
           ))}
-          <div className="flex-1" />
-          {isActive && (!emp.rollfiSynced || !emp.easyteamSynced) && (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={syncEmployee.isPending}
-              className="h-5 px-2 text-[10px] gap-1 border-green-500/30 text-green-300/70 hover:bg-green-500/10 bg-transparent"
-              onClick={handleSync}
-            >
-              <RefreshCw className={`h-2.5 w-2.5 ${syncEmployee.isPending ? "animate-spin" : ""}`} />
-              {syncEmployee.isPending ? "Syncing…" : "Retry Sync"}
-            </Button>
-          )}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-5 px-2 text-[10px] text-red-400/60 hover:text-red-400 hover:bg-red-500/10 bg-transparent"
-            onClick={handleDelete}
-          >
-            <Trash2 className="h-2.5 w-2.5 mr-1" /> Remove
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EmployeeList({ clientId }: { clientId: string }) {
-  const { data, isLoading, refetch } = useListClientEmployees(clientId);
-  const [addingEmployee, setAddingEmployee] = useState(false);
-
-  if (isLoading) {
-    return <div className="space-y-1 mt-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-8 w-full opacity-20" />)}</div>;
-  }
-
-  const employees = data?.employees ?? [];
-  const active = employees.filter((e) => e.status === "active").length;
-  const total = employees.length;
-
-  return (
-    <div className="mt-3 space-y-2">
-      {total > 0 && (
-        <div className="text-[10px] text-white/30 mb-1">
-          {active} of {total} active
-        </div>
-      )}
-
-      {employees.length === 0 && !addingEmployee && (
-        <div className="text-xs text-white/40 text-center py-3 rounded-md border border-dashed border-white/15">
-          No employees yet — add your first staff member.
-        </div>
-      )}
-
-      {employees.map((emp) => (
-        <EmployeeRow key={emp.id} emp={emp} clientId={clientId} onRefresh={() => refetch()} />
-      ))}
-
-      {addingEmployee ? (
-        <AddEmployeeForm clientId={clientId} onDone={() => { setAddingEmployee(false); refetch(); }} />
-      ) : (
-        <Button
-          size="sm"
-          variant="outline"
-          className="w-full h-7 text-xs gap-1 border-dashed border-white/20 text-white/50 hover:text-white hover:bg-white/10 bg-transparent"
-          onClick={() => setAddingEmployee(true)}
-        >
-          <UserPlus className="h-3 w-3" /> Add Employee
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function ClientCard({ client, onDelete }: { client: { id: string; name: string; locationName: string; timezone: string }; onDelete: () => void }) {
-  const [expanded, setExpanded] = useState(true);
-  const deleteClient = useDeleteClient();
-  const qc = useQueryClient();
-
-  const handleDelete = () => {
-    if (!confirm(`Delete "${client.name}" and all their employees?`)) return;
-    deleteClient.mutate({ clientId: client.id }, {
-      onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/clients"] }); onDelete(); },
-    });
-  };
-
-  return (
-    <div className="rounded-xl border overflow-hidden" style={PANEL}>
-      <div className="px-4 py-3 border-b flex items-center justify-between" style={{ ...PANEL_DIVIDER, background: "rgba(255,255,255,0.05)" }}>
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="p-1.5 rounded shrink-0" style={{ background: "rgba(232,98,42,0.2)" }}>
-            <Building2 className="h-4 w-4 text-[#E8622A]" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-white truncate">{client.name}</div>
-            <div className="flex items-center gap-1 text-xs text-white/40 mt-0.5">
-              <MapPin className="h-3 w-3 shrink-0" />
-              <span className="truncate">{client.locationName}</span>
-              <span className="text-white/20 mx-1">·</span>
-              <span className="truncate">{client.timezone.replace("America/", "")}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0 ml-2">
-          <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 font-mono border-white/20 text-white/40 bg-transparent">
-            {client.id.slice(0, 10)}…
-          </Badge>
-          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white/30 hover:text-red-400 bg-transparent" onClick={handleDelete}>
-            <Trash2 className="h-3.5 w-3.5" />
-          </Button>
-          <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-white/40 hover:text-white bg-transparent" onClick={() => setExpanded(!expanded)}>
-            {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-          </Button>
         </div>
       </div>
 
-      {expanded && (
-        <div className="px-4 pb-4 pt-3">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-white/40 mb-1">
-            <Users className="h-3.5 w-3.5" />
-            Staff
-          </div>
-          <EmployeeList clientId={client.id} />
-        </div>
-      )}
+      <div className="px-5 py-3 border-t bg-gray-50/40 flex items-center gap-2">
+        <Link href={`/clients/${company.id}`} className="flex-1">
+          <Button size="sm" className="w-full gap-1.5 text-white border-0" style={{ background: NAVY }}>
+            View Details <ChevronRight className="h-3.5 w-3.5" />
+          </Button>
+        </Link>
+        <Link href={`/clients/${company.id}/employees/new`}>
+          <Button size="sm" variant="outline" className="gap-1.5">
+            <Users className="h-3.5 w-3.5" />Add Employee
+          </Button>
+        </Link>
+      </div>
     </div>
   );
 }
 
-export default function Clients() {
-  const { data, isLoading, refetch } = useListClients();
-  const [addingClient, setAddingClient] = useState(false);
-  const clients = data?.clients ?? [];
+export default function ClientsPage() {
+  const [search, setSearch] = useState("");
+  const { data, isLoading, error } = useQuery<{ companies: Company[] }>({
+    queryKey: ["/api/companies"],
+    queryFn: () => fetch("/api/companies", { credentials: "include" }).then((r) => r.json()),
+  });
+
+  const companies = (data?.companies ?? []).filter((c) =>
+    !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.city.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const active = companies.filter((c) => c.status === "active").length;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-primary">Clients</h1>
-          <p className="text-muted-foreground mt-1">Manage daycare centers and their staff. Employees auto-sync to EasyTeam and Rollfi when activated.</p>
+          <h1 className="text-2xl font-bold" style={{ color: NAVY }}>Clients</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {isLoading ? "Loading…" : `${companies.length} daycare centers · ${active} active`}
+          </p>
         </div>
-        <Button onClick={() => setAddingClient(true)} disabled={addingClient} className="gap-2 bg-[#E8622A] hover:bg-[#d4571f] text-white border-0">
-          <Plus className="h-4 w-4" /> Add Client
-        </Button>
+        <Link href="/clients/new">
+          <Button className="gap-2 text-white border-0" style={{ background: ORANGE }}>
+            <Plus className="h-4 w-4" />Add New Client
+          </Button>
+        </Link>
       </div>
 
-      {addingClient && (
-        <Card className="border-primary/30 bg-primary/5">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-accent" />
-              New Daycare Client
-            </CardTitle>
-            <CardDescription>Fill in the center details. You can add staff after creating the client.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <AddClientForm onDone={() => { setAddingClient(false); refetch(); }} />
-          </CardContent>
-        </Card>
-      )}
+      {/* Search */}
+      <div className="relative max-w-sm">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name or city…" className="pl-9" />
+      </div>
 
+      {/* Stats bar */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: "Total Clients", value: companies.length, color: NAVY },
+          { label: "Active", value: companies.filter((c) => c.status === "active").length, color: "#16a34a" },
+          { label: "Setting Up", value: companies.filter((c) => c.status !== "active" && c.status !== "suspended").length, color: "#d97706" },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-white rounded-xl border px-4 py-3 text-center shadow-sm">
+            <div className="text-2xl font-bold" style={{ color }}>{value}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Company cards */}
       {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-52 rounded-2xl" />)}
         </div>
-      ) : clients.length === 0 ? (
-        <div className="text-center py-20 text-muted-foreground border-2 border-dashed border-border rounded-xl">
-          <Building2 className="h-12 w-12 mx-auto mb-4 opacity-20" />
-          <p className="font-medium">No clients yet</p>
-          <p className="text-sm mt-1">Click "Add Client" to create your first daycare center.</p>
+      ) : error ? (
+        <div className="flex items-center gap-2 text-red-600 bg-red-50 rounded-xl px-4 py-3 border border-red-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" />Failed to load clients. Please refresh.
+        </div>
+      ) : companies.length === 0 ? (
+        <div className="text-center py-20 border-2 border-dashed border-gray-200 rounded-2xl">
+          <Building2 className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+          <p className="font-semibold text-gray-700">{search ? "No matching clients" : "No clients yet"}</p>
+          <p className="text-sm text-gray-400 mt-1 mb-4">{search ? "Try a different search" : "Add your first daycare center to get started."}</p>
+          {!search && (
+            <Link href="/clients/new">
+              <Button className="gap-2 text-white border-0" style={{ background: ORANGE }}><Plus className="h-4 w-4" />Add First Client</Button>
+            </Link>
+          )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {clients.map((client) => (
-            <ClientCard key={client.id} client={client} onDelete={() => refetch()} />
-          ))}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {companies.map((c) => <CompanyCard key={c.id} company={c} />)}
         </div>
       )}
     </div>

@@ -72,3 +72,102 @@ export const timesheetEntries = pgTable("timesheet_entries", {
   approvedAt:      text("approved_at"),
   approvedByUserId: text("approved_by_user_id"),
 });
+
+// ── Company & Employee Master Data ───────────────────────────
+
+export const companies = pgTable("companies", {
+  id:                text("id").primaryKey(),
+  name:              text("name").notNull(),
+  doingBusinessAs:   text("doing_business_as"),
+  businessWebsite:   text("business_website"),
+  phone:             text("phone").notNull().default(""),
+  industry:          text("industry").notNull().default("daycare"),
+  package:           text("package").notNull().default("full_daycare"),
+  status:            text("status").notNull().default("pending"),
+  // Location
+  address1:          text("address1").notNull().default(""),
+  address2:          text("address2"),
+  city:              text("city").notNull().default(""),
+  state:             text("state").notNull().default("NJ"),
+  zipcode:           text("zipcode").notNull().default(""),
+  locationName:      text("location_name"),
+  // Rollfi
+  rollfiCompanyId:   text("rollfi_company_id"),
+  rollfiLocationId:  text("rollfi_location_id"),
+  rollfiOnboardedAt: text("rollfi_onboarded_at"),
+  ein:               text("ein"),
+  // Onboarding
+  kybStatus:         text("kyb_status").notNull().default("not_started"),
+  bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
+  payScheduleAdded:  boolean("pay_schedule_added").notNull().default(false),
+  // Pay schedule
+  payFrequency:      text("pay_frequency"),
+  firstPayDate:      text("first_pay_date"),
+  createdAt:         text("created_at").notNull(),
+  updatedAt:         text("updated_at").notNull(),
+});
+
+export const employees = pgTable("employees", {
+  id:                text("id").primaryKey(),
+  companyId:         text("company_id").notNull(),
+  firstName:         text("first_name").notNull(),
+  lastName:          text("last_name").notNull(),
+  email:             text("email").notNull(),
+  phone:             text("phone").notNull().default(""),
+  position:          text("position").notNull(),
+  employmentType:    text("employment_type").notNull().default("Full Time (30+ Hours per week)"),
+  workerType:        text("worker_type").notNull().default("W2"),
+  startDate:         text("start_date").notNull(),
+  // Pay
+  payType:           text("pay_type").notNull().default("hourly"),
+  hourlyWage:        integer("hourly_wage").notNull().default(1500),
+  overtimeEligible:  boolean("overtime_eligible").notNull().default(true),
+  paymentMethod:     text("payment_method").notNull().default("Direct Deposit"),
+  taxExempt:         boolean("tax_exempt").notNull().default(false),
+  // Personal
+  ssn:               text("ssn"),
+  dateOfBirth:       text("date_of_birth"),
+  homeAddress:       text("home_address"),
+  homeCity:          text("home_city"),
+  homeState:         text("home_state"),
+  homeZip:           text("home_zip"),
+  // W4
+  w4FilingStatus:    text("w4_filing_status"),
+  w4MultipleJobs:    boolean("w4_multiple_jobs").default(false),
+  w4Dependents:      integer("w4_dependents").default(0),
+  w4ExtraWithholding: integer("w4_extra_withholding").default(0),
+  // Status
+  status:            text("status").notNull().default("onboarding"),
+  // Rollfi
+  rollfiUserId:      text("rollfi_user_id"),
+  rollfiWageId:      text("rollfi_wage_id"),
+  rollfiOnboardedAt: text("rollfi_onboarded_at"),
+  kycStatus:         text("kyc_status").default("not_started"),
+  bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
+  w4Submitted:       boolean("w4_submitted").notNull().default(false),
+  // EasyTeam
+  easyteamId:        text("easyteam_id"),
+  easyteamSynced:    boolean("easyteam_synced").notNull().default(false),
+  // Sync
+  syncStatus:        text("sync_status").notNull().default("pending"),
+  lastSyncError:     text("last_sync_error"),
+  createdAt:         text("created_at").notNull(),
+  updatedAt:         text("updated_at").notNull(),
+});
+
+export const beneficialOwners = pgTable("beneficial_owners", {
+  id:                  serial("id").primaryKey(),
+  companyId:           text("company_id").notNull(),
+  firstName:           text("first_name").notNull(),
+  lastName:            text("last_name").notNull(),
+  email:               text("email").notNull(),
+  phone:               text("phone").notNull(),
+  dateOfBirth:         text("date_of_birth").notNull(),
+  ssn:                 text("ssn").notNull(),
+  address1:            text("address1").notNull(),
+  city:                text("city").notNull(),
+  state:               text("state").notNull(),
+  zipcode:             text("zipcode").notNull(),
+  ownershipPercentage: integer("ownership_percentage").notNull().default(100),
+  isPayrollAdmin:      boolean("is_payroll_admin").notNull().default(true),
+});

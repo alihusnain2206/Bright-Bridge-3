@@ -4,6 +4,7 @@ import easyteamRouter from "./easyteam";
 import clientsRouter from "./clients";
 import authRouter from "./auth";
 import rollfiRouter from "./rollfi";
+import companiesRouter from "./companies";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(healthRouter);
 router.use(easyteamRouter);
 router.use(clientsRouter);
 router.use(rollfiRouter);
+router.use(companiesRouter);
 
 export default router;
