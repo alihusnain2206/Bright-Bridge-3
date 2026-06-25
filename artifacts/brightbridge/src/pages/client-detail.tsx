@@ -4,10 +4,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
   ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2, ShieldCheck,
+  Eye, EyeOff, Copy, X, KeyRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const ORANGE = "#E8622A";
 const NAVY = "#284362";
@@ -30,6 +33,129 @@ interface Employee {
 
 interface CompanyUser {
   id: string; name: string; email: string; role: string; position: string; source: string;
+}
+
+// ── Credential Manager Modal ──────────────────────────────────
+
+interface CredentialModalProps {
+  user: CompanyUser;
+  companyId: string;
+  onClose: () => void;
+  onSaved: () => void;
+}
+
+function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalProps) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email);
+  const [position, setPosition] = useState(user.position);
+  const [newPassword, setNewPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const copy = (val: string, key: string) => {
+    void navigator.clipboard.writeText(val);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true); setError("");
+    const body: Record<string, string> = { name, email, position };
+    if (newPassword.trim()) body.password = newPassword.trim();
+    try {
+      const res = await fetch(`/api/companies/${companyId}/users/${user.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) { setError(data.error ?? "Failed to save"); return; }
+      setSaved(true);
+      setTimeout(() => { onSaved(); onClose(); }, 1200);
+    } catch { setError("Network error"); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: NAVY }}>
+              <KeyRound className="h-4 w-4 text-white" />
+            </div>
+            <div>
+              <h2 className="font-bold text-[#284362] text-base">Manage Login</h2>
+              <p className="text-xs text-muted-foreground">View & update credentials for {user.name}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-gray-900 rounded-lg p-1 hover:bg-gray-100">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSave} className="px-6 py-5 space-y-4">
+          {/* Current credentials read-only display */}
+          <div className="rounded-xl bg-gray-50 border px-4 py-3 space-y-2.5">
+            <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Current Login</p>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[10px] text-gray-400">Email</p>
+                <p className="text-sm font-mono font-medium text-gray-800">{email}</p>
+              </div>
+              <button type="button" onClick={() => copy(email, "email")} className="p-1.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors">
+                {copied === "email" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-sm">Full Name</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Email Address</Label>
+            <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">Position</Label>
+            <Input value={position} onChange={(e) => setPosition(e.target.value)} />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-sm">New Password <span className="text-gray-400 font-normal">(leave blank to keep current)</span></Label>
+            <div className="relative">
+              <Input
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                type={showPw ? "text" : "password"}
+                placeholder="Enter new password…"
+                className="pr-9"
+              />
+              <button type="button" onClick={() => setShowPw((v) => !v)}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          </div>
+
+          {error && <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />{error}</p>}
+          {saved && <p className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />Saved successfully!</p>}
+
+          <div className="flex gap-2 pt-1">
+            <Button type="button" variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
+            <Button type="submit" disabled={saving || saved} className="flex-1 text-white border-0" style={{ background: ORANGE }}>
+              {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Saving…</> : "Save Changes"}
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }
 
 const STATUS_CFG: Record<string, { label: string; color: string }> = {
@@ -110,6 +236,9 @@ function OverviewTab({ company }: { company: Company }) {
 }
 
 function EmployeesTab({ company }: { company: Company }) {
+  const queryClient = useQueryClient();
+  const [credentialUser, setCredentialUser] = useState<CompanyUser | null>(null);
+
   const { data, isLoading } = useQuery<{ employees: Employee[] }>({
     queryKey: ["/api/employees", company.id],
     queryFn: () => fetch(`/api/employees?companyId=${company.id}`, { credentials: "include" }).then((r) => r.json()),
@@ -126,6 +255,18 @@ function EmployeesTab({ company }: { company: Company }) {
 
   return (
     <div className="space-y-6">
+      {credentialUser && (
+        <CredentialModal
+          user={credentialUser}
+          companyId={company.id}
+          onClose={() => setCredentialUser(null)}
+          onSaved={() => {
+            void queryClient.invalidateQueries({ queryKey: ["/api/companies/users", company.id] });
+            setCredentialUser(null);
+          }}
+        />
+      )}
+
       {/* Admins / Managers */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -146,15 +287,24 @@ function EmployeesTab({ company }: { company: Company }) {
                 <th className="text-left px-4 py-2.5">Email</th>
                 <th className="text-left px-4 py-2.5">Position</th>
                 <th className="text-left px-4 py-2.5">Role</th>
+                <th className="px-4 py-2.5"></th>
               </tr></thead>
               <tbody className="divide-y">
                 {managers.map((u) => (
                   <tr key={u.id} className="hover:bg-gray-50/50">
                     <td className="px-4 py-3 font-medium">{u.name}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{u.email}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs font-mono">{u.email}</td>
                     <td className="px-4 py-3 text-gray-500 text-xs">{u.position || "—"}</td>
                     <td className="px-4 py-3">
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#284362]/10 text-[#284362] capitalize">{u.role}</span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={() => setCredentialUser(u)}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-[#284362] hover:text-[#E8622A] border border-[#284362]/20 hover:border-[#E8622A]/40 rounded-lg px-2.5 py-1 transition-colors"
+                      >
+                        <KeyRound className="h-3 w-3" />Login
+                      </button>
                     </td>
                   </tr>
                 ))}

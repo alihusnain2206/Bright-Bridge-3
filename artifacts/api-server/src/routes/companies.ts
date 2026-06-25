@@ -321,6 +321,72 @@ router.get("/companies/:companyId/users", async (req: Request, res: Response) =>
   }
 });
 
+// ── GET /api/companies/:companyId/users/:userId (credentials) ─
+
+router.get("/companies/:companyId/users/:userId", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
+  const userId = String(req.params.userId);
+  // Check store first
+  const storeUser = store.getTestUserById(userId);
+  if (storeUser) {
+    const { password, ...safe } = storeUser;
+    res.json({ ...safe, password });
+    return;
+  }
+  // Fall back to DB
+  const [dbUser] = await db.select().from(userAccounts).where(eq(userAccounts.id, userId));
+  if (!dbUser) { res.status(404).json({ error: "User not found" }); return; }
+  res.json(dbUser);
+});
+
+// ── PUT /api/companies/:companyId/users/:userId (update creds) ─
+
+router.put("/companies/:companyId/users/:userId", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
+  const userId = String(req.params.userId);
+  const { name, email, password, position } = req.body as { name?: string; email?: string; password?: string; position?: string };
+
+  const updates: Record<string, string> = {};
+  if (name)     updates.name = name;
+  if (email)    updates.email = email;
+  if (password) updates.password = password;
+  if (position) updates.position = position;
+
+  if (Object.keys(updates).length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
+
+  try {
+    // Update in-memory store
+    store.updateTestUser(userId, updates as Parameters<typeof store.updateTestUser>[1]);
+
+    // Persist to DB — upsert so it works whether the record is in DB or not
+    await db.insert(userAccounts).values({
+      id: userId, name: name ?? "", email: email ?? "", password: password ?? "",
+      role: "manager", companyId: String(req.params.companyId), createdAt: new Date().toISOString(),
+      position: position ?? null,
+    }).onConflictDoUpdate({
+      target: userAccounts.id,
+      set: { ...updates },
+    });
+
+    // Re-fetch updated user from store to return
+    const updated = store.getTestUserById(userId);
+    if (updated) {
+      const { password: _p, ...safe } = updated;
+      res.json({ ...safe, password: updated.password });
+    } else {
+      const [dbUser] = await db.select().from(userAccounts).where(eq(userAccounts.id, userId));
+      res.json(dbUser);
+    }
+  } catch (err) {
+    req.log.error({ err }, "Failed to update user credentials");
+    res.status(500).json({ error: "Failed to update user" });
+  }
+});
+
 // ── GET /api/employees ───────────────────────────────────────
 
 router.get("/employees", async (req: Request, res: Response) => {

@@ -408,6 +408,15 @@ export const store = {
     const { password: _p, ...safe } = newUser;
     return { user: safe, password };
   },
+  updateTestUser(userId: string, updates: Partial<Pick<TestUser, "name" | "email" | "password" | "position">>): boolean {
+    const idx = testUsers.findIndex((u) => u.id === userId);
+    if (idx === -1) return false;
+    testUsers[idx] = { ...testUsers[idx]!, ...updates };
+    return true;
+  },
+  getTestUserById(userId: string): TestUser | undefined {
+    return testUsers.find((u) => u.id === userId);
+  },
   deleteStaffUser(userId: string): boolean {
     const idx = testUsers.findIndex((u) => u.id === userId && (u.role === "employee" || u.role === "manager"));
     if (idx === -1) return false;
