@@ -479,8 +479,16 @@ function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; 
     },
   });
 
+  const retryBank = useMutation({
+    mutationFn: () => api.post("/rollfi/onboard/verify-bank", { companyId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rollfi-tasks", companyId] });
+    },
+  });
+
   const tasks = data?.tasks ?? [];
   const hasKybFailure = tasks.some(t => t.description.toLowerCase().includes("kyb") && (t.description.toLowerCase().includes("failed") || t.description.toLowerCase().includes("failure")));
+  const hasBankPending = tasks.some(t => t.task?.toLowerCase().includes("bank") || t.description.toLowerCase().includes("microdeposit") || t.description.toLowerCase().includes("micro deposit") || t.description.toLowerCase().includes("funding source"));
 
   return (
     <div className="border-t border-white/5">
@@ -548,6 +556,31 @@ function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; 
               )}
               {retryKyb.isError && (
                 <p className="text-red-400/70 text-[10px]">{(retryKyb.error as Error)?.message ?? "Retry failed"}</p>
+              )}
+            </div>
+          )}
+
+          {hasBankPending && (
+            <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+              <p className="text-[10px] text-amber-300/70">
+                Bank account is pending micro-deposit verification. Click below to attempt verification — Rollfi sandbox accepts any amounts so this should resolve it without support.
+              </p>
+              <Button
+                size="sm"
+                disabled={retryBank.isPending}
+                onClick={() => retryBank.mutate()}
+                className="h-6 px-2.5 text-[11px] font-medium"
+                style={{ background: "rgba(59,130,246,0.6)" }}
+              >
+                {retryBank.isPending ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Verifying…</> : <><CheckCircle2 className="h-3 w-3 mr-1" />Verify Funding Source</>}
+              </Button>
+              {retryBank.isSuccess && (
+                <p className="text-emerald-400/70 text-[10px] flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Verification submitted — refresh checklist in ~30s
+                </p>
+              )}
+              {retryBank.isError && (
+                <p className="text-red-400/70 text-[10px]">{(retryBank.error as Error)?.message ?? "Verification failed"}</p>
               )}
             </div>
           )}
