@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
+import { persistUserAccount } from "../lib/user-account-persist.js";
 
 const router: IRouter = Router();
 
@@ -520,9 +521,14 @@ router.post("/employees", async (req: Request, res: Response) => {
         rollfiSynced: false,
       });
 
-      // 3. EasyTeam registration
+      // 3. EasyTeam registration — fall back to DB company locationId for new (wizard-created) companies
       const storeCompany = store.getCompany(body.companyId);
-      const locationId = storeCompany?.locationId;
+      let locationId = storeCompany?.locationId;
+      if (!locationId) {
+        // New company not yet in the in-memory store: derive a stable EasyTeam locationId
+        const [dbCompany] = await db.select().from(companies).where(eq(companies.id, body.companyId));
+        locationId = dbCompany?.rollfiLocationId || `LOC-${body.companyId}`;
+      }
       if (locationId) {
         const etResult = await registerEmployeeInEasyTeam(clientEmp, locationId, req.log);
         easyteamSynced = etResult.success;
@@ -555,19 +561,24 @@ router.post("/employees", async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString(),
     }).where(eq(employees.id, employeeId));
 
-    // 6. Auto-create login account
+    // 6. Auto-create login account and persist to DB so it survives restarts
     const existingUser = store.getUserByEmail(body.email);
     if (!existingUser) {
-      store.addTestUser({
+      const newLoginUser = {
         id: `USER-DYN-${Date.now()}`,
         name: `${body.firstName} ${body.lastName}`,
         email: body.email,
         password: "Staff123!",
-        role: "employee",
+        role: "employee" as const,
         companyId: body.companyId,
         employeeId,
         position: body.position,
         hourlyWage: hourlyWageCents,
+      };
+      store.addTestUser(newLoginUser);
+      // Persist so login survives server restarts
+      await persistUserAccount(newLoginUser).catch((err) => {
+        req.log.warn({ err, email: body.email }, "Failed to persist employee login account to DB");
       });
     }
 
