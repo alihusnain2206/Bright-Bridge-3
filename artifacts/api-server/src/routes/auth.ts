@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
+import { db, companies } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 declare module "express-session" {
   interface SessionData {
@@ -190,8 +192,11 @@ router.post("/auth/create-manager", async (req, res) => {
     return;
   }
 
-  const company = store.getCompany(companyId);
-  if (!company) { res.status(404).json({ error: "Company not found" }); return; }
+  const storeCompany = store.getCompany(companyId);
+  if (!storeCompany) {
+    const [dbCompany] = await db.select({ id: companies.id, name: companies.name }).from(companies).where(eq(companies.id, companyId));
+    if (!dbCompany) { res.status(404).json({ error: "Company not found" }); return; }
+  }
 
   const existing = store.getUserByEmail(email);
   if (existing) { res.status(409).json({ error: "A user with that email already exists" }); return; }
