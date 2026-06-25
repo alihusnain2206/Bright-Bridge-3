@@ -31,10 +31,17 @@ function formatSsn(n: string): string {
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
+interface KycOnboardingResult {
+  kycInitiated: boolean;
+  kycBlockedByKyb: boolean;
+  bankAdded: boolean;
+  error?: string;
+}
+
 // Run the mandatory employee KYC onboarding steps so status moves from "Invite Sent" to active.
 // Steps run sequentially; KYC identity must succeed before initiating KYC.
 // Non-fatal errors are logged (idempotent re-runs are fine).
-async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<void> {
+async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<KycOnboardingResult> {
   const headers = rollfiHeaders();
   // Rollfi expects raw 9 digits (no dashes)
   const ssn = randomNineDigits();
@@ -99,6 +106,8 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
 
   // Step 4 — initiate KYC verification (only if KYC info was accepted)
+  let kycInitiated = false;
+  let kycBlockedByKyb = false;
   if (!kycAdded) {
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
   } else {
@@ -109,10 +118,19 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
         { headers }
       );
       log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
+      const raw = r.data as Record<string, unknown>;
+      const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+      if (errMsg.toLowerCase().includes("kyb is not initiated") || errMsg.toLowerCase().includes("company kyb")) {
+        kycBlockedByKyb = true;
+        log.warn({ rollfiUserId }, "initiateUserKyc blocked — company KYB has not passed");
+      } else if (!raw.error) {
+        kycInitiated = true;
+      }
     } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
   }
 
   // Step 5 — add employee bank account (required for Direct Deposit employees to become active)
+  let bankAdded = false;
   try {
     const r = await axios.post(
       `${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`,
@@ -132,7 +150,11 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
       { headers }
     );
     log.info({ rollfiResponse: r.data }, "Rollfi addUserBankAccount response");
+    const raw = r.data as Record<string, unknown>;
+    if (!raw.error) bankAdded = true;
   } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+
+  return { kycInitiated, kycBlockedByKyb, bankAdded };
 }
 
 // Derive a stable UUID-shaped ID from a seed string (for recovery fallback)
@@ -933,8 +955,24 @@ router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
   req.log.info({ rollfiUserId, rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Retrying KYC onboarding for employee");
 
   try {
-    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
-    res.json({ success: true, rollfiUserId, message: "KYC steps re-submitted — status should update within seconds" });
+    const result = await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
+    if (result.kycBlockedByKyb) {
+      res.status(400).json({
+        error: "Company KYB verification has not passed. Employee KYC cannot be initiated until the company completes KYB verification with Rollfi.",
+        kycBlockedByKyb: true,
+        rollfiUserId,
+      });
+      return;
+    }
+    res.json({
+      success: true,
+      rollfiUserId,
+      kycInitiated: result.kycInitiated,
+      bankAdded: result.bankAdded,
+      message: result.kycInitiated
+        ? "KYC initiated successfully — status should update within seconds"
+        : "KYC steps re-submitted — some steps may already have been completed",
+    });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "retry-kyc failed");
