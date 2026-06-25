@@ -611,11 +611,14 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   const headers = rollfiHeaders();
 
   const newEin = randomNineDigits();
-  req.log.info({ companyId, rollfiCompanyId, newEin }, "Retrying company KYB with fresh random EIN");
+  const newOwnerSsn = randomNineDigits();
+  req.log.info({ companyId, rollfiCompanyId, newEin }, "Retrying company KYB with fresh random EIN + SSN");
 
   const steps: Record<string, unknown> = {};
 
-  // Step 1 — re-submit KYB info with fresh random EIN
+  // Step 1 — re-submit KYB info with fresh random EIN + beneficial owner SSN.
+  // Rollfi KYBs both the company EIN and the beneficial owner SSN — both must be
+  // unique in their sandbox or KYB is rejected ("already exists for another user").
   try {
     const r = await axios.post(
       `${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`,
@@ -628,6 +631,19 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
           dateOfIncorporation: "2015-01-01",
           incorporationState: "New Jersey",
           irsAssisgnedFederalFilingForm: "941",
+          beneficialOwners: [
+            {
+              firstName: "Joanne",
+              lastName: "Indiviglio",
+              ssn: newOwnerSsn,
+              dateOfBirth: "1980-01-01",
+              ownershipPercentage: 100,
+              address1: "123 Main St",
+              city: "Newark",
+              state: "NJ",
+              zipcode: "07101",
+            },
+          ],
         },
       },
       { headers }
@@ -681,8 +697,8 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
     steps.addCompanyBankAccountError = err.response?.data ?? String(e);
   }
 
-  // Persist the new EIN so future KYB retries and bank account references are consistent
-  await persistRollfiCompany(companyId, { ...rollfiCompany, ein: newEin });
+  // Persist the new EIN + SSN so future retries don't reuse the same values
+  await persistRollfiCompany(companyId, { ...rollfiCompany, ein: newEin, ownerSsn: newOwnerSsn });
 
   res.json({
     success: true,
