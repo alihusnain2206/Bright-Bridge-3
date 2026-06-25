@@ -3,8 +3,8 @@ import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
-import { db, rollfiWebhookEvents } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable } from "@workspace/db";
+import { desc, eq, inArray } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -165,11 +165,35 @@ router.get("/rollfi/status", (_req, res) => {
 
 // ── Full state (companies + employees + their Rollfi IDs) ────
 
-router.get("/rollfi/state", (_req, res) => {
-  const companies = store.getDaycareCompanies().map((c) => ({
-    ...c,
-    rollfi: store.getRollfiCompany(c.id) ?? null,
-  }));
+router.get("/rollfi/state", async (_req, res) => {
+  // Store companies (hardcoded Sunshine + Rainbow)
+  const storeCompanies = store.getDaycareCompanies();
+  const storeCompanyIds = new Set(storeCompanies.map((c) => c.id));
+
+  // DB companies not already in the store
+  const dbRows = await db.select({
+    id: companiesTable.id,
+    name: companiesTable.name,
+    rollfiCompanyId: companiesTable.rollfiCompanyId,
+    address1: companiesTable.address1,
+    city: companiesTable.city,
+    state: companiesTable.state,
+  }).from(companiesTable);
+
+  const dbOnlyCompanies = dbRows
+    .filter((r) => !storeCompanyIds.has(r.id))
+    .map((r) => ({
+      id: r.id,
+      name: r.name,
+      type: "daycare" as const,
+      rollfiCompanyId: r.rollfiCompanyId ?? undefined,
+      address: [r.address1, r.city, r.state].filter(Boolean).join(", "),
+    }));
+
+  const companies = [
+    ...storeCompanies.map((c) => ({ ...c, rollfi: store.getRollfiCompany(c.id) ?? null })),
+    ...dbOnlyCompanies.map((c) => ({ ...c, rollfi: store.getRollfiCompany(c.id) ?? null })),
+  ];
 
   // TestUser-based employees (existing payroll system)
   const testUserEmployees = store
@@ -208,7 +232,27 @@ router.get("/rollfi/state", (_req, res) => {
       }));
   });
 
-  const employees = [...testUserEmployees, ...clientEmployees];
+  // DB employees (from the employees table) that are Rollfi-onboarded and not already listed
+  const dbOnlyIds = dbOnlyCompanies.map((c) => c.id);
+  const dbEmployeeRows = dbOnlyIds.length > 0
+    ? await db.select().from(employeesTable).where(inArray(employeesTable.companyId, dbOnlyIds))
+    : [];
+  const dbEmployees = dbEmployeeRows
+    .filter((e) => e.status === "active" && !!e.rollfiUserId)
+    .filter((e) => !e.email || !existingEmails.has(e.email.toLowerCase()))
+    .map((e) => ({
+      userId: e.id,
+      employeeId: e.id,
+      name: `${e.firstName} ${e.lastName}`,
+      email: e.email,
+      position: e.position,
+      companyId: e.companyId,
+      hourlyWage: e.hourlyWage ?? 1500,
+      rollfi: store.getRollfiEmployee(e.id) ?? null,
+      source: "dbemployee" as const,
+    }));
+
+  const employees = [...testUserEmployees, ...clientEmployees, ...dbEmployees];
 
   res.json({ companies, employees });
 });

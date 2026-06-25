@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
-import { db, companies, employees, beneficialOwners, rollfiCompanyRecords } from "@workspace/db";
+import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
@@ -280,6 +280,44 @@ router.put("/companies/:companyId", async (req: Request, res: Response) => {
   } catch (err) {
     req.log.error({ err }, "Failed to update company");
     res.status(500).json({ error: "Failed to update company" });
+  }
+});
+
+// ── GET /api/companies/:companyId/users (managers + admins) ──
+
+router.get("/companies/:companyId/users", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const companyId = String(req.params.companyId);
+  try {
+    // From in-memory store (hardcoded test users with manager/employee roles)
+    const storeUsers = store.getUsersForCompany(companyId)
+      .filter((u) => u.role === "manager" || u.role === "super_admin");
+
+    // From DB user_accounts (managers created via the wizard)
+    const storeEmails = new Set(storeUsers.map((u) => u.email.toLowerCase()));
+    const dbUsers = await db.select({
+      id: userAccounts.id,
+      name: userAccounts.name,
+      email: userAccounts.email,
+      role: userAccounts.role,
+      position: userAccounts.position,
+      companyId: userAccounts.companyId,
+      createdAt: userAccounts.createdAt,
+    }).from(userAccounts)
+      .where(and(eq(userAccounts.companyId, companyId)));
+
+    const dbFiltered = dbUsers
+      .filter((u) => (u.role === "manager" || u.role === "super_admin") && !storeEmails.has(u.email.toLowerCase()));
+
+    const merged = [
+      ...storeUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, position: u.position ?? "", source: "store" })),
+      ...dbFiltered.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, position: u.position ?? "", source: "db" })),
+    ];
+
+    res.json({ users: merged });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list company users");
+    res.status(500).json({ error: "Failed to list company users" });
   }
 });
 

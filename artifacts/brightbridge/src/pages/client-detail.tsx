@@ -3,7 +3,7 @@ import { Link, useParams } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
-  ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2,
+  ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,6 +26,10 @@ interface Employee {
   payType: string; hourlyWage: number; status: string;
   easyteamSynced: boolean; rollfiUserId?: string; kycStatus?: string; bankAccountAdded: boolean;
   syncStatus: string; createdAt: string;
+}
+
+interface CompanyUser {
+  id: string; name: string; email: string; role: string; position: string; source: string;
 }
 
 const STATUS_CFG: Record<string, { label: string; color: string }> = {
@@ -110,64 +114,115 @@ function EmployeesTab({ company }: { company: Company }) {
     queryKey: ["/api/employees", company.id],
     queryFn: () => fetch(`/api/employees?companyId=${company.id}`, { credentials: "include" }).then((r) => r.json()),
   });
-  const employees = data?.employees ?? [];
+  const { data: usersData, isLoading: usersLoading } = useQuery<{ users: CompanyUser[] }>({
+    queryKey: ["/api/companies/users", company.id],
+    queryFn: () => fetch(`/api/companies/${company.id}/users`, { credentials: "include" }).then((r) => r.json()),
+  });
 
-  if (isLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>;
+  const employees = data?.employees ?? [];
+  const managers = usersData?.users ?? [];
+
+  if (isLoading || usersLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>;
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">{employees.length} employee{employees.length !== 1 ? "s" : ""} · {employees.filter((e) => e.status === "active").length} active</p>
-        <Link href={`/clients/${company.id}/employees/new`}>
-          <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
-            <Plus className="h-3.5 w-3.5" />Add Employee
-          </Button>
-        </Link>
+    <div className="space-y-6">
+      {/* Admins / Managers */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+            <ShieldCheck className="h-4 w-4 text-[#284362]" />Admins & Managers
+            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-[#284362]/10 text-[#284362] text-[10px] font-bold">{managers.length}</span>
+          </h3>
+        </div>
+        {managers.length === 0 ? (
+          <div className="text-center py-8 border border-dashed border-gray-200 rounded-xl text-sm text-gray-400">
+            No managers assigned yet
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="text-left px-4 py-2.5">Name</th>
+                <th className="text-left px-4 py-2.5">Email</th>
+                <th className="text-left px-4 py-2.5">Position</th>
+                <th className="text-left px-4 py-2.5">Role</th>
+              </tr></thead>
+              <tbody className="divide-y">
+                {managers.map((u) => (
+                  <tr key={u.id} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-3 font-medium">{u.name}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{u.email}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">{u.position || "—"}</td>
+                    <td className="px-4 py-3">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#284362]/10 text-[#284362] capitalize">{u.role}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
-      {employees.length === 0 ? (
-        <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-2xl">
-          <Users className="h-10 w-10 mx-auto mb-3 text-gray-300" />
-          <p className="font-semibold text-gray-700">No employees yet</p>
-          <p className="text-sm text-gray-400 mt-1 mb-4">Add your first employee to get started with payroll and time tracking.</p>
+      {/* Employees */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+            <Users className="h-4 w-4 text-[#E8622A]" />Employees
+            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-bold">{employees.length}</span>
+            <span className="text-gray-400 font-normal text-xs">· {employees.filter((e) => e.status === "active").length} active</span>
+          </h3>
           <Link href={`/clients/${company.id}/employees/new`}>
-            <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}><Plus className="h-3.5 w-3.5" />Add First Employee</Button>
+            <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
+              <Plus className="h-3.5 w-3.5" />Add Employee
+            </Button>
           </Link>
         </div>
-      ) : (
-        <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead><tr className="border-b bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
-              <th className="text-left px-4 py-3">Name / Position</th>
-              <th className="text-left px-4 py-3">Type</th>
-              <th className="text-left px-4 py-3">Rate</th>
-              <th className="text-left px-4 py-3">EasyTeam</th>
-              <th className="text-left px-4 py-3">Rollfi</th>
-              <th className="text-left px-4 py-3">KYC</th>
-              <th className="text-left px-4 py-3">Status</th>
-            </tr></thead>
-            <tbody className="divide-y">
-              {employees.map((emp) => {
-                const cfg = STATUS_CFG[emp.status] ?? STATUS_CFG.onboarding;
-                return (
-                  <tr key={emp.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-3">
-                      <div className="font-medium">{emp.firstName} {emp.lastName}</div>
-                      <div className="text-[11px] text-gray-400">{emp.position}</div>
-                    </td>
-                    <td className="px-4 py-3"><span className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-medium">{emp.workerType}</span></td>
-                    <td className="px-4 py-3 text-gray-700 font-mono text-xs">{formatWage(emp.hourlyWage)}</td>
-                    <td className="px-4 py-3"><SyncDot done={emp.easyteamSynced} label="ET" /></td>
-                    <td className="px-4 py-3"><SyncDot done={!!emp.rollfiUserId} label="Rollfi" /></td>
-                    <td className="px-4 py-3"><SyncDot done={emp.kycStatus === "verified"} label="KYC" /></td>
-                    <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cfg.color}`}>{cfg.label}</span></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+
+        {employees.length === 0 ? (
+          <div className="text-center py-16 border-2 border-dashed border-gray-200 rounded-2xl">
+            <Users className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+            <p className="font-semibold text-gray-700">No employees yet</p>
+            <p className="text-sm text-gray-400 mt-1 mb-4">Add your first employee to get started with payroll and time tracking.</p>
+            <Link href={`/clients/${company.id}/employees/new`}>
+              <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}><Plus className="h-3.5 w-3.5" />Add First Employee</Button>
+            </Link>
+          </div>
+        ) : (
+          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
+                <th className="text-left px-4 py-3">Name / Position</th>
+                <th className="text-left px-4 py-3">Type</th>
+                <th className="text-left px-4 py-3">Rate</th>
+                <th className="text-left px-4 py-3">EasyTeam</th>
+                <th className="text-left px-4 py-3">Rollfi</th>
+                <th className="text-left px-4 py-3">KYC</th>
+                <th className="text-left px-4 py-3">Status</th>
+              </tr></thead>
+              <tbody className="divide-y">
+                {employees.map((emp) => {
+                  const cfg = STATUS_CFG[emp.status] ?? STATUS_CFG.onboarding;
+                  return (
+                    <tr key={emp.id} className="hover:bg-gray-50/50">
+                      <td className="px-4 py-3">
+                        <div className="font-medium">{emp.firstName} {emp.lastName}</div>
+                        <div className="text-[11px] text-gray-400">{emp.position}</div>
+                      </td>
+                      <td className="px-4 py-3"><span className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-medium">{emp.workerType}</span></td>
+                      <td className="px-4 py-3 text-gray-700 font-mono text-xs">{formatWage(emp.hourlyWage)}</td>
+                      <td className="px-4 py-3"><SyncDot done={emp.easyteamSynced} label="ET" /></td>
+                      <td className="px-4 py-3"><SyncDot done={!!emp.rollfiUserId} label="Rollfi" /></td>
+                      <td className="px-4 py-3"><SyncDot done={emp.kycStatus === "verified"} label="KYC" /></td>
+                      <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cfg.color}`}>{cfg.label}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
