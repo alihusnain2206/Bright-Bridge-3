@@ -6,6 +6,8 @@ import { loadClientEmployeesFromDb } from "./lib/client-employee-persist.js";
 import { loadUserAccountsFromDb } from "./lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { store } from "./store.js";
+import { db, companies } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -17,6 +19,55 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+const SEED_COMPANIES = [
+  {
+    id: "ORG-SUNSHINE",
+    name: "Sunshine Daycare Centre",
+    phone: "9733330001",
+    industry: "daycare",
+    package: "full_daycare",
+    status: "active",
+    address1: "123 Main St",
+    city: "Newark",
+    state: "NJ",
+    zipcode: "07101",
+    locationName: "Sunshine Daycare Centre",
+    payScheduleAdded: true,
+    payFrequency: "BiWeekly",
+    createdAt: "2026-05-01T00:00:00Z",
+    updatedAt: "2026-05-01T00:00:00Z",
+  },
+  {
+    id: "ORG-RAINBOW",
+    name: "Rainbow Kids Daycare",
+    phone: "2013330001",
+    industry: "daycare",
+    package: "full_daycare",
+    status: "active",
+    address1: "456 Oak Ave",
+    city: "Jersey City",
+    state: "NJ",
+    zipcode: "07302",
+    locationName: "Rainbow Kids Daycare",
+    payScheduleAdded: true,
+    payFrequency: "BiWeekly",
+    createdAt: "2026-05-01T00:00:00Z",
+    updatedAt: "2026-05-01T00:00:00Z",
+  },
+] as const;
+
+async function bootSeedCompanies() {
+  let seeded = 0;
+  for (const seed of SEED_COMPANIES) {
+    const [existing] = await db.select({ id: companies.id }).from(companies).where(eq(companies.id, seed.id));
+    if (!existing) {
+      await db.insert(companies).values(seed as typeof companies.$inferInsert);
+      seeded++;
+    }
+  }
+  if (seeded > 0) logger.info({ seeded }, "Boot-seeded companies into DB");
 }
 
 async function bootEasyTeamSync() {
@@ -53,6 +104,7 @@ async function bootEasyTeamSync() {
 }
 
 Promise.all([
+  bootSeedCompanies(),
   loadRollfiStateFromDb().then(({ companies, employees }) => {
     logger.info({ companies, employees }, "Rollfi state restored from DB");
   }),

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
-import { AddEmployeeModal } from "@/components/AddEmployeeModal";
+
 import {
   Building2, Users, MapPin, Shield,
   Terminal, RefreshCw, Play, Clock, CalendarDays, Calendar,
@@ -34,7 +34,7 @@ const LAUNCH_ORG = { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" };
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
 interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
-interface Client { id: string; name: string; linkedCompanyId?: string; locationName?: string; address?: string }
+interface Company { id: string; name: string; locationName?: string | null; address1?: string | null; city?: string | null; state?: string | null; status: string }
 interface CreatedManager { id: string; name: string; email: string; companyId: string; role: string; password: string; loginEmail: string; position: string }
 
 function decodeJwt(token: string): Record<string, unknown> | null {
@@ -44,15 +44,15 @@ function decodeJwt(token: string): Record<string, unknown> | null {
 // ── Create Manager Modal ──────────────────────────────────────
 
 interface CreateManagerModalProps {
-  clients: Client[];
+  companies: Company[];
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function CreateManagerModal({ clients, onClose, onSuccess }: CreateManagerModalProps) {
+function CreateManagerModal({ companies, onClose, onSuccess }: CreateManagerModalProps) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [companyId, setCompanyId] = useState(clients[0]?.linkedCompanyId ?? "");
+  const [companyId, setCompanyId] = useState(companies[0]?.id ?? "");
   const [position, setPosition] = useState("Daycare Manager");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -60,7 +60,7 @@ function CreateManagerModal({ clients, onClose, onSuccess }: CreateManagerModalP
   const [showPassword, setShowPassword] = useState(false);
   const [copied, setCopied] = useState<"email" | "password" | null>(null);
 
-  const companiesWithId = clients.filter((c) => c.linkedCompanyId);
+  const companiesWithId = companies;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -115,7 +115,7 @@ function CreateManagerModal({ clients, onClose, onSuccess }: CreateManagerModalP
             <div className="text-center space-y-1">
               <CheckCircle2 className="h-10 w-10 text-emerald-500 mx-auto" />
               <p className="font-semibold text-gray-900 mt-2">{created.name} — Manager Created!</p>
-              <p className="text-sm text-muted-foreground">{created.position} · {clients.find((c) => c.linkedCompanyId === created.companyId)?.name ?? created.companyId}</p>
+              <p className="text-sm text-muted-foreground">{created.position} · {companies.find((c) => c.id === created.companyId)?.name ?? created.companyId}</p>
             </div>
 
             <div className="rounded-xl border border-[#284362]/20 bg-[#284362]/5 px-4 py-3 space-y-3">
@@ -170,7 +170,7 @@ function CreateManagerModal({ clients, onClose, onSuccess }: CreateManagerModalP
                 </SelectTrigger>
                 <SelectContent>
                   {companiesWithId.map((c) => (
-                    <SelectItem key={c.linkedCompanyId!} value={c.linkedCompanyId!}>{c.name}</SelectItem>
+                    <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -214,8 +214,7 @@ export default function SuperAdminDashboard() {
   const [selectedPage, setSelectedPage] = useState<Pages>(Pages.TIMESHEET);
   const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [allEmployees, setAllEmployees] = useState<EasyTeamEmployee[]>([]);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [addingForClient, setAddingForClient] = useState<Client | null>(null);
+  const [dbCompanies, setDbCompanies] = useState<Company[]>([]);
   const [creatingManager, setCreatingManager] = useState(false);
 
   const { launch } = useEasyTeamLauncher("admin-et-container", undefined, 700);
@@ -226,18 +225,18 @@ export default function SuperAdminDashboard() {
     return d.employees ?? [];
   }, []);
 
-  const fetchClients = useCallback(async () => {
-    const d = await fetch("/api/clients", { credentials: "include" }).then(r => r.json()) as { clients: Client[] };
-    setClients(d.clients ?? []);
+  const fetchCompanies = useCallback(async () => {
+    const d = await fetch("/api/companies", { credentials: "include" }).then(r => r.json()) as { companies: Company[] };
+    setDbCompanies(d.companies ?? []);
   }, []);
 
   useEffect(() => {
     void fetchEmployees();
-    void fetchClients();
+    void fetchCompanies();
     fetchEvents();
     const iv = setInterval(fetchEvents, 10000);
     return () => clearInterval(iv);
-  }, [fetchEmployees, fetchClients]);
+  }, [fetchEmployees, fetchCompanies]);
 
   const fetchEvents = async () => {
     try {
@@ -272,20 +271,8 @@ export default function SuperAdminDashboard() {
     finally { setTokenLoading(false); }
   };
 
-  const handleEmployeeAdded = async () => {
-    setAddingForClient(null);
-    const updated = await fetchEmployees();
-    void fetchClients();
-    if (tokenData) {
-      launch(tokenData.token, { page: selectedPage, employees: updated, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
-    }
-  };
-
-  const staffCountForClient = (clientId: string) =>
-    allEmployees.filter((e) => {
-      const client = clients.find((c) => c.id === clientId);
-      return client?.linkedCompanyId && e.companyId === client.linkedCompanyId;
-    }).length;
+  const staffCountForCompany = (companyId: string) =>
+    allEmployees.filter((e) => e.companyId === companyId).length;
 
   return (
     <div className="space-y-6">
@@ -338,32 +325,33 @@ export default function SuperAdminDashboard() {
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {clients.map((client) => (
-            <div key={client.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
+          {dbCompanies.map((company) => (
+            <div key={company.id} className="rounded-2xl bg-white border p-5 space-y-3 shadow-sm">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-semibold text-gray-900">{client.name}</h3>
+                  <h3 className="font-semibold text-gray-900">{company.name}</h3>
                   <p className="text-xs text-muted-foreground">Daycare Centre</p>
                 </div>
                 <Building2 className="h-5 w-5 text-[#E8622A]" />
               </div>
-              {client.address && (
+              {(company.address1 || company.city) && (
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <MapPin className="h-3.5 w-3.5" />{client.address}
+                  <MapPin className="h-3.5 w-3.5" />{[company.address1, company.city, company.state].filter(Boolean).join(", ")}
                 </div>
               )}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Users className="h-3.5 w-3.5" />{staffCountForClient(client.id)} staff members
+                  <Users className="h-3.5 w-3.5" />{staffCountForCompany(company.id)} staff members
                 </div>
-                <Button
-                  size="sm"
-                  onClick={() => setAddingForClient(client)}
-                  className="h-7 text-xs gap-1 text-white border-0"
-                  style={{ background: ORANGE }}
-                >
-                  <UserPlus className="h-3 w-3" />Add Employee
-                </Button>
+                <Link href={`/clients/${company.id}/employees/new`}>
+                  <Button
+                    size="sm"
+                    className="h-7 text-xs gap-1 text-white border-0"
+                    style={{ background: ORANGE }}
+                  >
+                    <UserPlus className="h-3 w-3" />Add Employee
+                  </Button>
+                </Link>
               </div>
             </div>
           ))}
@@ -465,20 +453,10 @@ export default function SuperAdminDashboard() {
         <Link href="/roles" className="ml-auto text-[#284362] underline underline-offset-2 hover:no-underline">View Role Comparison →</Link>
       </div>
 
-      {/* Add Employee Modal */}
-      {addingForClient && (
-        <AddEmployeeModal
-          clientId={addingForClient.id}
-          locationName={addingForClient.name}
-          onClose={() => setAddingForClient(null)}
-          onSuccess={handleEmployeeAdded}
-        />
-      )}
-
       {/* Create Manager Modal */}
       {creatingManager && (
         <CreateManagerModal
-          clients={clients}
+          companies={dbCompanies}
           onClose={() => setCreatingManager(false)}
           onSuccess={() => { /* manager created, modal stays open to show credentials */ }}
         />
