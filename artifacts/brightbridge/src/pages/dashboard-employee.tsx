@@ -66,7 +66,9 @@ export default function EmployeeDashboard() {
       const myEmployees = user.employeeId ? [
         { id: user.employeeId, name: user.name, role: "employee", timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
       ] : [];
-      const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? [];
+      // Fall back to Sunshine location for dynamically-created companies not in the map
+      const DEFAULT_LOCATIONS = COMPANY_LOCATIONS["ORG-SUNSHINE"]!;
+      const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? DEFAULT_LOCATIONS;
 
       launch(data.token, {
         page: Pages.TIME_CLOCK,
