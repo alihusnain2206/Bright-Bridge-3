@@ -1,0 +1,1237 @@
+You are working on the BrightBridge 
+Assist platform. This is a TypeScript 
+full-stack application. Do NOT rebuild 
+anything from scratch. Keep all existing 
+features working and implement the 
+following architectural changes.
+
+---
+
+CRITICAL ARCHITECTURE RULE — READ FIRST:
+
+There is ONE and ONLY ONE place to 
+create and manage clients and employees.
+That is the CLIENTS section.
+
+Payroll, Time Clock, Timesheets, 
+Schedule, and all other sections are 
+READ ONLY. They pull data from the 
+database. They NEVER have their own 
+forms for creating clients or employees.
+
+This rule must be enforced throughout 
+the entire codebase.
+
+---
+
+PART 1 — DATA LAYER
+
+Update the store/database layer to 
+replace all hardcoded client and 
+employee data with a proper dynamic 
+data structure.
+
+Create these TypeScript interfaces:
+
+interface Company {
+  id: string;
+  name: string;
+  doingBusinessAs?: string;
+  businessWebsite?: string;
+  phone: string;
+  industry: "daycare" | "retail" | 
+    "medical" | "construction" | "other";
+  package: "payroll_only" | 
+    "payroll_hr_workforce" | 
+    "full_daycare";
+  status: "pending" | "setting_up" | 
+    "active" | "suspended";
+  
+  // Location
+  address1: string;
+  address2?: string;
+  city: string;
+  state: string;
+  zipcode: string;
+  
+  // Rollfi mapping
+  rollfiCompanyId?: string;
+  rollfiLocationId?: string;
+  rollfiOnboardedAt?: string;
+  ein?: string;
+  
+  // Onboarding status
+  kybStatus: "not_started" | 
+    "pending" | "verified" | "failed";
+  bankAccountAdded: boolean;
+  payScheduleAdded: boolean;
+  
+  // Pay schedule
+  payFrequency?: "Weekly" | "BiWeekly" | 
+    "SemiMonthly" | "Monthly";
+  firstPayDate?: string;
+  
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Employee {
+  id: string;
+  companyId: string;
+  
+  // Basic info
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  position: string;
+  employmentType: 
+    "Full Time (30+ Hours per week)" | 
+    "Part Time (20-29 Hours per week)" | 
+    "Part Time (0-19 Hours per week)" | 
+    "Seasonal (0-6 months per year)" | 
+    "Variable (Hours vary every week)";
+  workerType: "W2" | "1099-NEC";
+  startDate: string;
+  
+  // Pay
+  payType: "hourly" | "salary_weekly" | 
+    "salary_monthly" | "salary_yearly" | 
+    "commission";
+  hourlyWage: number; // stored in CENTS
+  overtimeEligible: boolean;
+  paymentMethod: "Direct Deposit" | "Check";
+  taxExempt: boolean;
+  
+  // Personal (encrypted in real production)
+  ssn?: string;
+  dateOfBirth?: string;
+  homeAddress?: string;
+  homeCity?: string;
+  homeState?: string;
+  homeZip?: string;
+  
+  // W4
+  w4FilingStatus?: "Single" | 
+    "Married" | "Head of Household";
+  w4MultipleJobs?: boolean;
+  w4Dependents?: number;
+  w4ExtraWithholding?: number;
+  
+  // Status
+  status: "invited" | "onboarding" | 
+    "pending_verification" | 
+    "active" | "on_leave" | "terminated";
+  
+  // Rollfi mapping
+  rollfiUserId?: string;
+  rollfiWageId?: string;
+  rollfiOnboardedAt?: string;
+  kycStatus?: "not_started" | 
+    "pending" | "verified" | "failed";
+  bankAccountAdded: boolean;
+  w4Submitted: boolean;
+  
+  // EasyTeam
+  easytreamId?: string;
+  easytreamSynced: boolean;
+  
+  // Sync tracking
+  syncStatus: "synced" | 
+    "partial" | "failed" | "pending";
+  lastSyncError?: string;
+  
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface BeneficialOwner {
+  companyId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  dateOfBirth: string;
+  ssn: string;
+  address1: string;
+  city: string;
+  state: string;
+  zipcode: string;
+  ownershipPercentage: number;
+  isPayrollAdmin: boolean;
+}
+
+Store all data in a JSON file at:
+/server/data/companies.json
+/server/data/employees.json
+/server/data/owners.json
+
+These replace ALL hardcoded data.
+Initialize with empty arrays [].
+
+Update the store.ts to:
+→ Read from these JSON files
+→ Write to these JSON files
+→ Remove ALL hardcoded company
+  and employee data
+→ Keep existing Rollfi mapping
+  functions working
+
+---
+
+PART 2 — CLIENTS SECTION
+
+This is the MASTER DATA section.
+All creation and management happens here.
+
+CREATE NEW ROUTE: /clients
+
+This page shows:
+→ List of all companies
+→ [+ Add New Client] button
+→ Search/filter companies
+→ Status badge per company
+
+Company card shows:
+→ Company name
+→ Industry badge
+→ Package badge
+→ Status indicator:
+   ● Active (green)
+   ● Setting Up (yellow)
+   ● Pending (orange)
+   ● Suspended (red)
+→ Quick stats:
+   Employees: 0
+   Payroll status: Not started
+→ [View Details] button
+
+---
+
+PART 3 — ADD NEW CLIENT FORM
+
+Route: /clients/new
+
+Build a 5-step wizard form.
+Use TypeScript with proper typing.
+Show a progress bar at the top:
+[Step 1] → [Step 2] → [Step 3] → 
+[Step 4] → [Step 5]
+
+Store form state in React useState
+with a typed object covering
+all 5 steps.
+
+STEP 1 — Basic Information:
+
+interface Step1Data {
+  companyName: string;
+  doingBusinessAs: string;
+  businessWebsite: string;
+  phone: string;
+  industry: Company["industry"];
+  package: Company["package"];
+}
+
+Fields:
+- Company Name (required)
+- Doing Business As (optional)
+- Business Website (optional)
+- Phone Number (required)
+- Industry dropdown:
+  Daycare Centre
+  Retail
+  Medical
+  Construction
+  Other
+- Service Package radio:
+  ○ Payroll Only
+  ○ Payroll + HR + Workforce
+  ● Full Daycare (recommended)
+
+If Full Daycare selected:
+Show info banner:
+"✅ Includes EasyTeam time tracking,
+daycare management features,
+and full payroll processing"
+
+[Next →]
+
+---
+
+STEP 2 — Company Location:
+
+interface Step2Data {
+  address1: string;
+  address2: string;
+  city: string;
+  state: string;
+  zipcode: string;
+  locationName: string;
+  isWorkLocation: boolean;
+  isMailingAddress: boolean;
+  isFilingAddress: boolean;
+}
+
+Fields:
+- Location Name 
+  (e.g. "Main Street Location")
+- Address Line 1 (required)
+- Address Line 2 (optional)
+- City (required)
+- State dropdown - all US states
+  (required, default NJ)
+- Zip Code (required)
+
+Checkboxes (all checked by default):
+☑ Use as work location
+☑ Use as mailing address
+☑ Use as filing address
+
+[← Back] [Next →]
+
+---
+
+STEP 3 — Business Owner Details:
+
+interface Step3Data {
+  ownerFirstName: string;
+  ownerLastName: string;
+  ownerEmail: string;
+  ownerPhone: string;
+  ownerDob: string;
+  ownerSsn: string;
+  ownerAddress1: string;
+  ownerCity: string;
+  ownerState: string;
+  ownerZip: string;
+  ownershipPercentage: number;
+  isPayrollAdmin: boolean;
+}
+
+Show an important info banner:
+"⚠️ BENEFICIAL OWNER REQUIRED
+This must be the actual owner of
+the business with 25% or more
+equity, or a C-level executive
+authorized to sign documents.
+This is required by law for
+payroll processing and KYB
+verification. This is NOT 
+Joanne or BrightBridge."
+
+Fields:
+- First Name (required)
+- Last Name (required)
+- Email (required)
+- Phone (required)
+- Date of Birth (required)
+  MM/DD/YYYY format
+- SSN (required)
+  Format: XXX-XX-XXXX
+  Show/hide toggle 🔒
+  Show note: "Encrypted and
+  used only for KYB verification"
+- Home Address Line 1 (required)
+- City (required)
+- State dropdown (required)
+- Zip Code (required)
+- Ownership Percentage (required)
+  Default: 100
+  Minimum: 25
+- Is Payroll Admin: ☑ Yes (default)
+
+[← Back] [Next →]
+
+---
+
+STEP 4 — Business Verification:
+
+interface Step4Data {
+  entityType: string;
+  ein: string;
+  incorporationState: string;
+  dateOfIncorporation: string;
+  irsFilingForm: string;
+  payrollRunThisYear: "Yes" | "No";
+}
+
+Show info banner:
+"📋 REQUIRED FOR TAX COMPLIANCE
+This information is used to verify
+your business and ensure correct
+tax filing. All information must
+match your IRS records."
+
+Fields:
+- Entity Type dropdown (required):
+  LLC
+  Corporation
+  S-Corporation
+  Sole Proprietor
+  Partnership
+  Non-Profit
+  
+- EIN / Tax ID (required):
+  Format: XX-XXXXXXX
+  Show note: "Your 9-digit 
+  Employer Identification Number
+  from the IRS"
+  
+  For SANDBOX testing only:
+  Show button [Use Test EIN]
+  that auto-fills a random
+  valid format test EIN
+
+- State of Incorporation dropdown
+  (required, default NJ)
+
+- Date of Incorporation (required)
+  MM/DD/YYYY format
+
+- IRS Federal Filing Form dropdown:
+  941 (most common - default)
+  944
+
+- Has payroll been run this year?
+  ○ Yes ● No (default)
+
+[← Back] [Next →]
+
+---
+
+STEP 5 — Pay Schedule:
+
+interface Step5Data {
+  payFrequency: "Weekly" | "BiWeekly" | 
+    "SemiMonthly" | "Monthly";
+  payBeginDate: string;
+  payDate: string;
+  workerType: "W2" | "1099-NEC" | "Both";
+}
+
+Fields:
+- Pay Frequency (required):
+  ○ Weekly
+  ● BiWeekly (default - most common)
+  ○ Semi-Monthly
+  ○ Monthly
+
+- First Pay Period Start Date (required)
+  Default: today's date
+  
+- First Pay Date (required)
+  Default: 2 weeks from today
+
+- Worker Types:
+  ☑ W2 Employees (default)
+  ○ 1099 Contractors
+  ○ Both
+
+Show preview:
+"📅 PAY SCHEDULE PREVIEW
+First pay period:
+[payBeginDate] to [calculated end]
+First pay date: [payDate]
+Frequency: Every 2 weeks"
+
+[← Back] [Create Client]
+
+---
+
+STEP 5 SUBMIT ACTION:
+
+When Create Client is clicked:
+
+1. Show loading overlay:
+"⏳ Setting up your client...
+This may take 30-60 seconds"
+
+Show progress steps updating live:
+□ Creating BrightBridge account...
+□ Registering with Rollfi...
+□ Submitting business verification...
+□ Setting up bank account...
+□ Creating pay schedule...
+□ Finalizing setup...
+
+2. Call existing POST /rollfi/onboard/company
+   with the collected form data
+   (update this endpoint to accept
+   the full form data instead of
+   just companyId)
+
+3. On success:
+Save to companies.json
+Show success screen:
+
+"🎉 [Company Name] has been added!
+
+✅ BrightBridge account created
+✅ Rollfi payroll account created  
+✅ Business verification submitted
+✅ Pay schedule configured (BiWeekly)
+✅ EasyTeam time clock ready
+
+⚠️ ACTION REQUIRED:
+The following must be completed
+before payroll can run:
+
+[ ] Connect company bank account
+    [Connect Bank Account →]
+    
+[ ] Business verification (KYB)
+    ⏳ Under review (1-3 business days)
+    We will notify you when complete.
+    
+[ ] Add your first employee
+    [Add First Employee →]
+
+[Go to Client Dashboard →]"
+
+4. On error:
+Show specific error message
+Allow user to retry
+Keep form data intact
+
+---
+
+PART 4 — CLIENT DETAIL PAGE
+
+Route: /clients/:companyId
+
+Show full client details:
+
+HEADER SECTION:
+Company name + status badge
+Package badge
+[Edit Company] button
+
+TABS:
+[Overview] [Employees] [Payroll Status] 
+[Settings]
+
+OVERVIEW TAB:
+Company info summary
+Rollfi onboarding status:
+
+Show checklist:
+✅ BrightBridge account
+✅ Rollfi registration  
+⏳ KYB verification (pending)
+⚠️ Bank account (action required)
+✅ Pay schedule (BiWeekly)
+⚠️ Employees (0 added)
+
+EMPLOYEES TAB:
+This is where employees are managed!
+(See Part 5 below)
+
+PAYROLL STATUS TAB:
+Show current pay period status
+Link to Payroll section
+Shows read-only payroll summary
+
+SETTINGS TAB:
+Edit company details
+Danger zone: Suspend/Delete
+
+---
+
+PART 5 — EMPLOYEES MANAGEMENT
+
+Route: /clients/:companyId/employees
+
+IMPORTANT: 
+This is the ONLY place to add
+and manage employees.
+No other section creates employees.
+
+Show header:
+"Employees — [Company Name]"
+[+ Add Employee] button
+
+Show employees table:
+Columns:
+Name | Position | Type | Rate | 
+EasyTeam | Rollfi | KYC | Bank | Status
+
+Each row shows:
+→ Full name + position
+→ W2 or 1099 badge
+→ Hourly rate in dollars ($18.00/hr)
+→ EasyTeam: ✅ Ready / ❌ Not synced
+→ Rollfi: ✅ Done / ⏳ Pending / ❌ Failed
+→ KYC: ✅ Verified / ⏳ Pending / ⚠️ Needed
+→ Bank: ✅ Added / ⚠️ Needed / 📧 Invited
+→ Status badge:
+   Active (green)
+   Onboarding (yellow)
+   Pending Verification (orange)
+   Terminated (red)
+
+If no employees:
+Show empty state:
+"No employees yet!
+Add your first employee to get
+started with payroll and time tracking.
+[+ Add First Employee]"
+
+If company not fully onboarded:
+Show warning banner:
+"⚠️ Complete company setup before
+adding employees:
+[Connect Bank Account]
+[Waiting for KYB verification]"
+But still allow adding employees!
+
+---
+
+PART 6 — ADD EMPLOYEE FORM
+
+Route: /clients/:companyId/employees/new
+
+Company name shown at top:
+"Adding employee for: [Company Name]"
+
+Build a 4-step wizard form.
+Show progress bar at top.
+
+STEP 1 — Basic Information:
+
+interface EmpStep1Data {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  position: string;
+  employmentType: Employee["employmentType"];
+  workerType: Employee["workerType"];
+  startDate: string;
+}
+
+Fields:
+- First Name (required)
+- Last Name (required)
+- Work Email (required)
+  Note: "A welcome email will be
+  sent to this address"
+- Phone Number (required)
+- Job Title/Position (required)
+  Text input with suggestions:
+  Teacher, Assistant Teacher,
+  Daycare Director, Cook,
+  Administrative Assistant,
+  Security, Janitor, Other
+- Employment Type dropdown:
+  Full Time (30+ Hours per week)
+  Part Time (20-29 Hours per week)
+  Part Time (0-19 Hours per week)
+  Seasonal (0-6 months per year)
+  Variable (Hours vary every week)
+- Worker Type:
+  ● W2 Employee (default)
+  ○ 1099 Contractor
+- Start Date (required)
+  Default: today
+
+[Next →]
+
+---
+
+STEP 2 — Pay Details:
+
+interface EmpStep2Data {
+  payType: Employee["payType"];
+  wageAmount: number; // in dollars for UI
+  overtimeEligible: boolean;
+  paymentMethod: Employee["paymentMethod"];
+  taxExempt: boolean;
+  taxExemptReason?: string;
+}
+
+Fields:
+- Pay Type radio:
+  ● Hourly (default)
+  ○ Salary (per week)
+  ○ Salary (per month)
+  ○ Salary (per year)
+  ○ Commission
+
+- Wage Amount:
+  If hourly: "Hourly Rate: $ [18.00]"
+  If weekly salary: "Weekly Salary: $ [___]"
+  If monthly: "Monthly Salary: $ [___]"
+  If yearly: "Annual Salary: $ [___]"
+  
+  IMPORTANT: Always show and store
+  as DOLLARS (18.00 not 1800)
+  Convert to cents only when
+  sending to Rollfi API:
+  Math.round(wageAmount * 100)
+
+- Overtime Eligible:
+  ● Yes (default for hourly)
+  ○ No
+
+- Payment Method:
+  ● Direct Deposit (default)
+  ○ Check
+
+- Tax Exempt:
+  ● No (default)
+  ○ Yes
+  If yes, show reason dropdown:
+  - As an owner/corporate officer
+  - As a non-resident alien
+  - For another reason
+  - As a member of the clergy
+  - As a newspaper vendor
+  - As a family employee
+
+Show pay preview:
+"📊 PAY PREVIEW (estimated)
+Hourly rate: $18.00
+Standard hours (80h biweekly)
+Gross pay: $1,440.00
+Est. taxes (~24.65%): -$354.96
+Est. net pay: $1,085.04"
+
+[← Back] [Next →]
+
+---
+
+STEP 3 — Personal Information (KYC):
+
+interface EmpStep3Data {
+  ssn: string;
+  dateOfBirth: string;
+  homeAddress1: string;
+  homeAddress2?: string;
+  homeCity: string;
+  homeState: string;
+  homeZip: string;
+  workLocationId: string;
+  w4FilingStatus: "Single" | 
+    "Married" | "Head of Household";
+  w4MultipleJobs: boolean;
+  w4Dependents: number;
+  w4ExtraWithholding: number;
+}
+
+Show info banner:
+"🔒 SECURE INFORMATION
+This information is required by
+Rollfi for identity verification
+(KYC) and accurate tax withholding.
+All sensitive data is encrypted."
+
+Fields:
+- SSN (required):
+  Format: XXX-XX-XXXX
+  Show/hide toggle 👁
+  
+- Date of Birth (required):
+  MM/DD/YYYY format
+
+PERSONAL ADDRESS:
+- Street Address (required)
+- Address Line 2 (optional)
+- City (required)
+- State dropdown (required)
+- Zip Code (required)
+
+WORK LOCATION:
+- Location dropdown:
+  Shows locations for this company
+  (auto-populated from company data)
+
+W4 FEDERAL TAX WITHHOLDING:
+Show section header:
+"📋 W4 Tax Withholding
+How much federal tax to withhold
+from each paycheck"
+
+- Filing Status (required):
+  ○ Single (default)
+  ○ Married Filing Jointly
+  ○ Head of Household
+
+- Multiple Jobs or Spouse Works:
+  ○ Yes ● No (default)
+
+- Dependents Amount: $ [0.00]
+  Note: "Total from W4 Step 3"
+
+- Extra Withholding: $ [0.00]
+  Note: "Additional amount per paycheck"
+
+[← Back] [Next →]
+
+---
+
+STEP 4 — Bank Account Setup:
+
+interface EmpStep4Data {
+  bankSetupMethod: "invite" | "manual";
+  bankName?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  confirmAccountNumber?: string;
+  accountType?: "checking" | "savings";
+}
+
+Fields:
+- Bank Setup Method:
+
+  ● Send invite to employee 
+    (Recommended - More Secure)
+    "We will send [employee email]
+    a secure link to enter their
+    own bank details directly.
+    This is the most secure option."
+
+  ○ Enter bank details now
+    "Enter the employee's bank
+    account information manually."
+
+If manual selected show:
+- Bank Name (required)
+- Routing Number (required)
+  9 digits
+  [Verify] button that validates
+  the routing number format
+- Account Number (required)
+- Confirm Account Number (required)
+- Account Type:
+  ● Checking (default)
+  ○ Savings
+
+For SANDBOX testing:
+Show button [Use Test Bank Details]
+that fills in:
+Bank: Chase Bank
+Routing: 122238242
+Account: 9889890989
+Type: Checking
+
+Show final summary before submit:
+"📋 REVIEW AND CONFIRM
+
+Employee: John Smith
+Company: Sunshine Daycare Centre
+Position: Teacher
+Start Date: June 13, 2026
+Pay: $18.00/hr (W2, Full Time)
+Payment: Direct Deposit
+Bank: [Invite to be sent / Chase ****0989]
+
+[← Back] [Add Employee]"
+
+---
+
+STEP 4 SUBMIT ACTION:
+
+When Add Employee is clicked:
+
+1. Show loading overlay:
+"⏳ Setting up [First Name]...
+This may take 30-60 seconds"
+
+Show live progress:
+□ Creating BrightBridge profile...
+□ Registering with Rollfi...
+□ Running identity verification...
+□ Setting up wage information...
+□ Configuring tax withholding...
+□ Setting up direct deposit...
+□ Syncing with EasyTeam...
+
+2. Call these endpoints in sequence:
+   a. POST /api/rollfi/onboard/employee
+      (update to accept full form data)
+   b. If bank details provided:
+      POST /api/rollfi/onboard/bank-account
+      (with employee bank details)
+   c. If invite selected:
+      POST /api/send-bank-invite
+      (send email to employee)
+
+3. On success show:
+"✅ John Smith has been added!
+
+✅ BrightBridge profile created
+✅ Rollfi payroll account created
+✅ Identity verification submitted
+✅ Wage set: $18.00/hr
+✅ W4 tax withholding configured
+✅ EasyTeam time clock ready
+   John can clock in immediately!
+
+⚠️ PENDING:
+→ KYC verification (1-3 business days)
+→ Bank account: Invite sent to
+   john@sunshine.com
+
+Current Status: Onboarding ⏳
+
+[Add Another Employee]
+[View All Employees]
+[Go to Payroll →]"
+
+4. On error:
+Show specific error message
+Allow retry
+Keep all form data intact!
+
+---
+
+PART 7 — UPDATE PAYROLL SECTION
+
+The payroll section must be updated
+to read from the dynamic data
+instead of hardcoded values.
+
+COMPANY DROPDOWN:
+Remove hardcoded companies.
+Load from companies.json:
+GET /api/companies
+Returns all companies with
+rollfiCompanyId set
+(only show companies that have
+completed Rollfi onboarding)
+
+If no companies onboarded:
+Show empty state:
+"No companies ready for payroll yet.
+Please add and onboard a client first.
+[Add New Client →]"
+
+EMPLOYEE LIST IN PAYROLL:
+Remove hardcoded employees.
+Load from employees.json:
+GET /api/employees?companyId=xxx
+Filter by:
+→ status = "active"
+→ rollfiUserId exists
+→ companyId matches selected company
+
+If no active employees:
+Show message:
+"No active employees found for
+[Company Name].
+Please add employees first.
+[Add Employees →]
+Links to: /clients/[id]/employees"
+
+WAGES:
+Always display in dollars:
+hourlyWage / 100 = display value
+When sending to Rollfi:
+Math.round(displayValue * 100) = cents
+
+---
+
+PART 8 — UPDATE TIME CLOCK, 
+TIMESHEETS AND SCHEDULE
+
+These sections must also read
+from dynamic data:
+
+TIME CLOCK (EasyTeam iframe):
+Load employees for JWT from:
+GET /api/employees?companyId=xxx
+Filter: status = "active"
+
+Build employees array for JWT:
+const employees = activeEmployees.map(e => ({
+  id: e.id,
+  name: `${e.firstName} ${e.lastName}`,
+  role: e.position
+}));
+
+Pass to EasyTeam JWT as before.
+No hardcoded employees!
+
+ORGANIZATION for JWT:
+Load from companies.json
+using the logged-in user's companyId
+
+---
+
+PART 9 — NAVIGATION UPDATES
+
+Update the sidebar navigation
+to include Clients section:
+
+SUPER ADMIN (Joanne) SEES:
+🏠 Dashboard
+👥 Clients          ← ADD THIS
+⏰ Time Clock
+📋 Timesheets
+📅 Schedule
+👤 Roles
+💰 Payroll
+🔔 Webhooks
+⚙️ Config
+
+MANAGER SEES:
+🏠 Dashboard
+⏰ Time Clock
+📋 Timesheets
+📅 Schedule
+💰 Payroll
+🔔 Webhooks
+
+EMPLOYEE SEES:
+🏠 Dashboard
+⏰ Time Clock
+📋 Timesheets
+
+IMPORTANT:
+Only super_admin role can see
+and access the Clients section.
+Managers and employees cannot
+access /clients routes.
+Return 403 if they try.
+
+---
+
+PART 10 — API ENDPOINTS TO ADD
+
+Add these new TypeScript endpoints
+to the server:
+
+GET /api/companies
+Returns all companies from companies.json
+Requires authentication
+Super admin: returns all companies
+Manager: returns only their company
+
+GET /api/companies/:companyId
+Returns single company details
+with Rollfi status included
+
+POST /api/companies
+Creates new company in companies.json
+Called during client onboarding form
+Body: all Step1-5 form data combined
+
+PUT /api/companies/:companyId
+Updates company details
+
+GET /api/employees
+Returns employees from employees.json
+Query params: ?companyId=xxx&status=active
+Requires authentication
+Super admin: can query any company
+Manager: only their company's employees
+
+GET /api/employees/:employeeId
+Returns single employee details
+
+POST /api/employees
+Creates new employee in employees.json
+Called during employee onboarding form
+Body: all Step1-4 form data combined
+
+PUT /api/employees/:employeeId
+Updates employee details
+
+GET /api/companies/:companyId/
+onboarding-status
+Returns checklist of what is 
+complete and what is pending
+for both BrightBridge and Rollfi
+
+POST /api/send-bank-invite
+Sends email invite to employee
+to add their own bank details
+(can be a simulated email for sandbox)
+
+---
+
+PART 11 — IMPORTANT TECHNICAL RULES
+
+These rules must be followed
+throughout all TypeScript code:
+
+WAGES — ALWAYS dollars in UI:
+// Display to user:
+const displayWage = employee.hourlyWage / 100;
+// "$18.00/hr"
+
+// Send to Rollfi:
+const rollfiWage = Math.round(
+  displayWage * 100
+);
+// 1800
+
+// Store in database:
+// Always store as cents (1800)
+// Never store as dollars for wages
+
+NEVER hardcode:
+→ Company names
+→ Employee names  
+→ Emails or passwords
+→ Rollfi IDs
+→ EasyTeam IDs
+All data comes from JSON files
+or the Rollfi/EasyTeam APIs!
+
+ALWAYS check authentication:
+Every API endpoint must check
+req.session.userId exists
+Return 401 if not authenticated
+
+ALWAYS handle errors gracefully:
+Every API call wrapped in try/catch
+Always show user-friendly error message
+Never show raw error objects to users
+Always log errors with req.log.error
+
+FORM VALIDATION:
+All required fields validated
+before API calls are made
+Show inline validation errors
+Never submit incomplete forms
+
+LOADING STATES:
+Show loading spinner/overlay
+for all API operations
+Disable submit buttons while loading
+Never allow double-submission
+
+SANDBOX WARNING:
+Keep the existing yellow sandbox
+banner at the top of every page
+
+---
+
+PART 12 — DATA MIGRATION
+
+Remove the existing hardcoded
+test data from store.ts.
+
+For testing purposes add these
+two companies to companies.json
+as pre-seeded data:
+
+Company 1:
+{
+  "id": "ORG-SUNSHINE",
+  "name": "Sunshine Daycare Centre",
+  "industry": "daycare",
+  "package": "full_daycare",
+  "status": "active",
+  "address1": "123 Main St",
+  "city": "Newark",
+  "state": "NJ",
+  "zipcode": "07101",
+  "phone": "9733330001",
+  "kybStatus": "pending",
+  "bankAccountAdded": false,
+  "payScheduleAdded": true,
+  "payFrequency": "BiWeekly",
+  "createdAt": "2026-05-01T00:00:00Z",
+  "updatedAt": "2026-05-01T00:00:00Z"
+}
+
+Company 2:
+{
+  "id": "ORG-RAINBOW",
+  "name": "Rainbow Kids Daycare",
+  "industry": "daycare", 
+  "package": "full_daycare",
+  "status": "active",
+  "address1": "456 Oak Ave",
+  "city": "Jersey City",
+  "state": "NJ",
+  "zipcode": "07302",
+  "phone": "2013330001",
+  "kybStatus": "pending",
+  "bankAccountAdded": false,
+  "payScheduleAdded": true,
+  "payFrequency": "BiWeekly",
+  "createdAt": "2026-05-01T00:00:00Z",
+  "updatedAt": "2026-05-01T00:00:00Z"
+}
+
+Add existing test employees
+to employees.json matching
+the existing Rollfi mappings
+so payroll still works!
+
+---
+
+TESTING CHECKLIST:
+After building verify these work:
+
+CLIENTS SECTION:
+✅ /clients shows company list
+✅ Companies loaded dynamically
+   from companies.json
+✅ [+ Add New Client] button visible
+✅ Only super_admin can see this
+
+ADD CLIENT FLOW:
+✅ 5-step form works completely
+✅ Progress bar shows current step
+✅ Back button keeps form data
+✅ Step 3 has beneficial owner
+   warning about not using Joanne
+✅ Step 4 has test EIN button
+   for sandbox
+✅ Step 5 shows pay schedule preview
+✅ Submit creates company in
+   companies.json
+✅ Submit calls Rollfi API
+✅ Success screen shows
+   what is complete and pending
+✅ New company appears in
+   /clients list immediately
+
+CLIENT DETAIL:
+✅ /clients/ORG-SUNSHINE loads
+✅ Shows onboarding checklist
+✅ Employees tab shows employee list
+
+ADD EMPLOYEE FLOW:
+✅ /clients/ORG-SUNSHINE/employees
+   shows employee list
+✅ [+ Add Employee] button works
+✅ 4-step form works completely
+✅ Step 2 shows pay preview
+✅ Step 2 wage shows in dollars
+   ($18.00 not 1800!)
+✅ Step 3 has SSN show/hide toggle
+✅ Step 4 has invite vs manual option
+✅ Step 4 has test bank button
+✅ Submit creates employee in
+   employees.json
+✅ Submit calls Rollfi onboarding API
+✅ Employee appears in list immediately
+✅ Sync status badges show correctly
+
+PAYROLL SECTION:
+✅ Company dropdown loads from
+   companies.json dynamically
+✅ Employee list loads from
+   employees.json dynamically
+✅ No hardcoded data anywhere
+✅ Wages show as dollars
+✅ Empty state shows if no companies
+✅ Link to clients section works
+
+TIME CLOCK:
+✅ EasyTeam iframe loads
+✅ Employees passed via JWT
+   from employees.json
+✅ No hardcoded employee data
+
+NAVIGATION:
+✅ Clients section visible
+   for super_admin only
+✅ Managers cannot access /clients
+✅ All existing pages still work
