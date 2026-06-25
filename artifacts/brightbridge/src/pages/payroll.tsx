@@ -630,6 +630,8 @@ export default function Payroll() {
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [expandedEmpId, setExpandedEmpId] = useState<string | null>(null);
+  const [singleEmpStatus, setSingleEmpStatus] = useState<Record<string, EmpRollfiStatus & { loading?: boolean }>>({});
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -642,6 +644,19 @@ export default function Payroll() {
   const companies = state?.companies ?? [];
   const employees = state?.employees ?? [];
   const allCompaniesOnboarded = companies.length > 0 && companies.every((c) => c.rollfi);
+  const anyCompanyOnboarded   = companies.some((c) => c.rollfi);
+
+  const checkSingleEmpStatus = useCallback(async (rollfiUserId: string, companyId: string) => {
+    setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { ...prev[rollfiUserId], rollfiUserId, userStatus: "", kycStatus: "", loading: true } }));
+    try {
+      const d = await api.get<{ employees: EmpRollfiStatus[] }>(`/rollfi/employees/status?companyId=${companyId}`);
+      const found = d.employees.find((e) => e.rollfiUserId === rollfiUserId);
+      if (found) setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { ...found, loading: false } }));
+      else setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { rollfiUserId, userStatus: "Unknown", kycStatus: "Unknown", loading: false } }));
+    } catch {
+      setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { rollfiUserId, userStatus: "Error", kycStatus: "Error", loading: false } }));
+    }
+  }, []);
   const employeesForCompany = (cId: string) => employees.filter((e) => e.companyId === cId);
 
   const { data: overview, isLoading: overviewLoading, refetch: refetchOverview } = useQuery<{ companies: CompanyOverview[] }>({
@@ -853,15 +868,15 @@ export default function Payroll() {
               <div className="mt-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm">{onboardCompany.error?.message}</div>
             )}
 
-            <div className="mt-6 flex justify-end">
-              <Button disabled={!allCompaniesOnboarded} onClick={() => setTab(1)} className="gap-2 text-white font-semibold"
-                style={{ background: allCompaniesOnboarded ? ORANGE : "rgba(255,255,255,0.1)" }}>
+            <div className="mt-6 flex justify-end items-center gap-3">
+              {!allCompaniesOnboarded && anyCompanyOnboarded && (
+                <p className="text-white/30 text-xs">Some companies not yet registered — you can still proceed with registered ones</p>
+              )}
+              <Button disabled={!anyCompanyOnboarded} onClick={() => setTab(1)} className="gap-2 text-white font-semibold"
+                style={{ background: anyCompanyOnboarded ? ORANGE : "rgba(255,255,255,0.1)" }}>
                 Next: Add Employees <ChevronRight className="h-4 w-4" />
               </Button>
             </div>
-            {!allCompaniesOnboarded && companies.length > 0 && (
-              <p className="text-center text-white/30 text-xs mt-2">Register all companies to continue</p>
-            )}
           </div>
         )}
 
@@ -915,45 +930,128 @@ export default function Payroll() {
                     </div>
                     <div className="divide-y divide-white/5">
                       {compEmployees.map((emp) => {
-                        const rollfiStatus = emp.rollfi?.rollfiUserId ? getRollfiStatus(company.id, emp.rollfi.rollfiUserId) : null;
+                        const rowKey = emp.employeeId ?? emp.userId;
+                        const isExpanded = expandedEmpId === rowKey;
+                        const rollfiStatus = emp.rollfi?.rollfiUserId
+                          ? (singleEmpStatus[emp.rollfi.rollfiUserId] ?? getRollfiStatus(company.id, emp.rollfi.rollfiUserId))
+                          : null;
                         return (
-                          <div key={emp.employeeId} className="px-5 py-3 flex items-center justify-between gap-4 group">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-white text-sm font-medium">{emp.name}</span>
-                                <StatusBadge onboarded={!!emp.rollfi} />
-                                {rollfiStatus && <UserStatusBadge userStatus={rollfiStatus.userStatus} kycStatus={rollfiStatus.kycStatus} />}
+                          <React.Fragment key={rowKey}>
+                            {/* Clickable summary row */}
+                            <div
+                              className="px-5 py-3 flex items-center justify-between gap-4 cursor-pointer hover:bg-white/5 transition-colors select-none"
+                              onClick={() => setExpandedEmpId(isExpanded ? null : rowKey)}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="text-white/30 text-[10px] w-3 shrink-0">{isExpanded ? "▲" : "▼"}</span>
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-white text-sm font-medium">{emp.name}</span>
+                                    <StatusBadge onboarded={!!emp.rollfi} />
+                                    {rollfiStatus && !rollfiStatus.loading && <UserStatusBadge userStatus={rollfiStatus.userStatus} kycStatus={rollfiStatus.kycStatus} />}
+                                    {rollfiStatus?.loading && <Loader2 className="h-3 w-3 text-white/30 animate-spin" />}
+                                  </div>
+                                  <div className="flex items-center gap-3 mt-0.5">
+                                    <span className="text-white/40 text-xs">{emp.position}</span>
+                                    <span className="text-white/30 text-xs">·</span>
+                                    <span className="text-white/40 text-xs">${(emp.hourlyWage / 100).toFixed(2)}/hr</span>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="flex items-center gap-3 mt-0.5">
-                                <span className="text-white/40 text-xs">{emp.position}</span>
-                                <span className="text-white/30 text-xs">·</span>
-                                <span className="text-white/40 text-xs">${(emp.hourlyWage / 100).toFixed(2)}/hr</span>
-                                {emp.rollfi && <span className="text-white/25 text-xs font-mono">ID: {emp.rollfi.rollfiUserId.slice(0, 8)}…</span>}
+                              <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                {!emp.rollfi && (
+                                  <Button size="sm"
+                                    disabled={!company.rollfi || onboardEmployee.isPending || !emp.employeeId}
+                                    onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
+                                    className="text-white text-xs"
+                                    style={{ background: company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: !company.rollfi ? 0.5 : 1 }}>
+                                    {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : !company.rollfi ? "Register company first" : "Add to Rollfi"}
+                                  </Button>
+                                )}
+                                {emp.rollfi && (
+                                  <span className="text-emerald-400/70 text-xs flex items-center gap-1">
+                                    <CheckCircle2 className="h-3.5 w-3.5" /> Added
+                                  </span>
+                                )}
                               </div>
                             </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              {!emp.rollfi && (
-                                <button
-                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-white/20 hover:text-red-400 p-1"
-                                  title="Remove employee"
-                                  onClick={async () => {
-                                    if (!confirm(`Remove ${emp.name}?`)) return;
-                                    await api.delete(`/rollfi/employees/${emp.userId}`);
-                                    void refetchState();
-                                  }}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                              <Button size="sm"
-                                disabled={!!emp.rollfi || !company.rollfi || onboardEmployee.isPending || !emp.employeeId}
-                                onClick={() => emp.employeeId && onboardEmployee.mutate({ employeeId: emp.employeeId, companyId: company.id })}
-                                className="text-white text-xs"
-                                style={{ background: emp.rollfi ? "rgba(255,255,255,0.08)" : company.rollfi ? ORANGE : "rgba(255,255,255,0.08)", opacity: (emp.rollfi || !company.rollfi) ? 0.5 : 1 }}>
-                                {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : emp.rollfi ? "Added ✓" : !company.rollfi ? "Register company first" : "Add to Rollfi"}
-                              </Button>
-                            </div>
-                          </div>
+
+                            {/* Expanded detail panel */}
+                            {isExpanded && (
+                              <div className="px-5 py-4 border-t border-white/5" style={{ background: "rgba(20,40,65,0.6)" }}>
+                                <div className="grid grid-cols-2 gap-4 mb-4 text-xs">
+                                  <div>
+                                    <p className="text-white/35 uppercase tracking-wide text-[10px] font-semibold mb-1">Rollfi Status</p>
+                                    {emp.rollfi ? (
+                                      rollfiStatus ? (
+                                        <div className="space-y-1.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-white/50 w-20">Account</span>
+                                            {rollfiStatus.loading
+                                              ? <Loader2 className="h-3 w-3 text-white/30 animate-spin" />
+                                              : <UserStatusBadge userStatus={rollfiStatus.userStatus} kycStatus={rollfiStatus.kycStatus} />}
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-white/50 w-20">KYC</span>
+                                            <span className={`text-xs font-semibold ${rollfiStatus.kycStatus?.toLowerCase() === "passed" ? "text-emerald-400" : rollfiStatus.kycStatus?.toLowerCase() === "failed" ? "text-red-400" : "text-amber-400"}`}>
+                                              {rollfiStatus.kycStatus || "—"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <span className="text-white/30 text-xs italic">Not checked yet</span>
+                                      )
+                                    ) : (
+                                      <span className="text-white/30 text-xs italic">Not onboarded</span>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="text-white/35 uppercase tracking-wide text-[10px] font-semibold mb-1">Rollfi ID</p>
+                                    {emp.rollfi ? (
+                                      <span className="text-white/50 font-mono text-[11px] break-all">{emp.rollfi.rollfiUserId}</span>
+                                    ) : (
+                                      <span className="text-white/20 text-xs italic">—</span>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {emp.rollfi?.rollfiUserId && (
+                                    <Button size="sm" variant="ghost"
+                                      className="text-xs text-white/60 hover:text-white border border-white/10 h-7 gap-1.5"
+                                      disabled={!!rollfiStatus?.loading}
+                                      onClick={() => void checkSingleEmpStatus(emp.rollfi!.rollfiUserId, company.id)}>
+                                      {rollfiStatus?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                                      Check Rollfi Status
+                                    </Button>
+                                  )}
+                                  {!emp.rollfi && company.rollfi && emp.employeeId && (
+                                    <Button size="sm"
+                                      disabled={onboardEmployee.isPending}
+                                      onClick={() => onboardEmployee.mutate({ employeeId: emp.employeeId!, companyId: company.id })}
+                                      className="text-white text-xs h-7 gap-1.5"
+                                      style={{ background: ORANGE }}>
+                                      {onboardEmployee.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Users className="h-3 w-3" /> Onboard to Rollfi</>}
+                                    </Button>
+                                  )}
+                                  {!emp.rollfi && !company.rollfi && (
+                                    <p className="text-amber-400/60 text-xs flex items-center gap-1.5"><AlertTriangle className="h-3 w-3" /> Register the company first to onboard this employee</p>
+                                  )}
+                                  {!emp.rollfi && (
+                                    <button
+                                      className="text-white/20 hover:text-red-400 transition-colors text-xs flex items-center gap-1 ml-auto"
+                                      title="Remove employee"
+                                      onClick={async () => {
+                                        if (!confirm(`Remove ${emp.name}?`)) return;
+                                        await api.delete(`/rollfi/employees/${emp.userId}`);
+                                        void refetchState();
+                                      }}>
+                                      <Trash2 className="h-3 w-3" /> Remove
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </React.Fragment>
                         );
                       })}
                     </div>
