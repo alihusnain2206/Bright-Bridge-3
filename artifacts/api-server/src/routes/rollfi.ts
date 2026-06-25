@@ -3,6 +3,7 @@ import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
+import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable } from "@workspace/db";
 import { desc, eq, inArray } from "drizzle-orm";
 
@@ -281,7 +282,7 @@ router.get("/rollfi/state", async (_req, res) => {
 
 // ── Create / delete payroll employee ─────────────────────────
 
-router.post("/rollfi/employees", (req, res) => {
+router.post("/rollfi/employees", async (req, res) => {
   const { name, email, position, hourlyWage, companyId } = req.body as {
     name: string;
     email: string;
@@ -308,6 +309,24 @@ router.post("/rollfi/employees", (req, res) => {
   }
 
   const user = store.createStaffUser({ name, email, position, hourlyWage: hourlyWage ?? 1500, companyId });
+
+  // Register the new employee with EasyTeam immediately so they can clock in/out.
+  // EasyTeam creates the employee record on token exchange — without this step,
+  // the employee is in our store but unknown to EasyTeam and shifts are silently dropped.
+  const etLocationId = company.locationId ?? "LOC-SUNSHINE";
+  void registerEmployeeInEasyTeam(
+    {
+      id: user.employeeId!,
+      name: user.name,
+      email: user.email,
+      roleName: user.position ?? position,
+      wage: (user.hourlyWage ?? 1500) / 100,
+      wageType: "hourly",
+    },
+    etLocationId,
+    req.log
+  ).catch((err: unknown) => req.log.warn({ err }, "EasyTeam registration failed for new employee — will retry on first login"));
+
   res.status(201).json(user);
 });
 
