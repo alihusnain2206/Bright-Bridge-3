@@ -4,8 +4,8 @@ import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
-import { db, companies as companiesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, companies as companiesTable, userAccounts as userAccountsTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -490,8 +490,8 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   let restApiResponded = false;
   for (const co of companiesToSync) {
     const locId = co.locationId;
-    const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate);
-    req.log.info({ locationId: locId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
+    const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
+    req.log.info({ locationId: locId, companyId: co.id, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
 
     if ("shifts" in result) {
       restApiResponded = true; // API responded — don't fall through to seed even if 0 in range
@@ -625,13 +625,40 @@ async function fetchEasyTeamShiftsForLocation(
   locationId: string,
   _fromDate?: Date,
   _toDate?: Date,
+  companyId?: string,
 ): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
-  // Find the manager for this location — fall back to super_admin if none registered for this location yet
-  const managerUser =
-    store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager") ??
-    store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+  // 1. Try in-memory store — covers Sunshine/Rainbow and any managers loaded at boot
+  let managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+
+  // 2. For wizard-created companies (DB-only), look up manager from user_accounts
+  if (!managerUser?.employeeId && companyId) {
+    try {
+      const [dbManager] = await db
+        .select()
+        .from(userAccountsTable)
+        .where(and(eq(userAccountsTable.companyId, companyId), eq(userAccountsTable.role, "manager")));
+      if (dbManager?.employeeId) {
+        managerUser = {
+          id: dbManager.id,
+          name: dbManager.name ?? "Manager",
+          email: dbManager.email,
+          role: "manager",
+          companyId,
+          employeeId: dbManager.employeeId,
+          locationId,
+          position: dbManager.position ?? "Daycare Manager",
+        };
+      }
+    } catch { /* ignore — fall through to super_admin */ }
+  }
+
+  // 3. Last resort: super_admin (Joanne) — works only for locations she is registered under
+  if (!managerUser?.employeeId) {
+    managerUser = store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+  }
+
   if (!managerUser?.employeeId) return { error: `No user found for locationId=${locationId}` };
 
   try {
@@ -759,8 +786,8 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   // Note: in sandbox, this returns [] because timesheets only appear after formal submission.
   // This path will succeed in production when timesheets are submitted by employees.
   if (dataSource !== "easyteam" && locationId) {
-    const result = await fetchEasyTeamShiftsForLocation(locationId);
-    req.log.info({ locationId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "EasyTeam REST API fetch result");
+    const result = await fetchEasyTeamShiftsForLocation(locationId, fromDate, toDate, companyId);
+    req.log.info({ locationId, companyId, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "EasyTeam REST API fetch result");
 
     if ("shifts" in result && result.shifts.length > 0) {
       const normTs = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";

@@ -6,8 +6,8 @@ import { loadClientEmployeesFromDb } from "./lib/client-employee-persist.js";
 import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts } from "./lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { store } from "./store.js";
-import { db, companies } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, companies, userAccounts } from "@workspace/db";
+import { eq, and, notInArray } from "drizzle-orm";
 
 const rawPort = process.env["PORT"];
 
@@ -96,6 +96,41 @@ async function bootEasyTeamSync() {
       } else {
         skipped++;
         logger.warn({ id: emp.id, name: emp.name, reason: result.error }, "Boot sync: EasyTeam registration pending — employee will appear after first Time Clock use");
+      }
+    }
+  }
+
+  // ── DB-only companies (wizard-created, not in hardcoded store) ──
+  const hardcodedIds = store.listClients().map((c) => c.linkedCompanyId).filter(Boolean) as string[];
+  const dbCompanies = hardcodedIds.length > 0
+    ? await db.select().from(companies).where(notInArray(companies.id, hardcodedIds)).catch(() => [])
+    : await db.select().from(companies).catch(() => []);
+
+  for (const co of dbCompanies) {
+    const locationId = co.rollfiLocationId ?? `LOC-${co.id}`;
+    const dbEmps = await db
+      .select()
+      .from(userAccounts)
+      .where(and(eq(userAccounts.companyId, co.id)))
+      .catch(() => []);
+
+    for (const emp of dbEmps) {
+      if (!emp.employeeId) continue; // no EasyTeam ID assigned yet
+      const empObj = {
+        id:       emp.employeeId,
+        name:     emp.name ?? emp.email,
+        email:    emp.email,
+        roleName: emp.position ?? emp.role,
+        wage:     emp.hourlyWage ?? 1500,
+        wageType: "hourly" as const,
+      };
+      const result = await registerEmployeeInEasyTeam(empObj, locationId, logger);
+      if (result.success && result.easyteamEmployeeId) {
+        store.setEasyTeamUuidMapping(result.easyteamEmployeeId, emp.employeeId);
+        registered++;
+        logger.info({ employeeId: emp.employeeId, companyId: co.id, easyteamUuid: result.easyteamEmployeeId }, "Boot sync: DB employee UUID mapped");
+      } else {
+        skipped++;
       }
     }
   }
