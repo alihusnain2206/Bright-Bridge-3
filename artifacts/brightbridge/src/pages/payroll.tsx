@@ -662,6 +662,14 @@ export default function Payroll() {
   const allCompaniesOnboarded = companies.length > 0 && companies.every((c) => c.rollfi);
   const anyCompanyOnboarded   = companies.some((c) => c.rollfi);
 
+  const retryKyc = useMutation({
+    mutationFn: ({ rollfiUserId, companyId }: { rollfiUserId: string; companyId: string }) =>
+      api.post(`/rollfi/employees/${rollfiUserId}/retry-kyc`, { companyId }),
+    onSuccess: (_data, vars) => {
+      void checkSingleEmpStatus(vars.rollfiUserId, vars.companyId);
+    },
+  });
+
   const checkSingleEmpStatus = useCallback(async (rollfiUserId: string, companyId: string) => {
     setSingleEmpStatus((prev) => ({ ...prev, [rollfiUserId]: { ...prev[rollfiUserId], rollfiUserId, userStatus: "", kycStatus: "", loading: true } }));
     try {
@@ -1039,6 +1047,21 @@ export default function Payroll() {
                                       {rollfiStatus?.loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                                       Check Rollfi Status
                                     </Button>
+                                  )}
+                                  {emp.rollfi?.rollfiUserId && rollfiStatus && !rollfiStatus.loading && (rollfiStatus.kycStatus?.toLowerCase() === "new" || rollfiStatus.userStatus?.toLowerCase() === "pending") && (
+                                    <Button size="sm"
+                                      disabled={retryKyc.isPending}
+                                      onClick={() => retryKyc.mutate({ rollfiUserId: emp.rollfi!.rollfiUserId, companyId: company.id })}
+                                      className="text-white text-xs h-7 gap-1.5"
+                                      style={{ background: "rgba(245,158,11,0.7)" }}>
+                                      {retryKyc.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <><Zap className="h-3 w-3" /> Complete KYC</>}
+                                    </Button>
+                                  )}
+                                  {retryKyc.isSuccess && retryKyc.variables?.rollfiUserId === emp.rollfi?.rollfiUserId && (
+                                    <span className="text-emerald-400/70 text-xs flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> KYC re-submitted</span>
+                                  )}
+                                  {retryKyc.isError && retryKyc.variables?.rollfiUserId === emp.rollfi?.rollfiUserId && (
+                                    <span className="text-red-400/70 text-xs">{(retryKyc.error as Error)?.message ?? "KYC retry failed"}</span>
                                   )}
                                   {!emp.rollfi && company.rollfi && emp.employeeId && (
                                     <Button size="sm"

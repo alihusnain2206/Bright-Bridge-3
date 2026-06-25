@@ -912,6 +912,36 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
   }
 });
 
+// ── Retry KYC for an already-onboarded employee ──────────────
+// Useful when addKycInformation failed on the first onboard attempt,
+// leaving KYC in "new" state and account stuck on "Pending".
+
+router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { rollfiUserId } = req.params;
+  const { companyId } = req.body as { companyId: string };
+
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" });
+    return;
+  }
+
+  req.log.info({ rollfiUserId, rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Retrying KYC onboarding for employee");
+
+  try {
+    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
+    res.json({ success: true, rollfiUserId, message: "KYC steps re-submitted — status should update within seconds" });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "retry-kyc failed");
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
 // ── Pay period ───────────────────────────────────────────────
 
 router.get("/rollfi/payperiod", async (req, res) => {
