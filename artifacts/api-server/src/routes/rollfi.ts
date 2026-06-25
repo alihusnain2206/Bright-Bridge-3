@@ -589,6 +589,110 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   }
 });
 
+// ── Retry company KYB with fresh random EIN ──────────────────
+// Works around Rollfi sandbox "EIN already in use" KYB failures.
+// Generates new random EIN + owner SSN, re-submits addKybInformation,
+// re-initiates initiateCompanyKyb, and re-adds the bank account.
+
+router.post("/rollfi/retry-kyb", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId } = req.body as { companyId: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi yet" });
+    return;
+  }
+  const { rollfiCompanyId } = rollfiCompany;
+  const headers = rollfiHeaders();
+
+  const newEin = randomNineDigits();
+  req.log.info({ companyId, rollfiCompanyId, newEin }, "Retrying company KYB with fresh random EIN");
+
+  const steps: Record<string, unknown> = {};
+
+  // Step 1 — re-submit KYB info with fresh random EIN
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`,
+      {
+        method: "addKybInformation",
+        kybInformation: {
+          companyId: rollfiCompanyId,
+          ein: newEin,
+          entityType: "LLC",
+          dateOfIncorporation: "2015-01-01",
+          incorporationState: "New Jersey",
+          irsAssisgnedFederalFilingForm: "941",
+        },
+      },
+      { headers }
+    );
+    req.log.info({ rollfiResponse: r.data }, "retry-kyb: addKybInformation response");
+    steps.addKybInformation = r.data;
+  } catch (e) {
+    const err = e as { response?: { data: unknown } };
+    req.log.warn({ e }, "retry-kyb: addKybInformation failed");
+    steps.addKybInformationError = err.response?.data ?? String(e);
+  }
+
+  // Step 2 — re-initiate KYB
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/companyOnboarding#initiateCompanyKyb`,
+      { method: "initiateCompanyKyb", companyId: rollfiCompanyId },
+      { headers }
+    );
+    req.log.info({ rollfiResponse: r.data }, "retry-kyb: initiateCompanyKyb response");
+    steps.initiateCompanyKyb = r.data;
+  } catch (e) {
+    const err = e as { response?: { data: unknown } };
+    req.log.warn({ e }, "retry-kyb: initiateCompanyKyb failed");
+    steps.initiateCompanyKybError = err.response?.data ?? String(e);
+  }
+
+  // Step 3 — re-add bank account (funding source) with new EIN as account number
+  await new Promise((resolve) => setTimeout(resolve, 3000));
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+      {
+        method: "addCompanyBankAccount",
+        companyFundingSourceEntity: {
+          companyId: rollfiCompanyId,
+          accountNumber: newEin,
+          routingNumber: "221982389",
+          bankName: "BrightBridge Test Bank",
+          accountType: "checking",
+          accountName: "Payroll Account",
+        },
+      },
+      { headers }
+    );
+    req.log.info({ rollfiResponse: r.data }, "retry-kyb: addCompanyBankAccount response");
+    steps.addCompanyBankAccount = r.data;
+  } catch (e) {
+    const err = e as { response?: { data: unknown } };
+    req.log.warn({ e }, "retry-kyb: addCompanyBankAccount failed");
+    steps.addCompanyBankAccountError = err.response?.data ?? String(e);
+  }
+
+  // Persist the new EIN so future KYB retries and bank account references are consistent
+  await persistRollfiCompany(companyId, { ...rollfiCompany, ein: newEin });
+
+  res.json({
+    success: true,
+    rollfiCompanyId,
+    newEin,
+    steps,
+    message: "KYB re-submitted with a fresh EIN — check Setup Checklist in ~60 seconds to see if KYB passed",
+  });
+});
+
 // ── Bank account linking ─────────────────────────────────────
 
 router.post("/rollfi/onboard/bank-account", async (req, res) => {

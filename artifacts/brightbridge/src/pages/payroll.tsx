@@ -463,6 +463,7 @@ function HistorySection({ periods, companyName, companyId, onViewStubs }: {
 
 function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; rollfiCompanyId: string }) {
   const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
   const { data, isLoading, refetch } = useQuery<CompanyTasksData>({
     queryKey: ["rollfi-tasks", companyId],
     queryFn: () => api.get(`/rollfi/company-tasks?companyId=${companyId}`),
@@ -471,7 +472,15 @@ function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; 
     retry: false,
   });
 
+  const retryKyb = useMutation({
+    mutationFn: () => api.post("/rollfi/retry-kyb", { companyId }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["rollfi-tasks", companyId] });
+    },
+  });
+
   const tasks = data?.tasks ?? [];
+  const hasKybFailure = tasks.some(t => t.description.toLowerCase().includes("kyb") && (t.description.toLowerCase().includes("failed") || t.description.toLowerCase().includes("failure")));
 
   return (
     <div className="border-t border-white/5">
@@ -517,6 +526,32 @@ function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; 
               );
             })}
           </div>
+
+          {hasKybFailure && (
+            <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
+              <p className="text-[10px] text-amber-300/70">
+                KYB failed because Rollfi rejects EINs already in their system. Click below to re-submit with a fresh random EIN — this usually resolves it automatically.
+              </p>
+              <Button
+                size="sm"
+                disabled={retryKyb.isPending}
+                onClick={() => retryKyb.mutate()}
+                className="h-6 px-2.5 text-[11px] font-medium"
+                style={{ background: "rgba(245,158,11,0.7)" }}
+              >
+                {retryKyb.isPending ? <><Loader2 className="h-3 w-3 animate-spin mr-1" />Re-submitting KYB…</> : <><RefreshCw className="h-3 w-3 mr-1" />Retry KYB with new EIN</>}
+              </Button>
+              {retryKyb.isSuccess && (
+                <p className="text-emerald-400/70 text-[10px] flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> KYB re-submitted — refresh checklist in ~60s to confirm
+                </p>
+              )}
+              {retryKyb.isError && (
+                <p className="text-red-400/70 text-[10px]">{(retryKyb.error as Error)?.message ?? "Retry failed"}</p>
+              )}
+            </div>
+          )}
+
           <p className="mt-2 pt-2 border-t border-white/5 text-[10px] text-white/20 font-mono">{rollfiCompanyId}</p>
         </div>
       )}

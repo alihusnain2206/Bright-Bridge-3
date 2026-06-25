@@ -1,0 +1,49 @@
+Ali husnain  [6:55 PM]
+Hi @Michael Reta
+We've successfully completed the following steps end-to-end:
+
+Registered two test companies viacreateBusiness
+Onboarded employees under each company
+Set up pay schedules (BiWeekly W2) viaaddPaySchedule
+Fetched unprocessed pay periods viagetUnProcessedPayPeriod— both companies have an active period (05/26/2026–06/08/2026)
+Built a payroll preview that pulls live hours data and calculates gross pay
+The final step — calling initiatePayroll — is blocked because KYB verification failed for both sandbox companies. The getCompanyTask endpoint returns:
+"KYB verification has failed. Please contact support for more information."We understand this is expected for synthetic test data in the sandbox. Could you please manually approve KYB for the following two sandbox companies so we can complete the full payroll initiation flow?
+CompanyRollfi Company IDSunshine Daycare Centre43A90BF7-B2BB-4BB5-A6F5-090306556DC4Rainbow Kids Club626872FD-3D73-43E4-90EE-9E0019E99157
+Once KYB is approved, we'd also like to proceed with linking bank accounts and clearing the remaining onboarding tasks (Add Wage, Form 8655) — happy to handle those via API if you can point us to the right endpoints.
+Thanks in advance for your help!8 repliesMichael Reta  [7:08 PM]
+@James Gaskell can you help Ali here?
+James Gaskell  [7:20 PM]
+Hey @Ali husnain in sandbox we still simulate KYB using the beneficial owner's SSN and the company's EIN. So if the SSN or EIN already exists in our system (and it doesn't match the original person/company) our compliance partner rejects it as a KYB failure.
+
+To avoid failing KYB if you can use randoms for EINs and SSNs you should be able to get through KYB automatically. Am i okay to update the SSN/EIN and flip the company?
+Ali husnain  [8:00 PM]
+@James Gaskell
+Hi, yes please go ahead and flip both companies! Their IDs are:
+
+43A90BF7-B2BB-4BB5-A6F5-090306556DC4(Sunshine Daycare Centre)
+626872FD-3D73-43E4-90EE-9E0019E99157(Rainbow Kids Club)
+We've also updated our code on our end — new company registrations now use randomly generated EINs and SSNs instead of fixed test values, so this shouldn't happen again going forward.
+Once you flip KYB for those two companies, we'll test the full payroll initiation flow. Thanks!James Gaskell  [8:37 PM]
+Just updated the info and KYB is passed for both @Ali husnain
+Ali husnain  [9:30 PM]
+@James Gaskell Thanks, Hi again! KYB is working great now, thanks. We're one step away from a successful initiatePayroll — the bank account is linked but stuck in "MicroDeposit pending" status.
+The initiatePayroll error is:
+"Company funding source entity is not ready. Current status: MicroDeposit pending"Two questions:
+
+Can you approve/verify the bank account funding source for both companies in sandbox so we can skip the micro-deposit flow?
+43A90BF7-B2BB-4BB5-A6F5-090306556DC4(Sunshine Daycare Centre)
+626872FD-3D73-43E4-90EE-9E0019E99157(Rainbow Kids Club)
+
+Is there an API endpoint we can call to complete micro-deposit verification programmatically in the sandbox? We tried adminPortal#getCompanyFundingSource and a few variations but got 400s back.
+Thanks!
+James Gaskell  [12:02 AM]
+@Ali husnain, are you using any third party service to validate your account information? We try and steer away from micro-deposits if accounts are already verified to prevent unnecessary friction when onboarding to payroll. In the meantime I can flip the account statuses for the two you sent through
+Ali husnain  [12:09 AM]
+@James Gaskell
+No third-party service — we're using synthetic test bank details for sandbox testing. Please go ahead and flip both account statuses, that would be great. Same two companies:
+
+43A90BF7-B2BB-4BB5-A6F5-090306556DC4(Sunshine Daycare Centre)
+626872FD-3D73-43E4-90EE-9E0019E99157(Rainbow Kids Club)
+James Gaskell  [12:29 AM]
+Just flipped them both to ready. I should've been clearer before - I meant in production.
