@@ -3,7 +3,7 @@ import { logger } from "./lib/logger";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 import { loadClientEmployeesFromDb } from "./lib/client-employee-persist.js";
-import { loadUserAccountsFromDb } from "./lib/user-account-persist.js";
+import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts } from "./lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { store } from "./store.js";
 import { db, companies } from "@workspace/db";
@@ -116,6 +116,10 @@ Promise.all([
   }),
   loadUserAccountsFromDb().then(({ count }) => {
     logger.info({ count }, "User accounts restored from DB");
+    // Reconcile: create missing logins for any DB employee that has no user_accounts row
+    return reconcileEmployeeLoginAccounts().then(({ created }) => {
+      if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
+    });
   }),
 ])
   .catch((err) => {

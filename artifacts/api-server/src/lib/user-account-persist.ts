@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@workspace/db";
-import { userAccounts } from "@workspace/db/schema";
+import { userAccounts, employees } from "@workspace/db/schema";
 import { store, type TestUser } from "../store.js";
 
 export async function deleteUserAccount(userId: string): Promise<void> {
@@ -58,4 +58,54 @@ export async function loadUserAccountsFromDb(): Promise<{ count: number }> {
   }
 
   return { count: rows.length };
+}
+
+/**
+ * Reconcile: for every employee in the DB, ensure a user_accounts login exists.
+ * Fixes employees created before the persist-on-create fix was deployed.
+ * Safe to run on every boot — uses ON CONFLICT DO NOTHING via insert.
+ */
+export async function reconcileEmployeeLoginAccounts(): Promise<{ created: number }> {
+  const allEmployees = await db.select().from(employees);
+  const existingAccounts = await db.select({ email: userAccounts.email }).from(userAccounts);
+  const existingEmails = new Set(existingAccounts.map((a) => a.email.toLowerCase()));
+
+  let created = 0;
+  for (const emp of allEmployees) {
+    if (existingEmails.has(emp.email.toLowerCase())) continue;
+
+    const newUser: TestUser = {
+      id:         `USER-DYN-${emp.id}`,
+      name:       `${emp.firstName} ${emp.lastName}`,
+      email:      emp.email,
+      password:   "Staff123!",
+      role:       "employee",
+      companyId:  emp.companyId,
+      employeeId: emp.id,
+      position:   emp.position,
+      hourlyWage: emp.hourlyWage ?? undefined,
+    };
+
+    // Add to in-memory store
+    store.addTestUser(newUser);
+
+    // Persist to DB
+    await db.insert(userAccounts).values({
+      id:         newUser.id,
+      name:       newUser.name,
+      email:      newUser.email,
+      password:   newUser.password,
+      role:       newUser.role,
+      companyId:  newUser.companyId ?? "",
+      employeeId: newUser.employeeId ?? null,
+      position:   newUser.position ?? null,
+      hourlyWage: newUser.hourlyWage ?? null,
+      createdAt:  new Date().toISOString(),
+    }).onConflictDoNothing();
+
+    existingEmails.add(emp.email.toLowerCase());
+    created++;
+  }
+
+  return { created };
 }
