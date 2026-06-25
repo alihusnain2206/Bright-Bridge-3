@@ -4,7 +4,6 @@ import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { db, companies } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -172,27 +171,6 @@ router.post("/auth/token-by-role", async (req, res) => {
     req.log.error({ err }, "JWT signing failed");
     res.status(500).json({ error: `JWT signing failed: ${error.message}` });
     return;
-  }
-
-  // For employees and managers: register/refresh with EasyTeam in the background.
-  // EasyTeam upserts the employee on every exchangeToken call — this ensures dynamically
-  // created employees (added after boot sync) are always registered.
-  if (user.role === "employee" || user.role === "manager") {
-    const locationId = (payload.locationId as string | undefined)
-      ?? store.getCompany(user.companyId ?? "")?.locationId
-      ?? "LOC-SUNSHINE";
-    void registerEmployeeInEasyTeam(
-      {
-        id: user.employeeId ?? user.id,
-        name: user.name,
-        email: user.email,
-        roleName: user.position ?? user.role,
-        wage: (user.hourlyWage ?? 1500) / 100,
-        wageType: "hourly",
-      },
-      locationId,
-      req.log
-    ).catch(() => { /* non-fatal — SDK handles its own exchange */ });
   }
 
   // Return the signed JWT directly — EasyTeamLauncher handles token exchange internally
