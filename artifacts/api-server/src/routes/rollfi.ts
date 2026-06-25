@@ -1128,9 +1128,43 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod response");
-    // Don't assert error here — if users are already in the period Rollfi may return an error we can ignore
 
-    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: payrollData.length }, "Rollfi importRegularPayrollData request");
+    // Parse any per-user validation errors from addUsersToRegularPayPeriod.
+    // Rollfi embeds the rejected UUID in the error message:
+    //   "Employee validation failed for user <UUID>: Employee has an invalid status…"
+    // We must exclude those users from importRegularPayrollData or the whole batch fails.
+    const addUsersRaw = addUsersResp.data as Record<string, unknown>;
+    const addUsersErrMsg: string = (addUsersRaw?.error as Record<string, unknown>)?.message as string ?? "";
+    const UUID_RE = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/gi;
+    const rejectedUuids = new Set<string>(
+      addUsersErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
+    );
+
+    const skippedEmployees: { rollfiUserId: string; reason: string }[] = [];
+    let filteredPayrollData = payrollData;
+
+    if (rejectedUuids.size > 0) {
+      filteredPayrollData = payrollData.filter((entry) => {
+        const uid = (entry.userId as string).toUpperCase();
+        if (rejectedUuids.has(uid)) {
+          skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg });
+          req.log.warn({ rollfiUserId: entry.userId, reason: addUsersErrMsg }, "Excluding employee from payroll — Rollfi rejected them in addUsersToRegularPayPeriod");
+          return false;
+        }
+        return true;
+      });
+
+      if (filteredPayrollData.length === 0) {
+        const names = skippedEmployees.map((s) => s.rollfiUserId).join(", ");
+        res.status(400).json({
+          error: `All employees were rejected by Rollfi for this pay period. They may have incomplete onboarding (KYC/bank account). Rejected: ${names}`,
+          skippedEmployees,
+        });
+        return;
+      }
+    }
+
+    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: filteredPayrollData.length, skipped: skippedEmployees.length }, "Rollfi importRegularPayrollData request");
 
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
@@ -1138,7 +1172,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         method: "importRegularPayrollData",
         companyId: rollfiCompany.rollfiCompanyId,
         payPeriodId,
-        payrollData,
+        payrollData: filteredPayrollData,
       },
       { headers: rollfiHeaders() }
     );
@@ -1164,7 +1198,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
 
-    res.json({ success: true, importResult: importRaw, ...raw });
+    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");

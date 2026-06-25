@@ -42,6 +42,7 @@ interface PayrollResult {
   importResult?: { importRegularPayrollLData?: { status: string; message: string } };
   payPeriod?: { payPeriodId: string; status: string; message: string };
   error?: string;
+  skippedEmployees?: { rollfiUserId: string; reason: string }[];
 }
 interface EmpRollfiStatus { rollfiUserId: string; userStatus: string; kycStatus: string; }
 interface CompanyOverview {
@@ -221,6 +222,21 @@ function PayrollResultCard({ result, onReset }: { result: PayrollResult; onReset
           <p className="text-emerald-400/60 text-xs">Funds will be disbursed on the scheduled pay date</p>
         </div>
       </div>
+      {result.skippedEmployees && result.skippedEmployees.length > 0 && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-amber-300 text-sm font-semibold">Some employees were excluded from this payroll run</p>
+            <p className="text-amber-400/70 text-xs mt-0.5">Rollfi rejected them due to incomplete onboarding (KYC not passed or missing bank account).</p>
+            <ul className="mt-1.5 space-y-0.5">
+              {result.skippedEmployees.map((e) => (
+                <li key={e.rollfiUserId} className="text-amber-400/60 text-[11px] font-mono">{e.rollfiUserId}</li>
+              ))}
+            </ul>
+            <p className="text-amber-400/50 text-[11px] mt-1.5">Complete their Rollfi onboarding in Step 2 to include them in future payroll runs.</p>
+          </div>
+        </div>
+      )}
       <div className="space-y-2 mb-4">
         {steps.map((step, i) => (
           <div key={i} className="flex items-start gap-3">
