@@ -296,10 +296,23 @@ router.post("/rollfi/employees", async (req, res) => {
     return;
   }
 
+  // Check in-memory store first; fall back to DB for wizard-created (dynamic) companies.
+  // Without the DB fallback, POST /rollfi/employees returns 404 for dynamic companies even
+  // though they exist — blocking the entire employee creation flow.
   const company = store.getCompany(companyId);
+  let etLocationId = company?.locationId;
+
   if (!company) {
-    res.status(404).json({ error: "Company not found" });
-    return;
+    const [dbCompany] = await db
+      .select({ rollfiLocationId: companiesTable.rollfiLocationId })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, companyId))
+      .catch(() => [undefined]);
+    if (!dbCompany) {
+      res.status(404).json({ error: "Company not found" });
+      return;
+    }
+    etLocationId = dbCompany.rollfiLocationId ?? undefined;
   }
 
   const existing = store.getUserByEmail(email);
@@ -313,7 +326,7 @@ router.post("/rollfi/employees", async (req, res) => {
   // Register the new employee with EasyTeam immediately so they can clock in/out.
   // EasyTeam creates the employee record on token exchange — without this step,
   // the employee is in our store but unknown to EasyTeam and shifts are silently dropped.
-  const etLocationId = company.locationId ?? "LOC-SUNSHINE";
+  const resolvedEtLocationId = etLocationId ?? "LOC-SUNSHINE";
   void registerEmployeeInEasyTeam(
     {
       id: user.employeeId!,
@@ -323,7 +336,7 @@ router.post("/rollfi/employees", async (req, res) => {
       wage: (user.hourlyWage ?? 1500) / 100,
       wageType: "hourly",
     },
-    etLocationId,
+    resolvedEtLocationId,
     req.log
   ).catch((err: unknown) => req.log.warn({ err }, "EasyTeam registration failed for new employee — will retry on first login"));
 

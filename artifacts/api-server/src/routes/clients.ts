@@ -4,6 +4,8 @@ import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
 import { persistClientEmployee } from "../lib/client-employee-persist.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
+import { db, companies as companiesTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 
 const router: IRouter = Router();
@@ -20,10 +22,19 @@ async function attemptSync(employeeId: string, clientId: string, log: Logger) {
 
   const rollfiCompany = getRollfiCompanyForClient(clientId);
 
-  // Resolve the EasyTeam location for this client
+  // Resolve the EasyTeam location for this client — check store first, then DB for dynamic companies
   const client = store.getClient(clientId);
-  const company = client?.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
-  const locationId = company?.locationId;
+  const linkedCompanyId = client?.linkedCompanyId;
+  const company = linkedCompanyId ? store.getCompany(linkedCompanyId) : undefined;
+  let locationId = company?.locationId;
+  if (!locationId && linkedCompanyId) {
+    const [dbCo] = await db
+      .select({ rollfiLocationId: companiesTable.rollfiLocationId })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, linkedCompanyId))
+      .catch(() => [undefined]);
+    locationId = dbCo?.rollfiLocationId ?? undefined;
+  }
 
   // Register in EasyTeam — only flag as synced after confirmed API success
   let easyteamSynced = emp.easyteamSynced;

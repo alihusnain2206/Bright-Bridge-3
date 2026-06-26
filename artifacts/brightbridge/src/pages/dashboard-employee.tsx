@@ -66,9 +66,13 @@ export default function EmployeeDashboard() {
       const myEmployees = user.employeeId ? [
         { id: user.employeeId, name: user.name, role: "employee", timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const }
       ] : [];
-      // Fall back to Sunshine location for dynamically-created companies not in the map
-      const DEFAULT_LOCATIONS = COMPANY_LOCATIONS["ORG-SUNSHINE"]!;
-      const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? DEFAULT_LOCATIONS;
+      // Fall back to the auth-context location (resolved from DB for dynamic companies),
+      // then to Sunshine as last resort. This ensures new employees at wizard-created
+      // companies clock in at their actual EasyTeam location, not Sunshine.
+      const authLoc = location
+        ? [{ id: location.id, name: location.name, latitude: location.latitude, longitude: location.longitude }]
+        : [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }];
+      const myLocations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? authLoc;
 
       launch(data.token, {
         page: Pages.TIME_CLOCK,

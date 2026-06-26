@@ -34,9 +34,35 @@ function normalizePemKey(raw: string | undefined): string | undefined {
 const EASYTEAM_API_KEY = normalizePemKey(process.env.EASYTEAM_API_KEY);
 const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 
+// ── Location helper ─────────────────────────────────────────
+// Resolves a user's location object. For static companies (Sunshine, Rainbow) the location lives
+// in the in-memory store. For dynamically-created companies (wizard-created, DB-only) we construct
+// a minimal location from the DB company record so the frontend always gets a valid location.
+async function resolveUserLocation(userId: string): Promise<object | undefined> {
+  const user = store.getUserById(userId);
+  if (!user?.locationId) return undefined;
+  const storeLocation = store.getLocation(user.locationId);
+  if (storeLocation) return storeLocation;
+  // DB fallback — dynamic company employees have a UUID locationId not present in the static store
+  if (!user.companyId) return undefined;
+  const [dbCo] = await db.select().from(companies).where(eq(companies.id, user.companyId)).catch(() => [undefined]);
+  if (dbCo?.rollfiLocationId === user.locationId) {
+    const addr = [dbCo.address1, dbCo.city, dbCo.state].filter(Boolean).join(", ");
+    return {
+      id: dbCo.rollfiLocationId,
+      name: dbCo.locationName ?? dbCo.name ?? "Your Location",
+      organizationId: user.companyId,
+      address: addr,
+      latitude: 0,
+      longitude: 0,
+    };
+  }
+  return undefined;
+}
+
 // ── Login ────────────────────────────────────────────────────
 
-router.post("/auth/login", (req, res) => {
+router.post("/auth/login", async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
     res.status(400).json({ error: "Email and password are required" });
@@ -52,7 +78,7 @@ router.post("/auth/login", (req, res) => {
   req.session.userId = user.id;
   const { password: _p, ...safeUser } = user;
   const company = store.getCompany(user.companyId);
-  const location = user.locationId ? store.getLocation(user.locationId) : undefined;
+  const location = await resolveUserLocation(user.id);
   res.json({ user: safeUser, company, location });
 });
 
@@ -71,7 +97,7 @@ router.post("/auth/logout", (req, res) => {
 
 // ── Me ───────────────────────────────────────────────────────
 
-router.get("/auth/me", (req, res) => {
+router.get("/auth/me", async (req, res) => {
   if (!req.session.userId) {
     res.status(401).json({ error: "Not authenticated" });
     return;
@@ -82,7 +108,7 @@ router.get("/auth/me", (req, res) => {
     return;
   }
   const company = store.getCompany(user.companyId);
-  const location = user.locationId ? store.getLocation(user.locationId) : undefined;
+  const location = await resolveUserLocation(user.id);
   res.json({ user, company, location });
 });
 
@@ -125,10 +151,20 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "manager") {
+    // Same DB-fallback chain as employees so dynamic-company managers get the right locationId
+    const mgrStoreLocation = store.getCompany(user.companyId ?? "")?.locationId;
+    const mgrDbLocation = (!user.locationId && !mgrStoreLocation && user.companyId)
+      ? await db.select({ rollfiLocationId: companies.rollfiLocationId })
+          .from(companies)
+          .where(eq(companies.id, user.companyId))
+          .then((rows) => rows[0]?.rollfiLocationId ?? undefined)
+          .catch(() => undefined)
+      : undefined;
+    const mgrLocationId = user.locationId ?? mgrStoreLocation ?? mgrDbLocation;
     payload = {
       employeeId: user.employeeId,
       organizationId: "ORG-BRIGHTBRIDGE",
-      locationId: user.locationId,
+      locationId: mgrLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "manager",
