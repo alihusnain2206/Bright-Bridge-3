@@ -1447,10 +1447,15 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   }
 
   type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
-  const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate } = req.body as {
+  const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate, employeeHours = [] } = req.body as {
     companyId: string; payPeriodId: string; adjustments?: AdjInput[];
     payBeginDate?: string; payEndDate?: string;
+    employeeHours?: { rollfiUserId: string; hours: number }[];
   };
+  // Build a quick lookup from rollfiUserId → hours passed from the frontend display
+  const frontendHours = new Map<string, number>(
+    employeeHours.map(({ rollfiUserId, hours }) => [rollfiUserId.toUpperCase(), hours])
+  );
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) {
     res.status(400).json({ error: "Company not onboarded to Rollfi" });
@@ -1484,8 +1489,10 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       const synced = u.employeeId
         ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
         : null;
-      const payHours = synced ? synced.approvedHours : 0;
-      if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced for this employee — defaulting to 0h");
+      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
+      const payHours = synced ? synced.approvedHours : (frontendH ?? 0);
+      if (!synced && frontendH) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (no store entry)");
+      if (!synced && !frontendH) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced and no frontend hours — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
@@ -1565,12 +1572,47 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         { headers: rollfiHeaders() }
       );
       req.log.info({ rollfiResponse: retryResp.data }, "Rollfi addUsersToRegularPayPeriod retry response");
-      // If the retry also errors (e.g. all remaining users already enrolled), log and continue —
-      // importRegularPayrollData will surface any real issue.
+      // If the retry ALSO rejects a user (e.g. already has line item from a prior run),
+      // parse that UUID and remove them from filteredPayrollData too.
       const retryRaw = retryResp.data as Record<string, unknown>;
-      if (retryRaw?.error) {
+      const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
+      const retryRejectedUuids = new Set<string>(
+        retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
+      );
+      if (retryRejectedUuids.size > 0) {
+        filteredPayrollData = filteredPayrollData.filter((entry) => {
+          const uid = (entry.userId as string).toUpperCase();
+          if (retryRejectedUuids.has(uid)) {
+            skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg });
+            req.log.warn({ rollfiUserId: entry.userId, reason: retryErrMsg }, "Excluding employee from payroll — rejected in addUsersToRegularPayPeriod retry (already has line item)");
+            return false;
+          }
+          return true;
+        });
+      } else if (retryRaw?.error) {
         req.log.warn({ rollfiError: retryRaw.error }, "addUsersToRegularPayPeriod retry had error — proceeding to import");
       }
+    }
+
+    // Remove employees with zero hours — Rollfi rejects payroll where every employee has 0h.
+    // These appear in the adjustments panel but produce no payable amount.
+    filteredPayrollData = filteredPayrollData.filter((entry) => {
+      const hours = (entry.basicPay as Record<string, unknown>)?.payHours as number ?? 0;
+      const bonus = (entry.bonusPay as Record<string, unknown>)?.amount as number ?? 0;
+      if (hours === 0 && bonus === 0) {
+        skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: "zero hours and no bonus — excluded from payroll batch" });
+        req.log.warn({ rollfiUserId: entry.userId }, "Excluding employee — 0 hours and no bonus");
+        return false;
+      }
+      return true;
+    });
+
+    if (filteredPayrollData.length === 0) {
+      res.status(400).json({
+        error: "No employees have billable hours or bonuses for this pay period. Use the Payroll Adjustments section to add hours or bonuses before submitting.",
+        skippedEmployees,
+      });
+      return;
     }
 
     req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: filteredPayrollData.length, skipped: skippedEmployees.length }, "Rollfi importRegularPayrollData request");

@@ -856,8 +856,8 @@ export default function Payroll() {
   });
 
   const submitPayroll = useMutation({
-    mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[] }) =>
-      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs }),
+    mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
+      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
     onSuccess: (data) => {
       setPayrollResult(data);
       setIsPolling(true);
@@ -1702,7 +1702,12 @@ export default function Payroll() {
                     const adjs = Object.entries(adjustments)
                       .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
                       .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
-                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, payBeginDate: payPeriod.payBeginDate, payEndDate: payPeriod.payEndDate, adjs });
+                    // Pass hours the UI is displaying so backend can use them even if store has no entry
+                    const companyPreview = preview?.companies?.find((c: { id: string }) => c.id === selectedCompanyId);
+                    const employeeHours = (companyPreview?.employees ?? preview?.employees ?? [])
+                      .filter((e: { rollfiUserId: string | null; netPayableHours: number }) => e.rollfiUserId && e.netPayableHours > 0)
+                      .map((e: { rollfiUserId: string | null; netPayableHours: number }) => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
+                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, payBeginDate: payPeriod.payBeginDate, payEndDate: payPeriod.payEndDate, adjs, employeeHours });
                   }}
                   className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
                   style={{ background: ORANGE }}
