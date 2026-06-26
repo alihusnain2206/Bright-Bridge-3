@@ -140,10 +140,19 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "employee") {
-    // Resolve locationId: user record first, then company fallback, then LOC-SUNSHINE default
-    const empLocationId = user.locationId
-      ?? store.getCompany(user.companyId ?? "")?.locationId
-      ?? "LOC-SUNSHINE";
+    // Resolve locationId: user record first, then company (in-memory store), then DB fallback
+    // for dynamically-created companies (wizard-created), then LOC-SUNSHINE as last resort.
+    // The DB fallback is critical: without it, dynamic-company employees clock in at LOC-SUNSHINE
+    // (a different location than where Pull Hours syncs), causing the manager to see 0 hours.
+    const storeLocation = store.getCompany(user.companyId ?? "")?.locationId;
+    const dbLocation = (!user.locationId && !storeLocation && user.companyId)
+      ? await db.select({ rollfiLocationId: companies.rollfiLocationId })
+          .from(companies)
+          .where(eq(companies.id, user.companyId))
+          .then((rows) => rows[0]?.rollfiLocationId ?? undefined)
+          .catch(() => undefined)
+      : undefined;
+    const empLocationId = user.locationId ?? storeLocation ?? dbLocation ?? "LOC-SUNSHINE";
     payload = {
       employeeId: user.employeeId,
       organizationId: "ORG-BRIGHTBRIDGE",
