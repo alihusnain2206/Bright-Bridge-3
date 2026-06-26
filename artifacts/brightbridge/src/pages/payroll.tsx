@@ -196,8 +196,9 @@ function PayPeriodStatusBadge({ status }: { status: string }) {
 
 // ── Payroll result card ───────────────────────────────────────
 
-function PayrollResultCard({ result, onReset }: { result: PayrollResult; onReset: () => void }) {
+function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }: { result: PayrollResult; onReset: () => void; onVerifyBank?: () => void; verifyBankPending?: boolean }) {
   if (!result.success) {
+    const isBankPending = result.error?.toLowerCase().includes("microdeposit") || result.error?.toLowerCase().includes("funding source") || result.error?.toLowerCase().includes("not ready");
     return (
       <div className="mt-4 p-5 rounded-xl bg-red-500/10 border border-red-500/30">
         <div className="flex items-center gap-2 mb-2">
@@ -205,6 +206,18 @@ function PayrollResultCard({ result, onReset }: { result: PayrollResult; onReset
           <p className="text-red-300 font-semibold">Payroll submission failed</p>
         </div>
         <p className="text-red-300/70 text-sm ml-7">{result.error}</p>
+        {isBankPending && onVerifyBank && (
+          <div className="mt-3 ml-7 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <p className="text-amber-300/80 text-xs mb-2">The company bank account needs micro-deposit verification before payroll can be submitted.</p>
+            <button
+              onClick={onVerifyBank}
+              disabled={verifyBankPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-amber-500/30 hover:bg-amber-500/50 text-amber-200 border border-amber-500/30 disabled:opacity-50 transition-colors"
+            >
+              {verifyBankPending ? <><Loader2 className="h-3 w-3 animate-spin" />Verifying…</> : <><CheckCircle2 className="h-3 w-3" />Verify Bank Account Now</>}
+            </button>
+          </div>
+        )}
         <button onClick={onReset} className="mt-3 ml-7 text-xs text-red-400/70 hover:text-red-300 underline">Dismiss</button>
       </div>
     );
@@ -852,6 +865,15 @@ export default function Payroll() {
       void refetchOverview();
     },
     onError: (e) => { setPayrollResult({ success: false, error: (e as Error).message }); },
+  });
+
+  const verifyBank = useMutation({
+    mutationFn: (companyId: string) => api.post("/rollfi/onboard/verify-bank", { companyId }),
+    onSuccess: () => {
+      setPayrollResult(null);
+      void qc.invalidateQueries({ queryKey: ["rollfi-tasks"] });
+      setTimeout(() => { void fetchPayPeriod(selectedCompanyId); }, 1000);
+    },
   });
 
   // Auto-fetch employee statuses when entering tab 1
@@ -1554,7 +1576,14 @@ export default function Payroll() {
                   {selectedCompanyId === "all" && <p className="text-white/30 text-xs">Select a specific company to submit</p>}
                 </div>
 
-                {payrollResult && <PayrollResultCard result={payrollResult} onReset={() => setPayrollResult(null)} />}
+                {payrollResult && (
+                  <PayrollResultCard
+                    result={payrollResult}
+                    onReset={() => setPayrollResult(null)}
+                    onVerifyBank={selectedCompanyId !== "all" ? () => verifyBank.mutate(selectedCompanyId) : undefined}
+                    verifyBankPending={verifyBank.isPending}
+                  />
+                )}
 
                 {payPeriod && !periodSubmittable && (
                   <div className="mt-4 p-3 rounded-lg bg-white/5 border border-white/10 flex items-center gap-3">

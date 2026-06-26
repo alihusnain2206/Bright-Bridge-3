@@ -824,24 +824,26 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
     return;
   }
 
-  // Step 2: attempt micro-deposit verification with sandbox amounts (0.01, 0.01)
+  // Step 2: attempt micro-deposit verification.
+  // Accepts optional debitAmount1/debitAmount2 from the request body; falls back to 0.01/0.01
+  // (Rollfi sandbox accepts any amounts — docs show verifyMicroDeposits with debitAmount1/debitAmount2).
+  const { debitAmount1 = 0.01, debitAmount2 = 0.01 } = req.body as { debitAmount1?: number; debitAmount2?: number };
   try {
     const r2 = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposit`,
+      `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposits`,
       {
-        method: "verifyMicroDeposit",
+        method: "verifyMicroDeposits",
         companyId: rollfiCompanyId,
-        fundingSourceId,
-        amount1: 0.01,
-        amount2: 0.01,
+        debitAmount1,
+        debitAmount2,
       },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: r2.data }, "verifyMicroDeposit response");
+    req.log.info({ rollfiResponse: r2.data, debitAmount1, debitAmount2 }, "verifyMicroDeposits response");
     res.json({ success: true, fundingSourceId, verifyResponse: r2.data });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
-    req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposit failed");
+    req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposits failed");
     res.json({ success: false, fundingSourceId, currentStatus, error: err instanceof Error ? err.message : String(err), details: e.response?.data });
   }
 });
