@@ -408,6 +408,9 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     let synced = 0;
     await Promise.all(
       Array.from(hoursByEmp.entries()).map(async ([etEmpId, hours]) => {
+        // Never overwrite existing data with zero — if EasyTeam reports 0 hours (e.g. sandbox
+        // reset or no submitted shifts), preserve whatever was already stored for this employee.
+        if (hours <= 0) return;
         const etEmp = etEmps.find((e) => e.id === etEmpId);
         const rollfiUser = allStaff.find((u) =>
           u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
@@ -817,6 +820,9 @@ router.post("/easyteam/hours/approve", async (req, res) => {
           const matchedUser = companyUsers.find((u) => u.employeeId === internalEmpId);
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
           const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
+          // Never overwrite existing data with zero — skip employees whose EasyTeam data
+          // is empty/reset so we preserve the last known good value.
+          if (hoursWorked <= 0) continue;
           const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
           await upsertTimesheetEntry({
             employeeId: internalEmpId,

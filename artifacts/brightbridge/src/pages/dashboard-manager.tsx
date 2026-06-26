@@ -86,7 +86,11 @@ export default function ManagerDashboard() {
   const [fromDate, setFromDate] = useState(initWeek.from);
   const [toDate, setToDate] = useState(initWeek.to);
 
-  const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? [];
+  // Build locations for EasyTeam SDK. Use the hardcoded map for known companies; fall back to
+  // the location returned by the auth API (set on the manager's user record) so that dynamically-
+  // created companies (e.g. Happy Kids Daycare) still get a valid location entry.
+  const authLocation = location ? [{ id: location.id, name: location.name, latitude: location.latitude, longitude: location.longitude }] : [];
+  const companyLocations = COMPANY_LOCATIONS[user?.companyId ?? ""] ?? authLocation;
 
   // Derived name lookup from live employee list
   const employeeNames = Object.fromEntries(companyEmployees.map((e) => [e.id, e.name]));
@@ -174,10 +178,9 @@ export default function ManagerDashboard() {
     return () => clearInterval(iv);
   }, []);
 
-  // Auto-pull fresh EasyTeam data on mount and whenever the date range changes.
-  // Previously only fetchHours() was called here (reads stale store); now we sync first
-  // so the table always matches what the EasyTeam SDK iframe shows.
-  useEffect(() => { void handlePullHours(); }, [handlePullHours]);
+  // On mount: read what's in the store. Manager clicks "Pull Hours" to sync fresh from EasyTeam.
+  // Auto-pulling caused issues with dynamic companies (no locationId → sync returns 0 → wipes table).
+  useEffect(() => { void fetchHours(); }, [fetchHours]);
 
   const fetchEvents = async () => {
     try {
