@@ -776,7 +776,38 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
   }
 });
 
-// ── Funding source status + micro-deposit verification ───────
+// ── Funding source status (via getCompanyInfo) ───────────────
+
+router.get("/rollfi/onboard/bank-status", async (req, res) => {
+  const { companyId } = req.query as { companyId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+  try {
+    // Support confirmed: use getCompanyInfo to read current funding source status
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getCompanyInfo`,
+      { method: "getCompanyInfo", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: r.data }, "getCompanyInfo response");
+    const raw = r.data as Record<string, unknown>;
+    // Extract funding source info from Company array
+    const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+    const company = companies[0] ?? {};
+    const fundingSources = Array.isArray(company.FundingSources)
+      ? company.FundingSources as Record<string, unknown>[]
+      : [];
+    const active = fundingSources.find((f) => f.status !== "Deactivated") ?? fundingSources[0];
+    res.json({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, fundingSource: active ?? null, raw });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.warn({ err }, "getCompanyInfo failed");
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
+// ── Micro-deposit verification ────────────────────────────────
 
 router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
@@ -791,25 +822,43 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   }
   const rollfiCompanyId = rollfiCompany.rollfiCompanyId;
 
-  // Call verifyMicroDeposits directly — docs show only companyId + debitAmount1 + debitAmount2 needed.
-  // getCompanyFundingSource is not a documented endpoint so we skip it entirely.
+  // Step 1: check current status via getCompanyInfo (confirmed endpoint from Rollfi support)
+  let currentStatus: string | undefined;
+  try {
+    const infoResp = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getCompanyInfo`,
+      { method: "getCompanyInfo", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: infoResp.data }, "getCompanyInfo for verify-bank");
+    const infoRaw = infoResp.data as Record<string, unknown>;
+    const companies = Array.isArray(infoRaw.Company) ? infoRaw.Company as Record<string, unknown>[] : [];
+    const co = companies[0] ?? {};
+    const sources = Array.isArray(co.FundingSources) ? co.FundingSources as Record<string, unknown>[] : [];
+    const active = sources.find((f) => f.status !== "Deactivated") ?? sources[0];
+    currentStatus = active?.status as string | undefined;
+    req.log.info({ currentStatus }, "Funding source status from getCompanyInfo");
+    if (currentStatus && !["microdeposit pending", "pending"].includes(currentStatus.toLowerCase())) {
+      // Already verified or not pending — return early with status
+      res.json({ success: currentStatus.toLowerCase() === "ready" || currentStatus.toLowerCase() === "active", currentStatus, rollfiCompanyId, message: `Funding source status: ${currentStatus}` });
+      return;
+    }
+  } catch (e) {
+    req.log.warn({ e }, "getCompanyInfo failed in verify-bank — proceeding to verifyMicroDeposits");
+  }
+
+  // Step 2: attempt micro-deposit verification
   const { debitAmount1 = 0.01, debitAmount2 = 0.01 } = req.body as { debitAmount1?: number; debitAmount2?: number };
   try {
     const r = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposits`,
-      {
-        method: "verifyMicroDeposits",
-        companyId: rollfiCompanyId,
-        debitAmount1,
-        debitAmount2,
-      },
+      { method: "verifyMicroDeposits", companyId: rollfiCompanyId, debitAmount1, debitAmount2 },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: r.data, debitAmount1, debitAmount2 }, "verifyMicroDeposits response");
     const raw = r.data as Record<string, unknown>;
-    // Rollfi returns { status, message } — "Verification Failed" means wrong amounts, not an HTTP error
     const verified = String(raw.status ?? "").toLowerCase() === "success" || String(raw.message ?? "").toLowerCase().includes("success");
-    res.json({ success: verified, rollfiCompanyId, verifyResponse: raw });
+    res.json({ success: verified, rollfiCompanyId, currentStatus, verifyResponse: raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposits failed");
