@@ -101,8 +101,8 @@ export async function onboardEmployeeToRollfi(
     return { success: true, rollfiUserId: existing.rollfiUserId, rollfiWageId: existing.rollfiWageId };
   }
 
-  const nameParts = emp.name.split(" ");
-  const firstName = nameParts[0];
+  const nameParts = emp.name.trim().split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] ?? "";
   const lastName = nameParts.slice(1).join(" ") || "Staff";
 
   try {

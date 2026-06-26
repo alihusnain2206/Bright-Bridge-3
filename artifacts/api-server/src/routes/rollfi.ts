@@ -868,8 +868,8 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
   const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === employeeId);
   if (!staffUser) { res.status(404).json({ error: "Employee not found" }); return; }
 
-  const nameParts = staffUser.name.split(" ");
-  const firstName = nameParts[0];
+  const nameParts = staffUser.name.trim().split(/\s+/).filter(Boolean);
+  const firstName = nameParts[0] ?? "";
   const lastName = nameParts.slice(1).join(" ") || "Staff";
   const wage = staffUser.hourlyWage ?? 1500;
 
