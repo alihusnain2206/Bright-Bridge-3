@@ -4,8 +4,9 @@ import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
-import { db, companies as companiesTable, userAccounts as userAccountsTable } from "@workspace/db";
+import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
+import { resolveCompanyLocationId } from "../lib/location.js";
 
 const router: IRouter = Router();
 
@@ -164,40 +165,34 @@ router.post("/easyteam/token", async (req, res) => {
   let resolvedOrgId = organization_id || company_id || "SANDBOX-ORG-001";
   let resolvedRoleName = role_name || "Manager";
   let resolvedAccessRole = access_role || "manager";
-  let resolvedWage = 1500;
+  // Wage is expressed in DOLLARS in the launch JWT — consistent with /auth/token-by-role and
+  // the EasyTeam employee registration path (both divide stored cents by 100).
+  let resolvedWage = 15;
 
+  // client_id is a companyId in the unified model — resolve its EasyTeam location id.
   if (client_id) {
-    const client = store.getClient(client_id);
-    if (client) {
-      // Resolve the real EasyTeam location via client → linkedCompany → locationId
-      const linkedCompany = client.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
-      resolvedLocationId = linkedCompany?.locationId ?? client.linkedCompanyId ?? client.id;
-      resolvedOrgId = "ORG-BRIGHTBRIDGE";
-    }
+    resolvedLocationId = await resolveCompanyLocationId(client_id);
+    resolvedOrgId = "ORG-BRIGHTBRIDGE";
   }
 
   let resolvedEtEmployeeId = employee_id;
   if (employee_id) {
-    const emp = store.getEmployee(employee_id);
-    if (emp) {
-      if (emp.status !== "active") {
-        res.status(403).json({
-          success: false,
-          error: `Employee is not yet active (status: ${emp.status}). Activate them first before launching the time clock.`,
-        });
-        return;
+    // Prefer a matching staff user (seeded + dynamic logins carry role/position/wage and the
+    // canonical employeeId, so every JWT path maps to the same single EasyTeam record).
+    const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === employee_id);
+    if (staffUser) {
+      resolvedRoleName = staffUser.position ?? resolvedRoleName;
+      resolvedAccessRole = staffUser.role === "manager" ? "manager" : "employee";
+      resolvedWage = (staffUser.hourlyWage ?? 1500) / 100;
+      resolvedEtEmployeeId = staffUser.employeeId ?? employee_id;
+    } else {
+      // Fall back to the unified DB employees table for staff without a login account.
+      const [dbEmp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employee_id)).catch(() => [undefined]);
+      if (dbEmp) {
+        resolvedRoleName = dbEmp.position;
+        resolvedAccessRole = "employee";
+        resolvedWage = (dbEmp.hourlyWage ?? 1500) / 100;
       }
-      resolvedRoleName = emp.roleName;
-      resolvedAccessRole = emp.role;
-      resolvedWage = emp.wage;
-
-      // Resolve to the staffUser's canonical employeeId so every JWT path (Super Admin
-      // timesheets, Manager dashboard, Employee login, boot sync) maps to the same
-      // single EasyTeam record — preventing duplicate entries per person.
-      const staffUser = emp.email
-        ? store.getAllStaffUsers().find((u) => u.email === emp.email)
-        : undefined;
-      if (staffUser?.employeeId) resolvedEtEmployeeId = staffUser.employeeId;
     }
   }
 
@@ -319,8 +314,8 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
             "TIMESHEET_READ", "TIMESHEET_WRITE",
           ],
         },
-        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 2500 },
-        wage: 2500, wageType: "hourly",
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 25 },
+        wage: 25, wageType: "hourly",
         features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
       },
       EASYTEAM_API_KEY,
@@ -377,7 +372,6 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
   const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
-  const etEmps   = store.listClients().flatMap((c) => store.listEmployees(c.id));
 
   // Helper: scan exportLog for a matching entry, write to store + persist to DB.
   // Returns the number of entries persisted, or 0 if no usable export data was found.
@@ -393,10 +387,8 @@ router.post("/easyteam/hours/sync", async (req, res) => {
     const breaksByEmp = new Map<string, number>();
     for (const shift of found.shifts) {
       if (companyId) {
-        const etEmp = etEmps.find((e) => e.id === shift.employeeId);
-        const ru = etEmp
-          ? allStaff.find((u) => u.name.toLowerCase() === etEmp.name.toLowerCase())
-          : allStaff.find((u) => u.employeeId === shift.employeeId);
+        const internalEmpId = store.resolveEasyTeamUuid(shift.employeeId);
+        const ru = allStaff.find((u) => u.employeeId === internalEmpId);
         if (!ru || ru.companyId !== companyId) continue;
       }
       const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
@@ -411,13 +403,11 @@ router.post("/easyteam/hours/sync", async (req, res) => {
         // Never overwrite existing data with zero — if EasyTeam reports 0 hours (e.g. sandbox
         // reset or no submitted shifts), preserve whatever was already stored for this employee.
         if (hours <= 0) return;
-        const etEmp = etEmps.find((e) => e.id === etEmpId);
-        const rollfiUser = allStaff.find((u) =>
-          u.employeeId === etEmpId || (etEmp && u.name.toLowerCase() === etEmp.name.toLowerCase())
-        );
+        const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
+        const rollfiUser = allStaff.find((u) => u.employeeId === internalEmpId);
         const breakH = breaksByEmp.get(etEmpId) ?? 0;
         await upsertTimesheetEntry({
-          employeeId: rollfiUser?.employeeId ?? etEmpId,
+          employeeId: rollfiUser?.employeeId ?? internalEmpId,
           companyId:  rollfiUser?.companyId  ?? companyId ?? "unknown",
           periodKey,
           hoursWorked:   hours,
@@ -465,7 +455,11 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   }
 
   // ── Step 3: EasyTeam REST API direct fetch ──
-  const allClientIds = companyId ? [companyId] : store.listClients().map((c) => c.id);
+  const allClientIds = companyId
+    ? [companyId]
+    : (await db.select({ id: companiesTable.id }).from(companiesTable).catch(() => []))
+        .map((c) => c.id)
+        .filter((id) => id !== "ORG-BRIGHTBRIDGE");
   const storeCompaniesToSync = allClientIds
     .map((id) => store.getCompany(id))
     .filter((c): c is NonNullable<typeof c> => c != null && !!c.locationId);
@@ -681,8 +675,8 @@ async function fetchEasyTeamShiftsForLocation(
             "TIMESHEET_READ", "TIMESHEET_WRITE",
           ],
         },
-        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 2500 },
-        wage: 2500,
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 25 },
+        wage: 25,
         wageType: "hourly",
         features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
       },
@@ -738,9 +732,9 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Look up location for this company
-  const company = store.getCompany(companyId);
-  const locationId = company?.locationId;
+  // Resolve location: store for seeded demo companies, DB rollfiLocationId for wizard companies.
+  // Using the unified resolver ensures DB-only companies still REST-fetch EasyTeam hours on approval.
+  const locationId = await resolveCompanyLocationId(companyId);
 
   let dataSource: "easyteam" | "seeded" = "seeded";
 
@@ -884,8 +878,8 @@ router.get("/easyteam/debug/shifts", async (req, res) => {
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: { name: "manager", permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"] },
-        role: { name: mgr.position ?? "Daycare Manager", hourlyWage: 2500 },
-        wage: 2500,
+        role: { name: mgr.position ?? "Daycare Manager", hourlyWage: 25 },
+        wage: 25,
         wageType: "hourly",
         features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
       },

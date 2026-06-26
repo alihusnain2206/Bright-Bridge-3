@@ -355,7 +355,16 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   }
 
   const { companyId } = req.body as { companyId: string };
-  const company = store.getCompany(companyId);
+  // Resolve from the in-memory store (seeded demo) or DB (wizard-created companies) so
+  // dynamically-created companies can also be onboarded to Rollfi.
+  let company: { name: string; address?: string } | undefined = store.getCompany(companyId);
+  if (!company) {
+    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+    if (dbCo) {
+      const address = [dbCo.address1, dbCo.city, dbCo.state].filter(Boolean).join(", ");
+      company = { name: dbCo.name, address: address || undefined };
+    }
+  }
   if (!company) { res.status(404).json({ error: "Company not found" }); return; }
 
   const existing = store.getRollfiCompany(companyId);

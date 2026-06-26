@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
+import { resolveCompanyLocationId } from "../lib/location.js";
 import { db, companies } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
@@ -40,7 +41,7 @@ const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 // a minimal location from the DB company record so the frontend always gets a valid location.
 async function resolveUserLocation(userId: string): Promise<object | undefined> {
   const user = store.getUserById(userId);
-  if (!user) return undefined;
+  if (!user || !user.companyId) return undefined;
 
   // 1. If user has an explicit locationId, try the in-memory store first
   if (user.locationId) {
@@ -48,23 +49,18 @@ async function resolveUserLocation(userId: string): Promise<object | undefined> 
     if (storeLocation) return storeLocation;
   }
 
-  // 2. No store hit (or no explicit locationId) — derive from company.
+  // 2. Unified resolver: store company location → DB rollfiLocationId → LOC-${id}.
   //    Mirrors the same chain used in token-by-role so /me and JWT are always consistent.
-  if (!user.companyId) return undefined;
+  const locationId = await resolveCompanyLocationId(user.companyId);
+  const storeLocation = store.getLocation(locationId);
+  if (storeLocation) return storeLocation;
 
-  // Check in-memory store company first (ORG-SUNSHINE / ORG-RAINBOW)
-  const storeCompanyLocationId = store.getCompany(user.companyId)?.locationId;
-  if (storeCompanyLocationId) {
-    const storeLocation = store.getLocation(storeCompanyLocationId);
-    if (storeLocation) return storeLocation;
-  }
-
-  // DB fallback for dynamically created companies (wizard-created, not in static store)
+  // 3. DB-derived minimal location for dynamically created (wizard) companies.
   const [dbCo] = await db.select().from(companies).where(eq(companies.id, user.companyId)).catch(() => [undefined]);
-  if (dbCo?.rollfiLocationId) {
+  if (dbCo) {
     const addr = [dbCo.address1, dbCo.city, dbCo.state].filter(Boolean).join(", ");
     return {
-      id: dbCo.rollfiLocationId,
+      id: locationId,
       name: dbCo.locationName ?? dbCo.name ?? "Your Location",
       organizationId: user.companyId,
       address: addr,
@@ -74,6 +70,17 @@ async function resolveUserLocation(userId: string): Promise<object | undefined> 
   }
 
   return undefined;
+}
+
+// Resolves a user's company object. Seeded demo companies live in the in-memory store;
+// wizard-created companies are DB-only, so fall back to the DB row. Without this, managers/
+// employees of wizard companies see a blank company name on their dashboard.
+async function resolveUserCompany(companyId?: string): Promise<object | undefined> {
+  if (!companyId) return undefined;
+  const storeCo = store.getCompany(companyId);
+  if (storeCo) return storeCo;
+  const [dbCo] = await db.select().from(companies).where(eq(companies.id, companyId)).catch(() => [undefined]);
+  return dbCo ?? undefined;
 }
 
 // ── Login ────────────────────────────────────────────────────
@@ -93,7 +100,7 @@ router.post("/auth/login", async (req, res) => {
 
   req.session.userId = user.id;
   const { password: _p, ...safeUser } = user;
-  const company = store.getCompany(user.companyId);
+  const company = await resolveUserCompany(user.companyId);
   const location = await resolveUserLocation(user.id);
   res.json({ user: safeUser, company, location });
 });
@@ -123,7 +130,7 @@ router.get("/auth/me", async (req, res) => {
     res.status(401).json({ error: "User not found" });
     return;
   }
-  const company = store.getCompany(user.companyId);
+  const company = await resolveUserCompany(user.companyId);
   const location = await resolveUserLocation(user.id);
   res.json({ user, company, location });
 });
@@ -167,16 +174,8 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "manager") {
-    // Same DB-fallback chain as employees so dynamic-company managers get the right locationId
-    const mgrStoreLocation = store.getCompany(user.companyId ?? "")?.locationId;
-    const mgrDbLocation = (!user.locationId && !mgrStoreLocation && user.companyId)
-      ? await db.select({ rollfiLocationId: companies.rollfiLocationId })
-          .from(companies)
-          .where(eq(companies.id, user.companyId))
-          .then((rows) => rows[0]?.rollfiLocationId ?? undefined)
-          .catch(() => undefined)
-      : undefined;
-    const mgrLocationId = user.locationId ?? mgrStoreLocation ?? mgrDbLocation;
+    // Unified location resolver: store company → DB rollfiLocationId → LOC-${id}
+    const mgrLocationId = user.locationId ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
     payload = {
       employeeId: user.employeeId,
       organizationId: "ORG-BRIGHTBRIDGE",
@@ -196,15 +195,7 @@ router.post("/auth/token-by-role", async (req, res) => {
     // for dynamically-created companies (wizard-created), then LOC-SUNSHINE as last resort.
     // The DB fallback is critical: without it, dynamic-company employees clock in at LOC-SUNSHINE
     // (a different location than where Pull Hours syncs), causing the manager to see 0 hours.
-    const storeLocation = store.getCompany(user.companyId ?? "")?.locationId;
-    const dbLocation = (!user.locationId && !storeLocation && user.companyId)
-      ? await db.select({ rollfiLocationId: companies.rollfiLocationId })
-          .from(companies)
-          .where(eq(companies.id, user.companyId))
-          .then((rows) => rows[0]?.rollfiLocationId ?? undefined)
-          .catch(() => undefined)
-      : undefined;
-    const empLocationId = user.locationId ?? storeLocation ?? dbLocation ?? "LOC-SUNSHINE";
+    const empLocationId = user.locationId ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : "LOC-SUNSHINE");
     payload = {
       employeeId: user.employeeId,
       organizationId: "ORG-BRIGHTBRIDGE",

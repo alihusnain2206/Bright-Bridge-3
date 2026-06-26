@@ -2,3 +2,6 @@
 - [Rollfi employee onboarding flow](rollfi-employee-onboarding.md) — full 5-step KYC sequence required before employees can join payroll; bank account is the final activation gate
 - [EasyTeam environment](easyteam-production.md) — EasyTeam is PRODUCTION not sandbox; use production URLs, never revert to /sandbox/ prefix
 - [EasyTeam timesheets API](easyteam-timesheets-api.md) — no params on /timesheets; payableDuration is ms not minutes; UUID mapping required; clear stale entries before writing
+- [Durable delete cascades to login layer](login-account-durable-delete.md) — deleting employee/company must also delete store staff user + user_accounts row, or boot reconciliation resurrects it
+- [/clients is a contract shim over companies](clients-contract-shim.md) — clientId==companyId; keep POST/DELETE /clients even though wizard uses /api/companies (generated hooks depend on them)
+- [EasyTeam JWT wage units](easyteam-jwt-wage-units.md) — JWT `wage` claim must be DOLLARS (cents/100); we store cents internally; 3 JWT paths must stay consistent

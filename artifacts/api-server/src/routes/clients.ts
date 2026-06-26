@@ -1,204 +1,283 @@
 import { Router, type IRouter } from "express";
 import { store, type EmployeeStatus } from "../store";
-import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
-import { persistClientEmployee } from "../lib/client-employee-persist.js";
-import { persistUserAccount } from "../lib/user-account-persist.js";
-import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { db, companies as companiesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import type { Logger } from "pino";
+import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
+import { persistUserAccount, deleteUserAccount } from "../lib/user-account-persist.js";
+import { db, companies as companiesTable, employees as employeesTable } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-function getRollfiCompanyForClient(clientId: string) {
-  const client = store.getClient(clientId);
-  if (!client?.linkedCompanyId) return undefined;
-  return store.getRollfiCompany(client.linkedCompanyId);
+function uid() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function attemptSync(employeeId: string, clientId: string, log: Logger) {
-  const emp = store.getEmployee(employeeId);
-  if (!emp || emp.status !== "active") return;
+type CompanyRow = {
+  id: string;
+  name: string;
+  locationName: string | null;
+  createdAt?: string | null;
+};
 
-  const rollfiCompany = getRollfiCompanyForClient(clientId);
-
-  // Resolve the EasyTeam location for this client — check store first, then DB for dynamic companies
-  const client = store.getClient(clientId);
-  const linkedCompanyId = client?.linkedCompanyId;
-  const company = linkedCompanyId ? store.getCompany(linkedCompanyId) : undefined;
-  let locationId = company?.locationId;
-  if (!locationId && linkedCompanyId) {
-    const [dbCo] = await db
-      .select({ rollfiLocationId: companiesTable.rollfiLocationId })
-      .from(companiesTable)
-      .where(eq(companiesTable.id, linkedCompanyId))
-      .catch(() => [undefined]);
-    locationId = dbCo?.rollfiLocationId ?? undefined;
-  }
-
-  // Register in EasyTeam — only flag as synced after confirmed API success
-  let easyteamSynced = emp.easyteamSynced;
-  if (locationId && !emp.easyteamSynced) {
-    const etResult = await registerEmployeeInEasyTeam(emp, locationId, log);
-    easyteamSynced = etResult.success;
-    if (!etResult.success) {
-      log.warn({ employeeId, name: emp.name, reason: etResult.error }, "EasyTeam auto-registration did not confirm — employee will appear after first Time Clock use");
-    }
-  }
-
-  if (rollfiCompany && !emp.rollfiSynced) {
-    const result = await onboardClientEmployeeToRollfi(emp, rollfiCompany, log);
-    store.updateEmployee(employeeId, {
-      rollfiSynced: result.success,
-      rollfiUserId: result.rollfiUserId,
-      syncError: result.success ? undefined : result.error,
-      easyteamSynced,
-    });
-  } else {
-    store.updateEmployee(employeeId, { easyteamSynced, syncError: undefined });
-  }
+/**
+ * Project a DB company row to the legacy "Client" shape the frontend (and the generated
+ * OpenAPI hooks `useListClients` / `useListClientEmployees`) expect. In the unified model a
+ * client *is* a company, so clientId === companyId. Lat/long/timezone come from the in-memory
+ * store location for the seeded demo companies; wizard-created companies use sensible defaults.
+ */
+function projectCompany(co: CompanyRow) {
+  const storeCo = store.getCompany(co.id);
+  return {
+    id: co.id,
+    name: co.name,
+    locationName: co.locationName ?? storeCo?.name ?? co.name,
+    latitude: storeCo?.latitude ?? 40.7128,
+    longitude: storeCo?.longitude ?? -74.006,
+    timezone: "America/New_York",
+    createdAt: co.createdAt ?? new Date().toISOString(),
+    linkedCompanyId: co.id,
+  };
 }
 
-router.get("/clients", (_req, res) => {
-  res.json({ clients: store.listClients() });
+/** Project a DB employee row to the legacy "ClientEmployee" shape. */
+function projectEmployee(e: typeof employeesTable.$inferSelect) {
+  return {
+    id: e.id,
+    clientId: e.companyId,
+    name: `${e.firstName} ${e.lastName}`.trim(),
+    role: "employee",
+    roleName: e.position,
+    wage: e.hourlyWage,
+    wageType: "hourly" as const,
+    timeTrackingEnabled: true,
+    email: e.email,
+    status: e.status as EmployeeStatus,
+    easyteamSynced: e.easyteamSynced,
+    rollfiSynced: !!e.rollfiUserId,
+    rollfiUserId: e.rollfiUserId ?? undefined,
+    syncError: e.lastSyncError ?? undefined,
+    createdAt: e.createdAt,
+  };
+}
+
+// ── GET /clients ─────────────────────────────────────────────
+router.get("/clients", async (_req, res) => {
+  const rows: (typeof companiesTable.$inferSelect)[] = await db.select().from(companiesTable).catch(() => []);
+  const clients = rows.filter((c) => c.id !== "ORG-BRIGHTBRIDGE").map(projectCompany);
+  res.json({ clients });
 });
 
-router.post("/clients", (req, res) => {
-  const { name, locationName, latitude, longitude, timezone } = req.body as {
+// ── POST /clients (create) ───────────────────────────────────
+// In the unified model a "client" IS a company, so this creates a DB company row and
+// projects it back to the legacy Client shape. Retained for HTTP/Zod contract stability
+// (the generated `useCreateClient` hook); the in-app wizard creates companies via POST /api/companies.
+router.post("/clients", async (req, res) => {
+  const { name, locationName } = req.body as {
     name: string;
     locationName: string;
     latitude?: number;
     longitude?: number;
     timezone?: string;
   };
-
   if (!name || !locationName) {
     res.status(400).json({ error: "name and locationName are required" });
     return;
   }
-
-  const client = store.createClient({
+  const id = `ORG-${uid().toUpperCase()}`;
+  const now = new Date().toISOString();
+  await db.insert(companiesTable).values({
+    id,
     name,
     locationName,
-    latitude: latitude ?? 40.7128,
-    longitude: longitude ?? -74.006,
-    timezone: timezone ?? "America/New_York",
+    rollfiLocationId: `LOC-${id}`,
+    createdAt: now,
+    updatedAt: now,
   });
-
-  res.status(201).json(client);
+  const [saved] = await db.select().from(companiesTable).where(eq(companiesTable.id, id));
+  res.status(201).json(projectCompany(saved));
 });
 
-router.delete("/clients/:clientId", (req, res) => {
+// ── DELETE /clients/:clientId ────────────────────────────────
+// Removes the company (the unified "client"). The `client_employee_records` table is left
+// in place per the data-retention requirement. Retained for contract stability.
+router.delete("/clients/:clientId", async (req, res) => {
   const { clientId } = req.params;
-  const deleted = store.deleteClient(clientId);
-  if (!deleted) {
-    res.status(404).json({ error: "Client not found" });
-    return;
+  const deleted = await db
+    .delete(companiesTable)
+    .where(eq(companiesTable.id, clientId))
+    .returning({ id: companiesTable.id })
+    .catch(() => []);
+  if (deleted.length === 0) { res.status(404).json({ error: "Client not found" }); return; }
+
+  // Cascade: remove the company's employees and their auto-created logins so deleting a client
+  // doesn't orphan staff rows or leave usable login accounts behind. The client_employee_records
+  // table is intentionally left untouched (data-retention requirement).
+  const emps = await db.select().from(employeesTable).where(eq(employeesTable.companyId, clientId)).catch(() => []);
+  for (const emp of emps) {
+    if (!emp.email) continue;
+    const loginUser = store.getUserByEmail(emp.email);
+    if (loginUser) {
+      store.deleteStaffUser(loginUser.id);
+      await deleteUserAccount(loginUser.id).catch((err) =>
+        req.log.warn({ err, email: emp.email }, "Failed to delete login account for removed client employee")
+      );
+    }
   }
+  await db.delete(employeesTable).where(eq(employeesTable.companyId, clientId)).catch(() => { /* non-fatal */ });
+
   res.json({ deleted: true, id: clientId });
 });
 
-router.get("/clients/by-company/:companyId", (req, res) => {
+// ── GET /clients/by-company/:companyId ───────────────────────
+router.get("/clients/by-company/:companyId", async (req, res) => {
   const { companyId } = req.params;
-  const client = store.listClients().find((c) => c.linkedCompanyId === companyId);
-  if (!client) {
-    res.status(404).json({ error: "No client found for this company" });
+  const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+  if (co) { res.json(projectCompany(co)); return; }
+
+  // Fall back to the in-memory store for companies that only live there.
+  const storeCo = store.getCompany(companyId);
+  if (storeCo) {
+    res.json(projectCompany({ id: storeCo.id, name: storeCo.name, locationName: storeCo.name, createdAt: new Date().toISOString() }));
     return;
   }
-  res.json(client);
+  res.status(404).json({ error: "No client found for this company" });
 });
 
-router.get("/clients/:clientId/employees", (req, res) => {
+// ── GET /clients/:clientId/employees ─────────────────────────
+router.get("/clients/:clientId/employees", async (req, res) => {
   const { clientId } = req.params;
-  const client = store.getClient(clientId);
-  if (!client) {
-    res.status(404).json({ error: "Client not found" });
-    return;
-  }
-  res.json({ employees: store.listEmployees(clientId) });
+  const rows = await db.select().from(employeesTable).where(eq(employeesTable.companyId, clientId)).catch(() => []);
+  res.json({ employees: rows.map(projectEmployee) });
 });
 
+// ── POST /clients/:clientId/employees (quick-add) ────────────
 router.post("/clients/:clientId/employees", async (req, res) => {
   const { clientId } = req.params;
-  const client = store.getClient(clientId);
-  if (!client) {
-    res.status(404).json({ error: "Client not found" });
-    return;
-  }
 
-  const { name, email, role, roleName, wage, wageType, timeTrackingEnabled, status } = req.body as {
+  const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, clientId)).catch(() => [undefined]);
+  const storeCo = store.getCompany(clientId);
+  if (!co && !storeCo) { res.status(404).json({ error: "Client not found" }); return; }
+
+  const { name, email, roleName, wage, status } = req.body as {
     name: string;
     email?: string;
-    role: string;
+    role?: string;
     roleName: string;
-    wage?: number;
-    wageType?: "hourly" | "weekly" | "monthly";
+    wage?: number; // cents
+    wageType?: string;
     timeTrackingEnabled?: boolean;
     status?: EmployeeStatus;
   };
 
-  if (!name || !role || !roleName) {
-    res.status(400).json({ error: "name, role, and roleName are required" });
+  if (!name || !roleName) {
+    res.status(400).json({ error: "name and roleName are required" });
     return;
   }
 
-  const employee = store.createEmployee(clientId, {
-    name,
-    email,
-    role,
-    roleName,
-    wage: wage ?? 1500,
-    wageType: wageType ?? "hourly",
-    timeTrackingEnabled: timeTrackingEnabled ?? true,
-    status: status ?? "hired",
+  const [first, ...rest] = name.trim().split(" ");
+  const last = rest.join(" ") || first;
+  const employeeId = `EMP-${uid().toUpperCase()}`;
+  const hourlyWageCents = wage ?? 1500;
+  const finalStatus: EmployeeStatus = status ?? "active";
+  const now = new Date().toISOString();
+
+  await db.insert(employeesTable).values({
+    id: employeeId,
+    companyId: clientId,
+    firstName: first,
+    lastName: last,
+    email: email ?? "",
+    position: roleName,
+    startDate: now.split("T")[0],
+    payType: "hourly",
+    hourlyWage: hourlyWageCents,
+    status: finalStatus,
     easyteamSynced: false,
-    rollfiSynced: false,
+    syncStatus: "pending",
+    createdAt: now,
+    updatedAt: now,
   });
 
-  if (employee.status === "active") {
-    await attemptSync(employee.id, clientId, req.log as unknown as Logger);
+  let easyteamSynced = false;
+  let rollfiSynced = false;
+  let rollfiUserId: string | undefined;
+  let syncError: string | undefined;
+
+  if (finalStatus === "active") {
+    const sync = await syncEmployeeToIntegrations(
+      { id: employeeId, companyId: clientId, name, email: email ?? "", position: roleName, hourlyWageCents },
+      req.log
+    );
+    easyteamSynced = sync.easyteamSynced;
+    rollfiSynced = sync.rollfiSynced;
+    rollfiUserId = sync.rollfiUserId;
+    syncError = sync.syncError;
+
+    const syncStatus = easyteamSynced && rollfiSynced ? "synced" : (easyteamSynced || rollfiSynced) ? "partial" : "pending";
+    await db.update(employeesTable).set({
+      easyteamSynced,
+      rollfiUserId,
+      rollfiOnboardedAt: rollfiSynced ? now : undefined,
+      syncStatus,
+      lastSyncError: syncError,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(employeesTable.id, employeeId));
   }
 
-  const saved = store.getEmployee(employee.id) ?? employee;
-  await persistClientEmployee(saved).catch(() => { /* non-fatal */ });
-
-  // Auto-create a login account if email is provided
+  // Auto-create a login account if email is provided (and not already taken)
   let loginCreated = false;
   const loginPassword = "Staff123!";
-  if (email) {
-    const company = client.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
+  if (email && !store.getUserByEmail(email)) {
     store.addTestUser({
       id: `USER-DYN-${Date.now()}`,
       name,
       email,
       password: loginPassword,
       role: "employee",
-      companyId: client.linkedCompanyId ?? "",
-      locationId: company?.locationId,
-      employeeId: employee.id,
+      companyId: clientId,
+      locationId: storeCo?.locationId,
+      employeeId,
       position: roleName,
-      hourlyWage: wage,
+      hourlyWage: hourlyWageCents,
     });
     loginCreated = true;
     const newUser = store.getUserByEmail(email);
-    if (newUser) {
-      await persistUserAccount(newUser).catch(() => { /* non-fatal */ });
-    }
+    if (newUser) await persistUserAccount(newUser).catch(() => { /* non-fatal */ });
   }
 
-  res.status(201).json({ ...saved, loginCreated, loginEmail: loginCreated ? email : undefined, loginPassword: loginCreated ? loginPassword : undefined });
+  const [saved] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+  res.status(201).json({
+    ...projectEmployee(saved),
+    loginCreated,
+    loginEmail: loginCreated ? email : undefined,
+    loginPassword: loginCreated ? loginPassword : undefined,
+  });
 });
 
-router.delete("/clients/:clientId/employees/:employeeId", (req, res) => {
+// ── DELETE /clients/:clientId/employees/:employeeId ──────────
+router.delete("/clients/:clientId/employees/:employeeId", async (req, res) => {
   const { clientId, employeeId } = req.params;
-  const deleted = store.deleteEmployee(clientId, employeeId);
-  if (!deleted) {
-    res.status(404).json({ error: "Employee not found" });
-    return;
+  const [emp] = await db.select().from(employeesTable)
+    .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, clientId)))
+    .catch(() => [undefined]);
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  await db.delete(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => { /* non-fatal */ });
+
+  // Durable login cleanup: an auto-created login (memory + user_accounts DB row) would otherwise
+  // be re-seeded on the next restart, letting a deleted employee log in and clock in again.
+  if (emp.email) {
+    const loginUser = store.getUserByEmail(emp.email);
+    if (loginUser) {
+      store.deleteStaffUser(loginUser.id);
+      await deleteUserAccount(loginUser.id).catch((err) =>
+        req.log.warn({ err, email: emp.email }, "Failed to delete login account for removed employee")
+      );
+    }
   }
   res.json({ deleted: true, id: employeeId });
 });
 
+// ── PATCH /clients/:clientId/employees/:employeeId/status ────
 router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res) => {
   const { clientId, employeeId } = req.params;
   const { status } = req.body as { status: EmployeeStatus };
@@ -209,86 +288,73 @@ router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res)
     return;
   }
 
-  const emp = store.getEmployee(employeeId);
-  if (!emp || emp.clientId !== clientId) {
-    res.status(404).json({ error: "Employee not found" });
-    return;
-  }
+  const [emp] = await db.select().from(employeesTable)
+    .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, clientId)))
+    .catch(() => [undefined]);
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
 
   const wasNotActive = emp.status !== "active";
-  store.updateEmployee(employeeId, {
+  await db.update(employeesTable).set({
     status,
-    // Keep existing easyteamSynced flag when activating — attemptSync below will update it after real API call
+    // Preserve the existing easyteamSynced flag when activating; the sync below refreshes it.
     easyteamSynced: status === "active" ? emp.easyteamSynced : false,
-  });
+    updatedAt: new Date().toISOString(),
+  }).where(eq(employeesTable.id, employeeId));
 
   if (status === "active" && wasNotActive) {
-    await attemptSync(employeeId, clientId, req.log as unknown as Logger);
+    const sync = await syncEmployeeToIntegrations(
+      { id: emp.id, companyId: clientId, name: `${emp.firstName} ${emp.lastName}`, email: emp.email, position: emp.position, hourlyWageCents: emp.hourlyWage },
+      req.log
+    );
+    const syncStatus = sync.easyteamSynced && sync.rollfiSynced ? "synced" : (sync.easyteamSynced || sync.rollfiSynced) ? "partial" : "pending";
+    await db.update(employeesTable).set({
+      easyteamSynced: sync.easyteamSynced,
+      rollfiUserId: sync.rollfiUserId,
+      rollfiOnboardedAt: sync.rollfiSynced ? new Date().toISOString() : emp.rollfiOnboardedAt,
+      syncStatus,
+      lastSyncError: sync.syncError,
+      updatedAt: new Date().toISOString(),
+    }).where(eq(employeesTable.id, employeeId));
   }
 
-  if (status === "terminated") {
-    store.updateEmployee(employeeId, { easyteamSynced: false });
-  }
-
-  const updated = store.getEmployee(employeeId);
-  if (updated) await persistClientEmployee(updated).catch(() => { /* non-fatal */ });
-  res.json(updated);
+  const [updated] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+  res.json(projectEmployee(updated));
 });
 
+// ── POST /clients/:clientId/employees/:employeeId/sync ───────
 router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) => {
   const { clientId, employeeId } = req.params;
 
-  const emp = store.getEmployee(employeeId);
-  if (!emp || emp.clientId !== clientId) {
-    res.status(404).json({ error: "Employee not found" });
-    return;
-  }
-
+  const [emp] = await db.select().from(employeesTable)
+    .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, clientId)))
+    .catch(() => [undefined]);
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
   if (emp.status !== "active") {
     res.status(400).json({ error: "Only active employees can be synced. Update status to active first." });
     return;
   }
 
-  const rollfiCompany = getRollfiCompanyForClient(clientId);
-
-  // Register in EasyTeam
-  const client = store.getClient(clientId);
-  const company = client?.linkedCompanyId ? store.getCompany(client.linkedCompanyId) : undefined;
-  const locationId = company?.locationId;
-  let easyteamSynced = emp.easyteamSynced;
-  if (locationId) {
-    const etResult = await registerEmployeeInEasyTeam(emp, locationId, req.log as unknown as Logger);
-    easyteamSynced = etResult.success;
-    if (etResult.easyteamEmployeeId) {
-      const staffUser = store.getAllStaffUsers().find((u) => u.email === emp.email);
-      store.setEasyTeamUuidMapping(etResult.easyteamEmployeeId, staffUser?.employeeId ?? emp.id);
-    }
-  }
-
-  let rollfiSynced = emp.rollfiSynced;
-  let rollfiUserId = emp.rollfiUserId;
-  let syncError: string | undefined;
-
-  if (rollfiCompany) {
-    const result = await onboardClientEmployeeToRollfi(emp, rollfiCompany, req.log as unknown as Logger);
-    rollfiSynced = result.success;
-    rollfiUserId = result.rollfiUserId;
-    syncError = result.success ? undefined : result.error;
-  } else {
-    syncError = "Company not yet onboarded to Rollfi";
-  }
-
-  store.updateEmployee(employeeId, { easyteamSynced, rollfiSynced, rollfiUserId, syncError });
-
-  const synced = store.getEmployee(employeeId);
-  if (synced) await persistClientEmployee(synced).catch(() => { /* non-fatal */ });
+  const sync = await syncEmployeeToIntegrations(
+    { id: emp.id, companyId: clientId, name: `${emp.firstName} ${emp.lastName}`, email: emp.email, position: emp.position, hourlyWageCents: emp.hourlyWage },
+    req.log
+  );
+  const now = new Date().toISOString();
+  const syncStatus = sync.easyteamSynced && sync.rollfiSynced ? "synced" : (sync.easyteamSynced || sync.rollfiSynced) ? "partial" : "pending";
+  await db.update(employeesTable).set({
+    easyteamSynced: sync.easyteamSynced,
+    rollfiUserId: sync.rollfiUserId,
+    rollfiOnboardedAt: sync.rollfiSynced ? now : emp.rollfiOnboardedAt,
+    syncStatus,
+    lastSyncError: sync.syncError,
+    updatedAt: now,
+  }).where(eq(employeesTable.id, employeeId));
 
   res.json({
-    success: rollfiSynced,
-    easyteamSynced,
-    rollfiSynced,
-    rollfiUserId,
-    error: syncError,
+    success: sync.rollfiSynced,
+    easyteamSynced: sync.easyteamSynced,
+    rollfiSynced: sync.rollfiSynced,
+    rollfiUserId: sync.rollfiUserId,
+    error: sync.syncError,
   });
 });
 

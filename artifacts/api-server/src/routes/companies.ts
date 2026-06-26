@@ -3,8 +3,7 @@ import axios from "axios";
 import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
-import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { onboardClientEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
+import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 
 const router: IRouter = Router();
@@ -201,16 +200,6 @@ router.post("/companies", async (req: Request, res: Response) => {
       zipcode: body.ownerZip,
       ownershipPercentage: body.ownershipPercentage ?? 100,
       isPayrollAdmin: body.isPayrollAdmin ?? true,
-    });
-
-    // 3. Create in-memory Client for EasyTeam boot sync compatibility
-    store.createClient({
-      name: body.companyName,
-      locationName: body.locationName ?? body.companyName,
-      latitude: 40.7128,
-      longitude: -74.006,
-      timezone: "America/New_York",
-      linkedCompanyId: companyId,
     });
 
     req.log.info({ companyId, name: body.companyName }, "Company created in DB");
@@ -500,56 +489,24 @@ router.post("/employees", async (req: Request, res: Response) => {
       updatedAt: now,
     });
 
-    // 2. Create ClientEmployee in store for EasyTeam boot sync compatibility
-    const client = store.listClients().find((c) => c.linkedCompanyId === body.companyId);
-    let easyteamSynced = false;
-    let rollfiSynced = false;
-    let rollfiUserId: string | undefined;
-    let syncError: string | undefined;
-
-    if (client) {
-      const clientEmp = store.createEmployee(client.id, {
+    // 2. Sync the new employee to EasyTeam + Rollfi through the unified integration path.
+    const sync = await syncEmployeeToIntegrations(
+      {
+        id: employeeId,
+        companyId: body.companyId,
         name: `${body.firstName} ${body.lastName}`,
         email: body.email,
-        role: body.position.toLowerCase().replace(/\s+/g, "_"),
-        roleName: body.position,
-        wage: hourlyWageCents,
-        wageType: "hourly",
-        timeTrackingEnabled: true,
-        status: "active",
-        easyteamSynced: false,
-        rollfiSynced: false,
-      });
+        position: body.position,
+        hourlyWageCents,
+      },
+      req.log
+    );
+    const easyteamSynced = sync.easyteamSynced;
+    const rollfiSynced = sync.rollfiSynced;
+    const rollfiUserId = sync.rollfiUserId;
+    const syncError = sync.syncError;
 
-      // 3. EasyTeam registration — fall back to DB company locationId for new (wizard-created) companies
-      const storeCompany = store.getCompany(body.companyId);
-      let locationId = storeCompany?.locationId;
-      if (!locationId) {
-        // New company not yet in the in-memory store: derive a stable EasyTeam locationId
-        const [dbCompany] = await db.select().from(companies).where(eq(companies.id, body.companyId));
-        locationId = dbCompany?.rollfiLocationId || `LOC-${body.companyId}`;
-      }
-      if (locationId) {
-        const etResult = await registerEmployeeInEasyTeam(clientEmp, locationId, req.log);
-        easyteamSynced = etResult.success;
-        if (etResult.easyteamEmployeeId) {
-          store.setEasyTeamUuidMapping(etResult.easyteamEmployeeId, employeeId);
-        }
-        store.updateEmployee(clientEmp.id, { easyteamSynced });
-      }
-
-      // 4. Rollfi employee onboarding
-      const rollfiCompany = store.getRollfiCompany(body.companyId);
-      if (rollfiCompany) {
-        const rollfiResult = await onboardClientEmployeeToRollfi(clientEmp, rollfiCompany, req.log);
-        rollfiSynced = rollfiResult.success;
-        rollfiUserId = rollfiResult.rollfiUserId;
-        syncError = rollfiResult.error;
-        store.updateEmployee(clientEmp.id, { rollfiSynced, rollfiUserId, syncError });
-      }
-    }
-
-    // 5. Update DB with sync results
+    // 3. Update DB with sync results
     const syncStatus = easyteamSynced && rollfiSynced ? "synced" : (rollfiSynced || easyteamSynced) ? "partial" : "pending";
     await db.update(employees).set({
       easyteamSynced,
