@@ -1236,46 +1236,85 @@ router.get("/rollfi/payperiod", async (req, res) => {
     return;
   }
 
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  // FINAL statuses — not actionable for submission
+  const FINAL_STATUSES = new Set(["processed", "skipped"]);
+
   try {
-    // Rollfi sandbox intermittently returns empty unprocessedPayPeriods for a company
-    // that definitely has periods — retry up to 3 times with a short delay.
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-    let periods: Array<Record<string, unknown>> = [];
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      const response = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
-        { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+    // ── Strategy 1: getPayPeriod ───────────────────────────────
+    // Docs recommend this as the primary endpoint: "Retrieves the next pay period
+    // that should be processed for a company." Returns a single flat object.
+    let period: Record<string, unknown> | null = null;
+    try {
+      const gpResponse = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+        { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
         { headers: rollfiHeaders() }
       );
-      req.log.info({ rollfiResponse: response.data, attempt }, "Rollfi getUnProcessedPayPeriod raw response");
-      const raw = response.data as Record<string, unknown>;
-      assertNoRollfiError(raw, "getUnProcessedPayPeriod");
-      periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
-      if (periods.length > 0) break;
-      if (attempt < 3) {
-        req.log.warn({ attempt, rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Rollfi returned empty pay periods — retrying");
-        await sleep(400);
+      const gpRaw = gpResponse.data as Record<string, unknown>;
+      req.log.info({ rollfiResponse: gpRaw }, "Rollfi getPayPeriod raw response");
+      assertNoRollfiError(gpRaw, "getPayPeriod");
+
+      // getPayPeriod returns the period fields directly (no wrapper array).
+      // Accept it if it has a payPeriodId and is not in a final state.
+      const status = String(gpRaw.payPeriodStatus ?? "").toLowerCase();
+      if (gpRaw.payPeriodId && !FINAL_STATUSES.has(status)) {
+        period = gpRaw;
+        req.log.info({ payPeriodId: gpRaw.payPeriodId, status }, "getPayPeriod returned actionable period");
+      } else {
+        req.log.warn({ status, payPeriodId: gpRaw.payPeriodId }, "getPayPeriod returned non-actionable or empty period — falling back");
+      }
+    } catch (gpErr: unknown) {
+      const e = gpErr as { response?: { data: unknown } };
+      req.log.warn({ err: gpErr, rollfiErrorBody: e.response?.data }, "getPayPeriod failed — falling back to getUnProcessedPayPeriod");
+    }
+
+    // ── Strategy 2: getUnProcessedPayPeriod (fallback with retries) ───
+    // Returns an array of all unprocessed periods. Retry up to 3× because the
+    // sandbox intermittently returns an empty array for valid companies.
+    if (!period) {
+      let periods: Array<Record<string, unknown>> = [];
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        const response = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+          { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+          { headers: rollfiHeaders() }
+        );
+        req.log.info({ rollfiResponse: response.data, attempt }, "Rollfi getUnProcessedPayPeriod raw response");
+        const raw = response.data as Record<string, unknown>;
+        assertNoRollfiError(raw, "getUnProcessedPayPeriod");
+        periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+        if (periods.length > 0) break;
+        if (attempt < 3) {
+          req.log.warn({ attempt, rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Rollfi returned empty pay periods — retrying");
+          await sleep(400);
+        }
+      }
+
+      if (periods.length > 0) {
+        // Prefer submittable periods (preProcess/new/inProcess) over already-submitted,
+        // then pick the earliest deadline among them (most overdue first).
+        const STATUS_PRIORITY: Record<string, number> = { preprocess: 0, new: 1, inprocess: 2 };
+        const sorted = [...periods].sort((a, b) => {
+          const aPrio = STATUS_PRIORITY[String(a.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+          const bPrio = STATUS_PRIORITY[String(b.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+          if (aPrio !== bPrio) return aPrio - bPrio;
+          return String(a.payBeginDate ?? "").localeCompare(String(b.payBeginDate ?? ""));
+        });
+        period = sorted[0];
       }
     }
 
-    if (periods.length === 0) {
+    if (!period) {
       res.status(404).json({ error: "No unprocessed pay periods found for this company" });
       return;
     }
-    // Prefer submittable periods (preProcess, inProcess) over already-submitted ones,
-    // then pick the earliest deadline among submittable periods (most overdue first).
-    const STATUS_PRIORITY: Record<string, number> = { preprocess: 0, inprocess: 1, new: 2 };
-    const sorted = [...periods].sort((a, b) => {
-      const aPrio = STATUS_PRIORITY[String(a.payPeriodStatus ?? "").toLowerCase()] ?? 99;
-      const bPrio = STATUS_PRIORITY[String(b.payPeriodStatus ?? "").toLowerCase()] ?? 99;
-      if (aPrio !== bPrio) return aPrio - bPrio;
-      // For same priority, prefer the earliest payBeginDate (most overdue first)
-      return String(a.payBeginDate ?? "").localeCompare(String(b.payBeginDate ?? ""));
-    });
-    res.json(sorted[0]);
+
+    res.json(period);
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi getPayPeriod failed");
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi pay period fetch failed");
     res.status(500).json({ error: "Failed to get pay period", details: e.response?.data ?? String(err) });
   }
 });
