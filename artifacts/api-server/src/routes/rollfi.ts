@@ -1473,6 +1473,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const skippedEmployees: { rollfiUserId: string; reason: string }[] = [];
     let filteredPayrollData = payrollData;
+    let filteredOnboardedStaff = onboardedStaff;
 
     if (rejectedUuids.size > 0) {
       filteredPayrollData = payrollData.filter((entry) => {
@@ -1484,6 +1485,10 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         }
         return true;
       });
+      filteredOnboardedStaff = onboardedStaff.filter((u) => {
+        const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
+        return !rejectedUuids.has(uid);
+      });
 
       if (filteredPayrollData.length === 0) {
         const names = skippedEmployees.map((s) => s.rollfiUserId).join(", ");
@@ -1492,6 +1497,30 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
           skippedEmployees,
         });
         return;
+      }
+
+      // addUsersToRegularPayPeriod is atomic — when one user is rejected the whole batch fails.
+      // Retry with only the valid employees so they are actually enrolled before import.
+      req.log.info({ retryCount: filteredOnboardedStaff.length }, "Retrying addUsersToRegularPayPeriod without rejected employees");
+      const retryResp = await axios.post(
+        `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+        {
+          method: "addUsersToRegularPayPeriod",
+          companyId: rollfiCompany.rollfiCompanyId,
+          payPeriodId,
+          payrollLineItems: filteredOnboardedStaff.map((u) => ({
+            userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
+            paymentMethod: "Direct Deposit",
+          })),
+        },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: retryResp.data }, "Rollfi addUsersToRegularPayPeriod retry response");
+      // If the retry also errors (e.g. all remaining users already enrolled), log and continue —
+      // importRegularPayrollData will surface any real issue.
+      const retryRaw = retryResp.data as Record<string, unknown>;
+      if (retryRaw?.error) {
+        req.log.warn({ rollfiError: retryRaw.error }, "addUsersToRegularPayPeriod retry had error — proceeding to import");
       }
     }
 
