@@ -234,26 +234,8 @@ router.get("/rollfi/state", async (_req, res) => {
       source: "testuser" as const,
     }));
 
-  // ClientEmployee-based employees that have been Rollfi-synced
+  // Emails already represented by testUser-based employees (dedupe key for DB employees below)
   const existingEmails = new Set(testUserEmployees.map((e) => e.email?.toLowerCase()).filter(Boolean));
-  const clientEmployees = store.listClients().flatMap((client) => {
-    const linkedCompanyId = client.linkedCompanyId;
-    if (!linkedCompanyId) return [];
-    return store.listEmployees(client.id)
-      .filter((emp) => emp.rollfiSynced && emp.status === "active")
-      .filter((emp) => !emp.email || !existingEmails.has(emp.email.toLowerCase()))
-      .map((emp) => ({
-        userId: emp.id,
-        employeeId: emp.id,
-        name: emp.name,
-        email: emp.email,
-        position: emp.roleName,
-        companyId: linkedCompanyId,
-        hourlyWage: emp.wage,
-        rollfi: store.getRollfiEmployee(emp.id) ?? null,
-        source: "clientemployee" as const,
-      }));
-  });
 
   // DB employees (from the employees table) that are Rollfi-onboarded and not already listed
   const dbOnlyIds = dbOnlyCompanies.map((c) => c.id);
@@ -275,7 +257,7 @@ router.get("/rollfi/state", async (_req, res) => {
       source: "dbemployee" as const,
     }));
 
-  const employees = [...testUserEmployees, ...clientEmployees, ...dbEmployees];
+  const employees = [...testUserEmployees, ...dbEmployees];
 
   res.json({ companies, employees });
 });

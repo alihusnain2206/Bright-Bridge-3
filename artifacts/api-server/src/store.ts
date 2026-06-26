@@ -1,33 +1,4 @@
-export interface Client {
-  id: string;
-  name: string;
-  locationName: string;
-  latitude: number;
-  longitude: number;
-  timezone: string;
-  createdAt: string;
-  linkedCompanyId?: string;
-}
-
 export type EmployeeStatus = "hired" | "onboarding" | "active" | "terminated";
-
-export interface ClientEmployee {
-  id: string;
-  clientId: string;
-  name: string;
-  role: string;
-  roleName: string;
-  wage: number;
-  wageType: "hourly" | "weekly" | "monthly";
-  timeTrackingEnabled: boolean;
-  createdAt: string;
-  email?: string;
-  status: EmployeeStatus;
-  easyteamSynced: boolean;
-  rollfiSynced: boolean;
-  rollfiUserId?: string;
-  syncError?: string;
-}
 
 // ─── ROLE-BASED DATA ────────────────────────────────────────
 
@@ -119,39 +90,10 @@ export interface RollfiEmployeeRecord {
 const rollfiCompanies = new Map<string, RollfiCompanyRecord>();
 const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
 
-// ─── CLIENTS (existing + Rainbow) ───────────────────────────
-
-const clients: Client[] = [
-  {
-    id: "client-sunshine-001",
-    name: "Sunshine Daycare Center",
-    locationName: "Main Branch",
-    latitude: 40.7357,
-    longitude: -74.1724,
-    timezone: "America/New_York",
-    createdAt: new Date().toISOString(),
-    linkedCompanyId: "ORG-SUNSHINE",
-  },
-  {
-    id: "client-rainbow-001",
-    name: "Rainbow Kids Daycare",
-    locationName: "Jersey City Branch",
-    latitude: 40.7178,
-    longitude: -74.0431,
-    timezone: "America/New_York",
-    createdAt: new Date().toISOString(),
-    linkedCompanyId: "ORG-RAINBOW",
-  },
-];
-
-const employees: ClientEmployee[] = [
-  { id: "emp-sunshine-001", clientId: "client-sunshine-001", name: "Sarah Mitchell", email: "sarah.mitchell@sunshine.com", role: "manager", roleName: "Center Manager", wage: 2500, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-  { id: "emp-sunshine-002", clientId: "client-sunshine-001", name: "James Lee", email: "james.lee@sunshine.com", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-  { id: "emp-sunshine-003", clientId: "client-sunshine-001", name: "Maria Gonzalez", email: "maria.gonzalez@sunshine.com", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-  { id: "emp-rainbow-001", clientId: "client-rainbow-001", name: "Tom Wilson", email: "tom@rainbow.com", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-  { id: "emp-rainbow-002", clientId: "client-rainbow-001", name: "Lisa Chen", email: "lisa.chen@rainbow.com", role: "assistant", roleName: "Teaching Assistant", wage: 1400, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-  { id: "emp-rainbow-003", clientId: "client-rainbow-001", name: "Ali Husnain", email: "ali@rainbow.com", role: "teacher", roleName: "Lead Teacher", wage: 1800, wageType: "hourly", timeTrackingEnabled: true, createdAt: new Date().toISOString(), status: "active", easyteamSynced: false, rollfiSynced: false },
-];
+// ─── CLIENTS / CLIENT-EMPLOYEES (removed) ───────────────────
+// Legacy in-memory clients[] and ClientEmployee[] are gone. Daycare companies now live in
+// the DB `companies` table and their staff in the DB `employees` table (unified model).
+// The HTTP /clients endpoints in routes/clients.ts project over those tables for back-compat.
 
 // ─── TEST USERS ──────────────────────────────────────────────
 
@@ -193,57 +135,6 @@ const children: Child[] = [
 // ─── STORE ───────────────────────────────────────────────────
 
 export const store = {
-  // ── Clients ──
-  listClients(): Client[] { return clients; },
-  getClient(id: string): Client | undefined { return clients.find((c) => c.id === id); },
-  createClient(data: Omit<Client, "id" | "createdAt">): Client {
-    const client: Client = { id: `client-${uid()}`, ...data, createdAt: new Date().toISOString() };
-    clients.push(client);
-    return client;
-  },
-  deleteClient(id: string): boolean {
-    const idx = clients.findIndex((c) => c.id === id);
-    if (idx === -1) return false;
-    clients.splice(idx, 1);
-    const empIdxs = employees.map((e, i) => (e.clientId === id ? i : -1)).filter((i) => i !== -1).reverse();
-    empIdxs.forEach((i) => employees.splice(i, 1));
-    return true;
-  },
-
-  // ── Client Employees ──
-  listEmployees(clientId: string): ClientEmployee[] { return employees.filter((e) => e.clientId === clientId); },
-  getEmployee(id: string): ClientEmployee | undefined { return employees.find((e) => e.id === id); },
-  createEmployee(clientId: string, data: Omit<ClientEmployee, "id" | "clientId" | "createdAt">): ClientEmployee {
-    const employee: ClientEmployee = {
-      id: `emp-${uid()}`,
-      clientId,
-      ...data,
-      status: data.status ?? "hired",
-      easyteamSynced: data.easyteamSynced ?? false,
-      rollfiSynced: data.rollfiSynced ?? false,
-      createdAt: new Date().toISOString(),
-    };
-    employees.push(employee);
-    return employee;
-  },
-  insertEmployee(emp: ClientEmployee): void {
-    if (!employees.find((e) => e.id === emp.id)) {
-      employees.push(emp);
-    }
-  },
-  updateEmployee(id: string, updates: Partial<Omit<ClientEmployee, "id" | "clientId" | "createdAt">>): ClientEmployee | undefined {
-    const emp = employees.find((e) => e.id === id);
-    if (!emp) return undefined;
-    Object.assign(emp, updates);
-    return emp;
-  },
-  deleteEmployee(clientId: string, employeeId: string): boolean {
-    const idx = employees.findIndex((e) => e.id === employeeId && e.clientId === clientId);
-    if (idx === -1) return false;
-    employees.splice(idx, 1);
-    return true;
-  },
-
   // ── Auth Users ──
   getUserByEmail(email: string): TestUser | undefined {
     return testUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());

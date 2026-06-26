@@ -1,5 +1,5 @@
 import axios from "axios";
-import { store, type ClientEmployee, type RollfiCompanyRecord } from "../store.js";
+import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
 
 const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
@@ -78,8 +78,17 @@ export interface OnboardResult {
   error?: string;
 }
 
-export async function onboardClientEmployeeToRollfi(
-  emp: ClientEmployee,
+export interface RollfiEmployeeInput {
+  id: string;
+  name: string;
+  email?: string;
+  roleName: string;
+  /** wageRate passed to Rollfi addUserWage (preserves the existing unit per call site). */
+  wage: number;
+}
+
+export async function onboardEmployeeToRollfi(
+  emp: RollfiEmployeeInput,
   rollfiCompany: RollfiCompanyRecord,
   log: Logger
 ): Promise<OnboardResult> {
