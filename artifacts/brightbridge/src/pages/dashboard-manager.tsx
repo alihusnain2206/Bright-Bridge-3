@@ -80,6 +80,7 @@ export default function ManagerDashboard() {
   const [approvalDone, setApprovalDone] = useState(false);
   const [approvedAt, setApprovedAt] = useState<string | null>(null);
   const [approvalDataSource, setApprovalDataSource] = useState<"easyteam" | "seeded" | null>(null);
+  const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   const initWeek = getCurrentWeek();
   const [fromDate, setFromDate] = useState(initWeek.from);
@@ -143,6 +144,7 @@ export default function ManagerDashboard() {
         body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId }),
       });
       await fetchHours();
+      setLastSyncedAt(new Date());
     } catch { /* ignore */ }
     finally { setPulling(false); }
   }, [user?.companyId, fromDate, toDate, fetchHours]);
@@ -172,7 +174,10 @@ export default function ManagerDashboard() {
     return () => clearInterval(iv);
   }, []);
 
-  useEffect(() => { void fetchHours(); }, [fetchHours]);
+  // Auto-pull fresh EasyTeam data on mount and whenever the date range changes.
+  // Previously only fetchHours() was called here (reads stale store); now we sync first
+  // so the table always matches what the EasyTeam SDK iframe shows.
+  useEffect(() => { void handlePullHours(); }, [handlePullHours]);
 
   const fetchEvents = async () => {
     try {
@@ -297,17 +302,24 @@ export default function ManagerDashboard() {
                   className="h-7 text-xs rounded border border-white/20 bg-white/10 text-white px-2 [color-scheme:dark]"
                 />
               </div>
-              <Button
-                onClick={() => void handlePullHours()}
-                disabled={pulling || hoursLoading}
-                size="sm"
-                variant="outline"
-                className="gap-1.5 text-sm font-medium bg-white/5 border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
-              >
-                {pulling
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Pulling…</>
-                  : <><Download className="h-3.5 w-3.5" /> Pull Hours</>}
-              </Button>
+              <div className="flex flex-col items-end gap-0.5">
+                <Button
+                  onClick={() => void handlePullHours()}
+                  disabled={pulling || hoursLoading}
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5 text-sm font-medium bg-white/5 border-white/20 text-white/80 hover:bg-white/10 hover:text-white"
+                >
+                  {pulling
+                    ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Pulling…</>
+                    : <><Download className="h-3.5 w-3.5" /> Pull Hours</>}
+                </Button>
+                {lastSyncedAt && !pulling && (
+                  <span className="text-white/25 text-[10px]">
+                    Synced {lastSyncedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                  </span>
+                )}
+              </div>
               <Button onClick={() => void generateToken()} disabled={tokenLoading} size="sm"
                 className="gap-1.5 text-sm font-semibold text-white border-0" style={{ background: ORANGE }}>
                 <Play className="h-3.5 w-3.5" />
@@ -368,8 +380,8 @@ export default function ManagerDashboard() {
               </div>
             ) : hours.length === 0 ? (
               <div className="py-6 text-center text-white/30 text-sm space-y-1">
-                <p>No hours loaded for this period yet.</p>
-                <p className="text-white/20 text-xs">Use <span className="text-white/35">Pull Hours</span> or click <span className="text-white/35">Email Report</span> inside EasyTeam above.</p>
+                <p>No shifts recorded for this period yet.</p>
+                <p className="text-white/20 text-xs">Data auto-refreshes on load — click <span className="text-white/35">Pull Hours</span> to force a manual refresh.</p>
               </div>
             ) : (
               <>
