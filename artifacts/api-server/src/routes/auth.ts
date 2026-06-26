@@ -40,13 +40,28 @@ const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 // a minimal location from the DB company record so the frontend always gets a valid location.
 async function resolveUserLocation(userId: string): Promise<object | undefined> {
   const user = store.getUserById(userId);
-  if (!user?.locationId) return undefined;
-  const storeLocation = store.getLocation(user.locationId);
-  if (storeLocation) return storeLocation;
-  // DB fallback — dynamic company employees have a UUID locationId not present in the static store
+  if (!user) return undefined;
+
+  // 1. If user has an explicit locationId, try the in-memory store first
+  if (user.locationId) {
+    const storeLocation = store.getLocation(user.locationId);
+    if (storeLocation) return storeLocation;
+  }
+
+  // 2. No store hit (or no explicit locationId) — derive from company.
+  //    Mirrors the same chain used in token-by-role so /me and JWT are always consistent.
   if (!user.companyId) return undefined;
+
+  // Check in-memory store company first (ORG-SUNSHINE / ORG-RAINBOW)
+  const storeCompanyLocationId = store.getCompany(user.companyId)?.locationId;
+  if (storeCompanyLocationId) {
+    const storeLocation = store.getLocation(storeCompanyLocationId);
+    if (storeLocation) return storeLocation;
+  }
+
+  // DB fallback for dynamically created companies (wizard-created, not in static store)
   const [dbCo] = await db.select().from(companies).where(eq(companies.id, user.companyId)).catch(() => [undefined]);
-  if (dbCo?.rollfiLocationId === user.locationId) {
+  if (dbCo?.rollfiLocationId) {
     const addr = [dbCo.address1, dbCo.city, dbCo.state].filter(Boolean).join(", ");
     return {
       id: dbCo.rollfiLocationId,
@@ -57,6 +72,7 @@ async function resolveUserLocation(userId: string): Promise<object | undefined> 
       longitude: 0,
     };
   }
+
   return undefined;
 }
 
