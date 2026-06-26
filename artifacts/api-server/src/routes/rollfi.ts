@@ -1237,20 +1237,27 @@ router.get("/rollfi/payperiod", async (req, res) => {
   }
 
   try {
-    // getUnProcessedPayPeriod does not require a linked bank account and returns payPeriodId
-    // directly — use it instead of getPayPeriod which requires KYB + bank account
-    const response = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
-      { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
-      { headers: rollfiHeaders() }
-    );
+    // Rollfi sandbox intermittently returns empty unprocessedPayPeriods for a company
+    // that definitely has periods — retry up to 3 times with a short delay.
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    let periods: Array<Record<string, unknown>> = [];
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const response = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+        { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+        { headers: rollfiHeaders() }
+      );
+      req.log.info({ rollfiResponse: response.data, attempt }, "Rollfi getUnProcessedPayPeriod raw response");
+      const raw = response.data as Record<string, unknown>;
+      assertNoRollfiError(raw, "getUnProcessedPayPeriod");
+      periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+      if (periods.length > 0) break;
+      if (attempt < 3) {
+        req.log.warn({ attempt, rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Rollfi returned empty pay periods — retrying");
+        await sleep(400);
+      }
+    }
 
-    req.log.info({ rollfiResponse: response.data }, "Rollfi getUnProcessedPayPeriod raw response");
-
-    const raw = response.data as Record<string, unknown>;
-    assertNoRollfiError(raw, "getUnProcessedPayPeriod");
-
-    const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
     if (periods.length === 0) {
       res.status(404).json({ error: "No unprocessed pay periods found for this company" });
       return;
