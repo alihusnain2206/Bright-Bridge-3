@@ -1550,80 +1550,106 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod response");
 
     // Parse any per-user validation errors from addUsersToRegularPayPeriod.
-    // Rollfi embeds the rejected UUID in the error message:
-    //   "Employee validation failed for user <UUID>: Employee has an invalid status…"
-    // We must exclude those users from importRegularPayrollData or the whole batch fails.
+    // Rollfi embeds the rejected UUID in the error message.
+    // TWO distinct rejection reasons require different treatment:
+    //   "already has a payroll line item" → employee is ALREADY ENROLLED; keep in import payload,
+    //     just skip re-adding them (calling importRegularPayrollData still updates their hours).
+    //   anything else (invalid status, KYC failure, etc.) → truly invalid; exclude from import.
     const addUsersRaw = addUsersResp.data as Record<string, unknown>;
     const addUsersErrMsg: string = (addUsersRaw?.error as Record<string, unknown>)?.message as string ?? "";
     const UUID_RE = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/gi;
+    const isAlreadyEnrolledErr = (msg: string) => msg.toLowerCase().includes("already has a payroll line item");
+
     const rejectedUuids = new Set<string>(
       addUsersErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
     );
 
     const skippedEmployees: { rollfiUserId: string; reason: string }[] = [];
     let filteredPayrollData = payrollData;
+    // Track which employees still need to be added via addUsersToRegularPayPeriod retry.
+    // "Already enrolled" employees are removed from this set but kept in filteredPayrollData.
     let filteredOnboardedStaff = onboardedStaff;
 
     if (rejectedUuids.size > 0) {
-      filteredPayrollData = payrollData.filter((entry) => {
-        const uid = (entry.userId as string).toUpperCase();
-        if (rejectedUuids.has(uid)) {
-          skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg });
-          req.log.warn({ rollfiUserId: entry.userId, reason: addUsersErrMsg }, "Excluding employee from payroll — Rollfi rejected them in addUsersToRegularPayPeriod");
-          return false;
-        }
-        return true;
-      });
-      filteredOnboardedStaff = onboardedStaff.filter((u) => {
-        const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
-        return !rejectedUuids.has(uid);
-      });
-
-      if (filteredPayrollData.length === 0) {
-        const names = skippedEmployees.map((s) => s.rollfiUserId).join(", ");
-        res.status(400).json({
-          error: `All employees were rejected by Rollfi for this pay period. They may have incomplete onboarding (KYC/bank account). Rejected: ${names}`,
-          skippedEmployees,
+      if (isAlreadyEnrolledErr(addUsersErrMsg)) {
+        // Already enrolled — keep in import payload, just skip the re-add retry for them.
+        req.log.info({ alreadyEnrolled: [...rejectedUuids] }, "addUsersToRegularPayPeriod: employees already enrolled — keeping in import payload");
+        filteredOnboardedStaff = onboardedStaff.filter((u) => {
+          const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
+          return !rejectedUuids.has(uid);
         });
-        return;
-      }
-
-      // addUsersToRegularPayPeriod is atomic — when one user is rejected the whole batch fails.
-      // Retry with only the valid employees so they are actually enrolled before import.
-      req.log.info({ retryCount: filteredOnboardedStaff.length }, "Retrying addUsersToRegularPayPeriod without rejected employees");
-      const retryResp = await axios.post(
-        `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
-        {
-          method: "addUsersToRegularPayPeriod",
-          companyId: rollfiCompany.rollfiCompanyId,
-          payPeriodId,
-          payrollLineItems: filteredOnboardedStaff.map((u) => ({
-            userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
-            paymentMethod: "Direct Deposit",
-          })),
-        },
-        { headers: rollfiHeaders() }
-      );
-      req.log.info({ rollfiResponse: retryResp.data }, "Rollfi addUsersToRegularPayPeriod retry response");
-      // If the retry ALSO rejects a user (e.g. already has line item from a prior run),
-      // parse that UUID and remove them from filteredPayrollData too.
-      const retryRaw = retryResp.data as Record<string, unknown>;
-      const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
-      const retryRejectedUuids = new Set<string>(
-        retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
-      );
-      if (retryRejectedUuids.size > 0) {
-        filteredPayrollData = filteredPayrollData.filter((entry) => {
+        // filteredPayrollData unchanged — those employees will have their hours updated via import
+      } else {
+        // Truly invalid (bad KYC, wrong status, etc.) — exclude from import entirely.
+        filteredPayrollData = payrollData.filter((entry) => {
           const uid = (entry.userId as string).toUpperCase();
-          if (retryRejectedUuids.has(uid)) {
-            skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg });
-            req.log.warn({ rollfiUserId: entry.userId, reason: retryErrMsg }, "Excluding employee from payroll — rejected in addUsersToRegularPayPeriod retry (already has line item)");
+          if (rejectedUuids.has(uid)) {
+            skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg });
+            req.log.warn({ rollfiUserId: entry.userId, reason: addUsersErrMsg }, "Excluding employee from payroll — Rollfi rejected them in addUsersToRegularPayPeriod");
             return false;
           }
           return true;
         });
-      } else if (retryRaw?.error) {
-        req.log.warn({ rollfiError: retryRaw.error }, "addUsersToRegularPayPeriod retry had error — proceeding to import");
+        filteredOnboardedStaff = onboardedStaff.filter((u) => {
+          const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
+          return !rejectedUuids.has(uid);
+        });
+
+        if (filteredPayrollData.length === 0) {
+          const names = skippedEmployees.map((s) => s.rollfiUserId).join(", ");
+          res.status(400).json({
+            error: `All employees were rejected by Rollfi for this pay period. They may have incomplete onboarding (KYC/bank account). Rejected: ${names}`,
+            skippedEmployees,
+          });
+          return;
+        }
+      }
+
+      // Retry addUsersToRegularPayPeriod for employees not yet enrolled (filteredOnboardedStaff).
+      if (filteredOnboardedStaff.length > 0) {
+        // addUsersToRegularPayPeriod is atomic — when one user is rejected the whole batch fails.
+        // Retry with only the employees that still need enrolling.
+        req.log.info({ retryCount: filteredOnboardedStaff.length }, "Retrying addUsersToRegularPayPeriod without already-enrolled employees");
+        const retryResp = await axios.post(
+          `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+          {
+            method: "addUsersToRegularPayPeriod",
+            companyId: rollfiCompany.rollfiCompanyId,
+            payPeriodId,
+            payrollLineItems: filteredOnboardedStaff.map((u) => ({
+              userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
+              paymentMethod: "Direct Deposit",
+            })),
+          },
+          { headers: rollfiHeaders() }
+        );
+        req.log.info({ rollfiResponse: retryResp.data }, "Rollfi addUsersToRegularPayPeriod retry response");
+        const retryRaw = retryResp.data as Record<string, unknown>;
+        const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
+        const retryRejectedUuids = new Set<string>(
+          retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
+        );
+        if (retryRejectedUuids.size > 0) {
+          if (isAlreadyEnrolledErr(retryErrMsg)) {
+            // Also already enrolled — keep in import payload.
+            req.log.info({ alreadyEnrolled: [...retryRejectedUuids] }, "addUsersToRegularPayPeriod retry: employees also already enrolled — keeping in import payload");
+          } else {
+            // Genuinely invalid — exclude from import.
+            filteredPayrollData = filteredPayrollData.filter((entry) => {
+              const uid = (entry.userId as string).toUpperCase();
+              if (retryRejectedUuids.has(uid)) {
+                skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg });
+                req.log.warn({ rollfiUserId: entry.userId, reason: retryErrMsg }, "Excluding employee from payroll — rejected in addUsersToRegularPayPeriod retry");
+                return false;
+              }
+              return true;
+            });
+          }
+        } else if (retryRaw?.error) {
+          req.log.warn({ rollfiError: retryRaw.error }, "addUsersToRegularPayPeriod retry had error — proceeding to import");
+        }
+      } else {
+        req.log.info("All employees already enrolled in pay period — skipping addUsersToRegularPayPeriod retry");
       }
     }
 
