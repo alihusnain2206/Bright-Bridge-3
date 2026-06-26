@@ -703,6 +703,8 @@ export default function Payroll() {
   const [tab, setTab] = useState(0);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("all");
   const [payPeriod, setPayPeriod] = useState<PayPeriod | null>(null);
+  const [payPeriodFetchFailed, setPayPeriodFetchFailed] = useState(false);
+  const [payPeriodFetching, setPayPeriodFetching] = useState(false);
   const [payPeriodCompanyId, setPayPeriodCompanyId] = useState<string>("");
   const [payrollResult, setPayrollResult] = useState<PayrollResult | null>(null);
   const [empStatuses, setEmpStatuses] = useState<Record<string, EmpRollfiStatus[]>>({});
@@ -793,12 +795,18 @@ export default function Payroll() {
 
   const fetchPayPeriod = useCallback(async (companyId: string) => {
     setPayPeriodCompanyId(companyId);
+    setPayPeriodFetching(true);
+    setPayPeriodFetchFailed(false);
     try {
       const data = await api.get<PayPeriod>(`/rollfi/payperiod?companyId=${companyId}`);
       setPayPeriod(data);
+      setPayPeriodFetchFailed(false);
     } catch (e) {
       setPayPeriod(null);
+      setPayPeriodFetchFailed(true);
       console.warn("Failed to get pay period:", (e as Error).message);
+    } finally {
+      setPayPeriodFetching(false);
     }
   }, []);
 
@@ -884,7 +892,9 @@ export default function Payroll() {
     return () => clearInterval(timer);
   }, [isPolling, payPeriodCompanyId]);
 
-  const submittableStatuses = ["new", "cancelled", "failed"];
+  // Rollfi statuses that mean "this period is ready to run". Anything not in
+  // this list (submitted, processed, returned, skipped) means it's already done.
+  const submittableStatuses = ["new", "preprocess", "inprocess", "cancelled", "failed"];
   const periodSubmittable = !payPeriod || submittableStatuses.includes(payPeriod.payPeriodStatus.toLowerCase());
   const getRollfiStatus = (companyId: string, rollfiUserId: string | undefined) =>
     rollfiUserId ? (empStatuses[companyId]?.find((s) => s.rollfiUserId.toUpperCase() === rollfiUserId.toUpperCase()) ?? null) : null;
@@ -1532,7 +1542,11 @@ export default function Payroll() {
                     style={{ background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all" || !periodSubmittable) ? "rgba(255,255,255,0.1)" : ORANGE }}>
                     {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Review & Submit Payroll</>}
                   </Button>
-                  {!payPeriod && <p className="text-white/30 text-xs">Fetching pay period…</p>}
+                  {!payPeriod && payPeriodFetching && <p className="text-white/30 text-xs">Fetching pay period…</p>}
+                  {!payPeriod && !payPeriodFetching && payPeriodFetchFailed && (
+                    <p className="text-amber-400/70 text-xs">No pay period found — <button className="underline" onClick={() => void fetchPayPeriod(selectedCompanyId)}>retry</button></p>
+                  )}
+                  {!payPeriod && !payPeriodFetching && !payPeriodFetchFailed && <p className="text-white/30 text-xs">Fetching pay period…</p>}
                   {payPeriod && !periodSubmittable && (
                     <div className="flex items-center gap-1.5"><PayPeriodStatusBadge status={payPeriod.payPeriodStatus} /><p className="text-white/30 text-xs">— already submitted</p></div>
                   )}

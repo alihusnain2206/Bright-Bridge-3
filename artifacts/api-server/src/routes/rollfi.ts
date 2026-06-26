@@ -1250,16 +1250,21 @@ router.get("/rollfi/payperiod", async (req, res) => {
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "getUnProcessedPayPeriod");
 
-    // Return the first W2 unprocessed period (the one with the most recent payBeginDate)
     const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
     if (periods.length === 0) {
       res.status(404).json({ error: "No unprocessed pay periods found for this company" });
       return;
     }
-    // Sort descending by payBeginDate and return the most recent period
-    const sorted = [...periods].sort((a, b) =>
-      String(b.payBeginDate ?? "").localeCompare(String(a.payBeginDate ?? ""))
-    );
+    // Prefer submittable periods (preProcess, inProcess) over already-submitted ones,
+    // then pick the earliest deadline among submittable periods (most overdue first).
+    const STATUS_PRIORITY: Record<string, number> = { preprocess: 0, inprocess: 1, new: 2 };
+    const sorted = [...periods].sort((a, b) => {
+      const aPrio = STATUS_PRIORITY[String(a.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+      const bPrio = STATUS_PRIORITY[String(b.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+      if (aPrio !== bPrio) return aPrio - bPrio;
+      // For same priority, prefer the earliest payBeginDate (most overdue first)
+      return String(a.payBeginDate ?? "").localeCompare(String(b.payBeginDate ?? ""));
+    });
     res.json(sorted[0]);
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
