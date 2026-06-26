@@ -791,45 +791,11 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   }
   const rollfiCompanyId = rollfiCompany.rollfiCompanyId;
 
-  // Step 1: fetch current funding source to get its ID and status
-  let fundingSourceId: string | undefined;
-  let currentStatus: string | undefined;
-  try {
-    const r = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#getCompanyFundingSource`,
-      { method: "getCompanyFundingSource", companyId: rollfiCompanyId },
-      { headers: rollfiHeaders() }
-    );
-    req.log.info({ rollfiResponse: r.data }, "getCompanyFundingSource response");
-    const raw = r.data as Record<string, unknown>;
-    // Response may be a list or single object
-    const sources = Array.isArray(raw.fundingSources) ? raw.fundingSources
-      : Array.isArray(raw) ? raw
-      : raw.fundingSourceId ? [raw] : [];
-    const active = (sources as Array<Record<string, unknown>>).find((s) => s.status !== "Deactivated") ?? (sources as Array<Record<string, unknown>>)[0];
-    fundingSourceId = active?.fundingSourceId as string | undefined ?? active?.id as string | undefined;
-    currentStatus = active?.status as string | undefined;
-    req.log.info({ fundingSourceId, currentStatus }, "Funding source found");
-  } catch (e) {
-    req.log.warn({ e }, "getCompanyFundingSource failed");
-  }
-
-  if (!fundingSourceId) {
-    res.json({ status: "not_found", message: "No funding source found for this company", raw: undefined });
-    return;
-  }
-
-  if (currentStatus && !currentStatus.toLowerCase().includes("pending") && !currentStatus.toLowerCase().includes("micro")) {
-    res.json({ status: currentStatus, fundingSourceId, message: "Funding source already verified" });
-    return;
-  }
-
-  // Step 2: attempt micro-deposit verification.
-  // Accepts optional debitAmount1/debitAmount2 from the request body; falls back to 0.01/0.01
-  // (Rollfi sandbox accepts any amounts — docs show verifyMicroDeposits with debitAmount1/debitAmount2).
+  // Call verifyMicroDeposits directly — docs show only companyId + debitAmount1 + debitAmount2 needed.
+  // getCompanyFundingSource is not a documented endpoint so we skip it entirely.
   const { debitAmount1 = 0.01, debitAmount2 = 0.01 } = req.body as { debitAmount1?: number; debitAmount2?: number };
   try {
-    const r2 = await axios.post(
+    const r = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposits`,
       {
         method: "verifyMicroDeposits",
@@ -839,12 +805,15 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
       },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: r2.data, debitAmount1, debitAmount2 }, "verifyMicroDeposits response");
-    res.json({ success: true, fundingSourceId, verifyResponse: r2.data });
+    req.log.info({ rollfiResponse: r.data, debitAmount1, debitAmount2 }, "verifyMicroDeposits response");
+    const raw = r.data as Record<string, unknown>;
+    // Rollfi returns { status, message } — "Verification Failed" means wrong amounts, not an HTTP error
+    const verified = String(raw.status ?? "").toLowerCase() === "success" || String(raw.message ?? "").toLowerCase().includes("success");
+    res.json({ success: verified, rollfiCompanyId, verifyResponse: raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposits failed");
-    res.json({ success: false, fundingSourceId, currentStatus, error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
   }
 });
 
