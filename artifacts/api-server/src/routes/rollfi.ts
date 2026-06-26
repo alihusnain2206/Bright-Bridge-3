@@ -1471,6 +1471,39 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       .getAllStaffUsers()
       .filter((u) => u.employeeId && u.companyId === companyId && u.role !== "super_admin" && u.role !== "parent");
 
+    // Re-sync step: after a server restart the in-memory rollfiUserId map may be empty
+    // even though employees were previously onboarded.  Do a single getUsers call to
+    // recover any missing records so that payroll submission is restart-proof.
+    const staffMissingRollfiId = staffUsers.filter((u) => u.employeeId && !store.getRollfiEmployee(u.employeeId)?.rollfiUserId);
+    if (staffMissingRollfiId.length > 0) {
+      try {
+        req.log.info({ missing: staffMissingRollfiId.map((u) => u.employeeId) }, "Payroll init: looking up missing rollfiUserIds via getUsers");
+        const usersResp = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        type RollfiUser = { userId: string; email?: string };
+        const rollfiUsers: RollfiUser[] = (usersResp.data as { users?: RollfiUser[] }).users ?? [];
+        req.log.info({ rollfiUserCount: rollfiUsers.length }, "Payroll init: getUsers response");
+        for (const u of staffMissingRollfiId) {
+          const found = rollfiUsers.find((ru) => ru.email?.toLowerCase() === u.email.toLowerCase());
+          if (found?.userId) {
+            await persistRollfiEmployee(u.employeeId!, {
+              rollfiUserId: found.userId,
+              rollfiWageId: store.getRollfiEmployee(u.employeeId!)?.rollfiWageId ?? "",
+              onboardedAt: new Date().toISOString(),
+            });
+            req.log.info({ employeeId: u.employeeId, rollfiUserId: found.userId }, "Payroll init: re-synced missing rollfiUserId");
+          } else {
+            req.log.warn({ employeeId: u.employeeId, email: u.email }, "Payroll init: employee not found in Rollfi getUsers — will be skipped");
+          }
+        }
+      } catch (syncErr) {
+        req.log.warn({ syncErr }, "Payroll init: getUsers re-sync failed — proceeding with available data");
+      }
+    }
+
     const onboardedStaff = staffUsers.filter((u) => {
       const emp = store.getRollfiEmployee(u.employeeId!);
       return emp?.rollfiUserId;
