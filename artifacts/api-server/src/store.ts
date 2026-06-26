@@ -152,7 +152,7 @@ export const store = {
     return testUsers.filter((u) => u.companyId === companyId && u.employeeId !== null).map(({ password: _p, ...safe }) => safe);
   },
   getAllStaffUsers(): Omit<TestUser, "password">[] {
-    return testUsers.filter((u) => u.employeeId !== null).map(({ password: _p, ...safe }) => safe);
+    return testUsers.filter((u) => u.employeeId !== null && u.companyId !== "").map(({ password: _p, ...safe }) => safe);
   },
   getRawUser(id: string): TestUser | undefined {
     return testUsers.find((u) => u.id === id);

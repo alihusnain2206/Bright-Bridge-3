@@ -251,39 +251,6 @@ router.post("/easyteam/token", async (req, res) => {
   res.json({ success: true, token: signedJwt });
 });
 
-router.get("/easyteam/employees", (_req, res) => {
-  const employees = [
-    {
-      id: "EMP-TEST-001",
-      name: "John Smith",
-      role: "manager",
-      locationId: "SANDBOX-LOC-001",
-      timeTrackingEnabled: true,
-      wage: 1500,
-      wageType: "hourly",
-    },
-    {
-      id: "EMP-TEST-002",
-      name: "Mary Johnson",
-      role: "assistant",
-      locationId: "SANDBOX-LOC-001",
-      timeTrackingEnabled: true,
-      wage: 1200,
-      wageType: "hourly",
-    },
-    {
-      id: "EMP-TEST-003",
-      name: "Carlos Rivera",
-      role: "cashier",
-      locationId: "SANDBOX-LOC-001",
-      timeTrackingEnabled: true,
-      wage: 1000,
-      wageType: "hourly",
-    },
-  ];
-  res.json({ success: true, employees });
-});
-
 router.get("/easyteam/timesheets", (_req, res) => {
   res.json({
     success: true,
