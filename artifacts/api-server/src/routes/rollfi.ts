@@ -1435,8 +1435,8 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       const synced = u.employeeId
         ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
         : null;
-      const payHours = synced ? synced.approvedHours : 75;
-      if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced for this employee — using 75h fallback");
+      const payHours = synced ? synced.approvedHours : 0;
+      if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced for this employee — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
