@@ -1398,17 +1398,15 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
-  const entries = allStaff.map((u, i) => {
-    // Priority: DB approval > in-memory store entry > estimated fallback
+  const entries = allStaff.map((u) => {
+    // Only DB-approved hours are shown — no fallback to in-memory store or estimates.
+    // Employees without a manager-approved record in timesheet_approvals show as pending.
     const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
-    const synced = !approval && u.employeeId
-      ? (store.getTimesheetEntry(u.employeeId, periodKey) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
-      : undefined;
-    const hoursWorked     = approval ? approval.hoursWorked    : (synced ? synced.hoursWorked     : workdays * 8);
-    const breakDeduction  = approval ? approval.breakDeduction : (synced ? synced.breakDeduction  : workdays * 0.5);
-    const unapprovedHours = (approval || synced) ? 0           : (i % 3 === 0 ? 2 : 0);
-    const netPayableHours = approval ? approval.approvedHours  : (synced ? synced.approvedHours   : Math.max(0, hoursWorked - breakDeduction - unapprovedHours));
-    const hoursSource     = approval ? approval.source         : (synced ? synced.source          : "estimated");
+    const hoursWorked     = approval ? approval.hoursWorked    : 0;
+    const breakDeduction  = approval ? approval.breakDeduction : 0;
+    const unapprovedHours = 0;
+    const netPayableHours = approval ? approval.approvedHours  : 0;
+    const hoursSource     = approval ? approval.source         : "pending_approval";
     const hourlyRateCents = u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;

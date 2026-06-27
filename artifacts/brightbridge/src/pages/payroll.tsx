@@ -23,7 +23,7 @@ interface PreviewEmployee {
   employeeId: string | null; name: string; position: string; companyId: string;
   hoursWorked: number; breakDeduction: number; unapprovedHours: number;
   netPayableHours: number; hourlyRate: number; grossPay: number;
-  hoursSource?: "easyteam" | "seeded" | "estimated";
+  hoursSource?: "easyteam" | "seeded" | "estimated" | "easyteam_sync" | "manager_edit" | "pending_approval";
   onboardedToRollfi: boolean; rollfiUserId: string | null;
 }
 interface PayrollPreview {
@@ -849,12 +849,6 @@ export default function Payroll() {
     },
   });
 
-  const syncHours = useMutation({
-    mutationFn: ({ from, to }: { from: string; to: string }) =>
-      api.post<{ success: boolean; source: string; periodKey: string; synced: number; note?: string }>("/easyteam/hours/sync", { from, to }),
-    onSuccess: () => { void refetchPreview(); },
-  });
-
   const submitPayroll = useMutation({
     mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
       api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
@@ -1267,27 +1261,6 @@ export default function Payroll() {
               <Button variant="ghost" size="sm" className="text-white/60 hover:text-white gap-1.5 border border-white/10" onClick={() => void refetchPreview()}>
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh
               </Button>
-              <Button
-                variant="ghost" size="sm"
-                disabled={syncHours.isPending}
-                className="text-orange-400/70 hover:text-orange-300 gap-1.5 border border-orange-400/20 hover:border-orange-400/40"
-                onClick={() => {
-                  const from = payPeriod?.payBeginDate ?? new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split("T")[0]!;
-                  const to = payPeriod?.payEndDate ?? new Date().toISOString().split("T")[0]!;
-                  syncHours.mutate({ from, to });
-                }}
-              >
-                {syncHours.isPending
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Syncing…</>
-                  : <><ArrowRight className="h-3.5 w-3.5" /> Sync Hours from EasyTeam</>}
-              </Button>
-              {syncHours.isSuccess && (
-                <span className="text-xs text-emerald-400/80 flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" />
-                  {syncHours.data.synced} employees synced
-                  {syncHours.data.source === "seeded" && <span className="text-white/30 ml-1">(demo data)</span>}
-                </span>
-              )}
               {selectedCompanyId !== "all" && companies.find((c) => c.id === selectedCompanyId)?.rollfi && (
                 <Button variant="ghost" size="sm" className="text-white/60 hover:text-white gap-1.5 border border-white/10" onClick={() => void fetchPayPeriod(selectedCompanyId)}>
                   <Clock className="h-3.5 w-3.5" /> {payPeriod ? "Re-fetch Pay Period" : "Get Pay Period"}
@@ -1362,8 +1335,11 @@ export default function Payroll() {
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-white/70">{emp.hoursWorked}h</span>
-                                  {emp.hoursSource === "easyteam" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 border border-orange-500/20">EasyTeam</span>}
-                                  {emp.hoursSource === "seeded" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Synced</span>}
+                                  {(emp.hoursSource === "easyteam_sync") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                  {(emp.hoursSource === "manager_edit") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
+                                  {(emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                  {(emp.hoursSource === "seeded") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                  {(emp.hoursSource === "pending_approval") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending Approval</span>}
                                   {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
                                 </div>
                               </td>
@@ -1675,12 +1651,12 @@ export default function Payroll() {
             })()}
 
             <div className="px-6 py-4">
-              {preview.employees.some((e) => !e.hoursSource || e.hoursSource === "estimated") && (
+              {preview.employees.some((e) => e.hoursSource === "pending_approval") && (
                 <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 mb-4" style={{ background: "rgba(232,98,42,0.10)" }}>
                   <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <p className="text-amber-300 text-xs font-semibold">Hours not synced from EasyTeam</p>
-                    <p className="text-amber-300/60 text-xs mt-0.5">Some employees are using estimated hours. Close this dialog, click <span className="font-semibold">Sync Hours from EasyTeam</span>, then re-submit for accurate payroll.</p>
+                    <p className="text-amber-300 text-xs font-semibold">Some employees have not been approved yet</p>
+                    <p className="text-amber-300/60 text-xs mt-0.5">The manager for each daycare must pull hours and click <span className="font-semibold">Approve Hours</span> in their dashboard before payroll can be submitted for those employees.</p>
                   </div>
                 </div>
               )}
