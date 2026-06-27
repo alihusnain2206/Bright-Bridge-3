@@ -4,6 +4,7 @@ import * as crypto from "crypto";
 import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
+import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
 import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { resolveCompanyLocationId } from "../lib/location.js";
@@ -692,8 +693,15 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   const userId = req.session?.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
 
-  const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
+  const { from, to, companyId, entries: managerEntries } = req.body as {
+    from?: string; to?: string; companyId?: string;
+    entries?: { employeeId: string; approvedHours: number; managerEditNote?: string }[];
+  };
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  // Build a quick lookup map for manager-supplied overrides keyed by employeeId
+  const managerOverrides = new Map(
+    (managerEntries ?? []).map((e) => [e.employeeId, e])
+  );
 
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -815,12 +823,43 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   }
 
   const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
+  const now = new Date().toISOString();
 
-  // Persist approval state to DB so it survives server restarts
-  await Promise.all(approved.map((entry) => upsertTimesheetEntry(entry)));
+  // Build final approved entries — apply any manager-supplied hour overrides
+  const approvedEntries = await Promise.all(approved.map(async (entry) => {
+    const override     = managerOverrides.get(entry.employeeId);
+    const finalHours   = override != null ? override.approvedHours : entry.approvedHours;
+    const managerEdited = override != null
+      ? Math.abs(finalHours - entry.approvedHours) > 0.01
+      : false;
 
-  req.log.info({ periodKey, companyId, count: approved.length, userId, dataSource }, "Manager approved timesheet hours");
-  res.json({ success: true, periodKey, approved: approved.length, dataSource, entries: approved });
+    // Look up Rollfi user ID so payroll can reference this record without a separate join
+    const rollfiEmp = store.getRollfiEmployee(entry.employeeId);
+
+    // Write to the dedicated timesheet_approvals table — payroll source of truth
+    await upsertTimesheetApproval({
+      employeeId:          entry.employeeId,
+      rollfiUserId:        rollfiEmp?.rollfiUserId ?? null,
+      companyId:           entry.companyId,
+      periodKey:           entry.periodKey,
+      hoursWorked:         entry.hoursWorked,
+      breakDeduction:      entry.breakDeduction,
+      approvedHours:       finalHours,
+      approvedAt:          now,
+      approvedByManagerId: userId,
+      source:              managerEdited ? "manager_edit" : "easyteam_sync",
+      managerEdited,
+      managerEditNote:     override?.managerEditNote ?? null,
+    });
+
+    // Also keep timesheet_entries in sync for backward compat
+    await upsertTimesheetEntry({ ...entry, approvedHours: finalHours });
+
+    return { ...entry, approvedHours: finalHours };
+  }));
+
+  req.log.info({ periodKey, companyId, count: approvedEntries.length, userId, dataSource }, "Manager approved timesheet hours");
+  res.json({ success: true, periodKey, approved: approvedEntries.length, dataSource, entries: approvedEntries });
 });
 
 // Debug-only endpoint — shows raw EasyTeam REST API response for a given location

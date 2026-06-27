@@ -1,0 +1,47 @@
+I want to implement proper database storage for timesheet approvals. Here is exactly what I want:
+The Problem: Right now when a manager approves hours, it saves to in-memory store (RAM) only. When the server restarts, all approved hours are lost and payroll falls back to a hardcoded 75h guess. This needs to be fixed.
+The Flow I Want:
+
+Employee clocks in/out via EasyTeam iframe — EasyTeam records it on their servers
+Manager opens their dashboard, sees hours pulled from EasyTeam, reviews them, clicks Approve
+The moment manager clicks Approve — BrightBridge writes to the database permanently and immediately
+Super admin opens payroll — reads approved hours directly from the database, no sync button needed
+Super admin submits payroll — sends those DB-stored approvedHours to Rollfi
+
+The Database Table I Want: Add a new table called timesheet_approvals with these columns:
+id                   (auto generated)
+employeeId           (our internal employee ID)
+rollfiUserId         (Rollfi's ID for this employee — needed for payroll submission)
+companyId            (which company/daycare this belongs to)
+periodKey            (format: "2026-06-23/2026-06-26")
+hoursWorked          (raw hours from EasyTeam)
+breakDeduction       (break time)
+approvedHours        (final number that goes to Rollfi — manager can edit this)
+approvedAt           (timestamp when manager approved)
+approvedByManagerId  (which manager approved)
+source               ("easyteam_sync" or "manager_edit")
+managerEdited        (boolean — did manager change EasyTeam's number?)
+managerEditNote      (optional text — reason if manager changed the hours)
+What Needs to Change:
+
+POST /api/easyteam/hours/approve — instead of just setting managerApproved: true in the store, write a full record to the timesheet_approvals table with all the fields above including the manager's userId and timestamp
+GET /api/rollfi/payroll/preview — instead of reading from store.getTimesheetEntry(), read from the timesheet_approvals table filtered by companyId and periodKey
+POST /api/rollfi/payroll/initiate — instead of reading synced.approvedHours from store (with 75h fallback), read approvedHours from the timesheet_approvals table using both employeeId and rollfiUserId. If no approved record exists, return an error — do not fall back to 75h
+Manager dashboard — add the ability for a manager to manually edit the hours before approving (in case EasyTeam shows wrong time). The edited value should be saved with managerEdited: true and source: "manager_edit"
+Keep the existing timesheet_entries table untouched — just add the new timesheet_approvals table alongside it
+
+Important Rules:
+
+BrightBridge is the source of truth, NOT EasyTeam webhooks. The manager clicking Approve in BrightBridge is what writes to the DB — not an incoming webhook
+EasyTeam webhook can still update the DB if it arrives, but it should never overwrite a record that already has managerApproved: true
+The sync button on the manager dashboard stays, but it only pulls hours FROM EasyTeam for the manager to review — it does not approve anything
+Approval is always a manual manager action
+
+Do NOT change:
+
+Login system / auth flow
+EasyTeam JWT building
+Rollfi employee onboarding flow
+The existing timesheet_entries table
+
+Please implement this incrementally — one file at a time — and tell me what you changed after each file so I can follow along.

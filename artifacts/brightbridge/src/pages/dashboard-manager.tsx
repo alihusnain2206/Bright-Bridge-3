@@ -81,6 +81,9 @@ export default function ManagerDashboard() {
   const [approvedAt, setApprovedAt] = useState<string | null>(null);
   const [approvalDataSource, setApprovalDataSource] = useState<"easyteam" | "seeded" | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
+  // Per-employee hour overrides — manager can edit before clicking Approve
+  const [editedHours, setEditedHours] = useState<Record<string, number>>({});
+  const [editNotes, setEditNotes] = useState<Record<string, string>>({});
 
   const initWeek = getCurrentWeek();
   const [fromDate, setFromDate] = useState(initWeek.from);
@@ -106,6 +109,9 @@ export default function ManagerDashboard() {
         { credentials: "include" }
       ).then(r => r.json()) as { entries: TimesheetEntry[]; synced: boolean };
       setHours(d.entries ?? []);
+      // Seed editable hours from whatever EasyTeam/store returned so manager sees a pre-filled value
+      setEditedHours(Object.fromEntries((d.entries ?? []).map(e => [e.employeeId, e.approvedHours])));
+      setEditNotes({});
       const alreadyApproved = (d.entries ?? []).some(e => e.managerApproved);
       if (alreadyApproved) {
         setApprovalDone(true);
@@ -119,11 +125,17 @@ export default function ManagerDashboard() {
     if (!user?.companyId) return;
     setApproving(true);
     try {
+      // Build per-employee entries with manager's (potentially edited) approved hours
+      const entries = hours.map(e => ({
+        employeeId:      e.employeeId,
+        approvedHours:   editedHours[e.employeeId] ?? e.approvedHours,
+        managerEditNote: editNotes[e.employeeId] || undefined,
+      }));
       const d = await fetch("/api/easyteam/hours/approve", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId }),
+        body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId, entries }),
       }).then(r => r.json()) as { success: boolean; dataSource?: "easyteam" | "seeded"; entries: TimesheetEntry[] };
       if (d.success) {
         setHours(d.entries);
@@ -394,7 +406,7 @@ export default function ManagerDashboard() {
                       <th className="text-left pb-2 font-medium">Employee</th>
                       <th className="text-right pb-2 font-medium">Hours worked</th>
                       <th className="text-right pb-2 font-medium">Breaks</th>
-                      <th className="text-right pb-2 font-medium">Approved hrs</th>
+                      <th className="text-right pb-2 font-medium">{approvalDone ? "Approved hrs" : "Approve hrs (edit if needed)"}</th>
                       <th className="text-right pb-2 font-medium">Status</th>
                     </tr>
                   </thead>
@@ -404,7 +416,29 @@ export default function ManagerDashboard() {
                         <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}</td>
                         <td className="py-2.5 text-right text-white/60">{formatHours(e.hoursWorked)}</td>
                         <td className="py-2.5 text-right text-amber-400/60">−{formatHours(e.breakDeduction)}</td>
-                        <td className="py-2.5 text-right text-white font-semibold">{formatHours(e.approvedHours)}</td>
+                        <td className="py-2.5 text-right">
+                          {approvalDone ? (
+                            <span className="text-white font-semibold">{formatHours(editedHours[e.employeeId] ?? e.approvedHours)}</span>
+                          ) : (
+                            <div className="flex flex-col items-end gap-1">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.25"
+                                value={editedHours[e.employeeId] ?? e.approvedHours}
+                                onChange={ev => setEditedHours(prev => ({ ...prev, [e.employeeId]: parseFloat(ev.target.value) || 0 }))}
+                                className="w-20 text-right bg-white/10 text-white rounded px-1.5 py-0.5 text-sm border border-white/20 focus:outline-none focus:border-white/40"
+                              />
+                              <input
+                                type="text"
+                                placeholder="note (optional)"
+                                value={editNotes[e.employeeId] ?? ""}
+                                onChange={ev => setEditNotes(prev => ({ ...prev, [e.employeeId]: ev.target.value }))}
+                                className="w-28 text-right bg-transparent text-white/40 rounded px-1.5 py-0.5 text-xs border border-white/10 focus:outline-none placeholder:text-white/20"
+                              />
+                            </div>
+                          )}
+                        </td>
                         <td className="py-2.5 text-right">
                           {e.managerApproved
                             ? <span className="text-emerald-400 text-xs font-medium flex items-center justify-end gap-1"><CheckCircle2 className="h-3 w-3" /> Approved</span>

@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
+import { getTimesheetApprovalsByCompanyPeriod } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable } from "@workspace/db";
@@ -1376,7 +1377,7 @@ router.get("/rollfi/employees/status", async (req, res) => {
 
 // ── Payroll preview (EasyTeam hours → calculated pay) ────────
 
-router.get("/rollfi/payroll/preview", (req, res) => {
+router.get("/rollfi/payroll/preview", async (req, res) => {
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
 
   const toDate = to ? new Date(to) : new Date();
@@ -1391,16 +1392,23 @@ router.get("/rollfi/payroll/preview", (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
+  // Fetch DB-backed approved hours for this period — these take priority over in-memory store entries
+  const dbApprovals = companyId
+    ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
+    : [];
+  const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
+
   const entries = allStaff.map((u, i) => {
-    // Prefer EasyTeam synced hours: exact period key first, then most-recent across any period
-    const synced = u.employeeId
+    // Priority: DB approval > in-memory store entry > estimated fallback
+    const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
+    const synced = !approval && u.employeeId
       ? (store.getTimesheetEntry(u.employeeId, periodKey) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
       : undefined;
-    const hoursWorked     = synced ? synced.hoursWorked     : workdays * 8;
-    const breakDeduction  = synced ? synced.breakDeduction  : workdays * 0.5;
-    const unapprovedHours = synced ? 0                      : (i % 3 === 0 ? 2 : 0);
-    const netPayableHours = synced ? synced.approvedHours   : Math.max(0, hoursWorked - breakDeduction - unapprovedHours);
-    const hoursSource     = synced ? synced.source          : "estimated";
+    const hoursWorked     = approval ? approval.hoursWorked    : (synced ? synced.hoursWorked     : workdays * 8);
+    const breakDeduction  = approval ? approval.breakDeduction : (synced ? synced.breakDeduction  : workdays * 0.5);
+    const unapprovedHours = (approval || synced) ? 0           : (i % 3 === 0 ? 2 : 0);
+    const netPayableHours = approval ? approval.approvedHours  : (synced ? synced.approvedHours   : Math.max(0, hoursWorked - breakDeduction - unapprovedHours));
+    const hoursSource     = approval ? approval.source         : (synced ? synced.source          : "estimated");
     const hourlyRateCents = u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
@@ -1516,16 +1524,25 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
 
+    // Fetch DB-backed approved hours — these take priority over in-memory store entries
+    const dbApprovals = periodKey
+      ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
+      : [];
+    const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
+
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      const synced = u.employeeId
+      // Priority: DB approval > in-memory store entry > frontend-supplied hours > 0
+      const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
+      const synced = !approval && u.employeeId
         ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
         : null;
       const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
-      const payHours = synced ? synced.approvedHours : (frontendH ?? 0);
-      if (!synced && frontendH) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (no store entry)");
-      if (!synced && !frontendH) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No EasyTeam hours synced and no frontend hours — defaulting to 0h");
+      const payHours = approval ? approval.approvedHours : (synced ? synced.approvedHours : (frontendH ?? 0));
+      if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours");
+      else if (!synced && frontendH) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (no store entry)");
+      else if (!synced && !frontendH) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours found — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };

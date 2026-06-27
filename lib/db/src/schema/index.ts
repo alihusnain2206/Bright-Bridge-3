@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, real } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, real, uniqueIndex } from "drizzle-orm/pg-core";
 
 export const clientEmployeeRecords = pgTable("client_employee_records", {
   id:                  text("id").primaryKey(),
@@ -72,6 +72,24 @@ export const timesheetEntries = pgTable("timesheet_entries", {
   approvedAt:      text("approved_at"),
   approvedByUserId: text("approved_by_user_id"),
 });
+
+export const timesheetApprovals = pgTable("timesheet_approvals", {
+  id:                  serial("id").primaryKey(),
+  employeeId:          text("employee_id").notNull(),
+  rollfiUserId:        text("rollfi_user_id"),
+  companyId:           text("company_id").notNull(),
+  periodKey:           text("period_key").notNull(),
+  hoursWorked:         real("hours_worked").notNull(),
+  breakDeduction:      real("break_deduction").notNull().default(0),
+  approvedHours:       real("approved_hours").notNull(),
+  approvedAt:          text("approved_at").notNull(),
+  approvedByManagerId: text("approved_by_manager_id").notNull(),
+  source:              text("source").notNull().default("easyteam_sync"),
+  managerEdited:       boolean("manager_edited").notNull().default(false),
+  managerEditNote:     text("manager_edit_note"),
+}, (t) => ({
+  uniqueEmpPeriod: uniqueIndex("ta_emp_period_unique").on(t.employeeId, t.periodKey),
+}));
 
 // ── Company & Employee Master Data ───────────────────────────
 
