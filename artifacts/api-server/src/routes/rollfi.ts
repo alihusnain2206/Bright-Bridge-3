@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import axios from "axios";
 import { store } from "../store";
 import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persist.js";
-import { getTimesheetApprovalsByCompanyPeriod } from "../lib/timesheet-approvals-persist.js";
+import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByCompany } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable } from "@workspace/db";
@@ -1392,9 +1392,11 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Fetch DB-backed approved hours for this period — these take priority over in-memory store entries
+  // Fetch the most recent DB-approved hours per employee for this company.
+  // We intentionally ignore the exact periodKey so that a manager's weekly approval
+  // shows up correctly in a biweekly pay period (the periods rarely align).
   const dbApprovals = companyId
-    ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
+    ? await getLatestTimesheetApprovalsByCompany(companyId)
     : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
@@ -1522,10 +1524,9 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
 
-    // Fetch DB-backed approved hours — these take priority over in-memory store entries
-    const dbApprovals = periodKey
-      ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
-      : [];
+    // Fetch the most recent DB-approved hours per employee for this company.
+    // Ignore exact periodKey so manager's weekly approval covers biweekly pay periods.
+    const dbApprovals = await getLatestTimesheetApprovalsByCompany(companyId);
     const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
     const payrollData = onboardedStaff.map((u) => {

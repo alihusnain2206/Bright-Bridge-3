@@ -1,5 +1,5 @@
 import { db, timesheetApprovals } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 
 export interface TimesheetApproval {
   employeeId:          string;
@@ -93,6 +93,30 @@ export async function getTimesheetApprovalsByCompanyPeriod(
       eq(timesheetApprovals.periodKey, periodKey),
     ));
   return rows.map(rowToApproval);
+}
+
+/**
+ * Returns the most recent approval per employee for a company.
+ * Used by the payroll preview — does NOT require an exact periodKey match,
+ * so manager's weekly approval period aligns with the biweekly pay period.
+ */
+export async function getLatestTimesheetApprovalsByCompany(
+  companyId: string,
+): Promise<TimesheetApproval[]> {
+  const rows = await db
+    .select()
+    .from(timesheetApprovals)
+    .where(eq(timesheetApprovals.companyId, companyId))
+    .orderBy(desc(timesheetApprovals.approvedAt));
+
+  // Group by employee, keep most recent per employee (rows are DESC by approvedAt)
+  const byEmployee = new Map<string, TimesheetApproval>();
+  for (const row of rows) {
+    if (!byEmployee.has(row.employeeId)) {
+      byEmployee.set(row.employeeId, rowToApproval(row));
+    }
+  }
+  return Array.from(byEmployee.values());
 }
 
 export async function getTimesheetApprovalByEmployee(
