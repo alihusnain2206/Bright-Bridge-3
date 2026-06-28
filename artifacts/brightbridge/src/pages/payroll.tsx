@@ -1348,7 +1348,7 @@ export default function Payroll() {
                   const histNet    = r2(rollfiPd.payrollLineItems.reduce((s, e) => s + (e.netTotal ?? 0), 0));
                   const histEmpTax = r2(rollfiPd.employeeTaxSum);
                   const histErTax  = r2(rollfiPd.employerTaxSum);
-                  const histDebit  = r2(rollfiPd.total);
+                  const histDebit  = r2((rollfiPd.total ?? 0) + (rollfiPd.employerTaxSum ?? 0));
                   return (
                     <div className="rounded-xl border border-white/10 overflow-hidden">
                       <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
@@ -1528,7 +1528,7 @@ export default function Payroll() {
                     ? r2(rollfiPd.employerTaxSum)
                     : r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
                   const totalDebit  = rollfiPd?.total != null && rollfiPd.total > 0
-                    ? r2(rollfiPd.total)
+                    ? r2((rollfiPd.total ?? 0) + (rollfiPd.employerTaxSum ?? 0))
                     : r2(totalGross + totalErTax);
                   const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
                   return (
