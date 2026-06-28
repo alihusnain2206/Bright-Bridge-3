@@ -42,7 +42,7 @@ interface PayrollResult {
   importResult?: { importRegularPayrollLData?: { status: string; message: string } };
   payPeriod?: { payPeriodId: string; status: string; message: string };
   error?: string;
-  skippedEmployees?: { rollfiUserId: string; reason: string }[];
+  skippedEmployees?: { rollfiUserId: string; name?: string; type?: "zero_hours" | "onboarding"; reason: string }[];
 }
 interface EmpRollfiStatus { rollfiUserId: string; userStatus: string; kycStatus: string; }
 interface CompanyOverview {
@@ -243,21 +243,50 @@ function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }:
           <p className="text-emerald-400/60 text-xs">Funds will be disbursed on the scheduled pay date</p>
         </div>
       </div>
-      {result.skippedEmployees && result.skippedEmployees.length > 0 && (
-        <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
-          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-amber-300 text-sm font-semibold">Some employees were excluded from this payroll run</p>
-            <p className="text-amber-400/70 text-xs mt-0.5">Rollfi rejected them due to incomplete onboarding (KYC not passed or missing bank account).</p>
-            <ul className="mt-1.5 space-y-0.5">
-              {result.skippedEmployees.map((e) => (
-                <li key={e.rollfiUserId} className="text-amber-400/60 text-[11px] font-mono">{e.rollfiUserId}</li>
-              ))}
-            </ul>
-            <p className="text-amber-400/50 text-[11px] mt-1.5">Complete their Rollfi onboarding in Step 2 to include them in future payroll runs.</p>
-          </div>
-        </div>
-      )}
+      {result.skippedEmployees && result.skippedEmployees.length > 0 && (() => {
+        const zeroHours = result.skippedEmployees!.filter((e) => e.type === "zero_hours");
+        const onboarding = result.skippedEmployees!.filter((e) => e.type !== "zero_hours");
+        return (
+          <>
+            {zeroHours.length > 0 && (
+              <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-amber-300 text-sm font-semibold">
+                    {zeroHours.length === 1 ? "1 employee" : `${zeroHours.length} employees`} excluded — no hours this period
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {zeroHours.map((e) => (
+                      <li key={e.rollfiUserId} className="text-amber-400/70 text-xs">
+                        {e.name ?? e.rollfiUserId} — removed from pay period via Rollfi API
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-amber-400/50 text-[11px] mt-1.5">If this is unexpected, check their EasyTeam timesheets and resubmit.</p>
+                </div>
+              </div>
+            )}
+            {onboarding.length > 0 && (
+              <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-2">
+                <XCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-red-300 text-sm font-semibold">
+                    {onboarding.length === 1 ? "1 employee" : `${onboarding.length} employees`} excluded — incomplete Rollfi onboarding
+                  </p>
+                  <ul className="mt-1 space-y-0.5">
+                    {onboarding.map((e) => (
+                      <li key={e.rollfiUserId} className="text-red-400/70 text-xs">
+                        {e.name ?? e.rollfiUserId}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-red-400/50 text-[11px] mt-1.5">Complete their Rollfi onboarding in Step 2 to include them in future payroll runs.</p>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
       <div className="space-y-2 mb-4">
         {steps.map((step, i) => (
           <div key={i} className="flex items-start gap-3">
@@ -1423,10 +1452,11 @@ export default function Payroll() {
                         const er  = calcErTax(emp.grossPay);
                         const key = emp.employeeId ?? emp.name;
                         const isExpanded = expandedEmp === key;
+                        const isZeroHours = emp.hoursWorked === 0 && emp.grossPay === 0;
                         return (
                           <React.Fragment key={key}>
                             <tr
-                              className="hover:bg-white/5 transition-colors cursor-pointer select-none"
+                              className={`hover:bg-white/5 transition-colors cursor-pointer select-none ${isZeroHours ? "opacity-45" : ""}`}
                               onClick={() => setExpandedEmp(isExpanded ? null : key)}
                             >
                               <td className="px-4 py-3">
@@ -1441,19 +1471,24 @@ export default function Payroll() {
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-1.5">
                                   <span className="text-white/70">{emp.hoursWorked}h</span>
-                                  {(emp.hoursSource === "easyteam_sync") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                  {(emp.hoursSource === "manager_edit") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
-                                  {(emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                  {(emp.hoursSource === "seeded") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                  {(emp.hoursSource === "pending_approval") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending Approval</span>}
-                                  {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                  {isZeroHours
+                                    ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25">⚠ Will be excluded</span>
+                                    : <>
+                                        {(emp.hoursSource === "easyteam_sync") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                        {(emp.hoursSource === "manager_edit") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
+                                        {(emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                        {(emp.hoursSource === "seeded") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                        {(emp.hoursSource === "pending_approval") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending Approval</span>}
+                                        {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                      </>
+                                  }
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
                               <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
-                              <td className="px-4 py-3 text-emerald-400 font-bold">{fmtD(emp.grossPay)}</td>
-                              <td className="px-4 py-3 text-red-300/80 text-xs">~{fmtD(tax.total)}</td>
-                              <td className="px-4 py-3 text-white font-semibold text-xs">~{fmtD(tax.net)}</td>
+                              <td className="px-4 py-3 text-emerald-400 font-bold">{isZeroHours ? <span className="text-white/20 text-xs">—</span> : fmtD(emp.grossPay)}</td>
+                              <td className="px-4 py-3 text-red-300/80 text-xs">{isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.total)}`}</td>
+                              <td className="px-4 py-3 text-white font-semibold text-xs">{isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.net)}`}</td>
                               <td className="px-4 py-3">{emp.onboardedToRollfi ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-white/20" />}</td>
                             </tr>
                             {isExpanded && (
@@ -1659,6 +1694,28 @@ export default function Payroll() {
                     </div>
                   )}
                 </div>
+
+                {/* Zero-hours exclusion warning */}
+                {(() => {
+                  const excluded = preview.employees.filter((e) => e.hoursWorked === 0 && e.grossPay === 0);
+                  if (excluded.length === 0) return null;
+                  return (
+                    <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg border border-amber-500/30 bg-amber-500/8 text-xs">
+                      <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-amber-300 font-semibold mb-0.5">
+                          {excluded.length === 1
+                            ? `${excluded[0].name} has no hours and will not be included in this payroll run.`
+                            : `${excluded.length} employees have no hours and will not be included in this payroll run.`}
+                        </p>
+                        {excluded.length > 1 && (
+                          <p className="text-amber-400/70">{excluded.map((e) => e.name).join(", ")}</p>
+                        )}
+                        <p className="text-amber-400/50 mt-0.5">Check EasyTeam timesheets if this is unexpected before submitting.</p>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* Submit area — Change 5 (opens confirm dialog) */}
                 <div className="flex flex-wrap items-center gap-3">
