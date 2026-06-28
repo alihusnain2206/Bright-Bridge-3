@@ -1527,7 +1527,7 @@ export default function Payroll() {
                   const totalErTax  = confirmed && rollfiPd
                     ? r2(rollfiPd.employerTaxSum)
                     : r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
-                  const totalDebit  = confirmed && rollfiPd
+                  const totalDebit  = rollfiPd?.total != null && rollfiPd.total > 0
                     ? r2(rollfiPd.total)
                     : r2(totalGross + totalErTax);
                   const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
