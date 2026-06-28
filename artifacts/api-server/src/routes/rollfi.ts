@@ -1783,7 +1783,7 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
     );
     req.log.info({ rollfiResponse: r.data }, "Rollfi getProcessedPayperiodsDetails response");
     const raw = r.data as Record<string, unknown>;
-    const periods = (raw.processedPayperiods ?? raw.payPeriods ?? raw.periods ?? []) as Array<Record<string, unknown>>;
+    const periods = (raw.processedPayPeriods ?? raw.processedPayperiods ?? raw.payPeriods ?? raw.periods ?? []) as Array<Record<string, unknown>>;
     const sorted = [...periods].sort((a, b) =>
       String(b.payBeginDate ?? b.payDate ?? "").localeCompare(String(a.payBeginDate ?? a.payDate ?? ""))
     );
