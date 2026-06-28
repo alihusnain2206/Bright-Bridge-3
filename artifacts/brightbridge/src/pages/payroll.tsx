@@ -796,7 +796,7 @@ export default function Payroll() {
   const { data: history } = useQuery<{ periods: ProcessedPeriod[] }>({
     queryKey: ["rollfi-history", selectedCompanyId],
     queryFn: () => api.get(`/rollfi/payperiod/history?companyId=${selectedCompanyId}`),
-    enabled: tab === 2 && selectedCompanyId !== "all" && !!companies.find((c) => c.id === selectedCompanyId)?.rollfi,
+    enabled: tab === 2 && !!selectedCompanyId && selectedCompanyId !== "all",
     staleTime: 60_000,
     retry: false,
   });
