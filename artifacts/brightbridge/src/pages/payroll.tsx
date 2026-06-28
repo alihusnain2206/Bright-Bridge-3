@@ -739,6 +739,7 @@ export default function Payroll() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [expandedEmpId, setExpandedEmpId] = useState<string | null>(null);
   const [singleEmpStatus, setSingleEmpStatus] = useState<Record<string, EmpRollfiStatus & { loading?: boolean }>>({});
+  const [selectedHistoryPeriodId, setSelectedHistoryPeriodId] = useState<string | null>(null);
   const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
@@ -800,10 +801,11 @@ export default function Payroll() {
     retry: false,
   });
 
+  const activePeriodId = selectedHistoryPeriodId ?? payPeriod?.payPeriodId;
   const { data: payPeriodDetails } = useQuery<RollfiPeriodDetailsResponse>({
-    queryKey: ["rollfi-period-details", selectedCompanyId, payPeriod?.payPeriodId],
-    queryFn: () => api.get(`/rollfi/payperiod/details?companyId=${selectedCompanyId}&payPeriodId=${payPeriod!.payPeriodId}`),
-    enabled: !!payPeriod?.payPeriodId && selectedCompanyId !== "all" && tab === 2,
+    queryKey: ["rollfi-period-details", selectedCompanyId, activePeriodId],
+    queryFn: () => api.get(`/rollfi/payperiod/details?companyId=${selectedCompanyId}&payPeriodId=${encodeURIComponent(activePeriodId!)}`),
+    enabled: !!activePeriodId && selectedCompanyId !== "all" && tab === 2,
     retry: false,
     staleTime: 60_000,
   });
@@ -932,6 +934,9 @@ export default function Payroll() {
     rollfiUserId ? (empStatuses[companyId]?.find((s) => s.rollfiUserId.toUpperCase() === rollfiUserId.toUpperCase()) ?? null) : null;
 
   const selectedCompanyName = companies.find((c) => c.id === selectedCompanyId)?.name ?? "";
+  const activeHistoryPeriod = selectedHistoryPeriodId
+    ? (history?.periods.find((p) => p.payPeriodId === selectedHistoryPeriodId) ?? null)
+    : null;
 
   return (
     <div className="min-h-screen" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, #1a2e45 100%)` }}>
@@ -1268,7 +1273,7 @@ export default function Payroll() {
               <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                 <span className="text-white/40 text-xs">Company</span>
                 <select value={selectedCompanyId}
-                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); autoFetchedRef.current = ""; }}
+                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); autoFetchedRef.current = ""; setSelectedHistoryPeriodId(null); }}
                   className="bg-transparent text-white text-sm outline-none">
                   <option value="all">All Companies</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1278,14 +1283,40 @@ export default function Payroll() {
                 <RefreshCw className="h-3.5 w-3.5" /> Refresh
               </Button>
               {selectedCompanyId !== "all" && companies.find((c) => c.id === selectedCompanyId)?.rollfi && (
-                <Button variant="ghost" size="sm" className="text-white/60 hover:text-white gap-1.5 border border-white/10" onClick={() => void fetchPayPeriod(selectedCompanyId)}>
-                  <Clock className="h-3.5 w-3.5" /> {payPeriod ? "Re-fetch Pay Period" : "Get Pay Period"}
-                </Button>
+                <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
+                  <Clock className="h-3.5 w-3.5 text-white/40 shrink-0" />
+                  <select
+                    value={selectedHistoryPeriodId ?? ""}
+                    onChange={(e) => setSelectedHistoryPeriodId(e.target.value || null)}
+                    className="bg-transparent text-white/80 text-sm outline-none cursor-pointer"
+                  >
+                    {payPeriodFetching
+                      ? <option value="">Fetching current period…</option>
+                      : payPeriod
+                        ? <option value="">{payPeriod.payBeginDate} → {payPeriod.payEndDate} ({payPeriod.payPeriodStatus})</option>
+                        : <option value="">No current period</option>
+                    }
+                    {history?.periods.map((p) => (
+                      <option key={p.payPeriodId ?? p.payBeginDate} value={p.payPeriodId ?? ""}>
+                        {p.payBeginDate} → {p.payEndDate} ({p.payPeriodStatus ?? "Processed"}) ✓
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
             </div>
 
             {/* Pay period card */}
-            {payPeriod && (
+            {activeHistoryPeriod ? (
+              <div className="mb-4 p-4 rounded-xl border border-green-500/20 bg-green-500/5">
+                <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+                  <div><p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Pay Period</p><p className="text-white text-sm font-medium">{activeHistoryPeriod.payPeriod ?? `${activeHistoryPeriod.payBeginDate} – ${activeHistoryPeriod.payEndDate}`}</p></div>
+                  <div><p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Pay Date</p><p className="text-white text-sm">{activeHistoryPeriod.payDate ?? "—"}</p></div>
+                  <div><p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Status</p><PayPeriodStatusBadge status={String(activeHistoryPeriod.payPeriodStatus ?? "Processed")} /></div>
+                  <div className="ml-auto"><span className="text-[11px] px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/25 text-green-400 font-semibold">✅ Confirmed by Rollfi</span></div>
+                </div>
+              </div>
+            ) : payPeriod ? (
               <div className="mb-4 p-4 rounded-xl border border-white/10 bg-white/5">
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                   <div><p className="text-white/40 text-xs font-semibold uppercase tracking-wide mb-0.5">Pay Period</p><p className="text-white text-sm font-medium">{payPeriod.payPeriod}</p></div>
@@ -1296,12 +1327,63 @@ export default function Payroll() {
                   {isPolling && <div className="ml-auto flex items-center gap-1.5 text-orange-300/70 text-xs"><Loader2 className="h-3 w-3 animate-spin" /> Watching for updates…</div>}
                 </div>
               </div>
-            )}
+            ) : null}
 
-            {previewLoading && <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-white/40 animate-spin" /></div>}
-
-            {preview && !previewLoading && (
+            {selectedHistoryPeriodId && activeHistoryPeriod ? (
+              <div className="space-y-4">
+                {!payPeriodDetails ? (
+                  <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-white/30 animate-spin" /></div>
+                ) : (() => {
+                  const rollfiPd = payPeriodDetails.payPeriod?.[0];
+                  if (!rollfiPd) return <p className="text-white/30 text-sm text-center py-8">No payroll details available for this period.</p>;
+                  const histGross  = r2(rollfiPd.payrollLineItems.reduce((s, e) => s + (e.grossTotal ?? 0), 0));
+                  const histNet    = r2(rollfiPd.payrollLineItems.reduce((s, e) => s + (e.netTotal ?? 0), 0));
+                  const histEmpTax = r2(rollfiPd.employeeTaxSum);
+                  const histErTax  = r2(rollfiPd.employerTaxSum);
+                  const histDebit  = r2(rollfiPd.total);
+                  return (
+                    <div className="rounded-xl border border-white/10 overflow-hidden">
+                      <div className="px-5 py-3 border-b border-white/10 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)" }}>
+                        <p className="text-white font-semibold text-sm">Confirmed Payroll Totals</p>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/25 text-green-400 font-semibold">✅ Confirmed by Rollfi</span>
+                      </div>
+                      <div className="px-5 py-4 grid grid-cols-2 gap-6 text-xs border-b border-white/5">
+                        <div>
+                          <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employee Payments</p>
+                          <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(histGross)}</span></div>
+                          <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes</span><span className="text-red-300">−{fmtD(histEmpTax)}</span></div>
+                          <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Net Pay to Staff</span><span className="text-white">{fmtD(histNet)}</span></div>
+                        </div>
+                        <div>
+                          <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employer Costs</p>
+                          <div className="flex justify-between py-1 font-semibold"><span className="text-white/60">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(histErTax)}</span></div>
+                        </div>
+                      </div>
+                      <div className="px-5 py-4 flex items-center justify-between border-t border-amber-500/30" style={{ background: "rgba(232,98,42,0.08)" }}>
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-amber-400" />
+                          <div>
+                            <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
+                            <p className="text-green-400/70 text-[11px]">✅ Confirmed by Rollfi{activeHistoryPeriod.payDate ? ` · Debited on ${activeHistoryPeriod.payDate}` : ""}</p>
+                          </div>
+                        </div>
+                        <p className="text-amber-300 font-bold text-2xl">{fmtD(histDebit)}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
+                <PayStubsDrawer
+                  companyId={selectedCompanyId}
+                  period={activeHistoryPeriod}
+                  onClose={() => setSelectedHistoryPeriodId(null)}
+                />
+              </div>
+            ) : (
               <>
+                {previewLoading && <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 text-white/40 animate-spin" /></div>}
+
+                {preview && !previewLoading && (
+                  <>
                 <div className="mb-2 flex items-center justify-between">
                   <p className="text-white/40 text-xs">Period: {preview.period.from} → {preview.period.to} ({preview.period.workdays} workdays)</p>
                   {!preview.allOnboarded && (
@@ -1631,6 +1713,8 @@ export default function Payroll() {
                     )}
                   </>
                 )}
+              </>
+            )}
               </>
             )}
           </div>
