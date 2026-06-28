@@ -342,14 +342,20 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
 
   // Helper: scan exportLog for a matching entry, write to store + persist to DB.
+  // Removes the consumed entry from exportLog so stale webhook payloads cannot be
+  // replayed on subsequent Pull Hours calls (each webhook payload is used at most once).
   // Returns the number of entries persisted, or 0 if no usable export data was found.
   async function applyExportIfFound(): Promise<number> {
-    const found = exportLog.find(
+    const foundIdx = exportLog.findIndex(
       (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
         (!e.startDate || new Date(e.startDate) <= toDate) &&
         (!e.endDate   || new Date(e.endDate)   >= fromDate)
     );
+    if (foundIdx === -1) return 0;
+    const found = exportLog[foundIdx];
     if (!found?.shifts || found.shifts.length === 0) return 0;
+    // Consume the entry — remove it so future Pull Hours calls go to the REST API for fresh data.
+    exportLog.splice(foundIdx, 1);
 
     const hoursByEmp  = new Map<string, number>();
     const breaksByEmp = new Map<string, number>();
