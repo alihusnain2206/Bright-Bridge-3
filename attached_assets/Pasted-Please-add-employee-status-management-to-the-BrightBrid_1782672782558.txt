@@ -1,0 +1,836 @@
+Please add employee status management 
+to the BrightBridge platform. This 
+includes On Leave, Terminate, and 
+Reactivate functionality.
+
+Do NOT rebuild anything from scratch.
+Keep all existing features working.
+Add these new features only.
+
+This is a TypeScript codebase.
+
+---
+
+CONTEXT — WHY WE ARE BUILDING THIS:
+
+Rollfi specifically asked us:
+"How are you planning to handle 
+terminations? Rollfi has APIs for 
+both temporary deactivation and full 
+termination depending on what the 
+daycare is trying to do."
+
+We need to handle TWO scenarios:
+
+SCENARIO 1 — ON LEAVE:
+Employee is temporarily inactive
+(maternity leave, medical leave etc)
+They WILL come back!
+Use Rollfi deactivateUser API
+
+SCENARIO 2 — TERMINATED:
+Employee permanently left
+(fired, resigned, retired)
+They will NOT come back!
+Use Rollfi terminateUser API
+
+BOTH scenarios must also update
+EasyTeam automatically by filtering
+the employees array in the JWT
+to only include "active" employees.
+
+---
+
+PART 1 — UPDATE EMPLOYEE 
+STATUS IN DATABASE
+
+First update the employee data
+structure to support status:
+
+TypeScript interface update:
+The employee status field should
+support these values:
+type EmployeeStatus = 
+  | "invited"
+  | "onboarding" 
+  | "active"
+  | "on_leave"
+  | "terminated";
+
+Update employees.json structure
+to include these fields per employee:
+
+{
+  ...existing fields...
+  status: "active",
+  // Default for all existing employees
+  
+  onLeaveReason?: string,
+  onLeaveDate?: string,
+  expectedReturnDate?: string,
+  
+  terminatedAt?: string,
+  terminationReason?: string,
+  lastWorkingDay?: string,
+  terminatedBy?: string
+}
+
+Update all existing employees
+in employees.json to have:
+status: "active"
+
+---
+
+PART 2 — ADD ROLLFI API ENDPOINTS
+
+Add these three new endpoints
+to rollfi.ts:
+
+ENDPOINT 1 — Deactivate (On Leave):
+POST /api/rollfi/employees/deactivate
+
+TypeScript code:
+router.post(
+'/rollfi/employees/deactivate',
+async (req, res) => {
+  const { 
+    employeeId, 
+    reason, 
+    expectedReturnDate 
+  } = req.body as {
+    employeeId: string;
+    reason?: string;
+    expectedReturnDate?: string;
+  };
+
+  // Get employee from store
+  const employee = store
+    .getAllStaffUsers()
+    .find(u => u.employeeId === employeeId);
+    
+  if (!employee) {
+    res.status(404).json({ 
+      error: 'Employee not found' 
+    });
+    return;
+  }
+
+  // Get Rollfi mapping
+  const rollfiEmp = store
+    .getRollfiEmployee(employeeId);
+    
+  if (!rollfiEmp?.rollfiUserId) {
+    res.status(400).json({ 
+      error: 'Employee not onboarded 
+              to Rollfi' 
+    });
+    return;
+  }
+
+  try {
+    // Call Rollfi deactivateUser
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal
+       #deactivateUser`,
+      {
+        method: 'deactivateUser',
+        userId: rollfiEmp.rollfiUserId
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    req.log.info(
+      { rollfiResponse: response.data },
+      'Rollfi deactivateUser response'
+    );
+
+    // Update employee status in store
+    store.updateEmployeeStatus(
+      employeeId,
+      'on_leave',
+      {
+        onLeaveReason: reason,
+        onLeaveDate: new Date()
+          .toISOString(),
+        expectedReturnDate
+      }
+    );
+
+    res.json({ 
+      success: true,
+      status: 'on_leave',
+      rollfiResponse: response.data
+    });
+
+  } catch (err: unknown) {
+    const e = err as { 
+      response?: { data: unknown } 
+    };
+    req.log.error(
+      { err },
+      'deactivateUser failed'
+    );
+    res.status(500).json({ 
+      error: 'Failed to deactivate 
+              employee',
+      details: e.response?.data 
+               ?? String(err)
+    });
+  }
+});
+
+---
+
+ENDPOINT 2 — Terminate (Permanent):
+POST /api/rollfi/employees/terminate
+
+router.post(
+'/rollfi/employees/terminate',
+async (req, res) => {
+  const {
+    employeeId,
+    terminationReason,
+    lastWorkingDay
+  } = req.body as {
+    employeeId: string;
+    terminationReason: string;
+    lastWorkingDay: string;
+  };
+
+  const employee = store
+    .getAllStaffUsers()
+    .find(u => u.employeeId === employeeId);
+
+  if (!employee) {
+    res.status(404).json({ 
+      error: 'Employee not found' 
+    });
+    return;
+  }
+
+  const rollfiEmp = store
+    .getRollfiEmployee(employeeId);
+
+  if (!rollfiEmp?.rollfiUserId) {
+    res.status(400).json({ 
+      error: 'Employee not onboarded 
+              to Rollfi' 
+    });
+    return;
+  }
+
+  try {
+    // Call Rollfi terminateUser
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal
+       #terminateUser`,
+      {
+        method: 'terminateUser',
+        userId: rollfiEmp.rollfiUserId,
+        terminationDate: lastWorkingDay
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    req.log.info(
+      { rollfiResponse: response.data },
+      'Rollfi terminateUser response'
+    );
+
+    // Update employee status in store
+    store.updateEmployeeStatus(
+      employeeId,
+      'terminated',
+      {
+        terminatedAt: new Date()
+          .toISOString(),
+        terminationReason,
+        lastWorkingDay,
+        terminatedBy: 'admin'
+      }
+    );
+
+    res.json({ 
+      success: true,
+      status: 'terminated',
+      rollfiResponse: response.data
+    });
+
+  } catch (err: unknown) {
+    const e = err as { 
+      response?: { data: unknown } 
+    };
+    req.log.error(
+      { err },
+      'terminateUser failed'
+    );
+    res.status(500).json({ 
+      error: 'Failed to terminate 
+              employee',
+      details: e.response?.data 
+               ?? String(err)
+    });
+  }
+});
+
+---
+
+ENDPOINT 3 — Reactivate:
+POST /api/rollfi/employees/reactivate
+
+router.post(
+'/rollfi/employees/reactivate',
+async (req, res) => {
+  const { employeeId } = req.body as {
+    employeeId: string;
+  };
+
+  const employee = store
+    .getAllStaffUsers()
+    .find(u => u.employeeId === employeeId);
+
+  if (!employee) {
+    res.status(404).json({ 
+      error: 'Employee not found' 
+    });
+    return;
+  }
+
+  // Cannot reactivate terminated!
+  if (employee.status === 'terminated') {
+    res.status(400).json({ 
+      error: 'Cannot reactivate a 
+              terminated employee.
+              Please add them as 
+              a new employee instead.' 
+    });
+    return;
+  }
+
+  const rollfiEmp = store
+    .getRollfiEmployee(employeeId);
+
+  if (!rollfiEmp?.rollfiUserId) {
+    res.status(400).json({ 
+      error: 'Employee not onboarded 
+              to Rollfi' 
+    });
+    return;
+  }
+
+  try {
+    // Call Rollfi reactivateUser
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal
+       #reactivateUser`,
+      {
+        method: 'reactivateUser',
+        userId: rollfiEmp.rollfiUserId
+      },
+      { headers: rollfiHeaders() }
+    );
+
+    req.log.info(
+      { rollfiResponse: response.data },
+      'Rollfi reactivateUser response'
+    );
+
+    // Update employee status back to active
+    store.updateEmployeeStatus(
+      employeeId,
+      'active',
+      {
+        onLeaveReason: undefined,
+        onLeaveDate: undefined,
+        expectedReturnDate: undefined
+      }
+    );
+
+    res.json({ 
+      success: true,
+      status: 'active',
+      rollfiResponse: response.data
+    });
+
+  } catch (err: unknown) {
+    const e = err as { 
+      response?: { data: unknown } 
+    };
+    req.log.error(
+      { err },
+      'reactivateUser failed'
+    );
+    res.status(500).json({ 
+      error: 'Failed to reactivate 
+              employee',
+      details: e.response?.data 
+               ?? String(err)
+    });
+  }
+});
+
+---
+
+PART 3 — UPDATE STORE
+
+Add updateEmployeeStatus function
+to store.ts:
+
+updateEmployeeStatus(
+  employeeId: string,
+  status: EmployeeStatus,
+  additionalFields?: Partial<Employee>
+): boolean {
+  // Find employee in employees.json
+  // Update their status field
+  // Update any additional fields
+  // Save back to employees.json
+  // Return true if successful
+}
+
+Also update getAllStaffUsers to
+return the status field correctly.
+
+---
+
+PART 4 — UPDATE EASYTEAM JWT
+
+This is CRITICAL and very simple!
+
+Find where the EasyTeam JWT
+employees array is built.
+
+Currently it probably sends
+ALL employees like this:
+const employees = 
+  store.getAllStaffUsers()
+  .filter(u => u.companyId === companyId)
+
+UPDATE to only send ACTIVE employees:
+const employees = 
+  store.getAllStaffUsers()
+  .filter(u => 
+    u.companyId === companyId &&
+    u.status === 'active'
+    // Only active employees
+    // can use Time Clock!
+    // on_leave and terminated
+    // are automatically excluded!
+  )
+
+This single filter line means:
+→ On leave employees cannot
+  clock in via EasyTeam
+→ Terminated employees cannot
+  clock in via EasyTeam
+→ NO separate EasyTeam API call needed!
+→ Just filter the array!
+
+---
+
+PART 5 — BUILD THE UI
+
+Find the employees list page at:
+/clients/:companyId/employees
+
+UPDATE each employee row to show:
+
+FOR ACTIVE EMPLOYEES:
+Show status badge: 
+● Active (green dot)
+
+Show action buttons:
+[Edit] [On Leave] [Terminate]
+
+FOR ON LEAVE EMPLOYEES:
+Show status badge:
+🟡 On Leave
+Show leave reason if available
+Show expected return date if set
+
+Show action buttons:
+[Edit] [Reactivate]
+(NO On Leave or Terminate buttons!)
+
+FOR TERMINATED EMPLOYEES:
+Show status badge:
+🔴 Terminated
+Show termination date
+Show termination reason
+
+Show action buttons:
+[View History]
+(NO other buttons at all!)
+Employee row slightly greyed out
+
+---
+
+PART 6 — ON LEAVE MODAL
+
+When [On Leave] button is clicked
+show a modal popup:
+
+Title: "Put [Employee Name] On Leave"
+
+Content:
+"[Name] will be temporarily 
+removed from payroll and 
+unable to clock in until 
+reactivated."
+
+Form fields:
+- Reason dropdown:
+  ○ Maternity/Paternity Leave
+  ○ Medical Leave
+  ○ Personal Leave
+  ○ Unpaid Leave
+  ○ Suspended
+  ○ Other
+
+- Expected Return Date (optional):
+  Date picker
+  [MM/DD/YYYY]
+
+- Notes (optional):
+  Text area
+
+Buttons:
+[Cancel] [Confirm - Put On Leave]
+
+When Confirm clicked:
+1. Show loading spinner
+2. Call POST /api/rollfi/employees/deactivate
+   with employeeId and reason
+3. On success:
+   → Close modal
+   → Show success toast:
+     "✅ [Name] has been put on leave.
+     They will be removed from payroll
+     and cannot clock in."
+   → Update employee row immediately
+     to show On Leave status
+   → Show Reactivate button
+4. On error:
+   → Show error message in modal
+   → Keep modal open
+   → Allow retry
+
+---
+
+PART 7 — TERMINATE MODAL
+
+When [Terminate] button is clicked
+show a SERIOUS warning modal:
+
+Title: "⚠️ Terminate [Employee Name]"
+
+Show RED warning banner at top:
+"This action is PERMANENT 
+and cannot be undone!"
+
+Content:
+"[Name] will be permanently 
+removed from all future payrolls 
+and will be unable to clock in.
+Their records will be kept 
+for compliance purposes."
+
+Show what will happen:
+✓ Removed from all future payrolls
+✓ Cannot clock in to EasyTeam
+✓ Employment records kept
+✓ Pay history kept
+✗ Cannot be reactivated
+✗ Cannot clock in ever again
+
+Form fields:
+- Termination Reason (required):
+  ○ Resigned
+  ○ Terminated by employer
+  ○ Contract ended
+  ○ Retired
+  ○ Mutual agreement
+  ○ Other
+
+- Last Working Day (required):
+  Date picker
+  Default: today's date
+
+- Notes (optional):
+  Text area
+
+- Confirmation input (required!):
+  Label: "Type TERMINATE to confirm:"
+  Text input
+  [                              ]
+  
+  The final button is DISABLED
+  until user types exactly:
+  "TERMINATE" (case sensitive!)
+
+Buttons:
+[Cancel] 
+[Permanently Terminate] 
+← disabled until TERMINATE typed!
+← red background color
+
+When Terminate clicked:
+1. Show loading spinner
+2. Call POST /api/rollfi/employees/terminate
+   with employeeId, reason, lastWorkingDay
+3. On success:
+   → Close modal
+   → Show success toast:
+     "✅ [Name] has been terminated.
+     They have been removed from 
+     all future payrolls."
+   → Update employee row immediately
+     to show Terminated status
+     in red/greyed out
+   → Remove all action buttons
+     except View History
+4. On error:
+   → Show error message in modal
+   → Keep modal open
+   → Allow retry
+
+---
+
+PART 8 — REACTIVATE MODAL
+
+When [Reactivate] button is clicked
+show a confirmation modal:
+
+Title: "Reactivate [Employee Name]?"
+
+Content:
+"[Name] will be returned to 
+active status. They will be 
+included in future payrolls 
+and can clock in via EasyTeam."
+
+Show what will happen:
+✓ Added back to payroll
+✓ Can clock in to EasyTeam
+✓ Status changed to Active
+
+Buttons:
+[Cancel] [Confirm Reactivation]
+
+When Confirm clicked:
+1. Show loading spinner
+2. Call POST /api/rollfi/employees/reactivate
+   with employeeId
+3. On success:
+   → Close modal
+   → Show success toast:
+     "✅ [Name] has been reactivated!
+     They can now clock in and 
+     will be included in payroll."
+   → Update employee row immediately
+     to show Active status
+   → Show full action buttons again
+4. On error:
+   → Show error message
+   → Keep modal open
+   → Allow retry
+
+---
+
+PART 9 — STATUS BADGES AND COLORS
+
+Create consistent status badge
+component used across the app:
+
+Active:
+→ Green dot ●
+→ "Active" text
+→ Green background chip
+
+On Leave:
+→ Yellow dot 🟡
+→ "On Leave" text
+→ Yellow/amber background chip
+→ Show reason below if available
+→ Show return date if available
+
+Terminated:
+→ Red dot 🔴
+→ "Terminated" text
+→ Red background chip
+→ Show date below
+
+Invited/Onboarding:
+→ Blue dot 🔵
+→ "Setting Up" text
+→ Blue background chip
+
+---
+
+PART 10 — FILTER EMPLOYEES
+IN RELEVANT SECTIONS
+
+Update these sections to handle
+different statuses correctly:
+
+PAYROLL SECTION:
+Only show "active" employees
+in payroll preview table
+
+If on_leave employee has hours
+somehow, still exclude them!
+Always filter by status first:
+employees.filter(e => 
+  e.status === 'active'
+)
+
+TIMESHEETS SECTION:
+Show ALL employees including
+on_leave and terminated
+(need to see historical timesheets!)
+But clearly label their status
+
+SCHEDULE SECTION:
+Only show "active" employees
+Cannot schedule on_leave or
+terminated employees!
+
+TIME CLOCK (EasyTeam iframe):
+Only "active" employees in JWT
+(already handled in Part 4!)
+
+CLIENTS EMPLOYEE LIST:
+Show ALL employees with
+their status clearly labeled
+Active, On Leave, Terminated
+all visible with different styling
+
+---
+
+IMPORTANT TYPESCRIPT RULES:
+
+1. All new endpoints require
+   authentication check:
+   if (!req.session.userId) {
+     res.status(401).json({ 
+       error: 'Unauthorized' 
+     });
+     return;
+   }
+
+2. Cannot terminate if already
+   terminated:
+   if (employee.status === 'terminated') {
+     res.status(400).json({ 
+       error: 'Employee already terminated'
+     });
+     return;
+   }
+
+3. Cannot put on leave if
+   already terminated:
+   if (employee.status === 'terminated') {
+     res.status(400).json({ 
+       error: 'Cannot put terminated 
+               employee on leave'
+     });
+     return;
+   }
+
+4. Handle Rollfi API errors gracefully:
+   If Rollfi call fails:
+   → Do NOT update local status
+   → Show specific error to user
+   → Let them retry
+   → Never get out of sync!
+
+5. Always update BOTH Rollfi AND
+   local store together:
+   → If Rollfi succeeds → update store
+   → If Rollfi fails → do not update store
+   → Keep them in sync always!
+
+6. Log all status changes:
+   req.log.info({
+     employeeId,
+     previousStatus,
+     newStatus,
+     reason,
+     changedBy: req.session.userId
+   }, 'Employee status changed');
+
+---
+
+TESTING CHECKLIST:
+
+After building verify:
+
+ON LEAVE FLOW:
+✅ [On Leave] button visible
+   for active employees only
+✅ Modal opens with form fields
+✅ Reason dropdown works
+✅ Date picker works
+✅ Confirm button calls API
+✅ Loading state shows
+✅ Success toast appears
+✅ Employee row updates to
+   show On Leave badge
+✅ Reactivate button appears
+✅ On Leave button disappears
+✅ Employee NOT in EasyTeam
+   time clock after this
+
+TERMINATE FLOW:
+✅ [Terminate] button visible
+   for active employees only
+✅ Modal opens with RED warning
+✅ Termination reason required
+✅ Last working day required
+✅ TERMINATE input required
+✅ Submit button disabled until
+   TERMINATE typed exactly
+✅ Confirm button calls API
+✅ Loading state shows
+✅ Success toast appears
+✅ Employee row greyed out
+✅ Shows Terminated badge in red
+✅ Only View History button shown
+✅ Employee NOT in EasyTeam
+   time clock after this
+
+REACTIVATE FLOW:
+✅ [Reactivate] button visible
+   for on_leave employees only
+✅ NOT shown for terminated!
+✅ Modal opens with confirmation
+✅ Confirm button calls API
+✅ Loading state shows
+✅ Success toast appears
+✅ Employee row back to Active
+✅ Full action buttons return
+✅ Employee IN EasyTeam again
+
+EASYTEAM FILTER:
+✅ Active employees → in time clock
+✅ On leave employees → NOT in time clock
+✅ Terminated employees → NOT in time clock
+
+PAYROLL FILTER:
+✅ Only active employees in payroll
+✅ On leave employees excluded
+✅ Terminated employees excluded
+
+CANNOT DO:
+✅ Cannot reactivate terminated
+   (shows error message)
+✅ Cannot terminate already terminated
+   (shows error message)
+✅ Cannot put terminated on leave
+   (shows error message)
+
+EXISTING FEATURES:
+✅ All existing payroll works
+✅ All existing EasyTeam works
+✅ All existing client features work
+✅ No hardcoded data added

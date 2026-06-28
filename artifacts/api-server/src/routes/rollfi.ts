@@ -347,6 +347,110 @@ router.delete("/rollfi/employees/:userId", async (req, res) => {
   res.json({ deleted: true, id: userId });
 });
 
+// ── Employee Status Management ────────────────────────────────
+
+router.post("/rollfi/employees/deactivate", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { rollfiUserId, reason, expectedReturnDate } = req.body as { rollfiUserId: string; reason?: string; expectedReturnDate?: string };
+  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+
+  const allStaff = store.getAllStaffUsers();
+  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
+  if (employee?.status === "terminated") {
+    res.status(400).json({ error: "Cannot put terminated employee on leave" }); return;
+  }
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#deactivateUser`,
+      { method: "deactivateUser", userId: rollfiUserId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "Rollfi deactivateUser response");
+
+    if (employee?.employeeId) {
+      const previousStatus = employee.status;
+      store.updateEmployeeStatus(employee.employeeId, "on_leave", { onLeaveReason: reason, onLeaveDate: new Date().toISOString(), expectedReturnDate });
+      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "on_leave", reason, changedBy: req.session.userId }, "Employee status changed");
+    }
+    await db.update(employeesTable).set({ status: "on_leave", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+
+    res.json({ success: true, status: "on_leave", rollfiResponse: response.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "deactivateUser failed");
+    res.status(500).json({ error: "Failed to deactivate employee", details: e.response?.data ?? String(err) });
+  }
+});
+
+router.post("/rollfi/employees/terminate", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { rollfiUserId, terminationReason, lastWorkingDay } = req.body as { rollfiUserId: string; terminationReason: string; lastWorkingDay: string };
+  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+
+  const allStaff = store.getAllStaffUsers();
+  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
+  if (employee?.status === "terminated") {
+    res.status(400).json({ error: "Employee already terminated" }); return;
+  }
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#terminateUser`,
+      { method: "terminateUser", userId: rollfiUserId, terminationDate: lastWorkingDay },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "Rollfi terminateUser response");
+
+    if (employee?.employeeId) {
+      const previousStatus = employee.status;
+      store.updateEmployeeStatus(employee.employeeId, "terminated", { terminatedAt: new Date().toISOString(), terminationReason, lastWorkingDay, terminatedBy: req.session.userId });
+      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "terminated", terminationReason, changedBy: req.session.userId }, "Employee status changed");
+    }
+    await db.update(employeesTable).set({ status: "terminated", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+
+    res.json({ success: true, status: "terminated", rollfiResponse: response.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "terminateUser failed");
+    res.status(500).json({ error: "Failed to terminate employee", details: e.response?.data ?? String(err) });
+  }
+});
+
+router.post("/rollfi/employees/reactivate", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { rollfiUserId } = req.body as { rollfiUserId: string };
+  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+
+  const allStaff = store.getAllStaffUsers();
+  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
+  if (employee?.status === "terminated") {
+    res.status(400).json({ error: "Cannot reactivate a terminated employee. Please add them as a new employee instead." }); return;
+  }
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#reactivateUser`,
+      { method: "reactivateUser", userId: rollfiUserId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "Rollfi reactivateUser response");
+
+    if (employee?.employeeId) {
+      const previousStatus = employee.status;
+      store.updateEmployeeStatus(employee.employeeId, "active", { onLeaveReason: undefined, onLeaveDate: undefined, expectedReturnDate: undefined });
+      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "active", changedBy: req.session.userId }, "Employee status changed");
+    }
+    await db.update(employeesTable).set({ status: "active", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+
+    res.json({ success: true, status: "active", rollfiResponse: response.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "reactivateUser failed");
+    res.status(500).json({ error: "Failed to reactivate employee", details: e.response?.data ?? String(err) });
+  }
+});
+
 // ── Company onboarding ───────────────────────────────────────
 
 router.post("/rollfi/onboard/company", async (req, res) => {
@@ -1388,7 +1492,8 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
   const allStaff = store
     .getAllStaffUsers()
     .filter((u) => u.employeeId && u.role === "employee")
-    .filter((u) => !companyId || u.companyId === companyId);
+    .filter((u) => !companyId || u.companyId === companyId)
+    .filter((u) => !u.status || u.status === "active");
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 

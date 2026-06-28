@@ -1,4 +1,4 @@
-export type EmployeeStatus = "hired" | "onboarding" | "active" | "terminated";
+export type EmployeeStatus = "hired" | "invited" | "onboarding" | "active" | "on_leave" | "terminated";
 
 // ─── ROLE-BASED DATA ────────────────────────────────────────
 
@@ -15,6 +15,14 @@ export interface TestUser {
   employeeId: string | null;
   position: string;
   hourlyWage?: number;
+  status?: EmployeeStatus;
+  onLeaveReason?: string;
+  onLeaveDate?: string;
+  expectedReturnDate?: string;
+  terminatedAt?: string;
+  terminationReason?: string;
+  lastWorkingDay?: string;
+  terminatedBy?: string;
 }
 
 export interface Company {
@@ -312,6 +320,16 @@ export const store = {
     const idx = testUsers.findIndex((u) => u.id === userId && (u.role === "employee" || u.role === "manager"));
     if (idx === -1) return false;
     testUsers.splice(idx, 1);
+    return true;
+  },
+  updateEmployeeStatus(
+    employeeId: string,
+    status: EmployeeStatus,
+    additionalFields?: Partial<Pick<TestUser, "onLeaveReason" | "onLeaveDate" | "expectedReturnDate" | "terminatedAt" | "terminationReason" | "lastWorkingDay" | "terminatedBy">>
+  ): boolean {
+    const idx = testUsers.findIndex((u) => u.employeeId === employeeId);
+    if (idx === -1) return false;
+    testUsers[idx] = { ...testUsers[idx]!, status, ...additionalFields };
     return true;
   },
 

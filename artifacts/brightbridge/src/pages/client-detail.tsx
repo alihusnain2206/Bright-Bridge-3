@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
   ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2, ShieldCheck,
-  Eye, EyeOff, Copy, X, KeyRound,
+  Eye, EyeOff, Copy, X, KeyRound, Pause, Ban, RotateCcw, UserX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -58,112 +58,353 @@ function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalP
   const copy = (val: string, key: string) => {
     void navigator.clipboard.writeText(val);
     setCopied(key);
-    setTimeout(() => setCopied(null), 2000);
+    setTimeout(() => setCopied(null), 1500);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true); setError("");
-    const body: Record<string, string> = { name, email, position };
-    if (newPassword.trim()) body.password = newPassword.trim();
+  const handleSave = async () => {
+    setSaving(true);
+    setError("");
     try {
+      const body: Record<string, string> = {};
+      if (name !== user.name) body.name = name;
+      if (email !== user.email) body.email = email;
+      if (position !== user.position) body.position = position;
+      if (newPassword) body.password = newPassword;
+      if (Object.keys(body).length === 0) { setSaved(true); onSaved(); return; }
       const res = await fetch(`/api/companies/${companyId}/users/${user.id}`, {
-        method: "PUT", credentials: "include",
+        method: "PATCH", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json() as { error?: string };
-      if (!res.ok) { setError(data.error ?? "Failed to save"); return; }
+      if (!res.ok) { const d = await res.json() as { error?: string }; throw new Error(d.error ?? "Failed"); }
       setSaved(true);
-      setTimeout(() => { onSaved(); onClose(); }, 1200);
-    } catch { setError("Network error"); }
+      onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : "Failed to update"); }
     finally { setSaving(false); }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(0,0,0,0.55)" }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: NAVY }}>
-              <KeyRound className="h-4 w-4 text-white" />
-            </div>
-            <div>
-              <h2 className="font-bold text-[#284362] text-base">Manage Login</h2>
-              <p className="text-xs text-muted-foreground">View & update credentials for {user.name}</p>
-            </div>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b">
+          <div className="flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-[#284362]" />
+            <h2 className="font-semibold text-gray-900">Manage Login — {user.name}</h2>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-gray-900 rounded-lg p-1 hover:bg-gray-100">
-            <X className="h-4 w-4" />
-          </button>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
         </div>
-
-        <form onSubmit={handleSave} className="px-6 py-5 space-y-4">
-          {/* Current credentials read-only display */}
-          <div className="rounded-xl bg-gray-50 border px-4 py-3 space-y-2.5">
-            <p className="text-[10px] text-gray-400 uppercase tracking-wide font-semibold">Current Login</p>
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <p className="text-[10px] text-gray-400">Email</p>
-                <p className="text-sm font-mono font-medium text-gray-800">{email}</p>
-              </div>
-              <button type="button" onClick={() => copy(email, "email")} className="p-1.5 rounded hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors">
-                {copied === "email" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
-              </button>
+        <div className="p-5 space-y-4">
+          {saved && <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-sm">✓ Changes saved</div>}
+          {error && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-500">Full Name</Label>
+            <div className="flex gap-2">
+              <Input value={name} onChange={(e) => setName(e.target.value)} className="h-8 text-sm" />
+              <button onClick={() => copy(name, "name")} className="text-gray-400 hover:text-gray-600"><Copy className="h-3.5 w-3.5" /></button>
+              {copied === "name" && <span className="text-[10px] text-emerald-600 self-center">Copied!</span>}
             </div>
           </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-sm">Full Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Email Address</Label>
-            <Input value={email} onChange={(e) => setEmail(e.target.value)} type="email" />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">Position</Label>
-            <Input value={position} onChange={(e) => setPosition(e.target.value)} />
-          </div>
-          <div className="space-y-1.5">
-            <Label className="text-sm">New Password <span className="text-gray-400 font-normal">(leave blank to keep current)</span></Label>
-            <div className="relative">
-              <Input
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                type={showPw ? "text" : "password"}
-                placeholder="Enter new password…"
-                className="pr-9"
-              />
-              <button type="button" onClick={() => setShowPw((v) => !v)}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
-                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-              </button>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-500">Email (login)</Label>
+            <div className="flex gap-2">
+              <Input value={email} onChange={(e) => setEmail(e.target.value)} className="h-8 text-sm" />
+              <button onClick={() => copy(email, "email")} className="text-gray-400 hover:text-gray-600"><Copy className="h-3.5 w-3.5" /></button>
+              {copied === "email" && <span className="text-[10px] text-emerald-600 self-center">Copied!</span>}
             </div>
           </div>
-
-          {error && <p className="text-xs text-red-500 flex items-center gap-1"><AlertTriangle className="h-3.5 w-3.5" />{error}</p>}
-          {saved && <p className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" />Saved successfully!</p>}
-
-          <div className="flex gap-2 pt-1">
-            <Button type="button" variant="outline" onClick={onClose} className="flex-1">Cancel</Button>
-            <Button type="submit" disabled={saving || saved} className="flex-1 text-white border-0" style={{ background: ORANGE }}>
-              {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />Saving…</> : "Save Changes"}
-            </Button>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-500">Position</Label>
+            <Input value={position} onChange={(e) => setPosition(e.target.value)} className="h-8 text-sm" />
           </div>
-        </form>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-500">New Password (leave blank to keep current)</Label>
+            <div className="flex gap-2">
+              <Input type={showPw ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password…" className="h-8 text-sm" />
+              <button onClick={() => setShowPw((p) => !p)} className="text-gray-400 hover:text-gray-600">{showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}</button>
+              {newPassword && <button onClick={() => copy(newPassword, "pw")} className="text-gray-400 hover:text-gray-600"><Copy className="h-3.5 w-3.5" /></button>}
+              {copied === "pw" && <span className="text-[10px] text-emerald-600 self-center">Copied!</span>}
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 pb-5">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => { void handleSave(); }} disabled={saving} className="text-white border-0" style={{ background: NAVY }}>
+            {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />Saving…</> : "Save Changes"}
+          </Button>
+        </div>
       </div>
     </div>
   );
 }
 
-const STATUS_CFG: Record<string, { label: string; color: string }> = {
-  active:      { label: "Active",      color: "bg-emerald-100 text-emerald-700" },
-  onboarding:  { label: "Onboarding",  color: "bg-yellow-100 text-yellow-700" },
-  pending_verification: { label: "Pending", color: "bg-orange-100 text-orange-700" },
-  terminated:  { label: "Terminated",  color: "bg-red-100 text-red-700" },
+// ── Status config ─────────────────────────────────────────────
+
+const STATUS_CFG: Record<string, { label: string; color: string; dot: string }> = {
+  active:               { label: "Active",      color: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-500" },
+  onboarding:           { label: "Onboarding",  color: "bg-yellow-100 text-yellow-700",  dot: "bg-yellow-500" },
+  hired:                { label: "Setting Up",  color: "bg-blue-100 text-blue-700",      dot: "bg-blue-500" },
+  invited:              { label: "Setting Up",  color: "bg-blue-100 text-blue-700",      dot: "bg-blue-500" },
+  pending_verification: { label: "Pending",     color: "bg-orange-100 text-orange-700",  dot: "bg-orange-500" },
+  on_leave:             { label: "On Leave",    color: "bg-amber-100 text-amber-700",    dot: "bg-amber-500" },
+  terminated:           { label: "Terminated",  color: "bg-red-100 text-red-700",        dot: "bg-red-400" },
 };
+
+// ── On Leave Modal ────────────────────────────────────────────
+
+function OnLeaveModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess: () => void; onClose: () => void }) {
+  const [reason, setReason] = useState("");
+  const [returnDate, setReturnDate] = useState("");
+  const [notes, setNotes] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const fullName = `${emp.firstName} ${emp.lastName}`;
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/rollfi/employees/deactivate", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId, reason: reason || undefined, expectedReturnDate: returnDate || undefined }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to put employee on leave");
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b">
+          <div className="flex items-center gap-2">
+            <Pause className="h-4 w-4 text-amber-600" />
+            <h2 className="font-semibold text-gray-900">Put {fullName} On Leave</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+            <strong>{fullName}</strong> will be temporarily removed from payroll and unable to clock in until reactivated.
+          </div>
+          {error && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Reason</Label>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="w-full h-9 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+            >
+              <option value="">Select reason…</option>
+              <option value="Maternity/Paternity Leave">Maternity/Paternity Leave</option>
+              <option value="Medical Leave">Medical Leave</option>
+              <option value="Personal Leave">Personal Leave</option>
+              <option value="Unpaid Leave">Unpaid Leave</option>
+              <option value="Suspended">Suspended</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Expected Return Date <span className="text-gray-400 font-normal">(optional)</span></Label>
+            <Input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className="h-9 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Notes <span className="text-gray-400 font-normal">(optional)</span></Label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              placeholder="Any additional notes…"
+              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 resize-none"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 pb-5">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button size="sm" onClick={() => { void handleConfirm(); }} disabled={loading}
+            className="bg-amber-500 hover:bg-amber-600 text-white border-0 gap-1.5">
+            {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Processing…</> : <><Pause className="h-3.5 w-3.5" />Confirm — Put On Leave</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Terminate Modal ───────────────────────────────────────────
+
+function TerminateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess: () => void; onClose: () => void }) {
+  const [terminationReason, setTerminationReason] = useState("");
+  const [lastWorkingDay, setLastWorkingDay] = useState(new Date().toISOString().split("T")[0] ?? "");
+  const [notes, setNotes] = useState("");
+  const [confirmText, setConfirmText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const fullName = `${emp.firstName} ${emp.lastName}`;
+  const canSubmit = confirmText === "TERMINATE" && !!terminationReason && !!lastWorkingDay;
+
+  const handleConfirm = async () => {
+    if (!canSubmit) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/rollfi/employees/terminate", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId, terminationReason, lastWorkingDay }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to terminate employee");
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b">
+          <div className="flex items-center gap-2">
+            <Ban className="h-4 w-4 text-red-600" />
+            <h2 className="font-semibold text-gray-900">⚠️ Terminate {fullName}</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="p-3 rounded-lg bg-red-50 border border-red-300 text-sm text-red-800 font-semibold">
+            This action is PERMANENT and cannot be undone!
+          </div>
+          <p className="text-sm text-gray-600">
+            <strong>{fullName}</strong> will be permanently removed from all future payrolls and will be unable to clock in. Their records will be kept for compliance purposes.
+          </p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Removed from all future payrolls</div>
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Cannot clock in to EasyTeam</div>
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Employment records kept</div>
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Pay history kept</div>
+            <div className="flex items-center gap-2 text-red-600"><XCircle className="h-3.5 w-3.5" />Cannot be reactivated</div>
+            <div className="flex items-center gap-2 text-red-600"><XCircle className="h-3.5 w-3.5" />Cannot clock in ever again</div>
+          </div>
+          {error && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Termination Reason <span className="text-red-500">*</span></Label>
+            <select
+              value={terminationReason}
+              onChange={(e) => setTerminationReason(e.target.value)}
+              className="w-full h-9 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/30"
+            >
+              <option value="">Select reason…</option>
+              <option value="Resigned">Resigned</option>
+              <option value="Terminated by employer">Terminated by employer</option>
+              <option value="Contract ended">Contract ended</option>
+              <option value="Retired">Retired</option>
+              <option value="Mutual agreement">Mutual agreement</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Last Working Day <span className="text-red-500">*</span></Label>
+            <Input type="date" value={lastWorkingDay} onChange={(e) => setLastWorkingDay(e.target.value)} className="h-9 text-sm" />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Notes <span className="text-gray-400 font-normal">(optional)</span></Label>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500/30 resize-none"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">Type <strong>TERMINATE</strong> to confirm:</Label>
+            <Input
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder="TERMINATE"
+              className="h-9 text-sm border-red-200 focus-visible:ring-red-500/30 font-mono tracking-wider"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-5 pb-5">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button size="sm" onClick={() => { void handleConfirm(); }} disabled={!canSubmit || loading}
+            className="bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white border-0 gap-1.5">
+            {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Terminating…</> : <><Ban className="h-3.5 w-3.5" />Permanently Terminate</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Reactivate Modal ──────────────────────────────────────────
+
+function ReactivateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess: () => void; onClose: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const fullName = `${emp.firstName} ${emp.lastName}`;
+
+  const handleConfirm = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/rollfi/employees/reactivate", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to reactivate employee");
+      onSuccess();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b">
+          <div className="flex items-center gap-2">
+            <RotateCcw className="h-4 w-4 text-emerald-600" />
+            <h2 className="font-semibold text-gray-900">Reactivate {fullName}?</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-600">
+            <strong>{fullName}</strong> will be returned to active status. They will be included in future payrolls and can clock in via EasyTeam.
+          </p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Added back to payroll</div>
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Can clock in to EasyTeam</div>
+            <div className="flex items-center gap-2 text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" />Status changed to Active</div>
+          </div>
+          {error && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
+        </div>
+        <div className="flex justify-end gap-2 px-5 pb-5">
+          <Button variant="outline" size="sm" onClick={onClose} disabled={loading}>Cancel</Button>
+          <Button size="sm" onClick={() => { void handleConfirm(); }} disabled={loading}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white border-0 gap-1.5">
+            {loading ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Reactivating…</> : <><RotateCcw className="h-3.5 w-3.5" />Confirm Reactivation</>}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function formatWage(cents: number): string {
   return `$${(cents / 100).toFixed(2)}/hr`;
@@ -175,6 +416,22 @@ function SyncDot({ done, label }: { done: boolean; label: string }) {
       {done ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
       {label}
     </span>
+  );
+}
+
+// ── Success toast state ───────────────────────────────────────
+
+function Toast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  React.useEffect(() => {
+    const t = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(t);
+  }, [onDismiss]);
+  return (
+    <div className="fixed bottom-6 right-6 z-[60] bg-gray-900 text-white px-4 py-3 rounded-xl shadow-xl text-sm flex items-center gap-2 animate-in slide-in-from-bottom-2">
+      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+      {message}
+      <button onClick={onDismiss} className="ml-2 text-white/50 hover:text-white"><X className="h-3.5 w-3.5" /></button>
+    </div>
   );
 }
 
@@ -238,6 +495,10 @@ function OverviewTab({ company }: { company: Company }) {
 function EmployeesTab({ company }: { company: Company }) {
   const queryClient = useQueryClient();
   const [credentialUser, setCredentialUser] = useState<CompanyUser | null>(null);
+  const [onLeaveEmp, setOnLeaveEmp] = useState<Employee | null>(null);
+  const [terminateEmp, setTerminateEmp] = useState<Employee | null>(null);
+  const [reactivateEmp, setReactivateEmp] = useState<Employee | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery<{ employees: Employee[] }>({
     queryKey: ["/api/employees", company.id],
@@ -251,10 +512,13 @@ function EmployeesTab({ company }: { company: Company }) {
   const employees = data?.employees ?? [];
   const managers = usersData?.users ?? [];
 
+  const refreshEmployees = () => void queryClient.invalidateQueries({ queryKey: ["/api/employees", company.id] });
+
   if (isLoading || usersLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>;
 
   return (
     <div className="space-y-6">
+      {/* Modals */}
       {credentialUser && (
         <CredentialModal
           user={credentialUser}
@@ -266,6 +530,42 @@ function EmployeesTab({ company }: { company: Company }) {
           }}
         />
       )}
+      {onLeaveEmp && (
+        <OnLeaveModal
+          emp={onLeaveEmp}
+          onClose={() => setOnLeaveEmp(null)}
+          onSuccess={() => {
+            setOnLeaveEmp(null);
+            refreshEmployees();
+            setToast(`✅ ${onLeaveEmp.firstName} ${onLeaveEmp.lastName} has been put on leave. They will be removed from payroll and cannot clock in.`);
+          }}
+        />
+      )}
+      {terminateEmp && (
+        <TerminateModal
+          emp={terminateEmp}
+          onClose={() => setTerminateEmp(null)}
+          onSuccess={() => {
+            const name = `${terminateEmp.firstName} ${terminateEmp.lastName}`;
+            setTerminateEmp(null);
+            refreshEmployees();
+            setToast(`✅ ${name} has been terminated. They have been removed from all future payrolls.`);
+          }}
+        />
+      )}
+      {reactivateEmp && (
+        <ReactivateModal
+          emp={reactivateEmp}
+          onClose={() => setReactivateEmp(null)}
+          onSuccess={() => {
+            const name = `${reactivateEmp.firstName} ${reactivateEmp.lastName}`;
+            setReactivateEmp(null);
+            refreshEmployees();
+            setToast(`✅ ${name} has been reactivated! They can now clock in and will be included in payroll.`);
+          }}
+        />
+      )}
+      {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
 
       {/* Admins / Managers */}
       <div>
@@ -349,22 +649,66 @@ function EmployeesTab({ company }: { company: Company }) {
                 <th className="text-left px-4 py-3">Rollfi</th>
                 <th className="text-left px-4 py-3">KYC</th>
                 <th className="text-left px-4 py-3">Status</th>
+                <th className="text-right px-4 py-3">Actions</th>
               </tr></thead>
               <tbody className="divide-y">
                 {employees.map((emp) => {
                   const cfg = STATUS_CFG[emp.status] ?? STATUS_CFG.onboarding;
+                  const isTerminated = emp.status === "terminated";
+                  const isOnLeave = emp.status === "on_leave";
+                  const isActive = emp.status === "active";
+                  const hasRollfi = !!emp.rollfiUserId;
                   return (
-                    <tr key={emp.id} className="hover:bg-gray-50/50">
+                    <tr key={emp.id} className={`hover:bg-gray-50/50 transition-colors ${isTerminated ? "opacity-50" : ""}`}>
                       <td className="px-4 py-3">
-                        <div className="font-medium">{emp.firstName} {emp.lastName}</div>
+                        <div className={`font-medium ${isTerminated ? "text-gray-400 line-through" : ""}`}>{emp.firstName} {emp.lastName}</div>
                         <div className="text-[11px] text-gray-400">{emp.position}</div>
                       </td>
                       <td className="px-4 py-3"><span className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-medium">{emp.workerType}</span></td>
                       <td className="px-4 py-3 text-gray-700 font-mono text-xs">{formatWage(emp.hourlyWage)}</td>
                       <td className="px-4 py-3"><SyncDot done={emp.easyteamSynced} label="ET" /></td>
-                      <td className="px-4 py-3"><SyncDot done={!!emp.rollfiUserId} label="Rollfi" /></td>
+                      <td className="px-4 py-3"><SyncDot done={hasRollfi} label="Rollfi" /></td>
                       <td className="px-4 py-3"><SyncDot done={emp.kycStatus === "verified"} label="KYC" /></td>
-                      <td className="px-4 py-3"><span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cfg.color}`}>{cfg.label}</span></td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`inline-block w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${cfg.color}`}>{cfg.label}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {isTerminated && (
+                            <span className="text-[10px] text-gray-400 italic">No actions available</span>
+                          )}
+                          {isOnLeave && hasRollfi && (
+                            <button
+                              onClick={() => setReactivateEmp(emp)}
+                              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:text-emerald-800 border border-emerald-300 hover:border-emerald-400 rounded-lg px-2.5 py-1 transition-colors"
+                            >
+                              <RotateCcw className="h-3 w-3" />Reactivate
+                            </button>
+                          )}
+                          {isActive && hasRollfi && (
+                            <>
+                              <button
+                                onClick={() => setOnLeaveEmp(emp)}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:text-amber-800 border border-amber-300 hover:border-amber-400 rounded-lg px-2.5 py-1 transition-colors"
+                              >
+                                <Pause className="h-3 w-3" />On Leave
+                              </button>
+                              <button
+                                onClick={() => setTerminateEmp(emp)}
+                                className="inline-flex items-center gap-1 text-xs font-medium text-red-600 hover:text-red-700 border border-red-200 hover:border-red-300 rounded-lg px-2.5 py-1 transition-colors"
+                              >
+                                <UserX className="h-3 w-3" />Terminate
+                              </button>
+                            </>
+                          )}
+                          {!hasRollfi && !isTerminated && (
+                            <span className="text-[10px] text-gray-300 italic">Not on Rollfi</span>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}

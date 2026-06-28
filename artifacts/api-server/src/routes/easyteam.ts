@@ -105,7 +105,7 @@ router.get("/easyteam/employees", (req, res) => {
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
   const employees = users
-    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent")
+    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent" && (!u.status || u.status === "active"))
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
