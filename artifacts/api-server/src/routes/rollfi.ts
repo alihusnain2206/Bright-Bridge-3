@@ -1775,24 +1775,71 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
   const { companyId } = req.query as { companyId: string };
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+  const rawResponses: Record<string, unknown> = {};
+
+  // ── 1. Confirmed/processed periods ───────────────────────────
+  let processedPeriods: Array<Record<string, unknown>> = [];
   try {
     const r = await axios.post(
       `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodsDetails`,
       { method: "getProcessedPayperiodsDetails", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: r.data }, "Rollfi getProcessedPayperiodsDetails response");
+    rawResponses.getProcessedPayperiodsDetails = r.data;
     const raw = r.data as Record<string, unknown>;
-    const periods = (raw.processedPayPeriods ?? raw.processedPayperiods ?? raw.payPeriods ?? raw.periods ?? []) as Array<Record<string, unknown>>;
-    const sorted = [...periods].sort((a, b) =>
-      String(b.payBeginDate ?? b.payDate ?? "").localeCompare(String(a.payBeginDate ?? a.payDate ?? ""))
-    );
-    res.json({ periods: sorted.slice(0, 10), raw: r.data });
+    req.log.info({ raw, keys: Object.keys(raw) }, "Rollfi getProcessedPayperiodsDetails response");
+    processedPeriods = (
+      raw.processedPayPeriods ?? raw.processedPayperiods ?? raw.payPeriods ?? raw.periods ?? []
+    ) as Array<Record<string, unknown>>;
   } catch (err) {
-    const e = err as { response?: { data: unknown } };
-    req.log.warn({ err }, "getProcessedPayperiodsDetails failed");
-    res.status(500).json({ error: "Failed to fetch pay period history", details: e.response?.data ?? String(err) });
+    req.log.warn({ err }, "getProcessedPayperiodsDetails failed — continuing with unprocessed only");
+    rawResponses.getProcessedPayperiodsDetailsError = String(err);
   }
+
+  // ── 2. Unprocessed periods that are NOT "new" ─────────────────
+  // Catches submitted / inProcess / preProcess periods that exist before
+  // Rollfi marks them as fully processed.
+  let pendingPeriods: Array<Record<string, unknown>> = [];
+  try {
+    const r2 = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+      { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+      { headers: rollfiHeaders() }
+    );
+    rawResponses.getUnProcessedPayPeriod = r2.data;
+    const raw2 = r2.data as Record<string, unknown>;
+    req.log.info({ raw: raw2, keys: Object.keys(raw2) }, "Rollfi getUnProcessedPayPeriod response (for history)");
+    const allUnprocessed = (raw2.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+    // Keep only non-"new" periods — "new" is the current live period already shown in the UI
+    const CURRENT_STATUSES = new Set(["new", ""]);
+    pendingPeriods = allUnprocessed.filter(
+      (p) => !CURRENT_STATUSES.has(String(p.payPeriodStatus ?? "").toLowerCase())
+    );
+  } catch (err) {
+    req.log.warn({ err }, "getUnProcessedPayPeriod (for history) failed — continuing with processed only");
+    rawResponses.getUnProcessedPayPeriodError = String(err);
+  }
+
+  // ── 3. Merge, deduplicate by payPeriodId, sort newest first ──
+  const seen = new Set<string>();
+  const merged: Array<Record<string, unknown>> = [];
+  for (const p of [...processedPeriods, ...pendingPeriods]) {
+    const id = String(p.payPeriodId ?? p.payBeginDate ?? "");
+    if (id && seen.has(id)) continue;
+    if (id) seen.add(id);
+    merged.push(p);
+  }
+  const sorted = merged.sort((a, b) =>
+    String(b.payBeginDate ?? b.payDate ?? "").localeCompare(String(a.payBeginDate ?? a.payDate ?? ""))
+  );
+
+  req.log.info(
+    { processedCount: processedPeriods.length, pendingCount: pendingPeriods.length, mergedCount: sorted.length },
+    "pay period history merged"
+  );
+
+  res.json({ periods: sorted.slice(0, 20), raw: rawResponses });
 });
 
 // ── Run all payroll (all onboarded companies in sequence) ─────

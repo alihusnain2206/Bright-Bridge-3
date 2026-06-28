@@ -1296,11 +1296,19 @@ export default function Payroll() {
                         ? <option value="">{payPeriod.payBeginDate} → {payPeriod.payEndDate} ({payPeriod.payPeriodStatus})</option>
                         : <option value="">No current period</option>
                     }
-                    {history?.periods.map((p) => (
-                      <option key={p.payPeriodId ?? p.payBeginDate} value={p.payPeriodId ?? ""}>
-                        {p.payBeginDate} → {p.payEndDate} ({p.payPeriodStatus ?? "Processed"}) ✓
-                      </option>
-                    ))}
+                    {history?.periods.map((p) => {
+                      const st = String(p.payPeriodStatus ?? "").toLowerCase();
+                      const label = st === "processed" ? "✅ Processed"
+                        : st === "inprocess"           ? "⏳ In Process"
+                        : st === "preprocess"          ? "⏳ Pre-Process"
+                        : st === "submitted"           ? "📤 Submitted"
+                        : p.payPeriodStatus ?? "Previous";
+                      return (
+                        <option key={p.payPeriodId ?? p.payBeginDate} value={p.payPeriodId ?? ""}>
+                          {p.payBeginDate} → {p.payEndDate} ({label})
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
               )}
