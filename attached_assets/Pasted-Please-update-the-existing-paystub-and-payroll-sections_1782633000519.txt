@@ -1,0 +1,362 @@
+Please update the existing paystub 
+and payroll sections in the 
+BrightBridge platform. Do NOT rebuild 
+anything from scratch. Keep all 
+existing features working and make 
+these two specific additions only.
+
+---
+
+CONTEXT — WHY WE ARE MAKING THESE CHANGES:
+
+Rollfi's support team reviewed our 
+integration and gave us this specific 
+feedback:
+
+"Employer tax details should also be 
+shown clearly so discrepancies can be 
+caught early. Tax details should be 
+included on paystubs so employees can 
+see what was withheld."
+
+We need to fix two things:
+
+FIX 1: Add employer tax section 
+to the paystub
+
+FIX 2: Label each individual tax 
+line as confirmed or estimated 
+so users know which numbers are 
+real Rollfi data vs calculated
+
+---
+
+FIX 1 — ADD EMPLOYER TAX SECTION 
+TO PAYSTUB:
+
+Find the existing paystub component 
+or page in the codebase.
+
+The paystub currently shows:
+→ Gross Pay
+→ Employee deductions (federal, state,
+  SS, Medicare)
+→ Net Pay
+
+ADD a new section BELOW the existing 
+deductions section called:
+"Employer Contributions"
+
+This section shows what the COMPANY 
+pays on top of the employee salary.
+It is NOT deducted from the employee.
+
+Use these fixed tax rates:
+const EMPLOYER_RATES = {
+  socialSecurity: 0.062,    // 6.2%
+  medicare: 0.0145,         // 1.45%
+  futa: 0.006,              // 0.6%
+  njSuta: 0.005             // 0.5% NJ
+};
+
+Calculate from gross pay:
+const grossPay = employee.grossPay;
+
+const employerSS = 
+  Math.round(grossPay * 0.062 * 100) / 100;
+
+const employerMedicare = 
+  Math.round(grossPay * 0.0145 * 100) / 100;
+
+const futa = 
+  Math.round(grossPay * 0.006 * 100) / 100;
+
+const njSuta = 
+  Math.round(grossPay * 0.005 * 100) / 100;
+
+const totalEmployerContributions = 
+  Math.round(
+    (employerSS + employerMedicare + 
+     futa + njSuta) * 100
+  ) / 100;
+
+DESIGN OF THE NEW SECTION:
+
+Add a divider line after the 
+existing Net Pay section.
+
+Then show this new section:
+
+┌─────────────────────────────────────┐
+│ EMPLOYER CONTRIBUTIONS               │
+│ ℹ️ These are paid by the company    │
+│ and are NOT deducted from           │
+│ your paycheck                        │
+├─────────────────────────────────────┤
+│ Social Security Match (6.2%)        │
+│                          $83.70     │
+│                                      │
+│ Medicare Match (1.45%)              │
+│                          $19.58     │
+│                                      │
+│ Federal Unemployment (0.6%)         │
+│                           $8.10     │
+│                                      │
+│ NJ State Unemployment (0.5%)        │
+│                           $6.75     │
+├─────────────────────────────────────┤
+│ Total Employer Cost:     $118.13    │
+└─────────────────────────────────────┘
+
+Style requirements for this section:
+→ Light grey background to clearly
+  separate from employee section
+→ Slightly smaller font than main
+  paystub content
+→ Info icon ℹ️ with tooltip:
+  "These costs are paid by your 
+  employer directly to the government.
+  They do not affect your take home pay."
+→ Show all amounts in dollar format
+  e.g. $83.70 not 8370
+
+---
+
+ALSO UPDATE THE PAYROLL SUMMARY 
+SECTION (not just paystub):
+
+In the payroll preview/summary page
+where it shows totals at the bottom,
+update the totals section to show:
+
+BEFORE (what it shows now):
+Total Gross Pay: $3,000.00
+
+AFTER (what it should show):
+┌─────────────────────────────────────┐
+│ PAYROLL SUMMARY                      │
+├─────────────────────────────────────┤
+│ EMPLOYEE PAYMENTS:                   │
+│ Total Gross Pay:        $3,000.00   │
+│ Total Employee Taxes:    -$739.50   │
+│ Total Net to Employees: $2,260.50   │
+├─────────────────────────────────────┤
+│ EMPLOYER COSTS:                      │
+│ Employer SS (6.2%):      +$186.00   │
+│ Employer Medicare (1.45%): +$43.50  │
+│ Federal Unemployment:     +$18.00   │
+│ NJ State Unemployment:    +$15.00   │
+├─────────────────────────────────────┤
+│ ⚠️ TOTAL BANK DEBIT:                │
+│ $3,263.00                           │
+│ This amount will be debited from    │
+│ your connected bank account         │
+└─────────────────────────────────────┘
+
+Style the TOTAL BANK DEBIT row:
+→ Larger and bolder font
+→ Orange/amber background color
+→ Warning icon ⚠️
+→ Clear explanatory text below
+
+---
+
+FIX 2 — LABEL EACH TAX LINE AS 
+CONFIRMED OR ESTIMATED:
+
+Find the existing employee tax 
+breakdown in the paystub.
+
+Currently it shows something like:
+Federal Tax: $162.00
+State Tax: $67.50
+Social Security: $83.70
+Medicare: $19.58
+
+UPDATE each line to show whether 
+the amount is confirmed real data 
+from Rollfi or an estimate:
+
+IF the value came from Rollfi API
+(fromRollfi flag is true):
+Show green confirmed badge:
+Federal Tax: $162.00 ✅
+
+IF the value is locally calculated
+(fromRollfi flag is false):
+Show grey estimated badge:
+Federal Tax: ~$162.00 (est.)
+
+Implementation:
+
+For each tax line item add a 
+TypeScript boolean to track source:
+
+interface TaxLineItem {
+  label: string;
+  amount: number;
+  isConfirmed: boolean;
+  // true = from Rollfi API
+  // false = locally calculated
+}
+
+Create a small badge component:
+
+ConfirmedBadge: 
+→ Green dot + "Confirmed" text
+→ Only show if isConfirmed = true
+
+EstimatedBadge:
+→ Grey dot + "Estimated" text  
+→ Show ~ before amount
+→ Only show if isConfirmed = false
+
+Add a tooltip on the estimated badge:
+"This is an estimate based on 
+standard tax rates. The exact 
+amount will be confirmed after 
+Rollfi processes payroll."
+
+Add a tooltip on the confirmed badge:
+"This amount has been confirmed 
+by Rollfi after payroll processing."
+
+ALSO add a section-level indicator 
+at the top of the deductions section:
+
+IF all lines are confirmed:
+Show: "✅ All amounts confirmed by Rollfi"
+Green background banner
+
+IF some lines are estimated:
+Show: "⏳ Some amounts are estimates.
+Exact figures available after 
+payroll is processed."
+Yellow background banner
+
+IF no Rollfi data at all:
+Show: "📊 Showing estimated amounts
+based on standard tax rates.
+Submit payroll to get exact figures."
+Grey background banner
+
+---
+
+ALSO UPDATE NET PAY DISPLAY:
+
+The Net Pay hero number at the 
+bottom of the paystub should also 
+show its source:
+
+IF net pay came from Rollfi:
+NET PAY
+$1,017.22
+✅ Confirmed by Rollfi
+
+IF net pay is estimated:
+ESTIMATED NET PAY
+~$1,017.22
+(Submit payroll for exact amount)
+
+---
+
+IMPORTANT TECHNICAL NOTES:
+
+1. The employer tax rates are 
+ESTIMATES used for display only.
+Rollfi calculates the real amounts.
+Always show a small note:
+"* Employer tax amounts are 
+calculated using standard rates.
+Actual amounts may vary."
+
+2. NEVER remove the existing 
+"✓ Confirmed by Rollfi" badge
+at the top of the paystub.
+Keep it and also add the 
+per-line badges.
+
+3. The employer contributions section
+should ALWAYS show even before 
+payroll is processed.
+Use estimated amounts based on 
+gross pay and the fixed rates above.
+Label clearly as "(estimated)"
+
+4. Wage amounts must always be 
+in dollar format:
+✅ $18.00/hr
+✅ $1,350.00
+❌ 1800
+❌ 135000
+
+5. Keep all existing paystub 
+functionality working:
+→ Print button
+→ Download button
+→ Confirmed by Rollfi badge
+→ YTD amounts section
+→ Employee and company info header
+
+---
+
+TESTING CHECKLIST:
+
+After building please verify:
+
+EMPLOYER TAX SECTION:
+✅ Shows below Net Pay on paystub
+✅ Has light grey background
+✅ Shows 4 employer tax lines
+✅ Shows total employer cost
+✅ Has info icon with tooltip
+✅ All amounts in dollar format
+✅ Clearly says NOT deducted 
+   from employee pay
+
+PAYROLL SUMMARY TOTALS:
+✅ Shows employee payments section
+✅ Shows employer costs section
+✅ Shows TOTAL BANK DEBIT prominently
+✅ Debit amount = gross + employer taxes
+✅ Orange/amber background on debit row
+✅ Warning icon shown
+
+TAX LINE LABELS:
+✅ Each employee tax line shows
+   either confirmed ✅ or estimated badge
+✅ Confirmed lines show green dot
+✅ Estimated lines show grey dot + ~
+✅ Estimated lines show tooltip
+✅ Section banner shows overall status
+✅ Net Pay hero number shows its source
+
+EXISTING FEATURES STILL WORK:
+✅ Print paystub works
+✅ Download paystub works
+✅ Confirmed by Rollfi badge still shows
+✅ YTD section still shows
+✅ All existing payroll features work
+✅ No hardcoded company or 
+   employee data added
+✅ Wages still show in dollar format
+
+---
+
+AFTER BUILDING:
+
+Please also log this in the 
+server console so we can see 
+the real Rollfi field names 
+after next payroll run:
+
+In the paystubs endpoint add:
+console.log(
+  'ROLLFI RAW PAYSTUB DATA:',
+  JSON.stringify(rollfiEmpDetails, null, 2)
+);
+
+This will help us see the exact 
+field names Rollfi uses so we 
+can update the tax line mapping 
+in the next iteration.

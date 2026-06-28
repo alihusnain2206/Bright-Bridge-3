@@ -1966,6 +1966,7 @@ router.get("/rollfi/paystubs", async (req, res) => {
         { headers: rollfiHeaders() }
       );
       req.log.info({ rollfiResponse: r.data }, "getProcessedPayperiodEmpDetails response");
+      req.log.info({ rollfiEmpDetailsRaw: JSON.stringify(r.data, null, 2) }, "ROLLFI RAW PAYSTUB DATA — use this to identify real field names for tax lines");
       rollfiRaw = r.data;
       const raw = r.data as Record<string, unknown>;
       rollfiEmpDetails = (

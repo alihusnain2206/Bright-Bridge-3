@@ -1631,20 +1631,35 @@ export default function Payroll() {
               const totalGross  = preview.totalGrossPay;
               const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
               const totalNet    = r2(totalGross - totalEmpTax);
-              const totalErTax  = r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
+              const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
+              const totalErTax  = r2(erByComp.ss + erByComp.med + erByComp.futa + erByComp.nj);
               const totalDebit  = r2(totalGross + totalErTax);
               return (
-                <div className="px-6 py-4 border-b border-white/10 space-y-1 text-sm">
-                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
-                  <div className="flex justify-between py-0.5"><span className="text-white/50">Est. Employee Taxes</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
-                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Net to Employees</span><span className="text-white font-semibold">~{fmtD(totalNet)}</span></div>
-                  <div className="flex justify-between py-0.5"><span className="text-white/50">Est. Employer Taxes</span><span className="text-amber-300">+{fmtD(totalErTax)}</span></div>
-                  <div className="mt-3 p-3 rounded-lg border border-amber-500/40 flex items-center justify-between" style={{ background: "rgba(232,98,42,0.12)" }}>
-                    <div className="flex items-center gap-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-400" />
-                      <span className="text-amber-300 font-bold">Est. Bank Debit</span>
+                <div className="px-6 py-4 border-b border-white/10 space-y-3 text-sm">
+                  <div>
+                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employee Payments</p>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">Total Employee Taxes (est.)</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
+                    <div className="flex justify-between py-0.5 font-semibold"><span className="text-white/70">Total Net to Employees</span><span className="text-white">~{fmtD(totalNet)}</span></div>
+                  </div>
+                  <div className="border-t border-white/10 pt-2">
+                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employer Costs</p>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.ss))}</span></div>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.med))}</span></div>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.futa))}</span></div>
+                    <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.nj))}</span></div>
+                  </div>
+                  <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
+                    <div className="px-4 py-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 text-amber-400" />
+                        <div>
+                          <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
+                          <p className="text-amber-400/60 text-[10px]">This amount will be debited from your connected bank account</p>
+                        </div>
+                      </div>
+                      <span className="text-amber-300 font-bold text-xl">~{fmtD(totalDebit)}</span>
                     </div>
-                    <span className="text-amber-300 font-bold text-xl">~{fmtD(totalDebit)}</span>
                   </div>
                 </div>
               );
