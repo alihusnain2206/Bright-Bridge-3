@@ -4,13 +4,57 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2, Printer, Download, ArrowLeft } from "lucide-react";
 import { useLocation } from "wouter";
 
-interface PayStub {
-  employeeId: string | null; rollfiUserId: string | null;
-  name: string; position: string; hourlyRate: number; hoursWorked: number;
-  grossPay: number; federalTax: number; stateTax: number; fica: number;
-  deductions: number; netPay: number; ytdGross: number; fromRollfi: boolean;
+interface RollfiTaxDetail {
+  taxName: string;
+  taxAmount: number;
+  taxAmountYtd: number;
+  isEmployerTax: boolean;
 }
-interface PayStubsData { payPeriodId: string | null; companyId: string; stubs: PayStub[]; }
+interface RollfiOvertime { type: string; amount: number; numberOfHours: number; }
+interface RollfiCompensation {
+  payrollLineItemAdditionalCompensationVertexCompensationIdentifier: { compensationDescription: string };
+  amount: number;
+}
+interface RollfiReimbursement { reimbursementType: string; amount: number; }
+interface RollfiPayDetail {
+  payPercentage: number;
+  amount: number;
+  employeePayAccount: { accountName: string } | null;
+}
+
+interface PayStub {
+  employeeId: string | null;
+  rollfiUserId: string | null;
+  name: string;
+  position: string;
+  hourlyRate: number;
+  hoursWorked: number;
+  grossPay: number;
+  baseTotal: number | null;
+  federalTax: number;
+  stateTax: number;
+  fica: number;
+  deductions: number;
+  netPay: number;
+  ytdGross: number;
+  fromRollfi: boolean;
+  isProcessed: boolean;
+  employeeTaxDetails: RollfiTaxDetail[] | null;
+  employerTaxDetails: RollfiTaxDetail[] | null;
+  overTimes: RollfiOvertime[] | null;
+  additionalCompensations: RollfiCompensation[] | null;
+  reimbursements: RollfiReimbursement[] | null;
+  payDetails: RollfiPayDetail[] | null;
+}
+interface PayStubsData {
+  payPeriodId: string | null;
+  companyId: string;
+  stubs: PayStub[];
+  periodTotal: number | null;
+  employeeTaxSum: number | null;
+  employerTaxSum: number | null;
+  isProcessed: boolean;
+}
 
 const api = {
   get: async <T,>(path: string) => {
@@ -51,21 +95,30 @@ export default function Paystub() {
 
   const companyName = COMPANY_NAMES[companyId] ?? companyId;
 
-  const ytdTax   = stub ? r2(stub.ytdGross * 0.2465) : 0;
-  const ytdNet   = stub ? r2(stub.ytdGross - ytdTax) : 0;
+  // Derived values — used as fallback when Rollfi tax details not available
   const medicare = stub ? r2(stub.fica * (1.45 / 7.65)) : 0;
   const ss       = stub ? r2(stub.fica - medicare) : 0;
 
+  // YTD — use taxAmountYtd from Rollfi tax details when available
+  const ytdTaxFromRollfi = stub?.employeeTaxDetails
+    ? stub.employeeTaxDetails.reduce((sum, t) => sum + (t.taxAmountYtd ?? 0), 0)
+    : null;
+  const ytdGross = stub?.ytdGross ?? 0;
+  const ytdTax   = ytdTaxFromRollfi !== null ? r2(ytdTaxFromRollfi) : r2(ytdGross * 0.2465);
+  const ytdNet   = r2(ytdGross - ytdTax);
+
+  // Employer fallback rates (used when Rollfi employerTaxDetails not available)
   const employerSS       = stub ? Math.round(stub.grossPay * 0.062  * 100) / 100 : 0;
   const employerMedicare = stub ? Math.round(stub.grossPay * 0.0145 * 100) / 100 : 0;
   const futa             = stub ? Math.round(stub.grossPay * 0.006  * 100) / 100 : 0;
   const njSuta           = stub ? Math.round(stub.grossPay * 0.005  * 100) / 100 : 0;
-  const totalEmployer    = stub ? Math.round((employerSS + employerMedicare + futa + njSuta) * 100) / 100 : 0;
+  const totalEmployerFallback = stub ? Math.round((employerSS + employerMedicare + futa + njSuta) * 100) / 100 : 0;
+
+  // Determine if we have confirmed Rollfi data
+  const isConfirmed = stub?.isProcessed ?? stub?.fromRollfi ?? false;
 
   const handlePrint = () => window.print();
-  const handleDownload = () => {
-    window.print();
-  };
+  const handleDownload = () => { window.print(); };
 
   return (
     <div className="min-h-screen bg-white">
@@ -140,7 +193,7 @@ export default function Paystub() {
                 </>
               )}
               <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mt-3 mb-1">Payment Method</p>
-              <p className="text-gray-700 text-sm">Direct Deposit · Chase ****0989</p>
+              <p className="text-gray-700 text-sm">Direct Deposit</p>
               {stub.fromRollfi && (
                 <span className="inline-flex items-center gap-1 mt-2 px-2 py-0.5 bg-green-50 text-green-700 text-xs rounded-full border border-green-200">
                   ✓ Confirmed by Rollfi
@@ -153,18 +206,49 @@ export default function Paystub() {
           <div className="px-8 py-5 border-b border-gray-200">
             <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">Earnings</p>
             <div className="space-y-2 text-sm">
+              {/* Base pay */}
               <div className="flex justify-between">
-                <span className="text-gray-600">Regular: {stub.hoursWorked}h @ ${stub.hourlyRate.toFixed(2)}/hr</span>
-                <span className="text-gray-900">{fmtD(stub.grossPay)}</span>
+                <span className="text-gray-600">
+                  Regular: {stub.hoursWorked}h @ ${stub.hourlyRate.toFixed(2)}/hr
+                </span>
+                <span className="text-gray-900">{fmtD(stub.baseTotal ?? stub.grossPay)}</span>
               </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Overtime: 0h</span>
-                <span>$0.00</span>
-              </div>
-              <div className="flex justify-between text-gray-400">
-                <span>Bonus</span>
-                <span>$0.00</span>
-              </div>
+
+              {/* Overtime — from Rollfi when available, else show 0 */}
+              {stub.overTimes && stub.overTimes.filter(ot => ot.amount > 0).length > 0
+                ? stub.overTimes.filter(ot => ot.amount > 0).map((ot, i) => (
+                    <div key={i} className="flex justify-between">
+                      <span className="text-gray-600">{ot.type}: {ot.numberOfHours}h</span>
+                      <span className="text-gray-900">{fmtD(ot.amount)}</span>
+                    </div>
+                  ))
+                : !stub.fromRollfi && (
+                    <div className="flex justify-between text-gray-400">
+                      <span>Overtime: 0h</span>
+                      <span>$0.00</span>
+                    </div>
+                  )
+              }
+
+              {/* Additional compensations (bonuses etc.) */}
+              {stub.additionalCompensations?.filter(ac => ac.amount > 0).map((ac, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-gray-600">
+                    {ac.payrollLineItemAdditionalCompensationVertexCompensationIdentifier?.compensationDescription ?? "Bonus"}
+                  </span>
+                  <span className="text-gray-900">{fmtD(ac.amount)}</span>
+                </div>
+              ))}
+
+              {/* Reimbursements */}
+              {stub.reimbursements?.filter(r => r.amount > 0).map((r, i) => (
+                <div key={i} className="flex justify-between">
+                  <span className="text-gray-600">{r.reimbursementType}</span>
+                  <span className="text-gray-900">{fmtD(r.amount)}</span>
+                </div>
+              ))}
+
+              {/* Gross Pay total */}
               <div className="border-t border-gray-100 pt-2 flex justify-between font-bold text-gray-900">
                 <span>Gross Pay</span>
                 <span className="text-[#284362]">{fmtD(stub.grossPay)}</span>
@@ -175,54 +259,61 @@ export default function Paystub() {
           {/* Deductions */}
           <div className="px-8 py-5 border-b border-gray-200">
             <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">Deductions</p>
-            {stub.fromRollfi
+            {isConfirmed
               ? <div className="flex items-center gap-1.5 mb-3 px-2.5 py-1.5 rounded-md bg-green-50 border border-green-200 text-green-700 text-xs">✅ All amounts confirmed by Rollfi</div>
               : <div className="flex items-center gap-1.5 mb-3 px-2.5 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-xs">⏳ Showing estimated amounts based on standard tax rates. Submit payroll to get exact figures.</div>
             }
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600">Federal Income Tax</span>
-                  {stub.fromRollfi
-                    ? <span className="text-[10px] text-green-600 font-medium" title="This amount has been confirmed by Rollfi after payroll processing.">✅ Confirmed</span>
-                    : <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
-                  }
-                </div>
-                <span className="text-red-600">{stub.fromRollfi ? "" : "~"}−{fmtD(stub.federalTax)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600">NJ State Income Tax</span>
-                  {stub.fromRollfi
-                    ? <span className="text-[10px] text-green-600 font-medium" title="This amount has been confirmed by Rollfi after payroll processing.">✅ Confirmed</span>
-                    : <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
-                  }
-                </div>
-                <span className="text-red-600">{stub.fromRollfi ? "" : "~"}−{fmtD(stub.stateTax)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600">Social Security (6.2%)</span>
-                  {stub.fromRollfi
-                    ? <span className="text-[10px] text-green-600 font-medium" title="This amount has been confirmed by Rollfi after payroll processing.">✅ Confirmed</span>
-                    : <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
-                  }
-                </div>
-                <span className="text-red-600">{stub.fromRollfi ? "" : "~"}−{fmtD(ss)}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-600">Medicare (1.45%)</span>
-                  {stub.fromRollfi
-                    ? <span className="text-[10px] text-green-600 font-medium" title="This amount has been confirmed by Rollfi after payroll processing.">✅ Confirmed</span>
-                    : <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
-                  }
-                </div>
-                <span className="text-red-600">{stub.fromRollfi ? "" : "~"}−{fmtD(medicare)}</span>
-              </div>
+              {stub.employeeTaxDetails && stub.employeeTaxDetails.length > 0
+                ? (
+                  /* Dynamic lines from Rollfi */
+                  stub.employeeTaxDetails.map((t, i) => (
+                    <div key={i} className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600">{t.taxName}</span>
+                        <span className="text-[10px] text-green-600 font-medium" title="This amount has been confirmed by Rollfi after payroll processing.">✅ Confirmed</span>
+                      </div>
+                      <span className="text-red-600">−{fmtD(t.taxAmount)}</span>
+                    </div>
+                  ))
+                )
+                : (
+                  /* Fallback: hardcoded estimated lines */
+                  <>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600">Federal Income Tax</span>
+                        <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
+                      </div>
+                      <span className="text-red-600">~−{fmtD(stub.federalTax)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600">NJ State Income Tax</span>
+                        <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
+                      </div>
+                      <span className="text-red-600">~−{fmtD(stub.stateTax)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600">Social Security (6.2%)</span>
+                        <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
+                      </div>
+                      <span className="text-red-600">~−{fmtD(ss)}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-600">Medicare (1.45%)</span>
+                        <span className="text-[10px] text-gray-400" title="This is an estimate based on standard tax rates. The exact amount will be confirmed after Rollfi processes payroll.">⏳ Estimated</span>
+                      </div>
+                      <span className="text-red-600">~−{fmtD(medicare)}</span>
+                    </div>
+                  </>
+                )
+              }
               <div className="border-t border-gray-100 pt-2 flex justify-between font-semibold text-gray-700">
                 <span>Total Deductions</span>
-                <span className="text-red-600">{stub.fromRollfi ? "" : "~"}−{fmtD(stub.deductions)}</span>
+                <span className="text-red-600">{isConfirmed ? "" : "~"}−{fmtD(stub.deductions)}</span>
               </div>
             </div>
           </div>
@@ -231,14 +322,14 @@ export default function Paystub() {
           <div className="px-8 py-6 bg-[#284362] text-white flex items-center justify-between">
             <div>
               <p className="text-white/60 text-xs uppercase tracking-widest">
-                {stub.fromRollfi ? "Net Pay" : "Estimated Net Pay"}
+                {isConfirmed ? "Net Pay" : "Estimated Net Pay"}
               </p>
-              {stub.fromRollfi
+              {isConfirmed
                 ? <p className="text-green-300 text-xs mt-0.5">✅ Confirmed by Rollfi</p>
                 : <p className="text-white/40 text-xs mt-0.5">(Submit payroll for exact amount)</p>
               }
             </div>
-            <p className="text-4xl font-bold">{stub.fromRollfi ? fmtD(stub.netPay) : `~${fmtD(stub.netPay)}`}</p>
+            <p className="text-4xl font-bold">{isConfirmed ? fmtD(stub.netPay) : `~${fmtD(stub.netPay)}`}</p>
           </div>
 
           {/* Employer Contributions */}
@@ -252,29 +343,79 @@ export default function Paystub() {
             </div>
             <p className="text-gray-400 text-xs mb-3">These are paid by the company and are <strong>NOT</strong> deducted from your paycheck</p>
             <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-500">Social Security Match (6.2%)</span>
-                <span className="text-gray-700">{fmtD(employerSS)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Medicare Match (1.45%)</span>
-                <span className="text-gray-700">{fmtD(employerMedicare)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">Federal Unemployment (0.6%)</span>
-                <span className="text-gray-700">{fmtD(futa)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">NJ State Unemployment (0.5%)</span>
-                <span className="text-gray-700">{fmtD(njSuta)}</span>
-              </div>
+              {stub.employerTaxDetails && stub.employerTaxDetails.length > 0
+                ? (
+                  /* Dynamic lines from Rollfi */
+                  stub.employerTaxDetails.map((t, i) => (
+                    <div key={i} className="flex justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-500">{t.taxName}</span>
+                        {isConfirmed && <span className="text-[10px] text-green-600 font-medium">✅ Confirmed</span>}
+                      </div>
+                      <span className="text-gray-700">{fmtD(t.taxAmount)}</span>
+                    </div>
+                  ))
+                )
+                : (
+                  /* Fallback: hardcoded estimated lines */
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Social Security Match (6.2%)</span>
+                      <span className="text-gray-700">{fmtD(employerSS)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Medicare Match (1.45%)</span>
+                      <span className="text-gray-700">{fmtD(employerMedicare)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Federal Unemployment (0.6%)</span>
+                      <span className="text-gray-700">{fmtD(futa)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">NJ State Unemployment (0.5%)</span>
+                      <span className="text-gray-700">{fmtD(njSuta)}</span>
+                    </div>
+                  </>
+                )
+              }
               <div className="border-t border-gray-200 pt-2 flex justify-between font-semibold text-gray-700">
                 <span>Total Employer Cost</span>
-                <span>{fmtD(totalEmployer)}</span>
+                <span>
+                  {stub.employerTaxDetails
+                    ? fmtD(r2(stub.employerTaxDetails.reduce((s, t) => s + t.taxAmount, 0)))
+                    : fmtD(totalEmployerFallback)
+                  }
+                </span>
               </div>
             </div>
-            <p className="text-gray-400 text-[10px] mt-3">* Employer tax amounts are calculated using standard rates. Actual amounts may vary.</p>
+            <p className="text-gray-400 text-[10px] mt-3">
+              {isConfirmed
+                ? "* Employer tax amounts confirmed by Rollfi after payroll processing."
+                : "* Employer tax amounts are calculated using standard rates. Actual amounts may vary."}
+            </p>
           </div>
+
+          {/* Payment Details — from Rollfi payDetails when available */}
+          {stub.payDetails && stub.payDetails.length > 0 && (
+            <div className="px-8 py-5 border-b border-gray-200">
+              <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-3">Payment Details</p>
+              <div className="space-y-2 text-sm">
+                {stub.payDetails.map((pd, i) => (
+                  <div key={i} className="flex justify-between items-center">
+                    <div>
+                      <span className="text-gray-600">Direct Deposit</span>
+                      {pd.employeePayAccount?.accountName && (
+                        <span className="text-gray-400 text-xs ml-2">· {pd.employeePayAccount.accountName}</span>
+                      )}
+                    </div>
+                    <span className="text-gray-900 font-medium">
+                      {stub.payDetails && stub.payDetails.length > 1 ? `${pd.payPercentage}% → ` : ""}{fmtD(pd.amount)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* YTD */}
           <div className="px-8 py-5 border-b border-gray-200">
@@ -282,14 +423,14 @@ export default function Paystub() {
             <div className="grid grid-cols-3 gap-4 text-sm text-center">
               <div>
                 <p className="text-gray-400 text-xs mb-1">YTD Gross</p>
-                <p className="text-gray-900 font-semibold">{fmtD(stub.ytdGross)}</p>
+                <p className="text-gray-900 font-semibold">{fmtD(ytdGross)}</p>
               </div>
               <div>
-                <p className="text-gray-400 text-xs mb-1">YTD Taxes (est.)</p>
+                <p className="text-gray-400 text-xs mb-1">YTD Taxes{ytdTaxFromRollfi === null ? " (est.)" : ""}</p>
                 <p className="text-red-600 font-semibold">−{fmtD(ytdTax)}</p>
               </div>
               <div>
-                <p className="text-gray-400 text-xs mb-1">YTD Net (est.)</p>
+                <p className="text-gray-400 text-xs mb-1">YTD Net{ytdTaxFromRollfi === null ? " (est.)" : ""}</p>
                 <p className="text-gray-900 font-semibold">{fmtD(ytdNet)}</p>
               </div>
             </div>
@@ -299,7 +440,7 @@ export default function Paystub() {
           <div className="px-8 py-4 bg-gray-50 text-center">
             <p className="text-gray-400 text-xs">
               BrightBridge Assist · EasyTeam Embedded SDK Integration Test
-              {!stub.fromRollfi && " · Tax figures are estimates pending Rollfi confirmation"}
+              {!isConfirmed && " · Tax figures are estimates pending Rollfi confirmation"}
             </p>
           </div>
         </div>

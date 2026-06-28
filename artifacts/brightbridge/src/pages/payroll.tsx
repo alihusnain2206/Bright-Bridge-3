@@ -68,6 +68,14 @@ interface PayStub {
   deductions: number; netPay: number; ytdGross: number; fromRollfi: boolean;
 }
 interface PayStubsData { payPeriodId: string | null; companyId: string; stubs: PayStub[]; }
+interface RollfiPeriodDetailsResponse {
+  payPeriod: Array<{
+    payPeriodId: string; payPeriod: string; PayPeriodStatus: string;
+    total: number; employeeTaxSum: number; employerTaxSum: number;
+    isProcessed: boolean; payDate: string;
+    payrollLineItems: Array<{ grossTotal: number; netTotal: number; userId: string }>;
+  }>;
+}
 type AdjMap = Record<string, { bonusPay: number; overtimePay: number }>;
 
 // ── API helpers ──────────────────────────────────────────────
@@ -792,6 +800,14 @@ export default function Payroll() {
     retry: false,
   });
 
+  const { data: payPeriodDetails } = useQuery<RollfiPeriodDetailsResponse>({
+    queryKey: ["rollfi-period-details", selectedCompanyId, payPeriod?.payPeriodId],
+    queryFn: () => api.get(`/rollfi/payperiod/details?companyId=${selectedCompanyId}&payPeriodId=${payPeriod!.payPeriodId}`),
+    enabled: !!payPeriod?.payPeriodId && selectedCompanyId !== "all" && tab === 2,
+    retry: false,
+    staleTime: 60_000,
+  });
+
   const onboardCompany = useMutation({
     mutationFn: (companyId: string) => api.post("/rollfi/onboard/company", { companyId }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["rollfi-state"] }); },
@@ -1405,11 +1421,25 @@ export default function Payroll() {
 
                 {/* Totals summary — Change 3 & 9 */}
                 {(() => {
-                  const totalGross  = preview.totalGrossPay;
-                  const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
-                  const totalNet    = r2(totalGross - totalEmpTax);
-                  const totalErTax  = r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
-                  const totalDebit  = r2(totalGross + totalErTax);
+                  const rollfiPd   = payPeriodDetails?.payPeriod?.[0];
+                  const confirmed  = rollfiPd?.isProcessed === true;
+
+                  // Use Rollfi confirmed totals when processed, else estimate
+                  const totalGross  = confirmed && rollfiPd
+                    ? r2(rollfiPd.payrollLineItems.reduce((s, e) => s + (e.grossTotal ?? 0), 0))
+                    : preview.totalGrossPay;
+                  const totalEmpTax = confirmed && rollfiPd
+                    ? r2(rollfiPd.employeeTaxSum)
+                    : r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
+                  const totalNet    = confirmed && rollfiPd
+                    ? r2(rollfiPd.payrollLineItems.reduce((s, e) => s + (e.netTotal ?? 0), 0))
+                    : r2(totalGross - totalEmpTax);
+                  const totalErTax  = confirmed && rollfiPd
+                    ? r2(rollfiPd.employerTaxSum)
+                    : r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
+                  const totalDebit  = confirmed && rollfiPd
+                    ? r2(rollfiPd.total)
+                    : r2(totalGross + totalErTax);
                   const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
                   return (
                     <div className="mb-4 space-y-3">
@@ -1419,35 +1449,48 @@ export default function Payroll() {
                             <p className="text-white font-semibold text-sm">Payroll Totals Summary</p>
                             <p className="text-white/40 text-xs">{selectedCompanyName} · {preview.period.from} – {preview.period.to}</p>
                           </div>
+                          {confirmed && <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 border border-green-500/25 text-green-400 font-semibold">✅ Confirmed by Rollfi</span>}
                         </div>
                         <div className="px-5 py-4 grid grid-cols-2 gap-6 text-xs border-b border-white/5">
                           <div>
                             <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employee Payments</p>
-                            <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
-                            <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes (est.)</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
-                            <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Net Pay to Staff</span><span className="text-white">~{fmtD(totalNet)}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{confirmed ? "" : "~"}{fmtD(totalGross)}</span></div>
+                            <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes{confirmed ? "" : " (est.)"}</span><span className="text-red-300">−{confirmed ? "" : "~"}{fmtD(totalEmpTax)}</span></div>
+                            <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Net Pay to Staff</span><span className="text-white">{confirmed ? "" : "~"}{fmtD(totalNet)}</span></div>
                           </div>
                           <div>
                             <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employer Tax Obligations</p>
-                            <div className="flex justify-between py-1"><span className="text-white/60">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.ss))}</span></div>
-                            <div className="flex justify-between py-1"><span className="text-white/60">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.med))}</span></div>
-                            <div className="flex justify-between py-1"><span className="text-white/60">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.futa))}</span></div>
-                            <div className="flex justify-between py-1"><span className="text-white/60">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.nj))}</span></div>
-                            <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(totalErTax)}</span></div>
+                            {confirmed
+                              ? <div className="flex justify-between py-1 font-semibold"><span className="text-white/60">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(totalErTax)}</span></div>
+                              : <>
+                                  <div className="flex justify-between py-1"><span className="text-white/60">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.ss))}</span></div>
+                                  <div className="flex justify-between py-1"><span className="text-white/60">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.med))}</span></div>
+                                  <div className="flex justify-between py-1"><span className="text-white/60">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.futa))}</span></div>
+                                  <div className="flex justify-between py-1"><span className="text-white/60">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.nj))}</span></div>
+                                  <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Total Employer Taxes</span><span className="text-amber-300">+~{fmtD(totalErTax)}</span></div>
+                                </>
+                            }
                           </div>
                         </div>
                         <div className="px-5 py-4 flex items-center justify-between border-t border-amber-500/30" style={{ background: "rgba(232,98,42,0.08)" }}>
                           <div className="flex items-center gap-2">
                             <AlertTriangle className="h-4 w-4 text-amber-400" />
                             <div>
-                              <p className="text-amber-300 font-bold text-sm">Estimated Total Bank Debit</p>
-                              {payPeriod?.payDate && <p className="text-amber-400/60 text-[11px]">Debited on {payPeriod.payDate}</p>}
+                              <p className="text-amber-300 font-bold text-sm">{confirmed ? "Total Bank Debit" : "Estimated Total Bank Debit"}</p>
+                              {confirmed
+                                ? <p className="text-green-400/70 text-[11px]">✅ Confirmed by Rollfi{payPeriod?.payDate ? ` · Debited on ${payPeriod.payDate}` : ""}</p>
+                                : payPeriod?.payDate && <p className="text-amber-400/60 text-[11px]">Debited on {payPeriod.payDate}</p>
+                              }
                             </div>
                           </div>
-                          <p className="text-amber-300 font-bold text-2xl">~{fmtD(totalDebit)}</p>
+                          <p className="text-amber-300 font-bold text-2xl">{confirmed ? "" : "~"}{fmtD(totalDebit)}</p>
                         </div>
                       </div>
-                      <p className="text-white/20 text-[10px] px-1">* Tax amounts are estimates. Exact amounts confirmed after Rollfi processes payroll.</p>
+                      <p className="text-white/20 text-[10px] px-1">
+                        {confirmed
+                          ? "✅ All amounts confirmed by Rollfi after payroll processing."
+                          : "* Tax amounts are estimates. Exact amounts confirmed after Rollfi processes payroll."}
+                      </p>
                     </div>
                   );
                 })()}

@@ -1956,24 +1956,60 @@ router.get("/rollfi/paystubs", async (req, res) => {
   );
 
   let rollfiEmpDetails: Array<Record<string, unknown>> = [];
+  let rollfiPeriod: Record<string, unknown> | null = null;
   let rollfiRaw: unknown = null;
 
   if (payPeriodId) {
+    // Primary: getPayPeriodDetails — richer data with employeeTaxDetails, employerTaxDetails, netTotal, payDetails
     try {
       const r = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodEmpDetails`,
-        { method: "getProcessedPayperiodEmpDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+        `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+        { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
         { headers: rollfiHeaders() }
       );
-      req.log.info({ rollfiResponse: r.data }, "getProcessedPayperiodEmpDetails response");
-      req.log.info({ rollfiEmpDetailsRaw: JSON.stringify(r.data, null, 2) }, "ROLLFI RAW PAYSTUB DATA — use this to identify real field names for tax lines");
       rollfiRaw = r.data;
       const raw = r.data as Record<string, unknown>;
-      rollfiEmpDetails = (
-        raw.employeePayPeriodDetails ?? raw.employeeDetails ?? raw.payrollDetails ?? raw.employees ?? []
-      ) as Array<Record<string, unknown>>;
+      const periodArr = (raw.payPeriod ?? []) as Array<Record<string, unknown>>;
+      rollfiPeriod = periodArr[0] ?? null;
+      const lineItems = ((rollfiPeriod?.payrollLineItems ?? []) as Array<Record<string, unknown>>);
+      if (lineItems.length > 0) {
+        rollfiEmpDetails = lineItems;
+        req.log.info(
+          {
+            payPeriodId,
+            periodTotal: rollfiPeriod?.total,
+            isProcessed: rollfiPeriod?.isProcessed,
+            PayPeriodStatus: rollfiPeriod?.PayPeriodStatus,
+            employeeCount: lineItems.length,
+            fieldMapping: lineItems.map((e) => ({
+              userId: e.userId,
+              employeeTaxDetailCount: (e.employeeTaxDetails as unknown[] | undefined)?.length ?? 0,
+              employerTaxDetailCount: (e.employerTaxDetails as unknown[] | undefined)?.length ?? 0,
+              taxNames: ((e.employeeTaxDetails ?? []) as Array<{ taxName?: unknown }>).map((t) => t.taxName),
+              employerTaxNames: ((e.employerTaxDetails ?? []) as Array<{ taxName?: unknown }>).map((t) => t.taxName),
+            })),
+          },
+          "ROLLFI PAYSTUB FIELD MAPPING DEBUG"
+        );
+      }
     } catch (e) {
-      req.log.warn({ e }, "getProcessedPayperiodEmpDetails failed — building from local data");
+      req.log.warn({ e }, "getPayPeriodDetails failed for paystubs — falling back to getProcessedPayperiodEmpDetails");
+      // Fallback: getProcessedPayperiodEmpDetails
+      try {
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodEmpDetails`,
+          { method: "getProcessedPayperiodEmpDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+          { headers: rollfiHeaders() }
+        );
+        rollfiRaw = r.data;
+        const raw = r.data as Record<string, unknown>;
+        rollfiEmpDetails = (
+          raw.employeePayPeriodDetails ?? raw.employeeDetails ?? raw.payrollDetails ?? raw.employees ?? []
+        ) as Array<Record<string, unknown>>;
+        req.log.info({ rollfiEmpDetailsRaw: JSON.stringify(rollfiEmpDetails, null, 2) }, "ROLLFI RAW PAYSTUB DATA (fallback endpoint)");
+      } catch (e2) {
+        req.log.warn({ e2 }, "Both Rollfi paystub endpoints failed — building from local data");
+      }
     }
   }
 
@@ -1989,23 +2025,64 @@ router.get("/rollfi/paystubs", async (req, res) => {
     const payHours = synced ? synced.approvedHours : 75;
 
     const hourlyRateCents = u.hourlyWage ?? 1500;
-    const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
+    const hourlyRate = hourlyRateCents / 100;
+
+    // Gross pay — prefer grossTotal (getPayPeriodDetails field) then legacy fallbacks
     const grossPay = rollfiDetail
-      ? Number(rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? payHours * hourlyRate)
+      ? Number(rollfiDetail.grossTotal ?? rollfiDetail.grossPay ?? rollfiDetail.totalPay ?? rollfiDetail.totalPayAmount ?? payHours * hourlyRate)
       : payHours * hourlyRate;
+
+    // Estimated fallback values (used when Rollfi tax details not available)
     const federalTax  = Math.round(grossPay * 0.12   * 100) / 100;
     const stateTax    = Math.round(grossPay * 0.05   * 100) / 100;
     const fica        = Math.round(grossPay * 0.0765 * 100) / 100;
     const defaultDed  = Math.round((federalTax + stateTax + fica) * 100) / 100;
+
+    // Total deductions — prefer employeeTax.employeeTax (getPayPeriodDetails), then legacy fields
+    const employeeTaxObj = rollfiDetail?.employeeTax as Record<string, unknown> | undefined;
     const deductions  = rollfiDetail
-      ? Number(rollfiDetail.deductions ?? rollfiDetail.totalDeductions ?? rollfiDetail.totalTax ?? defaultDed)
+      ? Number(employeeTaxObj?.employeeTax ?? rollfiDetail.deductions ?? rollfiDetail.totalDeductions ?? rollfiDetail.totalTax ?? defaultDed)
       : defaultDed;
+
+    // Net pay — prefer netTotal (getPayPeriodDetails field)
     const netPay = rollfiDetail
-      ? Number(rollfiDetail.netPay ?? rollfiDetail.takeHomePay ?? grossPay - deductions)
+      ? Number(rollfiDetail.netTotal ?? rollfiDetail.netPay ?? rollfiDetail.takeHomePay ?? grossPay - deductions)
       : grossPay - deductions;
+
+    // YTD gross
     const ytdGross = rollfiDetail
       ? Number(rollfiDetail.ytdGross ?? rollfiDetail.yearToDateGross ?? rollfiDetail.ytdTotalGross ?? grossPay)
       : grossPay;
+
+    // Rich tax detail arrays from getPayPeriodDetails
+    type RollfiTaxRow = { taxName: string; taxAmount: number; taxAmountYtd: number; isEmployerTax: boolean };
+    const rawEmpTax = (rollfiDetail?.employeeTaxDetails ?? null) as Array<Record<string, unknown>> | null;
+    const rawErTax  = (rollfiDetail?.employerTaxDetails ?? null) as Array<Record<string, unknown>> | null;
+
+    const employeeTaxDetails: RollfiTaxRow[] | null = rawEmpTax
+      ? rawEmpTax
+          .filter((t) => Number(t.taxAmount ?? 0) > 0)
+          .map((t) => ({
+            taxName: String(t.taxName ?? ""),
+            taxAmount: Math.round(Number(t.taxAmount ?? 0) * 100) / 100,
+            taxAmountYtd: Math.round(Number(t.taxAmountYtd ?? 0) * 100) / 100,
+            isEmployerTax: false,
+          }))
+      : null;
+
+    const employerTaxDetails: RollfiTaxRow[] | null = rawErTax
+      ? rawErTax
+          .filter((t) => Number(t.taxAmount ?? 0) > 0)
+          .map((t) => ({
+            taxName: String(t.taxName ?? ""),
+            taxAmount: Math.round(Number(t.taxAmount ?? 0) * 100) / 100,
+            taxAmountYtd: Math.round(Number(t.taxAmountYtd ?? 0) * 100) / 100,
+            isEmployerTax: true,
+          }))
+      : null;
+
+    // Hours from getPayPeriodDetails payHours field, else timesheet, else estimate
+    const hoursWorked = rollfiDetail?.payHours ? Number(rollfiDetail.payHours) : (synced ? synced.hoursWorked : payHours);
 
     return {
       employeeId: u.employeeId,
@@ -2013,20 +2090,51 @@ router.get("/rollfi/paystubs", async (req, res) => {
       name: u.name,
       position: u.position,
       hourlyRate,
-      hoursWorked: synced ? synced.hoursWorked : payHours,
+      hoursWorked,
       hoursSource: synced ? synced.source : "fallback",
       grossPay:   Math.round(grossPay   * 100) / 100,
-      federalTax: rollfiDetail ? Number(rollfiDetail.federalTax ?? rollfiDetail.federalIncomeTax ?? federalTax) : federalTax,
-      stateTax:   rollfiDetail ? Number(rollfiDetail.stateTax   ?? rollfiDetail.stateIncomeTax   ?? stateTax)   : stateTax,
-      fica:       rollfiDetail ? Number(rollfiDetail.fica        ?? rollfiDetail.socialSecurity    ?? fica)       : fica,
+      baseTotal:  rollfiDetail ? Math.round(Number(rollfiDetail.baseTotal ?? grossPay) * 100) / 100 : null,
+      // Legacy flat fields (fallback display when rich arrays not available)
+      federalTax: employeeTaxDetails
+        ? (employeeTaxDetails.find((t) => t.taxName.toLowerCase().includes("federal"))?.taxAmount ?? federalTax)
+        : (rollfiDetail ? Number(rollfiDetail.federalTax ?? rollfiDetail.federalIncomeTax ?? federalTax) : federalTax),
+      stateTax: employeeTaxDetails
+        ? (employeeTaxDetails.find((t) => t.taxName.toLowerCase().includes("state"))?.taxAmount ?? stateTax)
+        : (rollfiDetail ? Number(rollfiDetail.stateTax ?? rollfiDetail.stateIncomeTax ?? stateTax) : stateTax),
+      fica: employeeTaxDetails
+        ? Math.round(((employeeTaxDetails.find((t) => t.taxName.toLowerCase().includes("social"))?.taxAmount ?? 0) + (employeeTaxDetails.find((t) => t.taxName.toLowerCase().includes("medicare"))?.taxAmount ?? 0)) * 100) / 100
+        : (rollfiDetail ? Number(rollfiDetail.fica ?? rollfiDetail.socialSecurity ?? fica) : fica),
       deductions: Math.round(deductions * 100) / 100,
       netPay:     Math.round(netPay     * 100) / 100,
       ytdGross:   Math.round(ytdGross   * 100) / 100,
       fromRollfi: !!rollfiDetail,
+      isProcessed: rollfiPeriod ? Boolean(rollfiPeriod.isProcessed) : false,
+      employeeTaxDetails,
+      employerTaxDetails,
+      overTimes: (rollfiDetail?.overTimes ?? null) as Array<{ type: string; amount: number; numberOfHours: number }> | null,
+      additionalCompensations: (rollfiDetail?.additionalCompensations ?? null) as Array<{
+        payrollLineItemAdditionalCompensationVertexCompensationIdentifier: { compensationDescription: string };
+        amount: number;
+      }> | null,
+      reimbursements: (rollfiDetail?.reimbursements ?? null) as Array<{ reimbursementType: string; amount: number }> | null,
+      payDetails: (rollfiDetail?.payDetails ?? null) as Array<{
+        payPercentage: number;
+        amount: number;
+        employeePayAccount: { accountName: string } | null;
+      }> | null,
     };
   });
 
-  res.json({ payPeriodId: payPeriodId ?? null, companyId, stubs, rollfiRaw });
+  res.json({
+    payPeriodId: payPeriodId ?? null,
+    companyId,
+    stubs,
+    rollfiRaw,
+    periodTotal:    rollfiPeriod?.total    != null ? Math.round(Number(rollfiPeriod.total)    * 100) / 100 : null,
+    employeeTaxSum: rollfiPeriod?.employeeTaxSum != null ? Number(rollfiPeriod.employeeTaxSum) : null,
+    employerTaxSum: rollfiPeriod?.employerTaxSum != null ? Number(rollfiPeriod.employerTaxSum) : null,
+    isProcessed: rollfiPeriod ? Boolean(rollfiPeriod.isProcessed) : false,
+  });
 });
 
 // ── Rollfi Webhook Receiver ────────────────────────────────────────────────

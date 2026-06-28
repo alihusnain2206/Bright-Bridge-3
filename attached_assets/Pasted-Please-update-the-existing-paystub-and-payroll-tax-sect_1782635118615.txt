@@ -1,0 +1,687 @@
+Please update the existing paystub 
+and payroll tax sections in the 
+BrightBridge platform to use REAL 
+Rollfi API field names instead of 
+hardcoded estimated tax rates.
+
+Do NOT rebuild anything from scratch.
+Keep all existing features working.
+Only update the tax data mapping.
+
+---
+
+REFERENCE DOCUMENTATION:
+Please read this Rollfi documentation
+page first before making any changes:
+https://developer.rollfi.xyz/api-reference/reports/getPayPeriodDetails
+
+This page shows the exact API
+response structure and field names
+that Rollfi returns.
+
+---
+
+CONTEXT — WHY WE ARE UPDATING:
+
+Currently the paystub and payroll
+preview show ESTIMATED tax amounts
+calculated using hardcoded rates:
+Federal: 12%
+NJ State: 5%
+Social Security: 6.2%
+Medicare: 1.45%
+
+These are just guesses and show
+"(estimated)" or "~" labels.
+
+We now have the REAL Rollfi API
+response structure confirmed.
+We need to use the actual field
+names from Rollfi so tax amounts
+show as "✅ Confirmed by Rollfi"
+instead of estimated.
+
+---
+
+THE CONFIRMED ROLLFI RESPONSE 
+STRUCTURE:
+
+We have confirmed this is exactly
+what Rollfi returns from
+getPayPeriodDetails:
+
+TOP LEVEL PAY PERIOD:
+{
+  payPeriod: [{
+    payPeriodId: string
+    payPeriod: string
+    PayPeriodStatus: string
+    total: number
+    // ← EXACT TOTAL BANK DEBIT!
+    // Use this for "Total Bank Debit"
+    
+    employeeTaxSum: number
+    // ← Sum of ALL employee taxes
+    
+    employerTaxSum: number
+    // ← Sum of ALL employer taxes
+    
+    isProcessed: boolean
+    payDate: string
+    payBeginDate: string
+    payEndDate: string
+    workerType: { workerType: string }
+    payrollLineItems: [...]
+  }]
+}
+
+PER EMPLOYEE (payrollLineItems):
+{
+  userId: string
+  // ← Rollfi user ID
+  // Use to match with our employee
+  
+  userName: string
+  // ← Employee full name from Rollfi
+  
+  baseTotal: number
+  // ← Base salary/hourly pay
+  
+  grossTotal: number
+  // ← Total gross earnings
+  // Includes overtime, bonuses etc
+  
+  netTotal: number
+  // ← NET PAY! Most important!
+  // What employee actually receives
+  // Use this for "Net Pay" display
+  
+  payHours: number
+  // ← Total hours worked
+  
+  payRate: number
+  // ← Pay rate
+  
+  retroAmount: number
+  // ← Retroactive pay if any
+  
+  employeeTax: {
+    employeeTax: number
+    // ← Total employee tax amount
+  }
+  
+  employeeTaxDetails: [
+    {
+      taxName: string
+      // ← EXACT tax label to display!
+      // Examples from real Rollfi data:
+      // "Federal Withholding Tax"
+      // "Medicare"
+      // "Social Security"
+      // "NJ State Income Tax" (for NJ)
+      // "NY State Income Tax" (for NY)
+      // "New York City Tax" (for NYC)
+      
+      taxAmount: number
+      // ← EXACT tax amount!
+      
+      taxAmountYtd: number
+      // ← Year to date amount
+      
+      isEmployerTax: false
+      // ← Always false for employee taxes
+    }
+  ]
+  
+  employerTaxDetails: [
+    {
+      taxName: string
+      // ← EXACT employer tax label!
+      // Examples from real Rollfi data:
+      // "FUTA"
+      // "Medicare"
+      // "Social Security"
+      // "NJ State Unemployment Insurance"
+      // "NY State Unemployment Insurance"
+      
+      taxAmount: number
+      // ← EXACT employer tax amount!
+      
+      taxAmountYtd: number
+      // ← Year to date amount
+      
+      isEmployerTax: true
+      // ← Always true for employer taxes
+    }
+  ]
+  
+  overTimes: [
+    {
+      type: string
+      // ← Overtime type description
+      amount: number
+      // ← Overtime pay amount
+      numberOfHours: number
+      // ← Overtime hours
+    }
+  ]
+  
+  additionalCompensations: [
+    {
+      payrollLineItemAdditionalCompensationVertexCompensationIdentifier: {
+        compensationDescription: string
+        // ← Bonus/comp description
+      }
+      amount: number
+    }
+  ]
+  
+  deductions: [
+    {
+      vertexDeductionIdentifier: {
+        deductionDescription: string
+        // ← Deduction description
+        // e.g. "401k", "Health Insurance"
+      }
+      amount: number
+    }
+  ]
+  
+  reimbursements: [
+    {
+      reimbursementType: string
+      // ← Type of reimbursement
+      amount: number
+    }
+  ]
+  
+  payDetails: [
+    {
+      payPercentage: number
+      // ← % going to this account
+      amount: number
+      // ← Amount to this account
+      employeePayAccount: {
+        accountName: string
+        // ← Bank account description
+        // e.g. "savings ... 2500"
+      } | null
+    }
+  ]
+}
+
+---
+
+UPDATE 1 — PAYSTUB EMPLOYEE 
+TAX SECTION:
+
+Find where the paystub currently
+shows hardcoded tax lines:
+Federal Income Tax (12%)
+NJ State Tax (5%)
+Social Security (6.2%)
+Medicare (1.45%)
+
+REPLACE with dynamic mapping
+from Rollfi's employeeTaxDetails:
+
+TypeScript code to use:
+
+interface TaxLine {
+  label: string;
+  amount: number;
+  ytd: number;
+  isConfirmed: boolean;
+}
+
+// When Rollfi data is available:
+const employeeTaxLines: TaxLine[] = 
+  payrollLineItem.employeeTaxDetails
+    .filter(tax => tax.taxAmount > 0)
+    // Only show taxes with amount > 0
+    // This hides Federal Withholding
+    // when it is $0 for some employees
+    .map(tax => ({
+      label: tax.taxName,
+      // Use EXACT Rollfi taxName!
+      // e.g. "Federal Withholding Tax"
+      // NOT hardcoded "Federal Income Tax"
+      amount: tax.taxAmount,
+      ytd: tax.taxAmountYtd,
+      isConfirmed: true
+      // ← Real data = confirmed!
+    }));
+
+// Total employee deductions:
+const totalEmployeeTax = 
+  payrollLineItem.employeeTax.employeeTax;
+
+// Net pay (use Rollfi's exact value!):
+const netPay = payrollLineItem.netTotal;
+
+When Rollfi data is NOT available
+(payroll not yet processed):
+Keep the existing estimated
+calculation as fallback
+But label as "(estimated)" or "~"
+
+---
+
+UPDATE 2 — PAYSTUB EMPLOYER 
+TAX SECTION:
+
+Find where the paystub currently
+shows hardcoded employer rates:
+Employer SS (6.2%)
+Employer Medicare (1.45%)
+Federal Unemployment (0.6%)
+NJ State Unemployment (0.5%)
+
+REPLACE with dynamic mapping
+from Rollfi's employerTaxDetails:
+
+// When Rollfi data is available:
+const employerTaxLines: TaxLine[] = 
+  payrollLineItem.employerTaxDetails
+    .filter(tax => tax.taxAmount > 0)
+    // Only show taxes with amount > 0
+    .map(tax => ({
+      label: tax.taxName,
+      // Use EXACT Rollfi taxName!
+      // e.g. "FUTA" not "Federal Unemployment"
+      // e.g. "Social Security" not "Employer SS"
+      // e.g. "NJ State Unemployment Insurance"
+      amount: tax.taxAmount,
+      ytd: tax.taxAmountYtd,
+      isConfirmed: true
+    }));
+
+// Total employer cost:
+const totalEmployerCost = 
+  payrollLineItem.employerTaxDetails
+    .reduce((sum, tax) => sum + tax.taxAmount, 0);
+
+---
+
+UPDATE 3 — EARNINGS SECTION:
+
+Update the earnings section
+to show ALL components from Rollfi:
+
+BASE PAY:
+Show: payrollLineItem.baseTotal
+
+OVERTIME (show only if exists):
+payrollLineItem.overTimes
+  .filter(ot => ot.amount > 0)
+  .forEach(ot => {
+    Show: ot.type + ot.numberOfHours + 
+          "hrs" + ot.amount
+  })
+
+ADDITIONAL COMPENSATION 
+(show only if exists):
+payrollLineItem.additionalCompensations
+  .filter(ac => ac.amount > 0)
+  .forEach(ac => {
+    Show: compensationDescription + amount
+  })
+
+REIMBURSEMENTS (show only if exists):
+payrollLineItem.reimbursements
+  .filter(r => r.amount > 0)
+  .forEach(r => {
+    Show: reimbursementType + amount
+  })
+
+GROSS PAY TOTAL:
+payrollLineItem.grossTotal
+
+---
+
+UPDATE 4 — CONFIRMED VS 
+ESTIMATED BADGES:
+
+Update the badge logic:
+
+WHEN payroll IS processed
+(isProcessed = true OR
+PayPeriodStatus = "processed"):
+
+Section banner:
+Show GREEN banner:
+"✅ All amounts confirmed by Rollfi"
+
+Per tax line:
+Show green ✅ badge
+No ~ prefix on amounts
+No "(estimated)" text
+
+Net Pay label:
+"NET PAY"
+"✅ Confirmed by Rollfi"
+
+WHEN payroll is NOT processed:
+Section banner:
+Show AMBER banner:
+"⏳ Showing estimated amounts.
+Exact figures confirmed after
+Rollfi processes payroll."
+
+Per tax line:
+Show grey ⏳ badge
+Add ~ prefix: ~$2.87
+Add "(est.)" suffix
+
+Net Pay label:
+"ESTIMATED NET PAY"
+"(Submit payroll for exact amount)"
+
+---
+
+UPDATE 5 — TOTAL BANK DEBIT:
+
+Find the "Estimated Total Bank Debit"
+section at the bottom.
+
+Update to use Rollfi's exact value:
+
+WHEN Rollfi data available:
+Use: payPeriod[0].total
+// This is the EXACT debit amount!
+
+Show:
+"⚠️ TOTAL BANK DEBIT"
+"✅ Confirmed by Rollfi"
+"$26.03" (no ~ prefix!)
+"Debited on: [payDate]"
+
+WHEN Rollfi data not available:
+Keep existing calculation:
+grossPay + estimatedEmployerTaxes
+
+Show:
+"⚠️ ESTIMATED TOTAL BANK DEBIT"
+"~$26.03"
+"* Estimated. Exact amount 
+confirmed after payroll processes"
+
+---
+
+UPDATE 6 — PAYROLL TOTALS SUMMARY:
+
+Find the "Payroll Totals Summary"
+section below the employee table.
+
+Update to use Rollfi totals:
+
+WHEN Rollfi data available:
+Employee section:
+Total Gross Pay: payPeriod[0]
+  .payrollLineItems
+  .reduce((s,e) => s + e.grossTotal, 0)
+
+Total Employee Taxes: 
+  payPeriod[0].employeeTaxSum
+
+Total Net to Staff:
+  payPeriod[0].payrollLineItems
+  .reduce((s,e) => s + e.netTotal, 0)
+
+Employer section:
+Total Employer Taxes:
+  payPeriod[0].employerTaxSum
+
+Total Bank Debit:
+  payPeriod[0].total
+  // THE EXACT NUMBER!
+
+Show "✅ Confirmed" badges
+Remove all ~ prefixes
+Remove all "est." labels
+
+WHEN Rollfi data not available:
+Keep existing estimated calculations
+Keep all ~ prefixes and est. labels
+
+---
+
+UPDATE 7 — PAYMENT DETAILS 
+SECTION ON PAYSTUB:
+
+Add a new section at the very
+bottom of the paystub showing
+how the payment was sent:
+
+Title: "PAYMENT DETAILS"
+
+Loop through payDetails array:
+payrollLineItem.payDetails.forEach(pd => {
+  if (pd.employeePayAccount) {
+    Show: "Direct Deposit"
+    Show: pd.employeePayAccount.accountName
+    // e.g. "savings ... 2500"
+    Show: pd.payPercentage + "% → $" + pd.amount
+  } else {
+    Show: "Direct Deposit"
+    Show: "100% → $" + pd.amount
+  }
+})
+
+If multiple payDetails entries:
+Show split deposit info:
+"60% → checking...1234: $540.00"
+"40% → savings...5678: $360.00"
+
+---
+
+UPDATE 8 — YTD SECTION:
+
+The paystub should show
+Year to Date (YTD) amounts.
+
+Find existing YTD section.
+
+Update to use real Rollfi YTD data:
+
+YTD Gross: 
+  Sum of grossTotal across all
+  processed periods for this employee
+  OR use taxAmountYtd from first
+  tax line if available
+
+YTD Taxes:
+  Sum of taxAmountYtd from all
+  employeeTaxDetails entries
+
+YTD Net:
+  YTD Gross - YTD Taxes
+
+If YTD data not available from Rollfi:
+Show current period amounts only
+With note: "YTD data available after
+first full payroll period"
+
+---
+
+UPDATE 9 — LOGGING FOR DEBUGGING:
+
+In the paystubs API endpoint
+add comprehensive logging to help
+verify real Rollfi field names:
+
+// Log the complete raw response
+req.log.info(
+  { 
+    rollfiRawResponse: rollfiEmpDetails,
+    fieldNames: rollfiEmpDetails.map(e => ({
+      userId: e.userId,
+      employeeTaxFields: Object.keys(
+        e.employeeTax || {}
+      ),
+      employeeTaxDetailCount: 
+        (e.employeeTaxDetails || []).length,
+      employerTaxDetailCount:
+        (e.employerTaxDetails || []).length,
+      taxNames: (e.employeeTaxDetails || [])
+        .map(t => t.taxName),
+      employerTaxNames: 
+        (e.employerTaxDetails || [])
+        .map(t => t.taxName)
+    }))
+  },
+  'ROLLFI PAYSTUB FIELD MAPPING DEBUG'
+);
+
+This will help us verify the
+exact field names Rollfi uses
+for NJ/NY employees specifically.
+
+---
+
+IMPORTANT TYPESCRIPT RULES:
+
+1. All amounts in dollar format:
+   $18.04 not 1804
+
+2. Handle null/undefined safely:
+   Use optional chaining:
+   payrollLineItem?.netTotal ?? 0
+   payrollLineItem?.employeeTaxDetails ?? []
+
+3. Filter zero amounts:
+   .filter(tax => tax.taxAmount > 0)
+   Never show $0.00 tax lines
+
+4. Keep fromRollfi boolean:
+   true = real Rollfi data
+   false = estimated fallback
+
+5. TypeScript interfaces:
+
+interface RollfiTaxDetail {
+  taxName: string;
+  taxAmount: number;
+  taxAmountYtd: number;
+  isEmployerTax: boolean;
+}
+
+interface RollfiPayrollLineItem {
+  userId: string;
+  userName: string;
+  baseTotal: number;
+  grossTotal: number;
+  netTotal: number;
+  payHours: number;
+  payRate: number;
+  retroAmount: number;
+  employeeTax: { employeeTax: number };
+  employeeTaxDetails: RollfiTaxDetail[];
+  employerTaxDetails: RollfiTaxDetail[];
+  overTimes: Array<{
+    type: string;
+    amount: number;
+    numberOfHours: number;
+  }>;
+  additionalCompensations: Array<{
+    payrollLineItemAdditionalCompensationVertexCompensationIdentifier: {
+      compensationDescription: string;
+    };
+    amount: number;
+  }>;
+  deductions: Array<{
+    vertexDeductionIdentifier: {
+      deductionDescription: string;
+    };
+    amount: number;
+  }>;
+  reimbursements: Array<{
+    reimbursementType: string;
+    amount: number;
+  }>;
+  payDetails: Array<{
+    payPercentage: number;
+    amount: number;
+    employeePayAccount: {
+      accountName: string;
+    } | null;
+  }>;
+}
+
+interface RollfiPayPeriod {
+  payPeriodId: string;
+  payPeriod: string;
+  PayPeriodStatus: string;
+  total: number;
+  employeeTaxSum: number;
+  employerTaxSum: number;
+  isProcessed: boolean;
+  payDate: string;
+  payBeginDate: string;
+  payEndDate: string;
+  payrollLineItems: RollfiPayrollLineItem[];
+}
+
+6. Graceful fallback:
+If Rollfi API call fails:
+→ Keep showing estimated amounts
+→ Show amber warning banner
+→ Never crash the paystub page
+→ Always show SOMETHING to user
+
+---
+
+TESTING CHECKLIST:
+
+After building verify:
+
+EMPLOYEE TAX SECTION:
+✅ Shows dynamic taxName from Rollfi
+   NOT hardcoded "Federal Income Tax"
+✅ Zero amount taxes are hidden
+✅ Each line has confirmed or
+   estimated badge
+✅ Amounts in dollar format
+
+EMPLOYER TAX SECTION:
+✅ Shows dynamic taxName from Rollfi
+   NOT hardcoded "Employer SS (6.2%)"
+✅ Zero amount taxes hidden
+✅ Confirmed badges when processed
+✅ Total employer cost correct
+
+EARNINGS SECTION:
+✅ Shows overtime if present
+✅ Shows additional comp if present
+✅ Shows reimbursements if present
+✅ Gross total matches Rollfi
+
+NET PAY:
+✅ Uses netTotal from Rollfi
+✅ Shows confirmed when processed
+✅ Shows ~ and estimated when not
+
+TOTAL BANK DEBIT:
+✅ Uses payPeriod.total from Rollfi
+✅ Exact amount when processed
+✅ Estimated when not processed
+✅ Orange/amber styling retained
+
+PAYROLL TOTALS SUMMARY:
+✅ Employee payments section correct
+✅ Employer taxes section correct
+✅ Total bank debit uses Rollfi total
+✅ Confirmed badges when processed
+
+PAYMENT DETAILS:
+✅ Shows bank account info
+✅ Shows split if multiple accounts
+✅ Shows payment method
+
+EXISTING FEATURES:
+✅ Print paystub still works
+✅ Download still works
+✅ All existing payroll features work
+✅ No hardcoded company/employee data
+✅ Wages in dollar format throughout
+✅ Sandbox warning banner visible
