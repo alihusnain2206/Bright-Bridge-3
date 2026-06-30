@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
-import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts } from "@workspace/db";
+import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
@@ -146,6 +146,10 @@ router.post("/companies", async (req: Request, res: Response) => {
     entityType: string; ein?: string; incorporationState: string; dateOfIncorporation: string; irsFilingForm: string;
     payrollRunThisYear: string;
     payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
+    stateTaxRegistrations?: Array<{
+      stateCode: string; stateName: string; stateEmployerId: string;
+      suiAccountNumber?: string; suiRate?: string;
+    }>;
   };
 
   if (!body.companyName || !body.address1 || !body.city || !body.state || !body.zipcode) {
@@ -234,6 +238,55 @@ router.post("/companies", async (req: Request, res: Response) => {
           await db.update(companies).set({ rollfiCompanyId, rollfiLocationId: rollfiLocationId ?? "", rollfiOnboardedAt: now, status: "setting_up", kybStatus: "pending", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
           rollfiResult = { rollfiCompanyId, rollfiLocationId };
 
+          // State tax registrations — submit each in sequence; failures stored locally as "failed"
+          const stateTaxList = body.stateTaxRegistrations ?? [];
+          let stateRegSuccessCount = 0;
+          for (const sr of stateTaxList) {
+            const srId = `SR-${sr.stateCode}-${Date.now()}`;
+            const suiRate = sr.suiRate ? parseFloat(sr.suiRate) : 2.8;
+            try {
+              const srResp = await axios.post(
+                `${ROLLFI_BASE_URL}/companyOnboarding#addStateRegistration`,
+                {
+                  method: "addStateRegistration",
+                  stateRegistration: {
+                    companyId: rollfiCompanyId,
+                    stateCode: sr.stateCode,
+                    stateEmployerId: sr.stateEmployerId,
+                    suiAccountNumber: sr.suiAccountNumber ?? sr.stateEmployerId,
+                    suiRate,
+                  },
+                },
+                { headers: rollfiHeaders() }
+              );
+              await db.insert(stateRegistrationsTable).values({
+                id: srId, companyId, rollfiCompanyId,
+                stateCode: sr.stateCode, stateName: sr.stateName,
+                stateEmployerId: sr.stateEmployerId,
+                suiAccountNumber: sr.suiAccountNumber ?? null,
+                suiRate: suiRate ?? null,
+                status: "active",
+                rollfiResponse: JSON.stringify(srResp.data),
+                registeredAt: now, updatedAt: now,
+              }).onConflictDoNothing();
+              stateRegSuccessCount++;
+              req.log.info({ companyId, stateCode: sr.stateCode }, "State registration submitted");
+            } catch (srErr: unknown) {
+              req.log.warn({ srErr, companyId, stateCode: sr.stateCode }, "State registration failed — storing as failed");
+              await db.insert(stateRegistrationsTable).values({
+                id: srId, companyId, rollfiCompanyId,
+                stateCode: sr.stateCode, stateName: sr.stateName,
+                stateEmployerId: sr.stateEmployerId,
+                suiAccountNumber: sr.suiAccountNumber ?? null,
+                suiRate: suiRate ?? null,
+                status: "failed",
+                rollfiResponse: String(srErr),
+                registeredAt: now, updatedAt: now,
+              }).onConflictDoNothing().catch(() => {});
+            }
+          }
+          rollfiResult = { ...rollfiResult, stateRegSuccessCount } as typeof rollfiResult & { stateRegSuccessCount: number };
+
           // Fire-and-forget full onboarding
           void ensureFullOnboarding(rollfiCompanyId, useEin, req.log).then(async () => {
             await db.update(companies).set({ bankAccountAdded: true, payScheduleAdded: true, status: "active", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
@@ -248,7 +301,8 @@ router.post("/companies", async (req: Request, res: Response) => {
     }
 
     const [saved] = await db.select().from(companies).where(eq(companies.id, companyId));
-    res.status(201).json({ ...saved, rollfi: rollfiResult });
+    const stateRegCount = (rollfiResult as Record<string, unknown>).stateRegSuccessCount as number | undefined;
+    res.status(201).json({ ...saved, rollfi: rollfiResult, stateRegistrations: stateRegCount ?? 0 });
   } catch (err) {
     req.log.error({ err }, "Failed to create company");
     res.status(500).json({ error: "Failed to create company" });

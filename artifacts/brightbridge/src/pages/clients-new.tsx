@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import {
   Building2, MapPin, User, FileText, Calendar, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, RefreshCw,
+  Globe, Plus, Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,25 @@ const ORANGE = "#E8622A";
 const NAVY = "#284362";
 
 const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
+const US_STATES_FULL = [
+  { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
+  { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
+  { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "DC", name: "District of Columbia" },
+  { code: "FL", name: "Florida" }, { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" },
+  { code: "ID", name: "Idaho" }, { code: "IL", name: "Illinois" }, { code: "IN", name: "Indiana" },
+  { code: "IA", name: "Iowa" }, { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" },
+  { code: "LA", name: "Louisiana" }, { code: "ME", name: "Maine" }, { code: "MD", name: "Maryland" },
+  { code: "MA", name: "Massachusetts" }, { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" },
+  { code: "MS", name: "Mississippi" }, { code: "MO", name: "Missouri" }, { code: "MT", name: "Montana" },
+  { code: "NE", name: "Nebraska" }, { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" },
+  { code: "NJ", name: "New Jersey" }, { code: "NM", name: "New Mexico" }, { code: "NY", name: "New York" },
+  { code: "NC", name: "North Carolina" }, { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" },
+  { code: "OK", name: "Oklahoma" }, { code: "OR", name: "Oregon" }, { code: "PA", name: "Pennsylvania" },
+  { code: "RI", name: "Rhode Island" }, { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" },
+  { code: "TN", name: "Tennessee" }, { code: "TX", name: "Texas" }, { code: "UT", name: "Utah" },
+  { code: "VT", name: "Vermont" }, { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" },
+  { code: "WV", name: "West Virginia" }, { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" },
+];
 const today = () => new Date().toISOString().split("T")[0];
 const twoWeeksOut = () => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().split("T")[0]; };
 function randomTestEin() { return `${String(Math.floor(10 + Math.random()*89))}-${String(Math.floor(1000000 + Math.random()*9000000))}`; }
@@ -33,12 +53,21 @@ interface FormData {
   payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
 }
 
+interface StateTaxEntry {
+  stateCode: string;
+  stateName: string;
+  stateEmployerId: string;
+  suiAccountNumber: string;
+  suiRate: string;
+}
+
 const STEPS = [
   { label: "Business Info",      icon: Building2 },
   { label: "Location",           icon: MapPin },
   { label: "Owner Details",      icon: User },
   { label: "Verification",       icon: FileText },
   { label: "Pay Schedule",       icon: Calendar },
+  { label: "State Taxes",        icon: Globe },
 ];
 
 interface ProgressStep {
@@ -66,8 +95,24 @@ export default function ClientsNew() {
   const [showSsn, setShowSsn] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [created, setCreated] = useState<{ id: string; name: string; rollfi?: { error?: string } } | null>(null);
+  const [created, setCreated] = useState<{ id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number } | null>(null);
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
+
+  // Step 6 — state tax entries
+  const [stateTaxEntries, setStateTaxEntries] = useState<StateTaxEntry[]>([]);
+  const [stateFormCode, setStateFormCode] = useState("");
+  const [stateFormEmpId, setStateFormEmpId] = useState("");
+  const [stateFormSuiAcct, setStateFormSuiAcct] = useState("");
+  const [stateFormSuiRate, setStateFormSuiRate] = useState("");
+
+  const addStateTaxEntry = () => {
+    if (!stateFormCode || !stateFormEmpId) return;
+    const name = US_STATES_FULL.find((s) => s.code === stateFormCode)?.name ?? stateFormCode;
+    setStateTaxEntries((prev) => [...prev, { stateCode: stateFormCode, stateName: name, stateEmployerId: stateFormEmpId, suiAccountNumber: stateFormSuiAcct, suiRate: stateFormSuiRate }]);
+    setStateFormCode(""); setStateFormEmpId(""); setStateFormSuiAcct(""); setStateFormSuiRate("");
+  };
+  const removeStateTaxEntry = (idx: number) => setStateTaxEntries((prev) => prev.filter((_, i) => i !== idx));
+
   const [form, setForm] = useState<FormData>({
     companyName: "", doingBusinessAs: "", businessWebsite: "", phone: "", industry: "daycare", package: "full_daycare",
     address1: "", address2: "", city: "", state: "NJ", zipcode: "", locationName: "",
@@ -87,23 +132,24 @@ export default function ClientsNew() {
       "Submitting business verification…",
       "Setting up bank account…",
       "Creating pay schedule…",
+      "Registering state taxes…",
       "Finalizing setup…",
     ];
     setProgressSteps(labels.map((label, i) => ({ label, done: false, active: i === 0 })));
 
     const advance = (idx: number) => {
       setProgressSteps((prev) => prev.map((s, i) => ({ ...s, done: i < idx, active: i === idx })));
-      return new Promise((r) => setTimeout(r, 600));
+      return new Promise((r) => setTimeout(r, 500));
     };
 
     await advance(1);
     const res = await fetch("/api/companies", {
       method: "POST", credentials: "include",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({ ...form, stateTaxRegistrations: stateTaxEntries }),
     });
-    await advance(2); await advance(3); await advance(4); await advance(5);
-    const data = await res.json() as { id: string; name: string; rollfi?: { error?: string }; error?: string };
+    await advance(2); await advance(3); await advance(4); await advance(5); await advance(6);
+    const data = await res.json() as { id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number; error?: string };
     setProgressSteps((prev) => prev.map((s) => ({ ...s, done: true, active: false })));
     if (!res.ok) throw new Error(data.error ?? "Failed to create client");
     return data;
@@ -142,6 +188,7 @@ export default function ClientsNew() {
               { done: hasRollfi, label: hasRollfi ? "Rollfi payroll account created" : `Rollfi: ${created.rollfi?.error ?? "pending"}` },
               { done: hasRollfi, label: "Business verification submitted" },
               { done: hasRollfi, label: `Pay schedule configured (${form.payFrequency})` },
+              { done: (created.stateRegistrations ?? 0) > 0, label: (created.stateRegistrations ?? 0) > 0 ? `${created.stateRegistrations} state tax registration${(created.stateRegistrations ?? 0) > 1 ? "s" : ""} submitted` : "State tax registrations pending" },
               { done: form.package === "full_daycare", label: "EasyTeam time clock ready" },
             ].map(({ done, label }) => (
               <div key={label} className={`flex items-center gap-3 text-sm ${done ? "text-emerald-700" : "text-amber-600"}`}>
@@ -534,12 +581,82 @@ export default function ClientsNew() {
           </div>
         )}
 
+        {/* ── Step 6 ── */}
+        {step === 6 && (
+          <div className="px-8 py-6 space-y-5">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">State Tax Registrations</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Required by Rollfi to accurately withhold and file state taxes at year-end. Add every state where this company employs workers.
+              </p>
+            </div>
+
+            {/* Added entries */}
+            {stateTaxEntries.length > 0 && (
+              <div className="space-y-2">
+                {stateTaxEntries.map((entry, idx) => (
+                  <div key={idx} className="flex items-start gap-3 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
+                    <Globe className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-emerald-900">{entry.stateName} ({entry.stateCode})</p>
+                      <p className="text-xs text-emerald-700 mt-0.5">Employer ID: {entry.stateEmployerId}{entry.suiAccountNumber ? ` · SUI Acct: ${entry.suiAccountNumber}` : ""}{entry.suiRate ? ` · SUI Rate: ${entry.suiRate}%` : ""}</p>
+                    </div>
+                    <button onClick={() => removeStateTaxEntry(idx)} className="text-emerald-400 hover:text-red-500 transition-colors mt-0.5">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add state form */}
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Add a State</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>State *</Label>
+                  <Select value={stateFormCode} onValueChange={setStateFormCode}>
+                    <SelectTrigger><SelectValue placeholder="Select state…" /></SelectTrigger>
+                    <SelectContent className="max-h-60">
+                      {US_STATES_FULL.map((s) => (
+                        <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>State Employer ID *</Label>
+                  <Input value={stateFormEmpId} onChange={(e) => setStateFormEmpId(e.target.value)} placeholder="e.g. 123456789" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>SUI Account Number <span className="text-gray-400 font-normal">(optional)</span></Label>
+                  <Input value={stateFormSuiAcct} onChange={(e) => setStateFormSuiAcct(e.target.value)} placeholder="e.g. 987654321" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>SUI Rate % <span className="text-gray-400 font-normal">(optional)</span></Label>
+                  <Input value={stateFormSuiRate} onChange={(e) => setStateFormSuiRate(e.target.value)} placeholder="e.g. 2.8" type="number" step="0.01" min="0" max="20" />
+                </div>
+              </div>
+              <Button onClick={addStateTaxEntry} disabled={!stateFormCode || !stateFormEmpId} variant="outline" className="gap-1.5 w-full">
+                <Plus className="h-4 w-4" /> Add State
+              </Button>
+            </div>
+
+            {stateTaxEntries.length === 0 && (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                At least one state registration is required before creating this client.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Navigation */}
         <div className="px-8 py-4 border-t bg-gray-50/40 flex items-center justify-between">
           <Button variant="outline" onClick={() => step > 1 ? setStep(step - 1) : navigate("/clients")} className="gap-1.5">
             <ChevronLeft className="h-4 w-4" />{step > 1 ? "Back" : "Cancel"}
           </Button>
-          {step < 5 ? (
+          {step < 6 ? (
             <Button onClick={() => setStep(step + 1)} className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
               disabled={
                 (step === 1 && (!form.companyName || !form.phone)) ||
@@ -551,7 +668,7 @@ export default function ClientsNew() {
             </Button>
           ) : (
             <Button onClick={handleSubmit} className="gap-1.5 text-white border-0 min-w-[140px]" style={{ background: ORANGE }}
-              disabled={!form.payFrequency || !form.payBeginDate || !form.payDate}>
+              disabled={stateTaxEntries.length === 0}>
               Create Client <ChevronRight className="h-4 w-4" />
             </Button>
           )}
