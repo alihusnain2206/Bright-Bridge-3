@@ -351,14 +351,26 @@ router.delete("/rollfi/employees/:userId", async (req, res) => {
 
 router.post("/rollfi/employees/deactivate", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const { rollfiUserId, reason, expectedReturnDate } = req.body as { rollfiUserId: string; reason?: string; expectedReturnDate?: string };
-  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+  const { employeeId, reason, expectedReturnDate } = req.body as { employeeId: string; reason?: string; expectedReturnDate?: string };
+  if (!employeeId) { res.status(400).json({ error: "employeeId is required" }); return; }
 
   const allStaff = store.getAllStaffUsers();
-  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
-  if (employee?.status === "terminated") {
-    res.status(400).json({ error: "Cannot put terminated employee on leave" }); return;
+  const employee = allStaff.find((u) => u.employeeId === employeeId);
+  if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  // State machine: only active → on_leave is allowed
+  if (employee.status === "terminated") {
+    res.status(400).json({ error: "Cannot put a terminated employee on leave. Terminated is a terminal state." }); return;
   }
+  if (employee.status === "on_leave") {
+    res.status(400).json({ error: "Employee is already on leave." }); return;
+  }
+
+  const rollfiRecord = store.getRollfiEmployee(employeeId);
+  if (!rollfiRecord?.rollfiUserId) {
+    res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
+  }
+  const rollfiUserId = rollfiRecord.rollfiUserId;
 
   try {
     const response = await axios.post(
@@ -366,33 +378,41 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
       { method: "deactivateUser", userId: rollfiUserId },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: response.data }, "Rollfi deactivateUser response");
+    req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi deactivateUser response");
 
-    if (employee?.employeeId) {
-      const previousStatus = employee.status;
-      store.updateEmployeeStatus(employee.employeeId, "on_leave", { onLeaveReason: reason, onLeaveDate: new Date().toISOString(), expectedReturnDate });
-      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "on_leave", reason, changedBy: req.session.userId }, "Employee status changed");
-    }
-    await db.update(employeesTable).set({ status: "on_leave", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+    const nowISO = new Date().toISOString();
+    const previousStatus = employee.status;
+    store.updateEmployeeStatus(employeeId, "on_leave", { onLeaveReason: reason, onLeaveDate: nowISO, expectedReturnDate });
+    req.log.info({ employeeId, previousStatus, newStatus: "on_leave", reason, changedBy: req.session.userId }, "Employee status changed to on_leave");
+    await db.update(employeesTable).set({ status: "on_leave", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
 
     res.json({ success: true, status: "on_leave", rollfiResponse: response.data });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
-    req.log.error({ err }, "deactivateUser failed");
-    res.status(500).json({ error: "Failed to deactivate employee", details: e.response?.data ?? String(err) });
+    req.log.error({ err, employeeId, rollfiUserId }, "deactivateUser failed — local state NOT mutated");
+    res.status(500).json({ error: "Failed to deactivate employee in Rollfi", details: e.response?.data ?? String(err) });
   }
 });
 
 router.post("/rollfi/employees/terminate", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const { rollfiUserId, terminationReason, lastWorkingDay } = req.body as { rollfiUserId: string; terminationReason: string; lastWorkingDay: string };
-  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+  const { employeeId, terminationReason, lastWorkingDay } = req.body as { employeeId: string; terminationReason: string; lastWorkingDay: string };
+  if (!employeeId) { res.status(400).json({ error: "employeeId is required" }); return; }
 
   const allStaff = store.getAllStaffUsers();
-  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
-  if (employee?.status === "terminated") {
-    res.status(400).json({ error: "Employee already terminated" }); return;
+  const employee = allStaff.find((u) => u.employeeId === employeeId);
+  if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  // State machine: terminated is terminal
+  if (employee.status === "terminated") {
+    res.status(400).json({ error: "Employee is already terminated. Terminated is a terminal state." }); return;
   }
+
+  const rollfiRecord = store.getRollfiEmployee(employeeId);
+  if (!rollfiRecord?.rollfiUserId) {
+    res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
+  }
+  const rollfiUserId = rollfiRecord.rollfiUserId;
 
   try {
     const response = await axios.post(
@@ -400,33 +420,44 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
       { method: "terminateUser", userId: rollfiUserId, terminationDate: lastWorkingDay },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: response.data }, "Rollfi terminateUser response");
+    req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi terminateUser response");
 
-    if (employee?.employeeId) {
-      const previousStatus = employee.status;
-      store.updateEmployeeStatus(employee.employeeId, "terminated", { terminatedAt: new Date().toISOString(), terminationReason, lastWorkingDay, terminatedBy: req.session.userId });
-      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "terminated", terminationReason, changedBy: req.session.userId }, "Employee status changed");
-    }
-    await db.update(employeesTable).set({ status: "terminated", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+    const nowISO = new Date().toISOString();
+    const previousStatus = employee.status;
+    store.updateEmployeeStatus(employeeId, "terminated", { terminatedAt: nowISO, terminationReason, lastWorkingDay, terminatedBy: req.session.userId });
+    req.log.info({ employeeId, previousStatus, newStatus: "terminated", terminationReason, lastWorkingDay, changedBy: req.session.userId }, "Employee status changed to terminated");
+    await db.update(employeesTable).set({ status: "terminated", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
 
     res.json({ success: true, status: "terminated", rollfiResponse: response.data });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
-    req.log.error({ err }, "terminateUser failed");
-    res.status(500).json({ error: "Failed to terminate employee", details: e.response?.data ?? String(err) });
+    req.log.error({ err, employeeId, rollfiUserId }, "terminateUser failed — local state NOT mutated");
+    res.status(500).json({ error: "Failed to terminate employee in Rollfi", details: e.response?.data ?? String(err) });
   }
 });
 
 router.post("/rollfi/employees/reactivate", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const { rollfiUserId } = req.body as { rollfiUserId: string };
-  if (!rollfiUserId) { res.status(400).json({ error: "rollfiUserId is required" }); return; }
+  const { employeeId } = req.body as { employeeId: string };
+  if (!employeeId) { res.status(400).json({ error: "employeeId is required" }); return; }
 
   const allStaff = store.getAllStaffUsers();
-  const employee = allStaff.find((u) => u.employeeId && store.getRollfiEmployee(u.employeeId)?.rollfiUserId === rollfiUserId);
-  if (employee?.status === "terminated") {
-    res.status(400).json({ error: "Cannot reactivate a terminated employee. Please add them as a new employee instead." }); return;
+  const employee = allStaff.find((u) => u.employeeId === employeeId);
+  if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  // State machine: terminated is terminal; already-active is a no-op error
+  if (employee.status === "terminated") {
+    res.status(400).json({ error: "Terminated employees cannot be reactivated. Add them as a new employee if rehired." }); return;
   }
+  if (!employee.status || employee.status === "active") {
+    res.status(400).json({ error: "Employee is already active. No status change needed." }); return;
+  }
+
+  const rollfiRecord = store.getRollfiEmployee(employeeId);
+  if (!rollfiRecord?.rollfiUserId) {
+    res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
+  }
+  const rollfiUserId = rollfiRecord.rollfiUserId;
 
   try {
     const response = await axios.post(
@@ -434,20 +465,19 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
       { method: "reactivateUser", userId: rollfiUserId },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: response.data }, "Rollfi reactivateUser response");
+    req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi reactivateUser response");
 
-    if (employee?.employeeId) {
-      const previousStatus = employee.status;
-      store.updateEmployeeStatus(employee.employeeId, "active", { onLeaveReason: undefined, onLeaveDate: undefined, expectedReturnDate: undefined });
-      req.log.info({ employeeId: employee.employeeId, previousStatus, newStatus: "active", changedBy: req.session.userId }, "Employee status changed");
-    }
-    await db.update(employeesTable).set({ status: "active", updatedAt: new Date().toISOString() }).where(eq(employeesTable.rollfiUserId, rollfiUserId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+    const nowISO = new Date().toISOString();
+    const previousStatus = employee.status;
+    store.updateEmployeeStatus(employeeId, "active", { onLeaveReason: undefined, onLeaveDate: undefined, expectedReturnDate: undefined });
+    req.log.info({ employeeId, previousStatus, newStatus: "active", changedBy: req.session.userId }, "Employee status changed to active");
+    await db.update(employeesTable).set({ status: "active", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
 
     res.json({ success: true, status: "active", rollfiResponse: response.data });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
-    req.log.error({ err }, "reactivateUser failed");
-    res.status(500).json({ error: "Failed to reactivate employee", details: e.response?.data ?? String(err) });
+    req.log.error({ err, employeeId, rollfiUserId }, "reactivateUser failed — local state NOT mutated");
+    res.status(500).json({ error: "Failed to reactivate employee in Rollfi", details: e.response?.data ?? String(err) });
   }
 });
 
@@ -1492,8 +1522,7 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
   const allStaff = store
     .getAllStaffUsers()
     .filter((u) => u.employeeId && u.role === "employee")
-    .filter((u) => !companyId || u.companyId === companyId)
-    .filter((u) => !u.status || u.status === "active");
+    .filter((u) => !companyId || u.companyId === companyId);
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 

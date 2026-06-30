@@ -167,7 +167,7 @@ function OnLeaveModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess: (
       const res = await fetch("/api/rollfi/employees/deactivate", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId, reason: reason || undefined, expectedReturnDate: returnDate || undefined }),
+        body: JSON.stringify({ employeeId: emp.id, reason: reason || undefined, expectedReturnDate: returnDate || undefined }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to put employee on leave");
@@ -258,7 +258,7 @@ function TerminateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess:
       const res = await fetch("/api/rollfi/employees/terminate", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId, terminationReason, lastWorkingDay }),
+        body: JSON.stringify({ employeeId: emp.id, terminationReason, lastWorkingDay }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to terminate employee");
@@ -361,7 +361,7 @@ function ReactivateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess
       const res = await fetch("/api/rollfi/employees/reactivate", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rollfiUserId: emp.rollfiUserId }),
+        body: JSON.stringify({ employeeId: emp.id }),
       });
       const data = await res.json() as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to reactivate employee");

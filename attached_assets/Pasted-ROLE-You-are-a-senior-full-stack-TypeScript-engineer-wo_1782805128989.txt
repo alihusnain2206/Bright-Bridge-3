@@ -1,0 +1,528 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer working on an 
+existing production-bound payroll 
+platform (BrightBridge Assist). 
+This platform integrates two external 
+systems with fundamentally different 
+state models, and you must respect 
+that architectural difference.
+
+SCOPE BOUNDARY — READ THIS FIRST:
+This task is STRICTLY LIMITED to 
+adding employee lifecycle status 
+management (on_leave, terminate, 
+reactivate). Do NOT touch, refactor, 
+rename, or "improve" any unrelated 
+code. Do NOT change the zero-hours 
+payroll exclusion logic — that is 
+explicitly out of scope for this task. 
+Do NOT modify EasyTeam JWT generation 
+beyond the single filter change 
+specified below. Do NOT alter existing 
+Rollfi onboarding, payroll preview, 
+or paystub logic. If you encounter 
+unrelated bugs or improvement 
+opportunities while working, note 
+them in your final summary but do 
+NOT fix them in this pass.
+
+---
+
+ARCHITECTURAL CONTEXT — WHY THIS 
+MATTERS:
+
+This platform sits between two 
+systems with opposite state models:
+
+ROLLFI is a system of record. It 
+permanently persists employee status 
+on its own servers. Changing an 
+employee's status there REQUIRES an 
+explicit, authenticated API call 
+(deactivateUser / terminateUser / 
+reactivateUser). Once called, Rollfi 
+remembers that state indefinitely 
+until told otherwise.
+
+EASYTEAM is stateless from our 
+integration's perspective. It holds 
+no persistent employee roster of its 
+own for our embedded use case — every 
+time the Time Clock iframe initializes, 
+our backend constructs and signs a 
+fresh JWT containing the CURRENT 
+employees array. EasyTeam has no 
+concept of "remove this employee" — 
+it simply renders whoever is present 
+in the most recently issued token. 
+Therefore, EasyTeam access control is 
+achieved entirely by what we choose 
+to include in that array at JWT 
+generation time, not by any EasyTeam-
+side API call.
+
+This means: BrightBridge's local 
+employee.status field is the single 
+source of truth that drives EasyTeam 
+visibility. Rollfi requires an active, 
+explicit sync call. EasyTeam requires 
+nothing but a correct filter.
+
+---
+
+PART 1 — EMPLOYEE STATUS MODEL
+
+Add a status field to the Employee 
+type/interface if not already typed 
+strictly:
+
+type EmployeeStatus =
+  | "invited"
+  | "onboarding"
+  | "active"
+  | "on_leave"
+  | "terminated";
+
+Extend the employee record with these 
+optional fields (only populated when 
+relevant):
+
+onLeaveReason?: string;
+onLeaveDate?: string;        // ISO
+expectedReturnDate?: string; // ISO
+
+terminatedAt?: string;       // ISO
+terminationReason?: string;
+lastWorkingDay?: string;     // ISO
+terminatedBy?: string;       // session userId
+
+Backfill: every existing employee 
+record currently without a status 
+field should default to "active" — 
+do this in a migration step or 
+on-read fallback, whichever fits 
+the existing persistence pattern 
+in store.ts. Do not break existing 
+records.
+
+---
+
+PART 2 — STORE LAYER
+
+Add a single method to the store 
+(store.ts) responsible for status 
+transitions:
+
+updateEmployeeStatus(
+  employeeId: string,
+  newStatus: EmployeeStatus,
+  meta?: Partial<Employee>
+): Employee | null
+
+This method must:
+- Locate the employee by employeeId
+- Validate the transition is legal 
+  (see state machine rules below)
+- Apply newStatus and any meta fields
+- Persist to the existing data store
+- Return the updated employee record, 
+  or null if not found
+
+STATE MACHINE RULES (enforce these 
+server-side, not just in the UI):
+
+active → on_leave: allowed
+active → terminated: allowed
+on_leave → active (reactivate): allowed
+on_leave → terminated: allowed
+terminated → anything: NOT ALLOWED, 
+  terminal state
+
+If an illegal transition is attempted, 
+the store method (or the calling 
+route) must reject it with a clear 
+error rather than silently applying it.
+
+---
+
+PART 3 — BACKEND ROUTES (rollfi.ts)
+
+Add three new authenticated routes. 
+Follow the exact existing patterns 
+already used in this file for 
+headers, logging, and error shape 
+(rollfiHeaders(), req.log.info/error, 
+assertNoRollfiError where applicable).
+
+ROUTE 1: POST /rollfi/employees/deactivate
+Body: { employeeId: string, 
+        reason?: string, 
+        expectedReturnDate?: string }
+
+Logic:
+1. Require req.session.userId, else 401
+2. Resolve employee via store; 404 if 
+   missing
+3. Reject if employee.status === 
+   'terminated' (400, explicit message)
+4. Resolve rollfiUserId via 
+   store.getRollfiEmployee(employeeId); 
+   400 if not onboarded to Rollfi
+5. Call Rollfi: method 
+   'deactivateUser' against 
+   adminPortal#deactivateUser with 
+   { userId: rollfiUserId }
+6. Log raw Rollfi response at info 
+   level, same pattern as existing 
+   onboarding calls
+7. ONLY on Rollfi success: call 
+   store.updateEmployeeStatus(
+     employeeId, 'on_leave', 
+     { onLeaveReason: reason, 
+       onLeaveDate: nowISO, 
+       expectedReturnDate })
+8. Respond { success: true, 
+   status: 'on_leave', 
+   rollfiResponse }
+9. On Rollfi failure: catch, log error 
+   with rollfiErrorBody pattern, 
+   respond 500 with details — do NOT 
+   touch local store state if the 
+   Rollfi call failed (avoid drift 
+   between systems)
+
+ROUTE 2: POST /rollfi/employees/terminate
+Body: { employeeId: string, 
+        terminationReason: string, 
+        lastWorkingDay: string }
+
+Logic: same shape as Route 1, except:
+- Reject if status already 'terminated' 
+  (400)
+- Call adminPortal#terminateUser with 
+  { userId: rollfiUserId, 
+    terminationDate: lastWorkingDay }
+- On success: 
+  store.updateEmployeeStatus(
+    employeeId, 'terminated', 
+    { terminatedAt: nowISO, 
+      terminationReason, 
+      lastWorkingDay, 
+      terminatedBy: req.session.userId })
+- Same fail-closed rule: do not mutate 
+  local state if the Rollfi call throws
+
+ROUTE 3: POST /rollfi/employees/reactivate
+Body: { employeeId: string }
+
+Logic:
+- Reject with 400 if current status 
+  is 'terminated' — message explicitly: 
+  "Terminated employees cannot be 
+  reactivated. Add them as a new 
+  employee if rehired."
+- Reject with 400 if current status 
+  is already 'active' (nothing to do)
+- Call adminPortal#reactivateUser 
+  with { userId: rollfiUserId }
+- On success: 
+  store.updateEmployeeStatus(
+    employeeId, 'active', 
+    { onLeaveReason: undefined, 
+      onLeaveDate: undefined, 
+      expectedReturnDate: undefined })
+- Same fail-closed error handling 
+  pattern
+
+All three routes must return 
+consistent error JSON shape matching 
+what the rest of rollfi.ts already 
+uses (error + details fields), so 
+the frontend's existing error-toast 
+handling (if any) keeps working 
+without changes.
+
+---
+
+PART 4 — THE EASYTEAM FIX 
+(SINGLE, SURGICAL CHANGE)
+
+Locate the existing code path that 
+constructs the `employees` array 
+passed into the EasyTeam JWT payload 
+(this is wherever the JWT 
+generation/token endpoint currently 
+pulls the employee list for a given 
+company/location).
+
+Add exactly one filter condition to 
+that existing query/array-build:
+
+.filter(emp => emp.status === 'active')
+
+Do not change anything else about 
+how that array is constructed — 
+field shape, ids, names, roles, 
+locationId mapping, etc. must remain 
+identical to current behavior. This 
+is the ONLY EasyTeam-related change 
+in this task. No EasyTeam API call, 
+no EasyTeam-side request, nothing else.
+
+---
+
+PART 5 — FRONTEND: EMPLOYEE LIST ROW
+
+On the existing employees list page 
+(/clients/:companyId/employees), 
+update the row rendering to branch 
+on status:
+
+status === 'active':
+  Show status pill: green dot + "Active"
+  Show action buttons: Edit, On Leave, 
+  Terminate
+
+status === 'on_leave':
+  Show status pill: amber dot + 
+  "On Leave"
+  If onLeaveReason present, show as 
+  secondary line
+  If expectedReturnDate present, show 
+  "Returns: [date]" as secondary line
+  Show action buttons: Edit, Reactivate
+  (On Leave and Terminate buttons must 
+  NOT render for this status)
+
+status === 'terminated':
+  Show status pill: red dot + 
+  "Terminated"
+  Show lastWorkingDay as secondary line
+  Row should be visually de-emphasized 
+  (reduced opacity is sufficient)
+  Show only: View History (no other 
+  action button — not even Edit)
+
+Do not alter row rendering for 
+'invited' / 'onboarding' statuses — 
+leave their existing presentation 
+exactly as-is.
+
+---
+
+PART 6 — ON LEAVE MODAL
+
+Trigger: "On Leave" button on an 
+active employee row.
+
+Modal content:
+- Title: "Put {firstName} {lastName} 
+  On Leave"
+- Body copy explaining: removed from 
+  payroll + cannot clock in until 
+  reactivated
+- Reason select (required): Maternity/
+  Paternity Leave, Medical Leave, 
+  Personal Leave, Unpaid Leave, 
+  Suspended, Other
+- Expected Return Date (optional date 
+  input)
+- Notes (optional textarea) — not 
+  persisted server-side unless you 
+  see an existing notes field pattern 
+  to reuse; if none exists, omit this 
+  field rather than inventing new 
+  unrelated schema
+- Cancel / Confirm buttons
+
+On Confirm:
+- Disable form, show inline loading 
+  state on the Confirm button
+- POST /rollfi/employees/deactivate
+- On success: close modal, show 
+  success toast using whatever toast 
+  pattern already exists in this 
+  codebase, optimistically update 
+  the row in local state/query cache 
+  to on_leave without requiring a 
+  full refetch (but trigger a refetch 
+  in the background if that matches 
+  existing data-fetching patterns, 
+  e.g. react-query invalidation)
+- On failure: show the error message 
+  returned by the API inline in the 
+  modal, keep modal open, re-enable 
+  the form for retry
+
+---
+
+PART 7 — TERMINATE MODAL
+
+Trigger: "Terminate" button on an 
+active employee row.
+
+Modal content:
+- Title: "Terminate {firstName} 
+  {lastName}" with a clear warning 
+  visual treatment (this should look 
+  meaningfully more severe than the 
+  On Leave modal — red accents, 
+  warning icon)
+- Explicit copy: "This action is 
+  permanent and cannot be undone."
+- Bulleted consequence list: removed 
+  from all future payroll, cannot 
+  clock in ever again, records retained 
+  for compliance, cannot be reactivated
+- Termination Reason select (required): 
+  Resigned, Terminated by employer, 
+  Contract ended, Retired, Mutual 
+  agreement, Other
+- Last Working Day (required date 
+  input, default to today)
+- Type-to-confirm text input: label 
+  "Type TERMINATE to confirm", the 
+  primary action button stays disabled 
+  until the input value exactly equals 
+  "TERMINATE" (case-sensitive, no 
+  trimming leniency beyond standard 
+  whitespace trim)
+- Cancel / Permanently Terminate 
+  buttons (Terminate button styled red/
+  destructive, disabled per above)
+
+On Confirm:
+- Same loading/disable pattern as 
+  On Leave modal
+- POST /rollfi/employees/terminate
+- On success: close modal, success 
+  toast, update row to terminated 
+  status optimistically (strip action 
+  buttons down to View History only), 
+  background refetch if applicable
+- On failure: inline error in modal, 
+  keep open, allow retry
+
+---
+
+PART 8 — REACTIVATE MODAL
+
+Trigger: "Reactivate" button on an 
+on_leave employee row only.
+
+Modal content:
+- Title: "Reactivate {firstName} 
+  {lastName}?"
+- Body: explains they will be added 
+  back to payroll and able to clock 
+  in again
+- Cancel / Confirm Reactivation buttons
+
+On Confirm:
+- POST /rollfi/employees/reactivate
+- Same success/failure handling 
+  pattern as above — on success, row 
+  reverts to full active state with 
+  Edit/On Leave/Terminate buttons 
+  restored
+
+---
+
+PART 9 — DOWNSTREAM STATUS AWARENESS 
+(READ-ONLY, NOT NEW FILTERS)
+
+Do not introduce new filtering logic 
+beyond what is explicitly listed here. 
+Specifically:
+
+- Payroll preview/submission flow: 
+  it already operates on whatever 
+  employee set it currently queries. 
+  Verify (do not rewrite) that it is 
+  already sourcing from the same 
+  underlying employee store that now 
+  carries the status field, so that 
+  on_leave/terminated employees 
+  naturally fall outside any "active 
+  employees for payroll" query if such 
+  a query already exists. If the 
+  payroll query does NOT currently 
+  filter by status at all, do not add 
+  that filtering in this task — flag 
+  it in your summary as a follow-up 
+  item, since that touches the 
+  zero-hours logic explicitly marked 
+  out of scope above.
+
+- Timesheets view: no change required. 
+  Historical data for on_leave/
+  terminated employees must remain 
+  visible and unaffected.
+
+- Schedule view: no change required 
+  in this task.
+
+---
+
+PART 10 — LOGGING
+
+On every successful status transition, 
+emit one structured log line via the 
+existing req.log.info pattern:
+
+req.log.info({
+  employeeId,
+  previousStatus,
+  newStatus,
+  changedBy: req.session.userId,
+  reason: reason ?? terminationReason 
+    ?? undefined
+}, 'Employee status changed');
+
+This must fire only after the Rollfi 
+call succeeds and the local store 
+update completes — not before.
+
+---
+
+ERROR HANDLING DISCIPLINE 
+(NON-NEGOTIABLE):
+
+The local store must never reflect a 
+status that Rollfi does not also 
+reflect. If the Rollfi API call fails 
+for any reason (network error, Rollfi 
+returning a 200 with an error body per 
+the existing assertNoRollfiError 
+pattern used elsewhere in rollfi.ts, 
+timeout, etc.), the local 
+updateEmployeeStatus call must NOT 
+execute. Surface the failure to the 
+user with the real Rollfi error detail 
+where available, exactly matching the 
+existing error-surfacing convention 
+in this file.
+
+---
+
+DELIVERABLE SUMMARY REQUIRED AT END:
+
+After implementation, provide a 
+concise summary covering:
+1. Exact files touched and what 
+   changed in each
+2. Confirmation that the EasyTeam JWT 
+   change was the single filter line 
+   only, with the file/line reference
+3. Any places where you found the 
+   payroll query does NOT currently 
+   filter by employee status, flagged 
+   as a follow-up (not fixed now)
+4. Any Rollfi API response shape 
+   surprises encountered (e.g. if 
+   deactivateUser/terminateUser/
+   reactivateUser return unexpected 
+   field names) — log these but do 
+   not over-engineer handling for 
+   hypothetical shapes you haven't 
+   actually observed
