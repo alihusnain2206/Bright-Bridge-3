@@ -5,8 +5,8 @@ import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persi
 import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByCompany } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable } from "@workspace/db";
-import { desc, eq, inArray } from "drizzle-orm";
+import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { desc, eq, inArray, and } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -998,6 +998,92 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
     const e = err as { response?: { data: unknown } };
     req.log.warn({ err, rollfiErrorBody: e.response?.data }, "verifyMicroDeposits failed");
     res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+  }
+});
+
+// ── State Tax Registrations ───────────────────────────────────
+
+router.get("/rollfi/state-registrations", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { companyId } = req.query as { companyId?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  try {
+    const rows = await db.select().from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId));
+    res.json({ registrations: rows });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list state registrations");
+    res.status(500).json({ error: "Failed to list state registrations" });
+  }
+});
+
+router.post("/rollfi/onboard/state-registration", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { companyId, stateCode, stateName, stateEmployerId, suiAccountNumber, suiRate } = req.body as {
+    companyId: string; stateCode: string; stateName: string; stateEmployerId: string;
+    suiAccountNumber?: string; suiRate?: number;
+  };
+  if (!companyId || !stateCode || !stateEmployerId) {
+    res.status(400).json({ error: "companyId, stateCode, and stateEmployerId are required" }); return;
+  }
+
+  // Resolve rollfiCompanyId from store or DB
+  let rollfiCompanyId = store.getRollfiCompany(companyId)?.rollfiCompanyId;
+  if (!rollfiCompanyId) {
+    const [dbCo] = await db.select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+    rollfiCompanyId = dbCo?.rollfiCompanyId ?? undefined;
+  }
+  if (!rollfiCompanyId) {
+    res.status(400).json({ error: "Company is not yet registered with Rollfi. Complete Rollfi onboarding first." }); return;
+  }
+
+  // Guard: no duplicate per company+state
+  const [existing] = await db.select().from(stateRegistrationsTable)
+    .where(and(eq(stateRegistrationsTable.companyId, companyId), eq(stateRegistrationsTable.stateCode, stateCode)))
+    .catch(() => [undefined]);
+  if (existing) {
+    res.status(400).json({ error: `${stateName} (${stateCode}) is already registered for this company.`, existing }); return;
+  }
+
+  const id = `SR-${stateCode}-${Date.now()}`;
+  const nowISO = new Date().toISOString();
+
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/companyOnboarding#addStateRegistration`,
+      {
+        method: "addStateRegistration",
+        stateRegistration: {
+          companyId: rollfiCompanyId,
+          stateCode,
+          stateEmployerId,
+          suiAccountNumber: suiAccountNumber ?? stateEmployerId,
+          suiRate: suiRate ?? 2.8,
+        },
+      },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data, companyId, stateCode }, "Rollfi addStateRegistration response");
+
+    const [saved] = await db.insert(stateRegistrationsTable).values({
+      id, companyId, rollfiCompanyId, stateCode, stateName,
+      stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: suiRate ?? null,
+      status: "active", rollfiResponse: JSON.stringify(response.data), registeredAt: nowISO, updatedAt: nowISO,
+    }).returning();
+
+    res.json({ success: true, registration: saved, rollfiResponse: response.data });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err, companyId, stateCode, rollfiErrorBody: e.response?.data }, "addStateRegistration failed");
+
+    // Store locally as failed so admin can see the attempt
+    await db.insert(stateRegistrationsTable).values({
+      id, companyId, rollfiCompanyId, stateCode, stateName,
+      stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: suiRate ?? null,
+      status: "failed", rollfiResponse: JSON.stringify(e.response?.data ?? String(err)), registeredAt: nowISO, updatedAt: nowISO,
+    }).catch(() => { /* non-fatal */ });
+
+    res.status(500).json({ error: "Rollfi state registration failed", details: e.response?.data ?? String(err) });
   }
 });
 

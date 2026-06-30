@@ -173,6 +173,23 @@ export const employees = pgTable("employees", {
   updatedAt:         text("updated_at").notNull(),
 });
 
+export const stateRegistrations = pgTable("state_registrations", {
+  id:               text("id").primaryKey(),
+  companyId:        text("company_id").notNull(),
+  rollfiCompanyId:  text("rollfi_company_id").notNull(),
+  stateCode:        text("state_code").notNull(),
+  stateName:        text("state_name").notNull(),
+  stateEmployerId:  text("state_employer_id").notNull(),
+  suiAccountNumber: text("sui_account_number"),
+  suiRate:          real("sui_rate"),
+  status:           text("status").notNull().default("pending"),
+  rollfiResponse:   text("rollfi_response"),
+  registeredAt:     text("registered_at").notNull(),
+  updatedAt:        text("updated_at").notNull(),
+}, (t) => ({
+  uniqueCompanyState: uniqueIndex("sr_company_state_unique").on(t.companyId, t.stateCode),
+}));
+
 export const beneficialOwners = pgTable("beneficial_owners", {
   id:                  serial("id").primaryKey(),
   companyId:           text("company_id").notNull(),
