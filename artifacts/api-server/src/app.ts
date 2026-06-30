@@ -12,6 +12,9 @@ const isProd = process.env.NODE_ENV === "production";
 
 const app: Express = express();
 
+// Trust the Replit reverse proxy so req.secure is correct and secure cookies work
+app.set("trust proxy", 1);
+
 app.use(
   pinoHttp({
     logger,
@@ -39,7 +42,7 @@ app.use(
     cookie: {
       httpOnly: true,
       secure: isProd,
-      sameSite: isProd ? "none" : "lax",
+      sameSite: "lax",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     },
   }),
