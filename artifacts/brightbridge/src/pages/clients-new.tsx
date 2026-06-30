@@ -116,8 +116,9 @@ export default function ClientsNew() {
       const data = await runWithProgress();
       setCreated(data);
     } catch (e) {
-      setSubmitError(e instanceof Error ? e.message : "An error occurred");
-      setSubmitting(false);
+      const msg = e instanceof Error ? e.message : "An error occurred";
+      // Keep the overlay open so the error is visible — the Retry button handles dismissal
+      setSubmitError(msg);
     }
   };
 
@@ -186,9 +187,26 @@ export default function ClientsNew() {
             <SetupProgress steps={progressSteps} />
           </div>
           {submitError && (
-            <div className="mt-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
-              <AlertTriangle className="h-4 w-4 shrink-0" />{submitError}
-              <Button size="sm" variant="outline" onClick={() => { setSubmitting(false); setSubmitError(""); }} className="ml-auto">Retry</Button>
+            <div className="mt-4 space-y-2">
+              <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-3 border border-red-200">
+                <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                <span className="flex-1">
+                  {submitError.toLowerCase().includes("unauthorized") || submitError === "Unauthorized"
+                    ? "Your session expired. Please log in again and then retry."
+                    : submitError}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => { setSubmitting(false); setSubmitError(""); }} className="flex-1">
+                  ← Back to form
+                </Button>
+                {(submitError.toLowerCase().includes("unauthorized") || submitError === "Unauthorized") && (
+                  <Button size="sm" className="flex-1 text-white border-0" style={{ background: NAVY }}
+                    onClick={() => navigate("/login")}>
+                    Log in again
+                  </Button>
+                )}
+              </div>
             </div>
           )}
         </div>
