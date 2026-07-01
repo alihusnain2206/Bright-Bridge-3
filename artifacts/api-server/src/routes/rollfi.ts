@@ -532,7 +532,6 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
         method: "activateUser",
         user: {
           userId: rollfiUserId,
-          ...(rollfiCompanyId ? { companyId: rollfiCompanyId } : {}),
         },
       },
       { headers: rollfiHeaders() }
