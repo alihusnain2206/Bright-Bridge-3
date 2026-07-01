@@ -6,6 +6,7 @@ import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByComp
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
 import { desc, eq, inArray, and } from "drizzle-orm";
 
 const router: IRouter = Router();
@@ -1097,10 +1098,7 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
         code: stateCode,
-        companyStateRegistration: {
-          "UI Account Number": stateEmployerId,
-          "Unemployment Rate": String(effectiveSuiRate),
-        },
+        companyStateRegistration: buildStateRegistrationPayload(stateCode, stateEmployerId, suiAccountNumber, effectiveSuiRate),
       },
       { headers: rollfiHeaders() }
     );
@@ -1176,10 +1174,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
         code: reg.stateCode,
-        companyStateRegistration: {
-          "UI Account Number": reg.stateEmployerId,
-          "Unemployment Rate": String(effectiveSuiRate),
-        },
+        companyStateRegistration: buildStateRegistrationPayload(reg.stateCode, reg.stateEmployerId, reg.suiAccountNumber, effectiveSuiRate),
       },
       { headers: rollfiHeaders() }
     );

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
 import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
 import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
@@ -251,10 +252,7 @@ router.post("/companies", async (req: Request, res: Response) => {
                   method: "addStateRegistrationInfo",
                   companyId: rollfiCompanyId,
                   code: sr.stateCode,
-                  companyStateRegistration: {
-                    "UI Account Number": sr.stateEmployerId,
-                    "Unemployment Rate": String(suiRate),
-                  },
+                  companyStateRegistration: buildStateRegistrationPayload(sr.stateCode, sr.stateEmployerId, sr.suiAccountNumber, suiRate),
                 },
                 { headers: rollfiHeaders() }
               );
