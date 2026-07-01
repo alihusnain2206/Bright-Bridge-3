@@ -497,6 +497,7 @@ function EmployeesTab({ company }: { company: Company }) {
   const [credentialUser, setCredentialUser] = useState<CompanyUser | null>(null);
   const [onLeaveEmp, setOnLeaveEmp] = useState<Employee | null>(null);
   const [terminateEmp, setTerminateEmp] = useState<Employee | null>(null);
+  const [syncingRollfi, setSyncingRollfi] = useState(false);
   const [reactivateEmp, setReactivateEmp] = useState<Employee | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -513,6 +514,27 @@ function EmployeesTab({ company }: { company: Company }) {
   const managers = usersData?.users ?? [];
 
   const refreshEmployees = () => void queryClient.invalidateQueries({ queryKey: ["/api/employees", company.id] });
+
+  const syncFromRollfi = async () => {
+    setSyncingRollfi(true);
+    try {
+      const res = await fetch(`/api/rollfi/companies/${company.id}/sync-employees`, {
+        method: "POST", credentials: "include",
+      });
+      const data = await res.json() as { linked?: number; alreadyLinked?: number; total?: number; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Sync failed");
+      refreshEmployees();
+      if ((data.linked ?? 0) > 0) {
+        setToast(`✅ Synced ${data.linked} employee${(data.linked ?? 0) > 1 ? "s" : ""} from Rollfi. Terminate and On Leave buttons are now available.`);
+      } else {
+        setToast(`ℹ️ No new employees linked — ${data.alreadyLinked ?? 0} already connected, ${(data.total ?? 0) - (data.alreadyLinked ?? 0) - (data.linked ?? 0)} not found in Rollfi.`);
+      }
+    } catch (e) {
+      setToast(`❌ ${e instanceof Error ? e.message : "Sync failed"}`);
+    } finally {
+      setSyncingRollfi(false);
+    }
+  };
 
   if (isLoading || usersLoading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}</div>;
 
@@ -622,11 +644,17 @@ function EmployeesTab({ company }: { company: Company }) {
             <span className="ml-1 px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-bold">{employees.length}</span>
             <span className="text-gray-400 font-normal text-xs">· {employees.filter((e) => e.status === "active").length} active</span>
           </h3>
-          <Link href={`/clients/${company.id}/employees/new`}>
-            <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
-              <Plus className="h-3.5 w-3.5" />Add Employee
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void syncFromRollfi()} disabled={syncingRollfi} className="gap-1.5 text-gray-600 text-xs">
+              {syncingRollfi ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+              {syncingRollfi ? "Syncing…" : "Sync from Rollfi"}
             </Button>
-          </Link>
+            <Link href={`/clients/${company.id}/employees/new`}>
+              <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
+                <Plus className="h-3.5 w-3.5" />Add Employee
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {employees.length === 0 ? (

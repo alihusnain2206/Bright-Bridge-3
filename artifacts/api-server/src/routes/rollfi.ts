@@ -1595,6 +1595,63 @@ router.get("/rollfi/employees/status", async (req, res) => {
   }
 });
 
+// ── Sync employees from Rollfi → link missing rollfiUserIds ──
+
+router.post("/rollfi/companies/:companyId/sync-employees", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin required" }); return; }
+
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+
+  const { companyId } = req.params;
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" }); return;
+  }
+
+  try {
+    const usersResp = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    type RollfiUser = { userId: string; email?: string };
+    const rollfiUsers: RollfiUser[] = (usersResp.data as { users?: RollfiUser[] }).users ?? [];
+    req.log.info({ rollfiUserCount: rollfiUsers.length, companyId }, "Sync: fetched Rollfi users");
+
+    const localEmps = await db.select().from(employeesTable).where(eq(employeesTable.companyId, companyId));
+    let linked = 0;
+    let alreadyLinked = 0;
+    const details: Array<{ name: string; email: string; result: string }> = [];
+
+    for (const emp of localEmps) {
+      if (emp.rollfiUserId) { alreadyLinked++; continue; }
+      const match = rollfiUsers.find((ru) => ru.email?.toLowerCase() === emp.email.toLowerCase());
+      if (!match?.userId) {
+        details.push({ name: `${emp.firstName} ${emp.lastName}`, email: emp.email, result: "not_found_in_rollfi" });
+        continue;
+      }
+      const nowISO = new Date().toISOString();
+      await db.update(employeesTable)
+        .set({ rollfiUserId: match.userId, rollfiOnboardedAt: nowISO, status: emp.status === "onboarding" ? "active" : emp.status })
+        .where(eq(employeesTable.id, emp.id));
+      await persistRollfiEmployee(emp.id, { rollfiUserId: match.userId, rollfiWageId: "", onboardedAt: nowISO });
+      linked++;
+      details.push({ name: `${emp.firstName} ${emp.lastName}`, email: emp.email, result: "linked" });
+      req.log.info({ employeeId: emp.id, rollfiUserId: match.userId }, "Sync: linked employee to Rollfi");
+    }
+
+    res.json({ linked, alreadyLinked, total: localEmps.length, details });
+  } catch (err) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "sync-employees failed");
+    res.status(500).json({ error: "Sync failed", details: e.response?.data ?? String(err) });
+  }
+});
+
 // ── Payroll preview (EasyTeam hours → calculated pay) ────────
 
 router.get("/rollfi/payroll/preview", async (req, res) => {
