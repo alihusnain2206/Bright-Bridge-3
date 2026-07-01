@@ -367,15 +367,21 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
   }
 
   const rollfiRecord = store.getRollfiEmployee(employeeId);
-  if (!rollfiRecord?.rollfiUserId) {
+  let rollfiUserId = rollfiRecord?.rollfiUserId;
+  if (!rollfiUserId) {
+    const [dbEmp] = await db.select({ rollfiUserId: employeesTable.rollfiUserId }).from(employeesTable).where(eq(employeesTable.id, employeeId));
+    rollfiUserId = dbEmp?.rollfiUserId ?? undefined;
+  }
+  if (!rollfiUserId) {
     res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
   }
-  const rollfiUserId = rollfiRecord.rollfiUserId;
+  const rollfiCompany = store.getRollfiCompany(employee.companyId);
+  const rollfiCompanyId = rollfiCompany?.rollfiCompanyId;
 
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#deactivateUser`,
-      { method: "deactivateUser", userId: rollfiUserId },
+      { method: "deactivateUser", userId: rollfiUserId, companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi deactivateUser response");
@@ -409,15 +415,21 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
   }
 
   const rollfiRecord = store.getRollfiEmployee(employeeId);
-  if (!rollfiRecord?.rollfiUserId) {
+  let rollfiUserId = rollfiRecord?.rollfiUserId;
+  if (!rollfiUserId) {
+    const [dbEmp] = await db.select({ rollfiUserId: employeesTable.rollfiUserId }).from(employeesTable).where(eq(employeesTable.id, employeeId));
+    rollfiUserId = dbEmp?.rollfiUserId ?? undefined;
+  }
+  if (!rollfiUserId) {
     res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
   }
-  const rollfiUserId = rollfiRecord.rollfiUserId;
+  const rollfiCompany = store.getRollfiCompany(employee.companyId);
+  const rollfiCompanyId = rollfiCompany?.rollfiCompanyId;
 
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#terminateUser`,
-      { method: "terminateUser", userId: rollfiUserId, terminationDate: lastWorkingDay },
+      { method: "terminateUser", userId: rollfiUserId, companyId: rollfiCompanyId, terminationDate: lastWorkingDay },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi terminateUser response");
@@ -454,15 +466,21 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
   }
 
   const rollfiRecord = store.getRollfiEmployee(employeeId);
-  if (!rollfiRecord?.rollfiUserId) {
+  let rollfiUserId = rollfiRecord?.rollfiUserId;
+  if (!rollfiUserId) {
+    const [dbEmp] = await db.select({ rollfiUserId: employeesTable.rollfiUserId }).from(employeesTable).where(eq(employeesTable.id, employeeId));
+    rollfiUserId = dbEmp?.rollfiUserId ?? undefined;
+  }
+  if (!rollfiUserId) {
     res.status(400).json({ error: "Employee is not yet onboarded to Rollfi. Complete Rollfi onboarding first." }); return;
   }
-  const rollfiUserId = rollfiRecord.rollfiUserId;
+  const rollfiCompany = store.getRollfiCompany(employee.companyId);
+  const rollfiCompanyId = rollfiCompany?.rollfiCompanyId;
 
   try {
     const response = await axios.post(
       `${ROLLFI_BASE_URL}/adminPortal#reactivateUser`,
-      { method: "reactivateUser", userId: rollfiUserId },
+      { method: "reactivateUser", userId: rollfiUserId, companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi reactivateUser response");
