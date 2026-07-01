@@ -427,8 +427,15 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
 
+  // Resolve actual status: store resets to "active" on restart; trust DB for non-active states
+  let terminateStatus = employee.status;
+  if (!terminateStatus || terminateStatus === "active") {
+    const [dbEmpStatus] = await db.select({ status: employeesTable.status }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [undefined]);
+    if (dbEmpStatus?.status) terminateStatus = dbEmpStatus.status as typeof terminateStatus;
+  }
+
   // State machine: terminated is terminal
-  if (employee.status === "terminated") {
+  if (terminateStatus === "terminated") {
     res.status(400).json({ error: "Employee is already terminated. Terminated is a terminal state." }); return;
   }
 
