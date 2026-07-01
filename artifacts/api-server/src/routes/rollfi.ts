@@ -378,10 +378,20 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
   const rollfiCompany = store.getRollfiCompany(employee.companyId);
   const rollfiCompanyId = rollfiCompany?.rollfiCompanyId;
 
+  const exitDate = expectedReturnDate ? expectedReturnDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#deactivateUser`,
-      { method: "deactivateUser", userId: rollfiUserId, companyId: rollfiCompanyId },
+      `${ROLLFI_BASE_URL}/adminPortal/deactivateUser`,
+      {
+        method: "deactivateUser",
+        user: {
+          userId: rollfiUserId,
+          exitDate,
+          personalEmail: employee.email,
+          finalPayCheckType: "They have already been paid",
+          additionalNotes: reason ?? "",
+        },
+      },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi deactivateUser response");
@@ -428,8 +438,21 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#terminateUser`,
-      { method: "terminateUser", userId: rollfiUserId, companyId: rollfiCompanyId, terminationDate: lastWorkingDay },
+      `${ROLLFI_BASE_URL}/adminPortal/terminateUser`,
+      {
+        method: "terminateUser",
+        user: {
+          userId: rollfiUserId,
+          companyId: rollfiCompanyId,
+          exitDate: lastWorkingDay,
+          personalEmail: employee.email,
+          finalPayCheckType: "They have already been paid",
+          terminationChoice: "No - This user did not choose to leave",
+          dismissalType: "Other",
+          severance: false,
+          additionalNotes: terminationReason ?? "",
+        },
+      },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi terminateUser response");
@@ -479,8 +502,8 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#reactivateUser`,
-      { method: "reactivateUser", userId: rollfiUserId, companyId: rollfiCompanyId },
+      `${ROLLFI_BASE_URL}/adminPortal/activateUser`,
+      { method: "activateUser", userId: rollfiUserId },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi reactivateUser response");
