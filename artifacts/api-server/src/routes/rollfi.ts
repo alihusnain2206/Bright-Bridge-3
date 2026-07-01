@@ -359,11 +359,18 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
 
+  // Resolve actual status: store resets to "active" on restart; trust DB for non-active states
+  let deactivateStatus = employee.status;
+  if (!deactivateStatus || deactivateStatus === "active") {
+    const [dbEmpStatus] = await db.select({ status: employeesTable.status }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [undefined]);
+    if (dbEmpStatus?.status) deactivateStatus = dbEmpStatus.status as typeof deactivateStatus;
+  }
+
   // State machine: only active → on_leave is allowed
-  if (employee.status === "terminated") {
+  if (deactivateStatus === "terminated") {
     res.status(400).json({ error: "Cannot put a terminated employee on leave. Terminated is a terminal state." }); return;
   }
-  if (employee.status === "on_leave") {
+  if (deactivateStatus === "on_leave") {
     res.status(400).json({ error: "Employee is already on leave." }); return;
   }
 
@@ -481,11 +488,18 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
 
+  // Resolve actual status: in-memory store resets to "active" on restart, so trust DB when store says active
+  let effectiveStatus = employee.status;
+  if (!effectiveStatus || effectiveStatus === "active") {
+    const [dbEmpStatus] = await db.select({ status: employeesTable.status }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [undefined]);
+    if (dbEmpStatus?.status) effectiveStatus = dbEmpStatus.status as typeof effectiveStatus;
+  }
+
   // State machine: terminated is terminal; already-active is a no-op error
-  if (employee.status === "terminated") {
+  if (effectiveStatus === "terminated") {
     res.status(400).json({ error: "Terminated employees cannot be reactivated. Add them as a new employee if rehired." }); return;
   }
-  if (!employee.status || employee.status === "active") {
+  if (!effectiveStatus || effectiveStatus === "active") {
     res.status(400).json({ error: "Employee is already active. No status change needed." }); return;
   }
 
