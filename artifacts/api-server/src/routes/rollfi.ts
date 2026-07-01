@@ -1104,6 +1104,23 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
       },
       { headers: rollfiHeaders() }
     );
+    // Rollfi returns HTTP 200 even on errors — check the body for an error object
+    const rollfiErr = (response.data as { error?: { code?: number; message?: string } })?.error;
+    if (rollfiErr) {
+      req.log.error({ rollfiResponse: response.data, companyId, stateCode }, "Rollfi addStateRegistrationInfo returned error in body");
+      const failValues = {
+        id, companyId, rollfiCompanyId, stateCode, stateName,
+        stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: effectiveSuiRate,
+        status: "failed" as const, rollfiResponse: JSON.stringify(response.data), registeredAt: nowISO, updatedAt: nowISO,
+      };
+      if (existing) {
+        await db.update(stateRegistrationsTable).set(failValues).where(eq(stateRegistrationsTable.id, id)).catch(() => {});
+      } else {
+        await db.insert(stateRegistrationsTable).values(failValues).catch(() => {});
+      }
+      res.status(400).json({ error: rollfiErr.message ?? "Rollfi rejected state registration", rollfiResponse: response.data }); return;
+    }
+
     req.log.info({ rollfiResponse: response.data, companyId, stateCode }, "Rollfi addStateRegistrationInfo response");
 
     const values = {
@@ -1141,7 +1158,6 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
 
   const [reg] = await db.select().from(stateRegistrationsTable).where(eq(stateRegistrationsTable.id, id)).catch(() => [undefined]);
   if (!reg) { res.status(404).json({ error: "State registration not found" }); return; }
-  if (reg.status === "active") { res.status(400).json({ error: "Already active — no retry needed." }); return; }
 
   let rollfiCompanyId = reg.rollfiCompanyId ?? store.getRollfiCompany(reg.companyId)?.rollfiCompanyId;
   if (!rollfiCompanyId) {
@@ -1167,6 +1183,16 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
       },
       { headers: rollfiHeaders() }
     );
+    // Rollfi returns HTTP 200 even on errors — check the body for an error object
+    const rollfiRetryErr = (response.data as { error?: { code?: number; message?: string } })?.error;
+    if (rollfiRetryErr) {
+      req.log.error({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode }, "Rollfi addStateRegistrationInfo retry returned error in body");
+      await db.update(stateRegistrationsTable)
+        .set({ status: "failed", rollfiResponse: JSON.stringify(response.data), updatedAt: nowISO })
+        .where(eq(stateRegistrationsTable.id, id)).catch(() => {});
+      res.status(400).json({ error: rollfiRetryErr.message ?? "Rollfi rejected state registration", rollfiResponse: response.data }); return;
+    }
+
     req.log.info({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode }, "Rollfi addStateRegistrationInfo retry success");
 
     const [updated] = await db.update(stateRegistrationsTable)
@@ -1178,7 +1204,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
     const e = err as { response?: { data: unknown } };
     req.log.error({ err, regId: id, rollfiErrorBody: e.response?.data }, "addStateRegistrationInfo retry failed");
     await db.update(stateRegistrationsTable)
-      .set({ rollfiResponse: JSON.stringify(e.response?.data ?? String(err)), updatedAt: nowISO })
+      .set({ status: "failed", rollfiResponse: JSON.stringify(e.response?.data ?? String(err)), updatedAt: nowISO })
       .where(eq(stateRegistrationsTable.id, id)).catch(() => {});
     res.status(500).json({ error: "Retry failed", details: e.response?.data ?? String(err) });
   }

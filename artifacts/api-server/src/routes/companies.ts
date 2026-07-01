@@ -258,6 +258,11 @@ router.post("/companies", async (req: Request, res: Response) => {
                 },
                 { headers: rollfiHeaders() }
               );
+              // Rollfi returns HTTP 200 even on errors — check body
+              const srRollfiErr = (srResp.data as { error?: { code?: number; message?: string } })?.error;
+              if (srRollfiErr) {
+                throw new Error(srRollfiErr.message ?? "Rollfi rejected state registration");
+              }
               await db.insert(stateRegistrationsTable).values({
                 id: srId, companyId, rollfiCompanyId,
                 stateCode: sr.stateCode, stateName: sr.stateName,

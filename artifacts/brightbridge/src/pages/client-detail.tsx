@@ -915,8 +915,8 @@ function StateRegistrationSection({ company }: { company: Company }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {reg.status === "failed" && (
-                    <RetryStateRegButton regId={reg.id} onSuccess={() => void refetch()} />
+                  {(reg.status === "failed" || reg.status === "active") && (
+                    <RetryStateRegButton regId={reg.id} label={reg.status === "failed" ? "Retry" : "Re-submit"} onSuccess={() => void refetch()} />
                   )}
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${sc.color}`}>{sc.label}</span>
                 </div>
@@ -977,7 +977,7 @@ function StateRegistrationSection({ company }: { company: Company }) {
   );
 }
 
-function RetryStateRegButton({ regId, onSuccess }: { regId: string; onSuccess: () => void }) {
+function RetryStateRegButton({ regId, label = "Retry", onSuccess }: { regId: string; label?: string; onSuccess: () => void }) {
   const [retrying, setRetrying] = useState(false);
   const [error, setError] = useState("");
   const retry = async () => {
@@ -995,7 +995,7 @@ function RetryStateRegButton({ regId, onSuccess }: { regId: string; onSuccess: (
       {error && <span className="text-[10px] text-red-600 max-w-[120px] truncate" title={error}>{error}</span>}
       <button onClick={retry} disabled={retrying}
         className="text-[10px] font-semibold px-2 py-0.5 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50">
-        {retrying ? "Retrying…" : "Retry"}
+        {retrying ? "Retrying…" : label}
       </button>
     </div>
   );
