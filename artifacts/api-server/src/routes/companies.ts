@@ -246,15 +246,14 @@ router.post("/companies", async (req: Request, res: Response) => {
             const suiRate = sr.suiRate ? parseFloat(sr.suiRate) : 2.8;
             try {
               const srResp = await axios.post(
-                `${ROLLFI_BASE_URL}/companyOnboarding#addStateRegistration`,
+                `${ROLLFI_BASE_URL}/adminPortal/addStateRegistrationInfo`,
                 {
-                  method: "addStateRegistration",
-                  stateRegistration: {
-                    companyId: rollfiCompanyId,
-                    stateCode: sr.stateCode,
-                    stateEmployerId: sr.stateEmployerId,
-                    suiAccountNumber: sr.suiAccountNumber ?? sr.stateEmployerId,
-                    suiRate,
+                  method: "addStateRegistrationInfo",
+                  companyId: rollfiCompanyId,
+                  code: sr.stateCode,
+                  companyStateRegistration: {
+                    "UI Account Number": sr.stateEmployerId,
+                    "Unemployment Rate": String(suiRate),
                   },
                 },
                 { headers: rollfiHeaders() }

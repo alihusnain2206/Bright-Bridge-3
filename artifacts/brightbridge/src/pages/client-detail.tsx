@@ -914,7 +914,12 @@ function StateRegistrationSection({ company }: { company: Company }) {
                     {reg.suiRate != null && <span>· Rate: {reg.suiRate}%</span>}
                   </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${sc.color}`}>{sc.label}</span>
+                <div className="flex items-center gap-2">
+                  {reg.status === "failed" && (
+                    <RetryStateRegButton regId={reg.id} onSuccess={() => void refetch()} />
+                  )}
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${sc.color}`}>{sc.label}</span>
+                </div>
               </div>
             );
           })}
@@ -968,6 +973,30 @@ function StateRegistrationSection({ company }: { company: Company }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RetryStateRegButton({ regId, onSuccess }: { regId: string; onSuccess: () => void }) {
+  const [retrying, setRetrying] = useState(false);
+  const [error, setError] = useState("");
+  const retry = async () => {
+    setRetrying(true); setError("");
+    try {
+      const res = await fetch(`/api/rollfi/state-registrations/${regId}/retry`, { method: "POST", credentials: "include" });
+      const d = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(d.error ?? "Retry failed");
+      onSuccess();
+    } catch (e) { setError(e instanceof Error ? e.message : "Retry failed"); }
+    finally { setRetrying(false); }
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      {error && <span className="text-[10px] text-red-600 max-w-[120px] truncate" title={error}>{error}</span>}
+      <button onClick={retry} disabled={retrying}
+        className="text-[10px] font-semibold px-2 py-0.5 rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50">
+        {retrying ? "Retrying…" : "Retry"}
+      </button>
     </div>
   );
 }
