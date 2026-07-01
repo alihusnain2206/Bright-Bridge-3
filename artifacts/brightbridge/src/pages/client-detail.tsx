@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useParams } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -810,8 +810,9 @@ const US_STATES = [
 
 interface StateRegistration {
   id: string; companyId: string; rollfiCompanyId: string;
-  stateCode: string; stateName: string; stateEmployerId: string;
+  stateCode: string; stateName: string; stateEmployerId?: string | null;
   suiAccountNumber?: string | null; suiRate?: number | null;
+  fieldValuesJson?: string | null;
   status: string; rollfiResponse?: string | null;
   registeredAt: string; updatedAt: string;
 }
@@ -825,12 +826,13 @@ const STATE_REG_STATUS: Record<string, { label: string; color: string }> = {
 function StateRegistrationSection({ company }: { company: Company }) {
   const [showForm, setShowForm] = useState(false);
   const [stateCode, setStateCode] = useState("");
-  const [stateEmployerId, setStateEmployerId] = useState("");
-  const [suiAccount, setSuiAccount] = useState("");
-  const [suiRate, setSuiRate] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [stateFields, setStateFields] = useState<Record<string, { isMandatory: boolean }>>({});
+  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [fieldsLoading, setFieldsLoading] = useState(false);
+  const [fieldsError, setFieldsError] = useState("");
 
   const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
 
@@ -842,8 +844,34 @@ function StateRegistrationSection({ company }: { company: Company }) {
 
   const registrations = data?.registrations ?? [];
 
+  useEffect(() => {
+    if (!stateCode) { setStateFields({}); setFieldValues({}); setFieldsError(""); return; }
+    setFieldsLoading(true); setFieldsError("");
+    fetch(`/api/rollfi/state-fields/${stateCode}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d: { companyStateRegistrationFieldList?: Record<string, string>; fieldDescription?: Record<string, { isMandatory: boolean }>; error?: string }) => {
+        if (d.error) { setFieldsError(d.error); return; }
+        const fieldList = d.companyStateRegistrationFieldList ?? {};
+        const desc = d.fieldDescription ?? {};
+        const fields: Record<string, { isMandatory: boolean }> = {};
+        const vals: Record<string, string> = {};
+        for (const key of Object.keys(fieldList)) {
+          fields[key] = { isMandatory: desc[key]?.isMandatory ?? false };
+          vals[key] = "";
+        }
+        setStateFields(fields);
+        setFieldValues(vals);
+      })
+      .catch(() => setFieldsError("Failed to load state fields from Rollfi"))
+      .finally(() => setFieldsLoading(false));
+  }, [stateCode]);
+
   const handleSubmit = async () => {
-    if (!stateCode || !stateEmployerId) return;
+    if (!stateCode || Object.keys(stateFields).length === 0) return;
+    const missing = Object.entries(stateFields)
+      .filter(([k, v]) => v.isMandatory && !fieldValues[k]?.trim())
+      .map(([k]) => k);
+    if (missing.length > 0) { setSaveError(`Required: ${missing.join(", ")}`); return; }
     setSaving(true); setSaveError(""); setSaveSuccess(false);
     try {
       const selectedState = US_STATES.find((s) => s.code === stateCode);
@@ -852,14 +880,13 @@ function StateRegistrationSection({ company }: { company: Company }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId: company.id, stateCode, stateName: selectedState?.name ?? stateCode,
-          stateEmployerId, suiAccountNumber: suiAccount || undefined,
-          suiRate: suiRate ? parseFloat(suiRate) : undefined,
+          fieldValues,
         }),
       });
       const d = await res.json() as { error?: string };
       if (!res.ok) throw new Error(d.error ?? "Registration failed");
       setSaveSuccess(true);
-      setShowForm(false); setStateCode(""); setStateEmployerId(""); setSuiAccount(""); setSuiRate("");
+      setShowForm(false); setStateCode(""); setStateFields({}); setFieldValues({});
       void refetch();
     } catch (e) { setSaveError(e instanceof Error ? e.message : "Something went wrong"); }
     finally { setSaving(false); }
@@ -908,11 +935,22 @@ function StateRegistrationSection({ company }: { company: Company }) {
               <div key={reg.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50/50">
                 <div>
                   <div className="text-sm font-medium text-gray-800">{reg.stateName} <span className="text-gray-400">({reg.stateCode})</span></div>
-                  <div className="text-[11px] text-gray-400 mt-0.5 space-x-2">
-                    <span>Employer ID: <span className="font-mono text-gray-600">{reg.stateEmployerId}</span></span>
-                    {reg.suiAccountNumber && <span>· SUI: <span className="font-mono text-gray-600">{reg.suiAccountNumber}</span></span>}
-                    {reg.suiRate != null && <span>· Rate: {reg.suiRate}%</span>}
-                  </div>
+                  {reg.fieldValuesJson ? (
+                    <div className="text-[11px] text-gray-400 mt-0.5 flex flex-wrap gap-x-3">
+                      {Object.entries(JSON.parse(reg.fieldValuesJson) as Record<string, string>)
+                        .filter(([, v]) => v)
+                        .slice(0, 3)
+                        .map(([k, v]) => (
+                          <span key={k}>{k}: <span className="font-mono text-gray-600">{v}</span></span>
+                        ))}
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-gray-400 mt-0.5 space-x-2">
+                      {reg.stateEmployerId && <span>Employer ID: <span className="font-mono text-gray-600">{reg.stateEmployerId}</span></span>}
+                      {reg.suiAccountNumber && <span>· SUI: <span className="font-mono text-gray-600">{reg.suiAccountNumber}</span></span>}
+                      {reg.suiRate != null && <span>· Rate: {reg.suiRate}%</span>}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {(reg.status === "failed" || reg.status === "active") && (
@@ -936,37 +974,51 @@ function StateRegistrationSection({ company }: { company: Company }) {
         <div className="border rounded-xl p-4 space-y-3 bg-gray-50">
           <p className="text-sm font-semibold text-gray-800">Register a State</p>
           {saveError && <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{saveError}</div>}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1 col-span-2">
-              <Label className="text-xs text-gray-600 font-medium">State <span className="text-red-500">*</span></Label>
-              <select value={stateCode} onChange={(e) => setStateCode(e.target.value)}
-                className="w-full h-9 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#284362]/20">
-                <option value="">Select state…</option>
-                {US_STATES.filter((s) => !registrations.some((r) => r.stateCode === s.code)).map((s) => (
-                  <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
-                ))}
-              </select>
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label className="text-xs text-gray-600 font-medium">State Employer ID <span className="text-red-500">*</span></Label>
-              <Input value={stateEmployerId} onChange={(e) => setStateEmployerId(e.target.value)}
-                placeholder="e.g. NJ-123456789" className="h-9 text-sm" />
-              <p className="text-[10px] text-gray-400">The employer account number issued by the state's Department of Revenue or Labor.</p>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-600 font-medium">SUI Account # <span className="text-gray-400 font-normal">(optional)</span></Label>
-              <Input value={suiAccount} onChange={(e) => setSuiAccount(e.target.value)}
-                placeholder="e.g. 987654321" className="h-9 text-sm" />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-gray-600 font-medium">SUI Rate % <span className="text-gray-400 font-normal">(optional)</span></Label>
-              <Input type="number" step="0.01" min="0" max="20" value={suiRate}
-                onChange={(e) => setSuiRate(e.target.value)} placeholder="e.g. 2.80" className="h-9 text-sm" />
-            </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-gray-600 font-medium">State <span className="text-red-500">*</span></Label>
+            <select value={stateCode} onChange={(e) => setStateCode(e.target.value)}
+              className="w-full h-9 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#284362]/20">
+              <option value="">Select state…</option>
+              {US_STATES.filter((s) => !registrations.some((r) => r.stateCode === s.code)).map((s) => (
+                <option key={s.code} value={s.code}>{s.name} ({s.code})</option>
+              ))}
+            </select>
           </div>
+
+          {stateCode && fieldsLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+              <Loader2 className="h-4 w-4 animate-spin" />Loading {stateCode} registration fields…
+            </div>
+          )}
+          {fieldsError && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">{fieldsError}</div>
+          )}
+
+          {!fieldsLoading && Object.keys(stateFields).length > 0 && (
+            <div className="space-y-3">
+              {Object.entries(stateFields).map(([fieldName, meta]) => (
+                <div key={fieldName} className="space-y-1">
+                  <Label className="text-xs text-gray-600 font-medium">
+                    {fieldName}
+                    {meta.isMandatory
+                      ? <span className="text-red-500 ml-1">*</span>
+                      : <span className="text-gray-400 font-normal ml-1">(optional)</span>}
+                  </Label>
+                  <Input
+                    value={fieldValues[fieldName] ?? ""}
+                    onChange={(e) => setFieldValues((prev) => ({ ...prev, [fieldName]: e.target.value }))}
+                    placeholder={fieldName}
+                    className="h-9 text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           <div className="flex gap-2 justify-end pt-1">
-            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setSaveError(""); }}>Cancel</Button>
-            <Button size="sm" onClick={() => { void handleSubmit(); }} disabled={!stateCode || !stateEmployerId || saving}
+            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setSaveError(""); setStateCode(""); setStateFields({}); setFieldValues({}); }}>Cancel</Button>
+            <Button size="sm" onClick={() => { void handleSubmit(); }}
+              disabled={!stateCode || fieldsLoading || Object.keys(stateFields).length === 0 || saving}
               className="text-white border-0 gap-1.5" style={{ background: NAVY }}>
               {saving ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Registering…</> : <><Globe className="h-3.5 w-3.5" />Register State</>}
             </Button>

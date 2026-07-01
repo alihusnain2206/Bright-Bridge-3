@@ -6,7 +6,7 @@ import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByComp
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
-import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
+import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { desc, eq, inArray, and } from "drizzle-orm";
 
 const router: IRouter = Router();
@@ -1074,6 +1074,24 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
 
 // ── State Tax Registrations ───────────────────────────────────
 
+router.get("/rollfi/state-fields/:stateCode", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { stateCode } = req.params;
+  try {
+    const response = await axios({
+      method: "get",
+      url: `${ROLLFI_BASE_URL}/reports/getStateRegistrationFields`,
+      data: { method: "getStateRegistrationFields", code: stateCode },
+      headers: rollfiHeaders(),
+    });
+    res.json(response.data);
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err, stateCode }, "getStateRegistrationFields failed");
+    res.status(500).json({ error: "Failed to fetch state fields from Rollfi", details: e.response?.data });
+  }
+});
+
 router.get("/rollfi/state-registrations", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
   const { companyId } = req.query as { companyId?: string };
@@ -1089,12 +1107,12 @@ router.get("/rollfi/state-registrations", async (req, res) => {
 
 router.post("/rollfi/onboard/state-registration", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
-  const { companyId, stateCode, stateName, stateEmployerId, suiAccountNumber, suiRate } = req.body as {
-    companyId: string; stateCode: string; stateName: string; stateEmployerId: string;
-    suiAccountNumber?: string; suiRate?: number;
+  const { companyId, stateCode, stateName, fieldValues } = req.body as {
+    companyId: string; stateCode: string; stateName: string;
+    fieldValues: Record<string, string>;
   };
-  if (!companyId || !stateCode || !stateEmployerId) {
-    res.status(400).json({ error: "companyId, stateCode, and stateEmployerId are required" }); return;
+  if (!companyId || !stateCode || !fieldValues || Object.keys(fieldValues).length === 0) {
+    res.status(400).json({ error: "companyId, stateCode, and fieldValues are required" }); return;
   }
 
   // Resolve rollfiCompanyId from store or DB
@@ -1118,7 +1136,7 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
 
   const id = existing?.id ?? `SR-${stateCode}-${Date.now()}`;
   const nowISO = new Date().toISOString();
-  const effectiveSuiRate = suiRate ?? 2.8;
+  const fieldValuesJson = JSON.stringify(fieldValues);
 
   try {
     const response = await axios.post(
@@ -1127,7 +1145,7 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
         code: stateCode,
-        companyStateRegistration: buildStateRegistrationPayload(stateCode, stateEmployerId, suiAccountNumber, effectiveSuiRate),
+        companyStateRegistration: fieldValues,
       },
       { headers: rollfiHeaders() }
     );
@@ -1137,7 +1155,8 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
       req.log.error({ rollfiResponse: response.data, companyId, stateCode }, "Rollfi addStateRegistrationInfo returned error in body");
       const failValues = {
         id, companyId, rollfiCompanyId, stateCode, stateName,
-        stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: effectiveSuiRate,
+        stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+        fieldValuesJson,
         status: "failed" as const, rollfiResponse: JSON.stringify(response.data), registeredAt: nowISO, updatedAt: nowISO,
       };
       if (existing) {
@@ -1152,7 +1171,8 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
 
     const values = {
       id, companyId, rollfiCompanyId, stateCode, stateName,
-      stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: effectiveSuiRate,
+      stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+      fieldValuesJson,
       status: "active" as const, rollfiResponse: JSON.stringify(response.data), registeredAt: nowISO, updatedAt: nowISO,
     };
     const [saved] = existing
@@ -1166,7 +1186,8 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
 
     const failValues = {
       id, companyId, rollfiCompanyId, stateCode, stateName,
-      stateEmployerId, suiAccountNumber: suiAccountNumber ?? null, suiRate: effectiveSuiRate,
+      stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+      fieldValuesJson,
       status: "failed" as const, rollfiResponse: JSON.stringify(e.response?.data ?? String(err)), registeredAt: nowISO, updatedAt: nowISO,
     };
     if (existing) {
@@ -1186,7 +1207,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
   const [reg] = await db.select().from(stateRegistrationsTable).where(eq(stateRegistrationsTable.id, id)).catch(() => [undefined]);
   if (!reg) { res.status(404).json({ error: "State registration not found" }); return; }
 
-  let rollfiCompanyId = reg.rollfiCompanyId ?? store.getRollfiCompany(reg.companyId)?.rollfiCompanyId;
+  let rollfiCompanyId: string | undefined = reg.rollfiCompanyId ?? store.getRollfiCompany(reg.companyId)?.rollfiCompanyId ?? undefined;
   if (!rollfiCompanyId) {
     const [dbCo] = await db.select({ rollfiCompanyId: companiesTable.rollfiCompanyId }).from(companiesTable).where(eq(companiesTable.id, reg.companyId)).catch(() => [undefined]);
     rollfiCompanyId = dbCo?.rollfiCompanyId ?? undefined;
@@ -1194,7 +1215,11 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
   if (!rollfiCompanyId) { res.status(400).json({ error: "Company not registered with Rollfi." }); return; }
 
   const nowISO = new Date().toISOString();
-  const effectiveSuiRate = reg.suiRate ?? 2.8;
+
+  // Use stored dynamic fieldValues if available; fall back to legacy static mapping for old records
+  const companyStateRegistration: Record<string, string> = reg.fieldValuesJson
+    ? JSON.parse(reg.fieldValuesJson) as Record<string, string>
+    : buildStateRegistrationPayload(reg.stateCode, reg.stateEmployerId ?? "", reg.suiAccountNumber, reg.suiRate ?? 2.8);
 
   try {
     const response = await axios.post(
@@ -1203,7 +1228,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
         code: reg.stateCode,
-        companyStateRegistration: buildStateRegistrationPayload(reg.stateCode, reg.stateEmployerId, reg.suiAccountNumber, effectiveSuiRate),
+        companyStateRegistration,
       },
       { headers: rollfiHeaders() }
     );

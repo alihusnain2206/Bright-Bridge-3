@@ -148,8 +148,7 @@ router.post("/companies", async (req: Request, res: Response) => {
     payrollRunThisYear: string;
     payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
     stateTaxRegistrations?: Array<{
-      stateCode: string; stateName: string; stateEmployerId: string;
-      suiAccountNumber?: string; suiRate?: string;
+      stateCode: string; stateName: string; fieldValues: Record<string, string>;
     }>;
   };
 
@@ -244,7 +243,8 @@ router.post("/companies", async (req: Request, res: Response) => {
           let stateRegSuccessCount = 0;
           for (const sr of stateTaxList) {
             const srId = `SR-${sr.stateCode}-${Date.now()}`;
-            const suiRate = sr.suiRate ? parseFloat(sr.suiRate) : 2.8;
+            const fieldValues = sr.fieldValues as Record<string, string>;
+            const fieldValuesJson = JSON.stringify(fieldValues);
             try {
               const srResp = await axios.post(
                 `${ROLLFI_BASE_URL}/adminPortal/addStateRegistrationInfo`,
@@ -252,7 +252,7 @@ router.post("/companies", async (req: Request, res: Response) => {
                   method: "addStateRegistrationInfo",
                   companyId: rollfiCompanyId,
                   code: sr.stateCode,
-                  companyStateRegistration: buildStateRegistrationPayload(sr.stateCode, sr.stateEmployerId, sr.suiAccountNumber, suiRate),
+                  companyStateRegistration: fieldValues,
                 },
                 { headers: rollfiHeaders() }
               );
@@ -264,9 +264,8 @@ router.post("/companies", async (req: Request, res: Response) => {
               await db.insert(stateRegistrationsTable).values({
                 id: srId, companyId, rollfiCompanyId,
                 stateCode: sr.stateCode, stateName: sr.stateName,
-                stateEmployerId: sr.stateEmployerId,
-                suiAccountNumber: sr.suiAccountNumber ?? null,
-                suiRate: suiRate ?? null,
+                stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+                fieldValuesJson,
                 status: "active",
                 rollfiResponse: JSON.stringify(srResp.data),
                 registeredAt: now, updatedAt: now,
@@ -278,9 +277,8 @@ router.post("/companies", async (req: Request, res: Response) => {
               await db.insert(stateRegistrationsTable).values({
                 id: srId, companyId, rollfiCompanyId,
                 stateCode: sr.stateCode, stateName: sr.stateName,
-                stateEmployerId: sr.stateEmployerId,
-                suiAccountNumber: sr.suiAccountNumber ?? null,
-                suiRate: suiRate ?? null,
+                stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+                fieldValuesJson,
                 status: "failed",
                 rollfiResponse: String(srErr),
                 registeredAt: now, updatedAt: now,

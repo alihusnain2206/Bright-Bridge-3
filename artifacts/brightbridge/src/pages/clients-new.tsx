@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
   Building2, MapPin, User, FileText, Calendar, CheckCircle2,
@@ -56,9 +56,7 @@ interface FormData {
 interface StateTaxEntry {
   stateCode: string;
   stateName: string;
-  stateEmployerId: string;
-  suiAccountNumber: string;
-  suiRate: string;
+  fieldValues: Record<string, string>;
 }
 
 const STEPS = [
@@ -101,15 +99,38 @@ export default function ClientsNew() {
   // Step 6 — state tax entries
   const [stateTaxEntries, setStateTaxEntries] = useState<StateTaxEntry[]>([]);
   const [stateFormCode, setStateFormCode] = useState("");
-  const [stateFormEmpId, setStateFormEmpId] = useState("");
-  const [stateFormSuiAcct, setStateFormSuiAcct] = useState("");
-  const [stateFormSuiRate, setStateFormSuiRate] = useState("");
+  const [stateFormFields, setStateFormFields] = useState<Record<string, { isMandatory: boolean }>>({});
+  const [stateFormFieldValues, setStateFormFieldValues] = useState<Record<string, string>>({});
+  const [stateFormFieldsLoading, setStateFormFieldsLoading] = useState(false);
+  const [stateFormFieldsError, setStateFormFieldsError] = useState("");
+
+  useEffect(() => {
+    if (!stateFormCode) { setStateFormFields({}); setStateFormFieldValues({}); setStateFormFieldsError(""); return; }
+    setStateFormFieldsLoading(true); setStateFormFieldsError("");
+    fetch(`/api/rollfi/state-fields/${stateFormCode}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d: { companyStateRegistrationFieldList?: Record<string, string>; fieldDescription?: Record<string, { isMandatory: boolean }>; error?: string }) => {
+        if (d.error) { setStateFormFieldsError(d.error); return; }
+        const fieldList = d.companyStateRegistrationFieldList ?? {};
+        const desc = d.fieldDescription ?? {};
+        const fields: Record<string, { isMandatory: boolean }> = {};
+        const vals: Record<string, string> = {};
+        for (const key of Object.keys(fieldList)) {
+          fields[key] = { isMandatory: desc[key]?.isMandatory ?? false };
+          vals[key] = "";
+        }
+        setStateFormFields(fields);
+        setStateFormFieldValues(vals);
+      })
+      .catch(() => setStateFormFieldsError("Failed to load state fields"))
+      .finally(() => setStateFormFieldsLoading(false));
+  }, [stateFormCode]);
 
   const addStateTaxEntry = () => {
-    if (!stateFormCode || !stateFormEmpId) return;
+    if (!stateFormCode || Object.keys(stateFormFields).length === 0) return;
     const name = US_STATES_FULL.find((s) => s.code === stateFormCode)?.name ?? stateFormCode;
-    setStateTaxEntries((prev) => [...prev, { stateCode: stateFormCode, stateName: name, stateEmployerId: stateFormEmpId, suiAccountNumber: stateFormSuiAcct, suiRate: stateFormSuiRate }]);
-    setStateFormCode(""); setStateFormEmpId(""); setStateFormSuiAcct(""); setStateFormSuiRate("");
+    setStateTaxEntries((prev) => [...prev, { stateCode: stateFormCode, stateName: name, fieldValues: stateFormFieldValues }]);
+    setStateFormCode(""); setStateFormFields({}); setStateFormFieldValues({});
   };
   const removeStateTaxEntry = (idx: number) => setStateTaxEntries((prev) => prev.filter((_, i) => i !== idx));
 
@@ -599,7 +620,12 @@ export default function ClientsNew() {
                     <Globe className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-emerald-900">{entry.stateName} ({entry.stateCode})</p>
-                      <p className="text-xs text-emerald-700 mt-0.5">Employer ID: {entry.stateEmployerId}{entry.suiAccountNumber ? ` · SUI Acct: ${entry.suiAccountNumber}` : ""}{entry.suiRate ? ` · SUI Rate: ${entry.suiRate}%` : ""}</p>
+                      <div className="text-xs text-emerald-700 mt-0.5 flex flex-wrap gap-x-3">
+                        {Object.entries(entry.fieldValues)
+                          .filter(([, v]) => v)
+                          .slice(0, 3)
+                          .map(([k, v]) => <span key={k}>{k}: <span className="font-mono">{v}</span></span>)}
+                      </div>
                     </div>
                     <button onClick={() => removeStateTaxEntry(idx)} className="text-emerald-400 hover:text-red-500 transition-colors mt-0.5">
                       <Trash2 className="h-4 w-4" />
@@ -612,32 +638,53 @@ export default function ClientsNew() {
             {/* Add state form */}
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Add a State</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>State *</Label>
-                  <Select value={stateFormCode} onValueChange={setStateFormCode}>
-                    <SelectTrigger><SelectValue placeholder="Select state…" /></SelectTrigger>
-                    <SelectContent className="max-h-60">
-                      {US_STATES_FULL.map((s) => (
-                        <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>State Employer ID *</Label>
-                  <Input value={stateFormEmpId} onChange={(e) => setStateFormEmpId(e.target.value)} placeholder="e.g. 123456789" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>SUI Account Number <span className="text-gray-400 font-normal">(optional)</span></Label>
-                  <Input value={stateFormSuiAcct} onChange={(e) => setStateFormSuiAcct(e.target.value)} placeholder="e.g. 987654321" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>SUI Rate % <span className="text-gray-400 font-normal">(optional)</span></Label>
-                  <Input value={stateFormSuiRate} onChange={(e) => setStateFormSuiRate(e.target.value)} placeholder="e.g. 2.8" type="number" step="0.01" min="0" max="20" />
-                </div>
+              <div className="space-y-1.5">
+                <Label>State *</Label>
+                <Select value={stateFormCode} onValueChange={setStateFormCode}>
+                  <SelectTrigger><SelectValue placeholder="Select state…" /></SelectTrigger>
+                  <SelectContent className="max-h-60">
+                    {US_STATES_FULL.filter((s) => !stateTaxEntries.some((e) => e.stateCode === s.code)).map((s) => (
+                      <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <Button onClick={addStateTaxEntry} disabled={!stateFormCode || !stateFormEmpId} variant="outline" className="gap-1.5 w-full">
+
+              {stateFormCode && stateFormFieldsLoading && (
+                <div className="flex items-center gap-2 text-sm text-gray-500 py-1">
+                  <Loader2 className="h-4 w-4 animate-spin" />Loading {stateFormCode} registration fields…
+                </div>
+              )}
+              {stateFormFieldsError && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">{stateFormFieldsError}</div>
+              )}
+
+              {!stateFormFieldsLoading && Object.keys(stateFormFields).length > 0 && (
+                <div className="grid grid-cols-2 gap-3">
+                  {Object.entries(stateFormFields).map(([fieldName, meta]) => (
+                    <div key={fieldName} className="space-y-1.5">
+                      <Label>
+                        {fieldName}
+                        {meta.isMandatory
+                          ? <span className="text-red-500 ml-1">*</span>
+                          : <span className="text-gray-400 font-normal ml-1">(optional)</span>}
+                      </Label>
+                      <Input
+                        value={stateFormFieldValues[fieldName] ?? ""}
+                        onChange={(e) => setStateFormFieldValues((prev) => ({ ...prev, [fieldName]: e.target.value }))}
+                        placeholder={fieldName}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Button
+                onClick={addStateTaxEntry}
+                disabled={!stateFormCode || stateFormFieldsLoading || Object.keys(stateFormFields).length === 0}
+                variant="outline"
+                className="gap-1.5 w-full"
+              >
                 <Plus className="h-4 w-4" /> Add State
               </Button>
             </div>
