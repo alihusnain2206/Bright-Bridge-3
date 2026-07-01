@@ -17,16 +17,19 @@ export const STATE_FIELD_MAP: Record<string, StateFieldMap> = {
     ucAccount: "UC Account Number",
     // AL also has "City Occupational Tax ID" but we don't capture that field yet
   },
-  // ── NJ and NY: update field names once confirmed from Rollfi portal ──
-  NJ: {
-    unemploymentRate: "Unemployment Rate",
-    withholdingAccount: "Withholding Tax Account Number",
-    ucAccount: "UC Account Number",
-  },
+  // NY: Employer Registration Number (stateEmployerId), Withholding ID Number (suiAccountNumber), Unemployment Rate
   NY: {
     unemploymentRate: "Unemployment Rate",
-    withholdingAccount: "Withholding Tax Account Number",
-    ucAccount: "UC Account Number",
+    withholdingAccount: "Employer Registration Number",
+    ucAccount: "Withholding ID Number",
+  },
+  // NJ: NJ Employer Registration Number (stateEmployerId), NJ Department of Labor Account Number (suiAccountNumber),
+  //     Unemployment Rate, Disability Rate (NJ-specific — defaulted to 0.5 if not captured)
+  NJ: {
+    unemploymentRate: "Unemployment Rate",
+    withholdingAccount: "NJ Employer Registration Number",
+    ucAccount: "NJ Department of Labor Account Number",
+    extras: { "Disability Rate": "0.5" },
   },
 };
 

@@ -5,3 +5,4 @@
 - [Durable delete cascades to login layer](login-account-durable-delete.md) — deleting employee/company must also delete store staff user + user_accounts row, or boot reconciliation resurrects it
 - [/clients is a contract shim over companies](clients-contract-shim.md) — clientId==companyId; keep POST/DELETE /clients even though wizard uses /api/companies (generated hooks depend on them)
 - [EasyTeam JWT wage units](easyteam-jwt-wage-units.md) — JWT `wage` claim must be DOLLARS (cents/100); we store cents internally; 3 JWT paths must stay consistent
+- [Rollfi state registration fields](rollfi-state-fields.md) — field names in companyStateRegistration are state-specific; Rollfi returns 200+error-body on failure (not HTTP 4xx); mapping in lib/rollfi-state-fields.ts
