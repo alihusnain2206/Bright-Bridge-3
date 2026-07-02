@@ -245,7 +245,8 @@ export default function ClientEmployeesNew() {
         })}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col">
+        <div className="overflow-y-auto flex-1">
         {/* ── Step 1 ── */}
         {step === 1 && (
           <div className="px-8 py-6 space-y-4">
@@ -486,6 +487,8 @@ export default function ClientEmployeesNew() {
             </div>
           </div>
         )}
+
+        </div>{/* end scrollable step content */}
 
         {/* Navigation */}
         <div className="px-8 py-4 border-t bg-gray-50/40 flex items-center justify-between">
