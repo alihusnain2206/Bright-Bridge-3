@@ -2243,17 +2243,18 @@ router.get("/rollfi/payroll/overview", async (req, res) => {
       const rollfiCompany = store.getRollfiCompany(company.id)!;
       try {
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
-          { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+          `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+          { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
           { headers: rollfiHeaders() }
         );
         const raw = r.data as Record<string, unknown>;
-        assertNoRollfiError(raw, "getUnProcessedPayPeriod");
-        const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
-        const sorted = [...periods].sort((a, b) =>
-          String(b.payBeginDate ?? "").localeCompare(String(a.payBeginDate ?? ""))
-        );
-        return { companyId: company.id, companyName: company.name, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriod: sorted[0] ?? null };
+        assertNoRollfiError(raw, "getPayPeriod");
+        // getPayPeriod returns fields directly (not an array) — treat as a single period object
+        const hasPeriod = !!(raw.payPeriodId || raw.payBeginDate);
+        return {
+          companyId: company.id, companyName: company.name, rollfiCompanyId: rollfiCompany.rollfiCompanyId,
+          payPeriod: hasPeriod ? raw : null,
+        };
       } catch (e) {
         return { companyId: company.id, companyName: company.name, rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriod: null, error: String(e) };
       }

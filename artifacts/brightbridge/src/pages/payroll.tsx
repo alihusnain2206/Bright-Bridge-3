@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -769,7 +769,6 @@ export default function Payroll() {
   const [expandedEmpId, setExpandedEmpId] = useState<string | null>(null);
   const [singleEmpStatus, setSingleEmpStatus] = useState<Record<string, EmpRollfiStatus & { loading?: boolean }>>({});
   const [selectedHistoryPeriodId, setSelectedHistoryPeriodId] = useState<string | null>(null);
-  const autoFetchedRef = useRef<string>("");
   const qc = useQueryClient();
 
   const { data: state, isLoading: stateLoading, refetch: refetchState } = useQuery<RollfiState>({
@@ -917,30 +916,29 @@ export default function Payroll() {
     },
   });
 
-  // Auto-fetch employee statuses when entering tab 1
+  // Auto-fetch employee statuses when entering tab 1 — only for the selected company (or all if none chosen)
   useEffect(() => {
-    if (tab === 1 && companies.length > 0) void fetchEmpStatuses(companies);
-  }, [tab, companies.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (tab !== 1 || companies.length === 0) return;
+    const cosToFetch = selectedCompanyId !== "all"
+      ? companies.filter((c) => c.id === selectedCompanyId && c.rollfi)
+      : companies.filter((c) => c.rollfi);
+    if (cosToFetch.length > 0) void fetchEmpStatuses(cosToFetch);
+  }, [tab, selectedCompanyId, companies.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-fetch pay period when entering tab 2
+  // Fetch pay period for tab 2 — single consolidated effect to prevent duplicate calls.
+  // When selectedCompanyId is "all", auto-select the first enrolled company and return;
+  // the effect re-runs once selectedCompanyId updates and then fires fetchPayPeriod exactly once.
   useEffect(() => {
     if (tab !== 2) return;
-    const compId = selectedCompanyId !== "all" ? selectedCompanyId : companies.find((c) => c.rollfi)?.id;
-    if (!compId || autoFetchedRef.current === compId) return;
-    const comp = companies.find((c) => c.id === compId);
-    if (!comp?.rollfi) return;
-    autoFetchedRef.current = compId;
-    if (selectedCompanyId === "all") setSelectedCompanyId(compId);
-    void fetchPayPeriod(compId);
-  }, [tab, selectedCompanyId, companies]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Re-fetch pay period on company change in tab 2
-  useEffect(() => {
-    if (tab !== 2 || selectedCompanyId === "all") return;
+    if (selectedCompanyId === "all") {
+      const firstId = companies.find((c) => c.rollfi)?.id;
+      if (firstId) setSelectedCompanyId(firstId);
+      return;
+    }
     const comp = companies.find((c) => c.id === selectedCompanyId);
     if (!comp?.rollfi) return;
     void fetchPayPeriod(selectedCompanyId);
-  }, [selectedCompanyId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tab, selectedCompanyId, companies.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll pay period status after submission
   useEffect(() => {
@@ -993,7 +991,7 @@ export default function Payroll() {
           <PayrollOverviewPanel
             overview={overview}
             loading={overviewLoading}
-            onSelectCompany={(id) => { setSelectedCompanyId(id); autoFetchedRef.current = ""; setTab(2); void refetchPreview(); }}
+            onSelectCompany={(id) => { setSelectedCompanyId(id); setTab(2); void refetchPreview(); }}
             runAll={{ mutate: () => runAll.mutate(), isPending: runAll.isPending }}
             runAllResults={runAllResults}
             onDismissRunAll={() => setRunAllResults(null)}
@@ -1302,7 +1300,7 @@ export default function Payroll() {
               <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                 <span className="text-white/40 text-xs">Company</span>
                 <select value={selectedCompanyId}
-                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); autoFetchedRef.current = ""; setSelectedHistoryPeriodId(null); }}
+                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); setSelectedHistoryPeriodId(null); }}
                   className="bg-transparent text-white text-sm outline-none">
                   <option value="all">All Companies</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
