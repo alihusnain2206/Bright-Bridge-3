@@ -817,8 +817,8 @@ export default function Payroll() {
 
   const { data: preview, isLoading: previewLoading, refetch: refetchPreview } = useQuery<PayrollPreview>({
     queryKey: ["rollfi-preview", selectedCompanyId],
-    queryFn: () => api.get(`/rollfi/payroll/preview${selectedCompanyId !== "all" ? `?companyId=${selectedCompanyId}` : ""}`),
-    enabled: tab === 2,
+    queryFn: () => api.get(`/rollfi/payroll/preview?companyId=${selectedCompanyId}`),
+    enabled: tab === 2 && selectedCompanyId !== "all",
   });
 
   const { data: history } = useQuery<{ periods: ProcessedPeriod[] }>({
