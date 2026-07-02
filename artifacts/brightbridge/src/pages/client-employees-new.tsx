@@ -16,6 +16,16 @@ const NAVY = "#284362";
 const today = () => new Date().toISOString().split("T")[0];
 const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
 
+// States that issue their own withholding certificate — must match the backend set in rollfi-employee-sync.ts
+const STATES_WITH_OWN_W4 = new Set([
+  "AL","AR","AZ","CA","CO","CT","DC","DE","GA","HI",
+  "ID","IL","IN","IA","KS","KY","LA","ME","MD","MA",
+  "MI","MN","MS","MO","MT","NE","NJ","NM","NY","NC",
+  "OH","OK","OR","RI","SC","VT","VA","WI",
+]);
+const NO_INCOME_TAX_STATES = new Set(["AK","FL","NV","NH","SD","TN","TX","WA","WY"]);
+// ND, PA, UT use the federal W-4 directly
+
 const STEPS = [
   { label: "Basic Info",    icon: User },
   { label: "Pay Details",   icon: DollarSign },
@@ -369,7 +379,7 @@ export default function ClientEmployeesNew() {
               </div>
             </div>
             <div className="border-t pt-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">W4 Federal Tax Withholding</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Federal W-4 Withholding</p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2 space-y-1.5">
                   <Label>Filing Status</Label>
@@ -382,6 +392,37 @@ export default function ClientEmployeesNew() {
                 <div className="space-y-1.5"><Label>Dependents Amount ($)</Label><Input value={form.w4Dependents} onChange={(e) => set("w4Dependents", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" /></div>
                 <div className="space-y-1.5"><Label>Extra Withholding ($)</Label><Input value={form.w4ExtraWithholding} onChange={(e) => set("w4ExtraWithholding", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" /></div>
               </div>
+            </div>
+
+            {/* State W-4 — conditional on home state */}
+            <div className="border-t pt-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">State W-4 Withholding</p>
+              {STATES_WITH_OWN_W4.has(form.homeState) ? (
+                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-green-50 rounded-xl border border-green-200 text-sm text-green-800">
+                  <span className="mt-0.5 text-base leading-none">✓</span>
+                  <span>
+                    <strong>{form.homeState}</strong> requires a state withholding certificate.
+                    The filing status and withholding amounts above will be submitted to Rollfi as the{" "}
+                    <strong>{form.homeState} state W-4</strong> during onboarding.
+                  </span>
+                </div>
+              ) : NO_INCOME_TAX_STATES.has(form.homeState) ? (
+                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-600">
+                  <span className="mt-0.5 text-base leading-none">—</span>
+                  <span>
+                    <strong>{form.homeState}</strong> has no state income tax — no state W-4 is required.
+                    Only the federal W-4 above will be submitted.
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-600">
+                  <span className="mt-0.5 text-base leading-none">—</span>
+                  <span>
+                    <strong>{form.homeState}</strong> uses the federal W-4 for state withholding — no separate
+                    state form is required. Only the federal W-4 above will be submitted.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
