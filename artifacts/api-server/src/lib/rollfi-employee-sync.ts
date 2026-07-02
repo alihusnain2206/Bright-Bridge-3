@@ -86,7 +86,7 @@ export async function runEmployeeKycOnboarding(
     try {
       const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
         method: "addStateW4Information",
-        employeeId: rollfiUserId,
+        userId: rollfiUserId,
         stateW4Information: stateW4Payload,
       }, { headers });
       log.info({ rollfiResponse: r.data, homeState: w4.homeState }, "Rollfi addStateW4Information response");
