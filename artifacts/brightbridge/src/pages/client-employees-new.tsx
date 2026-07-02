@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -46,12 +46,89 @@ interface FormData {
   ssn: string; dateOfBirth: string;
   homeAddress: string; homeCity: string; homeState: string; homeZip: string;
   w4FilingStatus: string; w4MultipleJobs: boolean; w4Dependents: number; w4ExtraWithholding: number;
+  stateW4Fields: Record<string, string>;
   // Step 4
   bankSetupMethod: "invite" | "manual";
   bankName: string; routingNumber: string; accountNumber: string; accountType: string;
 }
 
 interface Company { id: string; name: string; }
+
+interface StateW4Field {
+  fieldName: string;
+  fieldDescription: string;
+  options?: string[];
+  dataType?: string;
+}
+interface StateW4Response { stateCode: string; stateW4FieldsList: Record<string, string>; fields: StateW4Field[]; }
+
+function StateW4FormSection({ stateCode, fields, values, onChange }: {
+  stateCode: string; fields: StateW4Field[]; values: Record<string, string>;
+  onChange: (updated: Record<string, string>) => void;
+}) {
+  const optionFields = fields.filter((f) => f.options && f.options.length > 0);
+  const numericFields = fields.filter((f) => !f.options);
+  const isMultiStatus = optionFields.length > 1;
+  const selectedStatusField = optionFields.find((f) => values[f.fieldName]) ?? optionFields[0];
+
+  const handleChange = (fieldName: string, value: string) => onChange({ ...values, [fieldName]: value });
+
+  const handleStatusTypeChange = (newFieldName: string) => {
+    const updated = { ...values };
+    optionFields.forEach((f) => { updated[f.fieldName] = ""; });
+    const newField = optionFields.find((f) => f.fieldName === newFieldName);
+    updated[newFieldName] = newField?.options?.[0] ?? "";
+    onChange(updated);
+  };
+
+  return (
+    <div className="border-t pt-4 space-y-4">
+      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{stateCode} State W-4 Withholding</p>
+      {isMultiStatus ? (
+        <>
+          <div className="space-y-1.5">
+            <Label>Filing Status</Label>
+            <Select value={selectedStatusField?.fieldName ?? ""} onValueChange={handleStatusTypeChange}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{optionFields.map((f) => <SelectItem key={f.fieldName} value={f.fieldName}>{f.fieldName}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          {selectedStatusField && (
+            <div className="space-y-1.5">
+              <Label>Withholding Code</Label>
+              <Select value={values[selectedStatusField.fieldName] ?? ""} onValueChange={(v) => handleChange(selectedStatusField.fieldName, v)}>
+                <SelectTrigger><SelectValue placeholder="Select code…" /></SelectTrigger>
+                <SelectContent>{selectedStatusField.options!.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+          )}
+        </>
+      ) : (
+        optionFields.map((field) => (
+          <div key={field.fieldName} className="space-y-1.5">
+            <Label>{field.fieldName}</Label>
+            <Select value={values[field.fieldName] ?? ""} onValueChange={(v) => handleChange(field.fieldName, v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{field.options!.map((opt) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        ))
+      )}
+      {numericFields.length > 0 && (
+        <div className="grid grid-cols-2 gap-4">
+          {numericFields.map((field) => (
+            <div key={field.fieldName} className="space-y-1.5">
+              <Label>{field.fieldName}</Label>
+              <Input type="number" step={field.dataType === "Double" ? "0.01" : "1"} min="0"
+                value={values[field.fieldName] ?? "0"}
+                onChange={(e) => handleChange(field.fieldName, e.target.value)} />
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PayPreview({ wage, payFrequency }: { wage: number; payFrequency?: string }) {
   const hoursPerPeriod = payFrequency === "Weekly" ? 40 : 80;
@@ -112,9 +189,35 @@ export default function ClientEmployeesNew() {
     payType: "hourly", wageAmount: 18, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
     ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "NJ", homeZip: "",
     w4FilingStatus: "Single", w4MultipleJobs: false, w4Dependents: 0, w4ExtraWithholding: 0,
+    stateW4Fields: {},
     bankSetupMethod: "invite", bankName: "", routingNumber: "", accountNumber: "", accountType: "checking",
   });
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
+
+  // Fetch state-specific W-4 fields when employee's home state changes
+  const { data: stateW4Data, isLoading: stateW4Loading } = useQuery<StateW4Response>({
+    queryKey: ["/api/rollfi/state-w4-fields", form.homeState],
+    queryFn: () => fetch(`/api/rollfi/state-w4-fields/${form.homeState}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: STATES_WITH_OWN_W4.has(form.homeState),
+    staleTime: 10 * 60 * 1000,
+  });
+
+  // Auto-initialise stateW4Fields with sensible defaults whenever the loaded fields change
+  useEffect(() => {
+    if (!stateW4Data?.fields) { setForm((f) => ({ ...f, stateW4Fields: {} })); return; }
+    const optionFields = stateW4Data.fields.filter((f) => f.options && f.options.length > 0);
+    const isMultiStatus = optionFields.length > 1;
+    const defaults: Record<string, string> = {};
+    stateW4Data.fields.forEach((field) => {
+      if (field.options) {
+        // Multi-status states (CT): first filing-status gets its first code, others start empty
+        defaults[field.fieldName] = (isMultiStatus && field.fieldName !== optionFields[0]?.fieldName) ? "" : (field.options[0] ?? "");
+      } else {
+        defaults[field.fieldName] = "0";
+      }
+    });
+    setForm((f) => ({ ...f, stateW4Fields: defaults }));
+  }, [stateW4Data]);
 
   const runWithProgress = async () => {
     const labels = [
@@ -377,11 +480,11 @@ export default function ClientEmployeesNew() {
                 <div className="space-y-1.5">
                   <Label>State *</Label>
                   <Select value={form.homeState} onValueChange={(v) => set("homeState", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
-                  {STATES_WITH_OWN_W4.has(form.homeState)
-                    ? <p className="text-xs text-green-700 mt-1">✓ State W-4 will also be submitted for {form.homeState}</p>
-                    : NO_INCOME_TAX_STATES.has(form.homeState)
+                  {NO_INCOME_TAX_STATES.has(form.homeState)
                     ? <p className="text-xs text-gray-400 mt-1">No state income tax — federal W-4 only</p>
-                    : <p className="text-xs text-gray-400 mt-1">{form.homeState} uses federal W-4 — no separate state form</p>
+                    : !STATES_WITH_OWN_W4.has(form.homeState)
+                    ? <p className="text-xs text-gray-400 mt-1">{form.homeState} uses federal W-4 — no separate state form</p>
+                    : null
                   }
                 </div>
                 <div className="space-y-1.5"><Label>Zip Code *</Label><Input value={form.homeZip} onChange={(e) => set("homeZip", e.target.value)} placeholder="07101" maxLength={5} /></div>
@@ -402,6 +505,23 @@ export default function ClientEmployeesNew() {
                 <div className="space-y-1.5"><Label>Extra Withholding ($)</Label><Input value={form.w4ExtraWithholding} onChange={(e) => set("w4ExtraWithholding", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" /></div>
               </div>
             </div>
+
+            {/* Dynamic state W-4 section — only for states that issue their own certificate */}
+            {STATES_WITH_OWN_W4.has(form.homeState) && (
+              stateW4Loading ? (
+                <div className="border-t pt-4 flex items-center gap-2 text-sm text-gray-400">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading {form.homeState} state W-4 fields…
+                </div>
+              ) : stateW4Data?.fields?.length ? (
+                <StateW4FormSection
+                  stateCode={form.homeState}
+                  fields={stateW4Data.fields}
+                  values={form.stateW4Fields}
+                  onChange={(updated) => setForm((f) => ({ ...f, stateW4Fields: updated }))}
+                />
+              ) : null
+            )}
 
           </div>
         )}

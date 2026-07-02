@@ -19,6 +19,9 @@ export interface EmployeeSyncInput {
   w4MultipleJobs?: boolean;
   w4Dependents?: number;
   w4ExtraWithholding?: number;
+  /** State-specific W-4 field values from the UI form (built via getStateW4FormFields).
+   *  When provided, used directly in addStateW4Information instead of the hardcoded fallback. */
+  stateW4Fields?: Record<string, string>;
 }
 
 export interface EmployeeSyncResult {
@@ -69,6 +72,7 @@ export async function syncEmployeeToIntegrations(
         id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents,
         homeState: emp.homeState, w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
         w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
+        stateW4Fields: emp.stateW4Fields,
       },
       rollfiCompany,
       log

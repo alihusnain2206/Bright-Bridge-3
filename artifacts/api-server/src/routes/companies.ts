@@ -487,6 +487,7 @@ router.post("/employees", async (req: Request, res: Response) => {
     ssn?: string; dateOfBirth?: string;
     homeAddress?: string; homeCity?: string; homeState?: string; homeZip?: string;
     w4FilingStatus?: string; w4MultipleJobs?: boolean; w4Dependents?: number; w4ExtraWithholding?: number;
+    stateW4Fields?: Record<string, string>;
     bankSetupMethod: "invite" | "manual";
     bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
   };
@@ -557,6 +558,7 @@ router.post("/employees", async (req: Request, res: Response) => {
         w4MultipleJobs: body.w4MultipleJobs,
         w4Dependents: body.w4Dependents,
         w4ExtraWithholding: body.w4ExtraWithholding,
+        stateW4Fields: body.stateW4Fields,
       },
       req.log
     );

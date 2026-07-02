@@ -25,6 +25,9 @@ export interface W4Data {
   dependents: number;
   extraWithholding: number;
   homeState: string;
+  /** State-specific W-4 field values collected from the UI via getStateW4FormFields.
+   *  When present, sent directly to addStateW4Information instead of the hardcoded fallback. */
+  stateW4Fields?: Record<string, string>;
 }
 
 const DEFAULT_W4: W4Data = {
@@ -79,9 +82,12 @@ export async function runEmployeeKycOnboarding(
     log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
   } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
 
-  // State W-4 — only for states that issue their own withholding certificate.
+  // State W-4 — prefer UI-collected dynamic fields (stateW4Fields from getStateW4FormFields);
+  // fall back to the hardcoded builder for states where UI data wasn't provided.
   // States using the federal W-4 (ND, PA, UT) or with no income tax (AK, FL, NV, NH, SD, TN, TX, WA, WY) are skipped.
-  const stateW4Payload = buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
+  const stateW4Payload = (w4.stateW4Fields && Object.keys(w4.stateW4Fields).length > 0)
+    ? w4.stateW4Fields
+    : buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
   if (stateW4Payload) {
     try {
       const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
@@ -89,7 +95,7 @@ export async function runEmployeeKycOnboarding(
         userId: rollfiUserId,
         stateW4Information: stateW4Payload,
       }, { headers });
-      log.info({ rollfiResponse: r.data, homeState: w4.homeState }, "Rollfi addStateW4Information response");
+      log.info({ rollfiResponse: r.data, homeState: w4.homeState, source: w4.stateW4Fields ? "ui-form" : "fallback" }, "Rollfi addStateW4Information response");
     } catch (e) { log.warn({ e }, "addStateW4Information failed (ignoring)"); }
   } else {
     log.info({ homeState: w4.homeState }, "Skipping addStateW4Information — state uses federal W-4 or has no income tax");
@@ -134,6 +140,8 @@ export interface RollfiEmployeeInput {
   w4MultipleJobs?: boolean;
   w4Dependents?: number;
   w4ExtraWithholding?: number;
+  /** State-specific W-4 fields from the UI form — used directly if provided. */
+  stateW4Fields?: Record<string, string>;
 }
 
 /**
@@ -292,6 +300,7 @@ export async function onboardEmployeeToRollfi(
       dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
       extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
       homeState: emp.homeState ?? DEFAULT_W4.homeState,
+      stateW4Fields: emp.stateW4Fields,
     });
 
     await persistRollfiEmployee(emp.id, {
