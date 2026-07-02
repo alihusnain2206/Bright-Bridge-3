@@ -79,16 +79,21 @@ export async function runEmployeeKycOnboarding(
     log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
   } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
 
-  // State W-4 — submit state-specific withholding fields
-  try {
-    const stateW4Payload = buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
-    const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
-      method: "addStateW4Information",
-      employeeId: rollfiUserId,
-      stateW4Information: stateW4Payload,
-    }, { headers });
-    log.info({ rollfiResponse: r.data, homeState: w4.homeState }, "Rollfi addStateW4Information response");
-  } catch (e) { log.warn({ e }, "addStateW4Information failed (ignoring)"); }
+  // State W-4 — only for states that issue their own withholding certificate.
+  // States using the federal W-4 (ND, PA, UT) or with no income tax (AK, FL, NV, NH, SD, TN, TX, WA, WY) are skipped.
+  const stateW4Payload = buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
+  if (stateW4Payload) {
+    try {
+      const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
+        method: "addStateW4Information",
+        employeeId: rollfiUserId,
+        stateW4Information: stateW4Payload,
+      }, { headers });
+      log.info({ rollfiResponse: r.data, homeState: w4.homeState }, "Rollfi addStateW4Information response");
+    } catch (e) { log.warn({ e }, "addStateW4Information failed (ignoring)"); }
+  } else {
+    log.info({ homeState: w4.homeState }, "Skipping addStateW4Information — state uses federal W-4 or has no income tax");
+  }
 
   if (!kycAdded) {
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
@@ -132,15 +137,34 @@ export interface RollfiEmployeeInput {
 }
 
 /**
+ * States that issue their own employee withholding certificate (state W-4).
+ * All other states either have no income tax or instruct employees to use
+ * the federal W-4 — for those, addStateW4Information must NOT be called.
+ *
+ * No income tax (skip): AK, FL, NV, NH, SD, TN, TX, WA, WY
+ * Use federal W-4 (skip): ND, PA, UT
+ */
+const STATES_WITH_OWN_W4 = new Set([
+  "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "GA", "HI",
+  "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA",
+  "MI", "MN", "MS", "MO", "MT", "NE", "NJ", "NM", "NY", "NC",
+  "OH", "OK", "OR", "RI", "SC", "VT", "VA", "WI",
+]);
+
+/**
  * Build the stateW4Information payload for addStateW4Information.
- * Field names are state-specific labels used on the actual state W-4 form.
+ * Returns null when the state uses the federal W-4 or has no income tax
+ * — the caller must skip the API call in that case.
+ * Field names match the labels on the actual state W-4 form.
  */
 function buildStateW4Payload(
   homeState: string,
   filingStatus: string,
   dependents: number,
   additionalWithholding: number
-): Record<string, string> {
+): Record<string, string> | null {
+  if (!STATES_WITH_OWN_W4.has(homeState.toUpperCase())) return null;
+
   const fields: Record<string, string> = {
     "Filing Status": filingStatus,
     "Withholding Allowance": String(dependents),
