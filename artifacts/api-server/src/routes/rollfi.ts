@@ -188,6 +188,27 @@ router.get("/rollfi/status", (_req, res) => {
   });
 });
 
+// ── State W-4 form fields (proxy to Rollfi getStateW4FormFields) ──────────────
+// Returns the dynamic field list for a given state — use this to build the UI
+// form and to know the correct field names for addStateW4Information.
+
+router.get("/rollfi/state-w4-fields/:stateCode", async (req, res) => {
+  const stateCode = (req.params.stateCode ?? "").toUpperCase();
+  if (!stateCode) { res.status(400).json({ error: "stateCode is required" }); return; }
+  try {
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getStateW4FormFields`,
+      { method: "getStateW4FormFields", stateCode },
+      { headers: rollfiHeaders() }
+    );
+    res.json(r.data);
+  } catch (err) {
+    const e = err as { response?: { data: unknown; status?: number } };
+    req.log.error({ err, stateCode }, "getStateW4FormFields failed");
+    res.status(e.response?.status ?? 500).json({ error: "Failed to fetch state W4 fields", details: e.response?.data ?? String(err) });
+  }
+});
+
 // ── Full state (companies + employees + their Rollfi IDs) ────
 
 router.get("/rollfi/state", async (_req, res) => {

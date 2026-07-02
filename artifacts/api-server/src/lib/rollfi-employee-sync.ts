@@ -165,12 +165,20 @@ function buildStateW4Payload(
 ): Record<string, string> | null {
   if (!STATES_WITH_OWN_W4.has(homeState.toUpperCase())) return null;
 
+  // Field name for allowances differs by state — confirmed via getStateW4FormFields.
+  // For production, call getStateW4FormFields dynamically to get the correct field names.
+  const allowancesField: Record<string, string> = {
+    NJ: "Total Allowances",   // NJ-W4 line 4
+    NY: "Withholding Allowance", // NY IT-2104 Box 1
+  };
+  const allowancesKey = allowancesField[homeState.toUpperCase()] ?? "Withholding Allowance";
+
   const fields: Record<string, string> = {
     "Filing Status": filingStatus,
-    "Withholding Allowance": String(dependents),
+    [allowancesKey]: String(dependents),
     "Additional Withholding": additionalWithholding.toFixed(2),
   };
-  // NY residents in NYC / Yonkers have extra local-tax fields — default to 0 in sandbox.
+  // NY residents in NYC / Yonkers have extra local-tax fields — confirmed via getStateW4FormFields.
   if (homeState === "NY") {
     fields["NYC Withholding Allowance"] = "0";
     fields["NYC Additional Withholding"] = "0.00";
