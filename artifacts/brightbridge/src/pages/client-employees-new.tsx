@@ -245,8 +245,7 @@ export default function ClientEmployeesNew() {
         })}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden flex flex-col">
-        <div className="overflow-y-auto flex-1">
+      <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
         {/* ── Step 1 ── */}
         {step === 1 && (
           <div className="px-8 py-6 space-y-4">
@@ -375,7 +374,16 @@ export default function ClientEmployeesNew() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2 space-y-1.5"><Label>Street Address *</Label><Input value={form.homeAddress} onChange={(e) => set("homeAddress", e.target.value)} placeholder="123 Oak Street" /></div>
                 <div className="space-y-1.5"><Label>City *</Label><Input value={form.homeCity} onChange={(e) => set("homeCity", e.target.value)} placeholder="Newark" /></div>
-                <div className="space-y-1.5"><Label>State *</Label><Select value={form.homeState} onValueChange={(v) => set("homeState", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+                <div className="space-y-1.5">
+                  <Label>State *</Label>
+                  <Select value={form.homeState} onValueChange={(v) => set("homeState", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
+                  {STATES_WITH_OWN_W4.has(form.homeState)
+                    ? <p className="text-xs text-green-700 mt-1">✓ State W-4 will also be submitted for {form.homeState}</p>
+                    : NO_INCOME_TAX_STATES.has(form.homeState)
+                    ? <p className="text-xs text-gray-400 mt-1">No state income tax — federal W-4 only</p>
+                    : <p className="text-xs text-gray-400 mt-1">{form.homeState} uses federal W-4 — no separate state form</p>
+                  }
+                </div>
                 <div className="space-y-1.5"><Label>Zip Code *</Label><Input value={form.homeZip} onChange={(e) => set("homeZip", e.target.value)} placeholder="07101" maxLength={5} /></div>
               </div>
             </div>
@@ -395,36 +403,6 @@ export default function ClientEmployeesNew() {
               </div>
             </div>
 
-            {/* State W-4 — conditional on home state */}
-            <div className="border-t pt-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">State W-4 Withholding</p>
-              {STATES_WITH_OWN_W4.has(form.homeState) ? (
-                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-green-50 rounded-xl border border-green-200 text-sm text-green-800">
-                  <span className="mt-0.5 text-base leading-none">✓</span>
-                  <span>
-                    <strong>{form.homeState}</strong> requires a state withholding certificate.
-                    The filing status and withholding amounts above will be submitted to Rollfi as the{" "}
-                    <strong>{form.homeState} state W-4</strong> during onboarding.
-                  </span>
-                </div>
-              ) : NO_INCOME_TAX_STATES.has(form.homeState) ? (
-                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-600">
-                  <span className="mt-0.5 text-base leading-none">—</span>
-                  <span>
-                    <strong>{form.homeState}</strong> has no state income tax — no state W-4 is required.
-                    Only the federal W-4 above will be submitted.
-                  </span>
-                </div>
-              ) : (
-                <div className="flex items-start gap-2.5 px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-200 text-sm text-gray-600">
-                  <span className="mt-0.5 text-base leading-none">—</span>
-                  <span>
-                    <strong>{form.homeState}</strong> uses the federal W-4 for state withholding — no separate
-                    state form is required. Only the federal W-4 above will be submitted.
-                  </span>
-                </div>
-              )}
-            </div>
           </div>
         )}
 
@@ -487,8 +465,6 @@ export default function ClientEmployeesNew() {
             </div>
           </div>
         )}
-
-        </div>{/* end scrollable step content */}
 
         {/* Navigation */}
         <div className="px-8 py-4 border-t bg-gray-50/40 flex items-center justify-between">
