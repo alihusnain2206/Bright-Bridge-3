@@ -255,14 +255,7 @@ export async function onboardEmployeeToRollfi(
       }
     }
 
-    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
-      filingStatus: emp.w4FilingStatus ?? DEFAULT_W4.filingStatus,
-      multipleJobs: emp.w4MultipleJobs ?? DEFAULT_W4.multipleJobs,
-      dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
-      extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
-      homeState: emp.homeState ?? DEFAULT_W4.homeState,
-    });
-
+    // Add wage BEFORE initiating KYC — Rollfi requires wage info to exist first
     const addWageResp = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUserWage`, {
       method: "addUserWage",
       userWage: {
@@ -279,10 +272,19 @@ export async function onboardEmployeeToRollfi(
         paymentMethod: "Direct Deposit",
       },
     }, { headers: rollfiHeaders() });
+    log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
     const wageObj = (addWageRaw.userWage ?? addWageRaw) as Record<string, unknown>;
     const rollfiWageId = (wageObj.userWageId ?? wageObj.id) as string | undefined;
+
+    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
+      filingStatus: emp.w4FilingStatus ?? DEFAULT_W4.filingStatus,
+      multipleJobs: emp.w4MultipleJobs ?? DEFAULT_W4.multipleJobs,
+      dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
+      extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
+      homeState: emp.homeState ?? DEFAULT_W4.homeState,
+    });
 
     await persistRollfiEmployee(emp.id, {
       rollfiUserId,
