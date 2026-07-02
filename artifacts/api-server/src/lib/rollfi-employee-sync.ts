@@ -19,10 +19,27 @@ function randomNineDigits(): string {
   return String(Math.floor(100_000_000 + Math.random() * 900_000_000));
 }
 
+export interface W4Data {
+  filingStatus: string;
+  multipleJobs: boolean;
+  dependents: number;
+  extraWithholding: number;
+  homeState: string;
+}
+
+const DEFAULT_W4: W4Data = {
+  filingStatus: "Single",
+  multipleJobs: false,
+  dependents: 0,
+  extraWithholding: 0,
+  homeState: "NJ",
+};
+
 export async function runEmployeeKycOnboarding(
   rollfiUserId: string,
   rollfiCompanyId: string,
-  log: Logger
+  log: Logger,
+  w4: W4Data = DEFAULT_W4
 ): Promise<void> {
   const headers = rollfiHeaders();
   const ssn = randomNineDigits();
@@ -44,13 +61,34 @@ export async function runEmployeeKycOnboarding(
     kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
   } catch (e) { log.warn({ e }, "addKycInformation failed (ignoring)"); }
 
+  // Federal W-4 — use actual form data, not hardcoded defaults
   try {
     const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addW4Information`, {
       method: "addW4Information",
-      w4Information: { userId: rollfiUserId, w4FilingStatus: "Single", haveMultipleJob: false, dependents: 0, dependentsAbove18: 0, otherIncome: 0, otherDeduction: 0, extraWithholding: 0 },
+      w4Information: {
+        userId: rollfiUserId,
+        w4FilingStatus: w4.filingStatus,
+        haveMultipleJob: w4.multipleJobs,
+        dependents: w4.dependents,
+        dependentsAbove18: 0,
+        otherIncome: 0,
+        otherDeduction: 0,
+        extraWithholding: w4.extraWithholding,
+      },
     }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
   } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
+
+  // State W-4 — submit state-specific withholding fields
+  try {
+    const stateW4Payload = buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
+    const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
+      method: "addStateW4Information",
+      employeeId: rollfiUserId,
+      stateW4Information: stateW4Payload,
+    }, { headers });
+    log.info({ rollfiResponse: r.data, homeState: w4.homeState }, "Rollfi addStateW4Information response");
+  } catch (e) { log.warn({ e }, "addStateW4Information failed (ignoring)"); }
 
   if (!kycAdded) {
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
@@ -85,6 +123,35 @@ export interface RollfiEmployeeInput {
   roleName: string;
   /** wageRate passed to Rollfi addUserWage (preserves the existing unit per call site). */
   wage: number;
+  /** Employee's home state — drives which state W-4 fields are submitted. Defaults to "NJ". */
+  homeState?: string;
+  w4FilingStatus?: string;
+  w4MultipleJobs?: boolean;
+  w4Dependents?: number;
+  w4ExtraWithholding?: number;
+}
+
+/**
+ * Build the stateW4Information payload for addStateW4Information.
+ * Field names are state-specific labels used on the actual state W-4 form.
+ */
+function buildStateW4Payload(
+  homeState: string,
+  filingStatus: string,
+  dependents: number,
+  additionalWithholding: number
+): Record<string, string> {
+  const fields: Record<string, string> = {
+    "Filing Status": filingStatus,
+    "Withholding Allowance": String(dependents),
+    "Additional Withholding": additionalWithholding.toFixed(2),
+  };
+  // NY residents in NYC / Yonkers have extra local-tax fields — default to 0 in sandbox.
+  if (homeState === "NY") {
+    fields["NYC Withholding Allowance"] = "0";
+    fields["NYC Additional Withholding"] = "0.00";
+  }
+  return fields;
 }
 
 export async function onboardEmployeeToRollfi(
@@ -164,7 +231,13 @@ export async function onboardEmployeeToRollfi(
       }
     }
 
-    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log);
+    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
+      filingStatus: emp.w4FilingStatus ?? DEFAULT_W4.filingStatus,
+      multipleJobs: emp.w4MultipleJobs ?? DEFAULT_W4.multipleJobs,
+      dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
+      extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
+      homeState: emp.homeState ?? DEFAULT_W4.homeState,
+    });
 
     const addWageResp = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUserWage`, {
       method: "addUserWage",

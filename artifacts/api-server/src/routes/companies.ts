@@ -552,6 +552,11 @@ router.post("/employees", async (req: Request, res: Response) => {
         email: body.email,
         position: body.position,
         hourlyWageCents,
+        homeState: body.homeState,
+        w4FilingStatus: body.w4FilingStatus,
+        w4MultipleJobs: body.w4MultipleJobs,
+        w4Dependents: body.w4Dependents,
+        w4ExtraWithholding: body.w4ExtraWithholding,
       },
       req.log
     );

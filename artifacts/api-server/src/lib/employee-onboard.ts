@@ -13,6 +13,12 @@ export interface EmployeeSyncInput {
   position: string;
   /** Stored in cents (e.g. 1800 = $18.00/hr). */
   hourlyWageCents: number;
+  /** Employee's home state — used for state W-4 submission. Defaults to "NJ". */
+  homeState?: string;
+  w4FilingStatus?: string;
+  w4MultipleJobs?: boolean;
+  w4Dependents?: number;
+  w4ExtraWithholding?: number;
 }
 
 export interface EmployeeSyncResult {
@@ -59,7 +65,11 @@ export async function syncEmployeeToIntegrations(
   const rollfiCompany = store.getRollfiCompany(emp.companyId);
   if (rollfiCompany) {
     const r = await onboardEmployeeToRollfi(
-      { id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents },
+      {
+        id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents,
+        homeState: emp.homeState, w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
+        w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
+      },
       rollfiCompany,
       log
     );
