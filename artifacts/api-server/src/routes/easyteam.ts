@@ -105,7 +105,7 @@ router.get("/easyteam/employees", (req, res) => {
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
   const employees = users
-    .filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent" && (!u.status || u.status === "active"))
+    .filter((u) => u.employeeId && u.role === "employee" && (!u.status || u.status === "active"))
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
@@ -339,7 +339,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role !== "super_admin" && u.role !== "parent");
+  const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role === "employee");
 
   // Helper: scan exportLog for a matching entry, write to store + persist to DB.
   // Removes the consumed entry from exportLog so stale webhook payloads cannot be

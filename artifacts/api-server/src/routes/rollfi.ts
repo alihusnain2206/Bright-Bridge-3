@@ -1947,7 +1947,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     // Rollfi requires line items before initiatePayroll will accept the request.
     const staffUsers = store
       .getAllStaffUsers()
-      .filter((u) => u.employeeId && u.companyId === companyId && u.role !== "super_admin" && u.role !== "parent");
+      .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
 
     // Re-sync step: after a server restart the in-memory rollfiUserId map may be empty
     // even though employees were previously onboarded.  Do a single getUsers call to
@@ -2396,7 +2396,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       }
 
       const staffUsers = store.getAllStaffUsers().filter(
-        (u) => u.employeeId && u.companyId === company.id && u.role !== "super_admin" && u.role !== "parent"
+        (u) => u.employeeId && u.companyId === company.id && u.role === "employee"
       );
       const onboarded = staffUsers.filter((u) => store.getRollfiEmployee(u.employeeId!)?.rollfiUserId);
       if (onboarded.length === 0) {
@@ -2518,7 +2518,7 @@ router.get("/rollfi/paystubs", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded" }); return; }
 
   const staff = store.getAllStaffUsers().filter(
-    (u) => u.companyId === companyId && u.employeeId && u.role !== "super_admin" && u.role !== "parent"
+    (u) => u.companyId === companyId && u.employeeId && u.role === "employee"
   );
 
   let rollfiEmpDetails: Array<Record<string, unknown>> = [];
