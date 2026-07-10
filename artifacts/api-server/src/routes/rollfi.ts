@@ -2251,6 +2251,240 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
   }
 });
 
+// ── Import payroll data (Step 1 of 2-step payroll flow) ──────
+
+router.post("/rollfi/payroll/import", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+
+  type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
+  const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate, employeeHours = [] } = req.body as {
+    companyId: string; payPeriodId: string; adjustments?: AdjInput[];
+    payBeginDate?: string; payEndDate?: string;
+    employeeHours?: { rollfiUserId: string; hours: number }[];
+  };
+  const frontendHours = new Map<string, number>(
+    employeeHours.map(({ rollfiUserId, hours }) => [rollfiUserId.toUpperCase(), hours])
+  );
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+  try {
+    const staffUsers = store.getAllStaffUsers()
+      .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
+
+    const staffMissingRollfiId = staffUsers.filter((u) => u.employeeId && !store.getRollfiEmployee(u.employeeId)?.rollfiUserId);
+    if (staffMissingRollfiId.length > 0) {
+      try {
+        const usersResp = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        type RollfiUser = { userId: string; email?: string };
+        const rollfiUsers: RollfiUser[] = (usersResp.data as { users?: RollfiUser[] }).users ?? [];
+        for (const u of staffMissingRollfiId) {
+          const found = rollfiUsers.find((ru) => ru.email?.toLowerCase() === u.email.toLowerCase());
+          if (found?.userId) {
+            await persistRollfiEmployee(u.employeeId!, {
+              rollfiUserId: found.userId,
+              rollfiWageId: store.getRollfiEmployee(u.employeeId!)?.rollfiWageId ?? "",
+              onboardedAt: new Date().toISOString(),
+            });
+          }
+        }
+      } catch (syncErr) { req.log.warn({ syncErr }, "Payroll import: getUsers re-sync failed"); }
+    }
+
+    const onboardedStaff = staffUsers.filter((u) => store.getRollfiEmployee(u.employeeId!)?.rollfiUserId);
+    if (onboardedStaff.length === 0) { res.status(400).json({ error: "No onboarded employees found" }); return; }
+
+    const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
+    const dbApprovals = await getLatestTimesheetApprovalsByCompany(companyId);
+    const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
+
+    const payrollData = onboardedStaff.map((u) => {
+      const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
+      const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
+      const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
+      const synced = !approval && u.employeeId
+        ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
+        : null;
+      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
+      const payHours = approval ? approval.approvedHours : (synced ? synced.approvedHours : (frontendH ?? 0));
+      const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
+      if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
+      if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
+      return entry;
+    });
+
+    const employeeNameByRollfiId = new Map<string, string>(
+      onboardedStaff.map((u) => [store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase(), u.name])
+    );
+
+    const zeroHoursIds = new Set<string>(
+      payrollData
+        .filter((entry) => {
+          const hours = (entry.basicPay as Record<string, unknown>)?.payHours as number ?? 0;
+          const bonus = (entry.bonusPay as Record<string, unknown>)?.amount as number ?? 0;
+          return hours === 0 && bonus === 0;
+        })
+        .map((entry) => (entry.userId as string).toUpperCase())
+    );
+
+    const staffToEnroll = onboardedStaff.filter((u) => !zeroHoursIds.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
+
+    const addUsersResp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+      { method: "addUsersToRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, payrollLineItems: staffToEnroll.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, paymentMethod: "Direct Deposit" })) },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod (import step)");
+
+    const UUID_RE = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/gi;
+    const isAlreadyEnrolledErr = (msg: string) => msg.toLowerCase().includes("already has a payroll line item");
+    const addUsersRaw = addUsersResp.data as Record<string, unknown>;
+    const addUsersErrMsg: string = (addUsersRaw?.error as Record<string, unknown>)?.message as string ?? "";
+    const rejectedUuids = new Set<string>(addUsersErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []);
+
+    const skippedEmployees: { rollfiUserId: string; name?: string; type?: "zero_hours" | "onboarding"; reason: string }[] = [];
+    let filteredPayrollData = payrollData;
+    let filteredOnboardedStaff = staffToEnroll;
+
+    if (rejectedUuids.size > 0) {
+      if (isAlreadyEnrolledErr(addUsersErrMsg)) {
+        filteredOnboardedStaff = onboardedStaff.filter((u) => !rejectedUuids.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
+      } else {
+        filteredPayrollData = payrollData.filter((entry) => {
+          const uid = (entry.userId as string).toUpperCase();
+          if (rejectedUuids.has(uid)) { skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg }); return false; }
+          return true;
+        });
+        filteredOnboardedStaff = onboardedStaff.filter((u) => !rejectedUuids.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
+        if (filteredPayrollData.length === 0) {
+          res.status(400).json({ error: "All employees were rejected by Rollfi.", skippedEmployees });
+          return;
+        }
+      }
+      if (filteredOnboardedStaff.length > 0) {
+        const retryResp = await axios.post(
+          `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+          { method: "addUsersToRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, payrollLineItems: filteredOnboardedStaff.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, paymentMethod: "Direct Deposit" })) },
+          { headers: rollfiHeaders() }
+        );
+        const retryRaw = retryResp.data as Record<string, unknown>;
+        const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
+        const retryRejectedUuids = new Set<string>(retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []);
+        if (retryRejectedUuids.size > 0 && !isAlreadyEnrolledErr(retryErrMsg)) {
+          filteredPayrollData = filteredPayrollData.filter((entry) => {
+            const uid = (entry.userId as string).toUpperCase();
+            if (retryRejectedUuids.has(uid)) { skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg }); return false; }
+            return true;
+          });
+        }
+      }
+    }
+
+    filteredPayrollData = filteredPayrollData.filter((entry) => {
+      const uid = (entry.userId as string).toUpperCase();
+      if (zeroHoursIds.has(uid)) {
+        skippedEmployees.push({ rollfiUserId: entry.userId as string, name: employeeNameByRollfiId.get(uid), type: "zero_hours", reason: "No hours or bonus — excluded" });
+        return false;
+      }
+      return true;
+    });
+
+    if (zeroHoursIds.size > 0) {
+      axios.post(`${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
+        { method: "removeUsersFromRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, userIds: [...zeroHoursIds] },
+        { headers: rollfiHeaders() }
+      ).catch((e: unknown) => req.log.warn({ err: e }, "removeUsersFromRegularPayPeriod failed (non-fatal)"));
+    }
+
+    if (filteredPayrollData.length === 0) {
+      res.status(400).json({ error: "No employees have billable hours for this pay period.", skippedEmployees });
+      return;
+    }
+
+    const importResp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+      { method: "importRegularPayrollData", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, payrollData: filteredPayrollData },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: importResp.data }, "Rollfi importRegularPayrollData response");
+    const importRaw = importResp.data as Record<string, unknown>;
+    assertNoRollfiError(importRaw, "importRegularPayrollData");
+
+    // ── Fetch real totals from Rollfi after import ────────────
+    let realTotals: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null = null;
+    try {
+      const detailsResp = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+        { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+        { headers: rollfiHeaders() }
+      );
+      const dr = detailsResp.data as Record<string, unknown>;
+      req.log.info({ detailsRaw: dr }, "getPayPeriodDetails after import");
+      const payDetails = (dr.payDetails ?? dr.employeeDetails ?? []) as Array<Record<string, unknown>>;
+      let grossPay = 0, netPay = 0, employeeTax = 0, employerTax = 0;
+      for (const emp of payDetails) {
+        grossPay    += Number(emp.grossTotal    ?? emp.grossPay   ?? 0);
+        netPay      += Number(emp.netTotal      ?? emp.netPay     ?? 0);
+        const empTaxObj = emp.employeeTax as Record<string, unknown> | undefined;
+        employeeTax += Number(empTaxObj?.employeeTax ?? emp.deductions ?? emp.totalDeductions ?? 0);
+        const erArr = (emp.employerTaxDetails ?? []) as Array<Record<string, unknown>>;
+        employerTax += erArr.reduce((s, t) => s + Number(t.taxAmount ?? 0), 0);
+      }
+      realTotals = {
+        grossPay:    Math.round(grossPay    * 100) / 100,
+        netPay:      Math.round(netPay      * 100) / 100,
+        employeeTax: Math.round(employeeTax * 100) / 100,
+        employerTax: Math.round(employerTax * 100) / 100,
+        totalDebit:  Math.round((grossPay + employerTax) * 100) / 100,
+      };
+    } catch (detailsErr) {
+      req.log.warn({ detailsErr }, "getPayPeriodDetails after import failed — realTotals unavailable");
+    }
+
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");
+    const rollfiMessage = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: rollfiMessage, details: e.response?.data });
+  }
+});
+
+// ── Submit payroll (Step 2 of 2-step payroll flow) ───────────
+
+router.post("/rollfi/payroll/submit", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId, payPeriodId } = req.body as { companyId: string; payPeriodId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+  try {
+    const response = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+      { method: "initiatePayroll", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, runNow: false },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "Rollfi initiatePayroll (submit step)");
+    const raw = response.data as Record<string, unknown>;
+    assertNoRollfiError(raw, "initiatePayroll");
+    res.json({ success: true, ...raw });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi submit step failed");
+    const rollfiMessage = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: rollfiMessage, details: e.response?.data });
+  }
+});
+
 // ── Payroll overview (all companies, current period) ─────────
 
 router.get("/rollfi/payroll/overview", async (req, res) => {

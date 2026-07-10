@@ -44,6 +44,13 @@ interface PayrollResult {
   error?: string;
   skippedEmployees?: { rollfiUserId: string; name?: string; type?: "zero_hours" | "onboarding"; reason: string }[];
 }
+interface ImportResult {
+  success: boolean;
+  payPeriodId: string;
+  skippedEmployees?: { rollfiUserId: string; name?: string; type?: string; reason: string }[];
+  realTotals?: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null;
+  error?: string;
+}
 interface EmpRollfiStatus { rollfiUserId: string; userStatus: string; kycStatus: string; }
 interface CompanyOverview {
   companyId: string; companyName: string; rollfiCompanyId: string;
@@ -757,6 +764,7 @@ export default function Payroll() {
   const [payPeriodFetching, setPayPeriodFetching] = useState(false);
   const [payPeriodCompanyId, setPayPeriodCompanyId] = useState<string>("");
   const [payrollResult, setPayrollResult] = useState<PayrollResult | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [empStatuses, setEmpStatuses] = useState<Record<string, EmpRollfiStatus[]>>({});
   const [empStatusLoading, setEmpStatusLoading] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
@@ -895,11 +903,19 @@ export default function Payroll() {
     },
   });
 
-  const submitPayroll = useMutation({
+  const importHours = useMutation({
     mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
-      api.post<PayrollResult>("/rollfi/payroll/initiate", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
+      api.post<ImportResult>("/rollfi/payroll/import", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
+    onSuccess: (data) => { setImportResult(data); },
+    onError: (e) => { setImportResult({ success: false, payPeriodId: "", error: (e as Error).message }); },
+  });
+
+  const submitPayroll = useMutation({
+    mutationFn: ({ companyId, payPeriodId }: { companyId: string; payPeriodId: string }) =>
+      api.post<PayrollResult>("/rollfi/payroll/submit", { companyId, payPeriodId }),
     onSuccess: (data) => {
       setPayrollResult(data);
+      setImportResult(null);
       setIsPolling(true);
       setTimeout(() => { void fetchPayPeriod(selectedCompanyId); }, 1500);
       void refetchOverview();
@@ -1300,7 +1316,7 @@ export default function Payroll() {
               <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2">
                 <span className="text-white/40 text-xs">Company</span>
                 <select value={selectedCompanyId}
-                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); setSelectedHistoryPeriodId(null); }}
+                  onChange={(e) => { setSelectedCompanyId(e.target.value); setPayrollResult(null); setImportResult(null); setSelectedHistoryPeriodId(null); }}
                   className="bg-transparent text-white text-sm outline-none">
                   <option value="all">All Companies</option>
                   {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1715,18 +1731,25 @@ export default function Payroll() {
                   );
                 })()}
 
-                {/* Submit area — Change 5 (opens confirm dialog) */}
+                {/* Step 1 — Import hours to Rollfi */}
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
-                    disabled={!payPeriod || !preview.allOnboarded || submitPayroll.isPending || selectedCompanyId === "all" || !periodSubmittable}
+                    disabled={!payPeriod || !preview.allOnboarded || importHours.isPending || selectedCompanyId === "all" || !periodSubmittable}
                     onClick={() => {
                       if (payPeriod && selectedCompanyId !== "all" && preview.allOnboarded && periodSubmittable) {
-                        setConfirmOpen(true);
+                        setImportResult(null);
+                        const adjs = Object.entries(adjustments)
+                          .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
+                          .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
+                        const employeeHours = (preview?.employees ?? [])
+                          .filter((e) => e.rollfiUserId && e.netPayableHours > 0)
+                          .map((e) => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
+                        importHours.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, payBeginDate: payPeriod.payBeginDate, payEndDate: payPeriod.payEndDate, adjs, employeeHours });
                       }
                     }}
                     className="gap-2 text-white font-semibold"
                     style={{ background: (!payPeriod || !preview.allOnboarded || selectedCompanyId === "all" || !periodSubmittable) ? "rgba(255,255,255,0.1)" : ORANGE }}>
-                    {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Review & Submit Payroll</>}
+                    {importHours.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Sending to Rollfi…</> : <><Play className="h-4 w-4" /> {importResult?.success ? "Re-import Hours" : "Import Hours to Rollfi"}</>}
                   </Button>
                   {!payPeriod && payPeriodFetching && <p className="text-white/30 text-xs">Fetching pay period…</p>}
                   {!payPeriod && !payPeriodFetching && payPeriodFetchFailed && (
@@ -1739,6 +1762,77 @@ export default function Payroll() {
                   {payPeriod && periodSubmittable && !preview.allOnboarded && <p className="text-white/30 text-xs">All employees must be onboarded first</p>}
                   {selectedCompanyId === "all" && <p className="text-white/30 text-xs">Select a specific company to submit</p>}
                 </div>
+
+                {/* Import result card — shows Rollfi's real computed totals */}
+                {importResult && (
+                  <div className={`rounded-xl border overflow-hidden ${importResult.success ? "border-emerald-500/30" : "border-red-500/30"}`} style={{ background: importResult.success ? "rgba(16,185,129,0.06)" : "rgba(239,68,68,0.06)" }}>
+                    <div className="px-5 py-3 border-b flex items-center justify-between" style={{ borderColor: importResult.success ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)", background: importResult.success ? "rgba(16,185,129,0.08)" : "rgba(239,68,68,0.08)" }}>
+                      <div className="flex items-center gap-2">
+                        {importResult.success
+                          ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                          : <XCircle className="h-4 w-4 text-red-400" />}
+                        <p className="text-white font-semibold text-sm">{importResult.success ? "Hours Imported — Rollfi Computed Totals" : "Import Failed"}</p>
+                      </div>
+                      {importResult.success && <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 font-semibold">✅ Real numbers from Rollfi</span>}
+                    </div>
+                    {importResult.error && <p className="px-5 py-4 text-red-300 text-sm">{importResult.error}</p>}
+                    {importResult.success && importResult.realTotals && (() => {
+                      const t = importResult.realTotals!;
+                      return (
+                        <div className="px-5 py-4 space-y-4">
+                          <div className="grid grid-cols-2 gap-6 text-xs">
+                            <div>
+                              <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employee Payments</p>
+                              <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(t.grossPay)}</span></div>
+                              <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes</span><span className="text-red-300">−{fmtD(t.employeeTax)}</span></div>
+                              <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Net Pay to Staff</span><span className="text-white">{fmtD(t.netPay)}</span></div>
+                            </div>
+                            <div>
+                              <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employer Costs</p>
+                              <div className="flex justify-between py-1 font-semibold"><span className="text-white/60">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(t.employerTax)}</span></div>
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
+                            <div className="px-4 py-3 flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <AlertTriangle className="h-4 w-4 text-amber-400" />
+                                <div>
+                                  <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
+                                  <p className="text-amber-400/60 text-[10px]">Confirmed by Rollfi · Will be debited on pay date</p>
+                                </div>
+                              </div>
+                              <span className="text-amber-300 font-bold text-2xl">{fmtD(t.totalDebit)}</span>
+                            </div>
+                          </div>
+                          {importResult.skippedEmployees && importResult.skippedEmployees.length > 0 && (
+                            <p className="text-amber-400/70 text-xs">⚠ Excluded: {importResult.skippedEmployees.map((e) => e.name ?? e.rollfiUserId).join(", ")}</p>
+                          )}
+                          <div className="pt-1">
+                            <Button
+                              disabled={submitPayroll.isPending}
+                              onClick={() => setConfirmOpen(true)}
+                              className="w-full gap-2 text-white font-semibold"
+                              style={{ background: ORANGE }}>
+                              {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting Payroll…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {importResult.success && !importResult.realTotals && (
+                      <div className="px-5 py-4">
+                        <p className="text-white/50 text-sm mb-4">Hours imported successfully. Real totals not yet available — review the preview above and confirm to continue.</p>
+                        <Button
+                          disabled={submitPayroll.isPending}
+                          onClick={() => setConfirmOpen(true)}
+                          className="w-full gap-2 text-white font-semibold"
+                          style={{ background: ORANGE }}>
+                          {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {payrollResult && (
                   <PayrollResultCard
@@ -1784,8 +1878,8 @@ export default function Payroll() {
         )}
       </div>
 
-      {/* Confirm dialog — Change 5 */}
-      {confirmOpen && preview && payPeriod && (
+      {/* Confirm dialog — Step 2: submit after import */}
+      {confirmOpen && payPeriod && importResult?.success && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setConfirmOpen(false); }}
@@ -1799,75 +1893,67 @@ export default function Payroll() {
               </div>
             </div>
 
-            <div className="px-6 py-4 border-b border-white/10">
-              <p className="text-white/40 text-xs font-bold uppercase tracking-wide mb-3">Employee Summary</p>
-              <div className="space-y-1">
-                {preview.employees.map((emp) => {
-                  const t = calcEmpTax(emp.grossPay);
-                  return (
-                    <div key={emp.employeeId} className="flex items-center justify-between py-1.5 text-sm">
-                      <span className="text-white/70">{emp.name}</span>
-                      <div className="text-right">
-                        <span className="text-emerald-400 font-semibold">{fmtD(emp.grossPay)}</span>
-                        <span className="text-white/30 text-xs ml-2">→ ~{fmtD(t.net)} net</span>
+            {importResult.realTotals ? (
+              <div className="px-6 py-4 border-b border-white/10 space-y-3 text-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                  <span className="text-emerald-400 text-xs font-semibold">Rollfi-confirmed amounts — no estimates</span>
+                </div>
+                <div>
+                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employee Payments</p>
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(importResult.realTotals.grossPay)}</span></div>
+                  <div className="flex justify-between py-0.5"><span className="text-white/50">Total Employee Taxes</span><span className="text-red-300">−{fmtD(importResult.realTotals.employeeTax)}</span></div>
+                  <div className="flex justify-between py-0.5 font-semibold"><span className="text-white/70">Net Pay to Staff</span><span className="text-white">{fmtD(importResult.realTotals.netPay)}</span></div>
+                </div>
+                <div className="border-t border-white/10 pt-2">
+                  <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employer Costs</p>
+                  <div className="flex justify-between py-0.5 font-semibold"><span className="text-white/50">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(importResult.realTotals.employerTax)}</span></div>
+                </div>
+                <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-400" />
+                      <div>
+                        <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
+                        <p className="text-amber-400/60 text-[10px]">Will be debited from your connected bank account</p>
                       </div>
                     </div>
-                  );
-                })}
+                    <span className="text-amber-300 font-bold text-xl">{fmtD(importResult.realTotals.totalDebit)}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-
-            {(() => {
-              const totalGross  = preview.totalGrossPay;
-              const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
-              const totalNet    = r2(totalGross - totalEmpTax);
-              const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
-              const totalErTax  = r2(erByComp.ss + erByComp.med + erByComp.futa + erByComp.nj);
-              const totalDebit  = r2(totalGross + totalErTax);
-              return (
-                <div className="px-6 py-4 border-b border-white/10 space-y-3 text-sm">
-                  <div>
-                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employee Payments</p>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">Total Employee Taxes (est.)</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
-                    <div className="flex justify-between py-0.5 font-semibold"><span className="text-white/70">Total Net to Employees</span><span className="text-white">~{fmtD(totalNet)}</span></div>
-                  </div>
-                  <div className="border-t border-white/10 pt-2">
-                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-1.5">Employer Costs</p>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.ss))}</span></div>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.med))}</span></div>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.futa))}</span></div>
-                    <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(r2(erByComp.nj))}</span></div>
-                  </div>
-                  <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
-                    <div className="px-4 py-3 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className="h-4 w-4 text-amber-400" />
-                        <div>
-                          <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
-                          <p className="text-amber-400/60 text-[10px]">This amount will be debited from your connected bank account</p>
+            ) : preview && (
+              <div className="px-6 py-4 border-b border-white/10 space-y-3 text-sm">
+                <p className="text-white/40 text-xs">Hours were imported. Rollfi totals not available — review the preview above.</p>
+                {(() => {
+                  const totalGross  = preview.totalGrossPay;
+                  const totalEmpTax = r2(preview.employees.reduce((s, e) => s + calcEmpTax(e.grossPay).total, 0));
+                  const totalNet    = r2(totalGross - totalEmpTax);
+                  const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
+                  const totalErTax  = r2(erByComp.ss + erByComp.med + erByComp.futa + erByComp.nj);
+                  const totalDebit  = r2(totalGross + totalErTax);
+                  return (
+                    <>
+                      <div>
+                        <div className="flex justify-between py-0.5"><span className="text-white/50">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(totalGross)}</span></div>
+                        <div className="flex justify-between py-0.5"><span className="text-white/50">Est. Employee Taxes</span><span className="text-red-300">−{fmtD(totalEmpTax)}</span></div>
+                        <div className="flex justify-between py-0.5 font-semibold"><span className="text-white/70">Est. Net to Staff</span><span className="text-white">~{fmtD(totalNet)}</span></div>
+                      </div>
+                      <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
+                        <div className="px-4 py-3 flex items-center justify-between">
+                          <p className="text-amber-300 font-bold text-sm">Est. Total Bank Debit</p>
+                          <span className="text-amber-300 font-bold text-xl">~{fmtD(totalDebit)}</span>
                         </div>
                       </div>
-                      <span className="text-amber-300 font-bold text-xl">~{fmtD(totalDebit)}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+                    </>
+                  );
+                })()}
+              </div>
+            )}
 
             <div className="px-6 py-4">
-              {preview.employees.some((e) => e.hoursSource === "pending_approval") && (
-                <div className="flex items-start gap-2 p-3 rounded-lg border border-amber-500/30 mb-4" style={{ background: "rgba(232,98,42,0.10)" }}>
-                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-amber-300 text-xs font-semibold">Some employees have not been approved yet</p>
-                    <p className="text-amber-300/60 text-xs mt-0.5">The manager for each daycare must pull hours and click <span className="font-semibold">Approve Hours</span> in their dashboard before payroll can be submitted for those employees.</p>
-                  </div>
-                </div>
-              )}
               <p className="text-white/30 text-xs mb-4">
-                ⚠️ If any amounts seem wrong, click Cancel and review before submitting.
-                Tax figures are estimates — exact amounts confirmed by Rollfi after processing.
+                ⚠️ This will finalize and initiate payroll with Rollfi. Hours are already imported — this step cannot be undone.
               </p>
               <div className="flex gap-3">
                 <button
@@ -1880,15 +1966,7 @@ export default function Payroll() {
                   onClick={() => {
                     setConfirmOpen(false);
                     setPayrollResult(null);
-                    const adjs = Object.entries(adjustments)
-                      .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
-                      .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
-                    // Pass hours the UI is displaying so backend can use them even if store has no entry
-                    const companyPreview = preview?.companies?.find((c: { id: string }) => c.id === selectedCompanyId);
-                    const employeeHours = (companyPreview?.employees ?? preview?.employees ?? [])
-                      .filter((e: { rollfiUserId: string | null; netPayableHours: number }) => e.rollfiUserId && e.netPayableHours > 0)
-                      .map((e: { rollfiUserId: string | null; netPayableHours: number }) => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
-                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId, payBeginDate: payPeriod.payBeginDate, payEndDate: payPeriod.payEndDate, adjs, employeeHours });
+                    submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId });
                   }}
                   className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
                   style={{ background: ORANGE }}
