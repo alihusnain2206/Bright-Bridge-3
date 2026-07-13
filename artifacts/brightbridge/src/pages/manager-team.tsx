@@ -1,19 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { ManagerTeamTab } from "@/components/ManagerTeamTab";
 import { Users } from "lucide-react";
 
 export default function ManagerTeam() {
   const { user, company } = useAuth();
-  const [clientId, setClientId] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!user?.companyId) return;
-    fetch(`/api/clients/by-company/${user.companyId}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then((d: { clientId: string } | null) => { if (d?.clientId) setClientId(d.clientId); })
-      .catch(() => {});
-  }, [user?.companyId]);
 
   if (!user?.companyId) return null;
 
@@ -29,7 +20,7 @@ export default function ManagerTeam() {
         </div>
       </div>
 
-      <ManagerTeamTab companyId={user.companyId} clientId={clientId} />
+      <ManagerTeamTab companyId={user.companyId} clientId={user.companyId} />
     </div>
   );
 }

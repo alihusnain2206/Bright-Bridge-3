@@ -703,13 +703,11 @@ export function ManagerTeamTab({ companyId, clientId }: ManagerTeamTabProps) {
           {syncingRollfi ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
           {syncingRollfi ? "Syncing…" : "Sync from Rollfi"}
         </Button>
-        {clientId && (
-          <Link href={`/clients/${clientId}/employees/new`}>
-            <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
-              <Plus className="h-3.5 w-3.5" />Add Team Member
-            </Button>
-          </Link>
-        )}
+        <Link href={`/clients/${clientId ?? companyId}/employees/new`}>
+          <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
+            <Plus className="h-3.5 w-3.5" />Add Team Member
+          </Button>
+        </Link>
       </div>
 
       {/* Employees table */}
@@ -720,8 +718,8 @@ export function ManagerTeamTab({ companyId, clientId }: ManagerTeamTabProps) {
           <p className="text-sm text-gray-400 mt-1 mb-4">
             {employees.length === 0 ? "Add your first team member to get started." : "Try a different search or filter."}
           </p>
-          {employees.length === 0 && clientId && (
-            <Link href={`/clients/${clientId}/employees/new`}>
+          {employees.length === 0 && (
+            <Link href={`/clients/${clientId ?? companyId}/employees/new`}>
               <Button size="sm" className="gap-1.5 text-white border-0" style={{ background: ORANGE }}>
                 <Plus className="h-3.5 w-3.5" />Add First Team Member
               </Button>
