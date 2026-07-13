@@ -33,6 +33,8 @@ export interface LauncherConfig {
   employees: LauncherEmployee[];
   organization: LauncherOrg;
   locations: LauncherLocation[];
+  fromDate?: string; // YYYY-MM-DD — passed as searchParams to run()
+  toDate?: string;   // YYYY-MM-DD
 }
 
 interface LauncherEvent {
@@ -91,7 +93,11 @@ export function useEasyTeamLauncher(
       verbose: true,
     });
 
-    launcher.run(containerId, config.page);
+    // Pass date range as searchParams so EasyTeam's iframe opens on the correct period
+    const dateParams = config.fromDate && config.toDate
+      ? { searchParams: new URLSearchParams({ from: config.fromDate, to: config.toDate }) }
+      : undefined;
+    launcher.run(containerId, config.page, dateParams);
     launcherRef.current = launcher;
 
     // The SDK sets its own iframe height. Override it immediately and after
@@ -103,5 +109,12 @@ export function useEasyTeamLauncher(
     return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [containerId, iframeMinHeight, applyMinHeight]);
 
-  return { launch };
+  const navigateToDate = useCallback((fromDate: string, toDate: string) => {
+    if (!launcherRef.current) return;
+    launcherRef.current.navigate(Pages.TIMESHEET, {
+      searchParams: new URLSearchParams({ from: fromDate, to: toDate }),
+    });
+  }, []);
+
+  return { launch, navigateToDate };
 }

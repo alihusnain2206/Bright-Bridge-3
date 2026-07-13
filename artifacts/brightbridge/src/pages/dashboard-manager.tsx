@@ -111,7 +111,9 @@ export default function ManagerDashboard() {
   // Derived name lookup from live employee list
   const employeeNames = Object.fromEntries(companyEmployees.map((e) => [e.id, e.name]));
 
-  const { launch } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
+  const { launch, navigateToDate } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
+  // Track whether EasyTeam has been launched at least once so we know when auto-navigate is safe
+  const etLaunchedRef = React.useRef(false);
 
   const fetchHours = useCallback(async () => {
     if (!user?.companyId) return;
@@ -189,7 +191,8 @@ export default function ManagerDashboard() {
 
   useEffect(() => { void fetchCompanyEmployees(); }, [fetchCompanyEmployees]);
 
-  // Fetch the company's pay schedule and snap the date range to the current pay period
+  // Fetch the company's pay schedule and snap the date range to the current pay period.
+  // If EasyTeam is already running, also navigate its iframe to the same period.
   useEffect(() => {
     if (!user?.companyId) return;
     fetch(`/api/companies/${user.companyId}/pay-period`, { credentials: "include" })
@@ -198,11 +201,15 @@ export default function ManagerDashboard() {
         if (d.from && d.to) {
           setFromDate(d.from);
           setToDate(d.to);
+          // If EasyTeam iframe is already loaded, navigate it to the correct period too
+          if (etLaunchedRef.current) {
+            navigateToDate(d.from, d.to);
+          }
         }
         if (d.frequency) setPayFrequency(d.frequency);
       })
       .catch(() => { /* keep default week on error */ });
-  }, [user?.companyId]);
+  }, [user?.companyId, navigateToDate]);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -306,7 +313,10 @@ export default function ManagerDashboard() {
         employees: allLaunchEmployees,
         organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations: allLaunchLocations,
+        fromDate,
+        toDate,
       });
+      etLaunchedRef.current = true;
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
