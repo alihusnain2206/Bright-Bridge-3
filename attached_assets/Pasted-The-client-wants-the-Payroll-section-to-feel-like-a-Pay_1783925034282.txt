@@ -1,0 +1,512 @@
+The client wants the Payroll section 
+to feel like a "Payroll Operations 
+Command Center" — not a simple 
+payroll list. The client is competing 
+with ADP, Paychex, Rippling, and 
+Gusto so the design needs to feel 
+professional and data-rich.
+
+We already have these backend 
+endpoints working that provide 
+ALL the data needed:
+
+GET /rollfi/payperiod?companyId=xxx
+→ Returns current unprocessed period
+
+GET /rollfi/payperiod/history?companyId=xxx
+→ Returns processed past periods
+
+GET /rollfi/payperiod/details?companyId=xxx&payPeriodId=xxx
+→ Returns FULL pay period details:
+   total (bank debit), employeeTaxSum,
+   employerTaxSum, isProcessed,
+   payrollLineItems per employee with
+   employeeTaxDetails, employerTaxDetails,
+   netTotal, grossTotal, overTimes,
+   deductions, reimbursements, payDetails
+
+GET /rollfi/payroll/preview?companyId=xxx
+→ Returns employee hours and pay preview
+
+GET /rollfi/payroll/overview
+→ Returns all companies payroll summary
+
+POST /rollfi/payroll/initiate
+→ Submits payroll to Rollfi
+
+GET /rollfi/paystubs?companyId=xxx&payPeriodId=xxx
+→ Returns per employee paystub data
+
+GET /rollfi/company-tasks?companyId=xxx
+→ Returns onboarding/compliance tasks
+
+GET /rollfi/employees/status?companyId=xxx
+→ Returns employee Rollfi activation status
+
+All data is available. This task is 
+about DISPLAYING it professionally.
+
+---
+
+PART 1 — PAYROLL SUB-NAVIGATION
+
+Replace the current simple payroll 
+page with a tabbed layout.
+
+Add tabs at the top of the payroll 
+section:
+
+[Current Payrolls] [Payroll History] 
+[Off-Cycle Payrolls]
+
+Current Payrolls = default active tab
+Shows the main payroll operations view
+
+Payroll History = past processed payrolls
+Uses existing /rollfi/payperiod/history 
+endpoint data
+
+Off-Cycle Payrolls = placeholder tab
+Show "Coming Soon" message for now
+(Rollfi supports this via 
+addSupplementalPayPeriod but UI 
+will be built later)
+
+---
+
+PART 2 — KPI CARDS (top row)
+
+Show 5 cards across the top:
+
+CARD 1 — PAYROLL STATUS:
+Data from: getPayPeriodDetails
+→ PayPeriodStatus field
+Show: "Ready" / "Submitted" / 
+"Processing" / "Completed" / "New"
+Color: Green=Ready/Completed, 
+Amber=Submitted/Processing, 
+Grey=New
+Show pay period dates below
+Link: "View details →"
+
+CARD 2 — PAY PERIOD:
+Data from: getPayPeriodDetails
+→ payBeginDate, payEndDate
+Show: "Jun 14 - Jun 28, 2026"
+Show: frequency (BiWeekly)
+Show: "Funding by [deadline date]"
+Link: "View calendar →"
+
+CARD 3 — PAY DATE:
+Data from: getPayPeriodDetails
+→ payDate
+Show: "Jul 1, 2026"
+Show: "in X days" countdown
+  calculated from today to payDate
+
+CARD 4 — EMPLOYEES TO PAY:
+Data from: getPayPeriodDetails
+→ payrollLineItems.length
+Show: employee count
+Show: "X Active" breakdown
+Link: "View employees →"
+
+CARD 5 — CASH REQUIRED:
+Data from: getPayPeriodDetails
+→ total field (exact bank debit!)
+Show: "$X,XXX.XX"
+Show: "Debit on [payDate]"
+Show: green "Funds available" badge
+  OR amber "Pending" badge based on
+  whether bank account is verified
+Link: "View funding details →"
+
+Style: Each card has an icon at top,
+large number in center, details below,
+link at bottom. Match BrightBridge 
+colors (#1B3A6B deep blue, 
+#0EA5C9 teal).
+
+---
+
+PART 3 — PAYROLL HEALTH AND TIMELINE
+
+Below KPI cards show three columns:
+
+COLUMN 1 — PAYROLL HEALTH SCORE:
+A circular progress indicator 
+showing a percentage.
+
+Calculate from:
+→ Is payroll calculated? (✅ or ❌)
+→ Are all employees onboarded? 
+  (check rollfiUserId exists)
+→ Is bank account verified?
+→ Are state registrations done?
+→ Is payroll approved/submitted?
+
+Each check = percentage of total
+Show: X% with label:
+90-100% = "Excellent" (green)
+70-89% = "Good" (blue)
+50-69% = "Needs Attention" (amber)
+Below 50% = "Critical" (red)
+
+Show: "vs last payroll ↑X%" 
+comparison if history available
+
+COLUMN 2 — PAYROLL TIMELINE:
+A horizontal stepper/progress 
+showing the payroll lifecycle:
+
+Steps:
+1. Hours Imported (from EasyTeam)
+2. Payroll Calculated
+3. Exceptions Reviewed
+4. Payroll Approved
+5. Funding Scheduled
+6. Employees Paid
+7. Taxes Filed
+
+For CURRENT period:
+Completed steps = green checkmark
+Current step = blue active
+Future steps = grey inactive
+
+Show timestamp below completed steps
+if available from activity log.
+
+Link: "View full workflow →"
+
+COLUMN 3 — SMART INSIGHTS:
+Show 3-4 rule-based insights
+calculated from Rollfi data:
+
+INSIGHT RULES:
+IF current grossTotal > last period:
+→ "Cash required increased by 
+   $X,XXX (X.X%)" with amber icon
+
+IF any employee overtimeHours > 0 
+this period but not last:
+→ "Overtime detected this period" 
+   with warning icon
+
+IF new employees added since 
+last payroll:
+→ "X new employees added since 
+   last payroll" with info icon
+
+IF any employee grossTotal differs 
+significantly (>20%) from last period:
+→ "X employees have large pay 
+   variances" with warning icon
+
+Use getPayPeriodDetails for current
+and getProcessedPayperiodsDetails 
+for comparison. If no history exists
+show: "Insights available after first 
+completed payroll"
+
+Link: "View all insights →"
+
+---
+
+PART 4 — CURRENT PAYROLLS TABLE
+
+Main data grid below the health row.
+
+Table columns:
+Pay Period | Pay Date | Employees | 
+Status | Cash Required | Funding Date | 
+Last Updated | Actions
+
+DATA SOURCE:
+Combine results from:
+→ getPayPeriod (current unprocessed)
+→ getProcessedPayperiodsDetails 
+  (recent processed, last 5)
+
+Show most recent periods first.
+Current unprocessed period at top.
+
+STATUS BADGES per row:
+"New" = grey badge
+"Submitted" = amber badge
+"Processing" = blue badge
+"Completed" = green badge
+
+ACTIONS column dropdown per row:
+If status = New:
+→ [Open] [Preview] [Submit]
+
+If status = Submitted:
+→ [View] [Cancel]
+
+If status = Processing:
+→ [View]
+
+If status = Completed:
+→ [View] [Paystubs] [Export]
+
+When "Open" or "View" clicked:
+Expand the row inline OR navigate
+to the detailed payroll view showing
+the employee table, tax breakdown,
+and totals we already built.
+
+When "Paystubs" clicked:
+Show the existing paystub view
+using /rollfi/paystubs endpoint.
+
+---
+
+PART 5 — RIGHT SIDEBAR
+
+Show a fixed right sidebar with 
+three sections:
+
+SECTION 1 — PAYROLL ACTIONS:
+Quick action buttons (vertical list):
+→ Run Payroll Preview
+→ Recalculate Payroll
+→ View Payroll Register
+→ View Audit Log
+→ Export Payroll Summary
+
+Each links to existing functionality
+or shows "Coming Soon" if not built.
+"Run Payroll Preview" opens the 
+existing payroll preview flow.
+
+SECTION 2 — PAYROLL CUTOFF TIMES:
+Show for each pay schedule:
+"BiWeekly: [deadline date/time]"
+Status: "On Track" (green) or
+"Approaching" (amber) or
+"Passed" (red)
+
+Data from: getPayPeriodDetails
+→ deadLineToRunPayroll field
+Calculate: if deadline > 3 days away
+= On Track, < 3 days = Approaching,
+past = Passed
+
+SECTION 3 — UPCOMING DEADLINES:
+Show upcoming payroll-related dates:
+→ Payroll Deadline: [date] [X days]
+→ Pay Date: [date] [X days]
+→ Quarterly 941 Filing: [next 941 date]
+  (fixed dates: Apr 30, Jul 31,
+  Oct 31, Jan 31)
+
+Color: green if > 14 days,
+amber if 3-14 days,
+red if < 3 days
+
+---
+
+PART 6 — BOTTOM WIDGETS
+
+Below the main table show four 
+equal-width cards:
+
+CARD 1 — PAYROLL FUNDING FORECAST:
+Show next 3-4 upcoming pay dates 
+with projected cash required.
+
+Data: use most recent processed 
+payroll total as the projection 
+for upcoming periods.
+
+Format:
+[Pay Date] [Projected Amount]
+Jul 15 → $2,400 (projected)
+Jul 29 → $2,400 (projected)
+Aug 12 → $2,400 (projected)
+
+Link: "View full forecast →"
+
+CARD 2 — PAYROLL VARIANCE:
+Compare current period vs last period.
+
+Calculate:
+currentTotal = current getPayPeriodDetails total
+lastTotal = most recent processed period total
+variance% = ((current - last) / last) * 100
+varianceAmount = current - last
+
+Show: "X.X% Increase/Decrease 
+in Cash Required"
+Show: "$X,XXX Change"
+
+Show top variance drivers if data
+available (overtime increase, 
+new hires, rate changes).
+
+If no history: "Variance available 
+after first completed payroll"
+
+CARD 3 — RECENT PAYROLL ACTIVITY:
+A timeline feed showing recent 
+payroll-related events.
+
+Pull from existing webhook events 
+or activity logs:
+→ "Payroll calculated" [timestamp]
+→ "Payroll submitted" [timestamp]
+→ "Payroll approved" [timestamp]
+→ "Funding scheduled" [timestamp]
+
+Show most recent 5 events.
+Link: "View all activity →"
+
+CARD 4 — EMPLOYEE PAY SUMMARY:
+Quick summary of employee pay 
+for current period:
+
+Data from getPayPeriodDetails:
+Total Gross: sum of grossTotal
+Total Net: sum of netTotal
+Total Employee Tax: employeeTaxSum
+Total Employer Tax: employerTaxSum
+
+Show as a simple 4-line summary.
+
+---
+
+PART 7 — PAYROLL HISTORY TAB
+
+When "Payroll History" tab clicked:
+
+Show a table of ALL processed periods:
+
+Columns:
+Pay Period | Pay Date | Employees | 
+Gross Pay | Net Pay | Total Debit | 
+Status
+
+Data from: 
+getProcessedPayperiodsDetails
+
+Sort by most recent first.
+
+Actions per row:
+→ [View Details] → opens full breakdown
+→ [View Paystubs] → shows employee stubs
+→ [Export] → placeholder for now
+
+---
+
+PART 8 — EXISTING FUNCTIONALITY
+
+KEEP all existing payroll features 
+inside the new layout:
+
+✅ Company selector dropdown
+   (already working, keep it!)
+✅ Pay period dropdown selector
+   (already working with history!)
+✅ Employee payroll preview table
+   with expandable tax breakdown
+✅ Payroll submit with confirmation
+   dialog (already working!)
+✅ Estimated vs confirmed badges
+   (already working!)
+✅ Total Bank Debit display
+   (already working!)
+✅ Paystub view per employee
+   (already working!)
+✅ Employer contributions section
+   (already working!)
+
+These should be accessible from 
+the "Open" or "View" actions in 
+the payroll grid, or from the 
+detailed view when a specific 
+pay period is selected.
+
+---
+
+IMPORTANT TECHNICAL RULES:
+
+1. TypeScript throughout — proper 
+   interfaces for all data types
+
+2. Reuse EXISTING API endpoints ONLY
+   Do NOT create new Rollfi API calls
+   All data is already available!
+
+3. Keep company selector working
+   All data scoped to selected company
+   No cross-company requests!
+   (we just fixed this bug!)
+
+4. No duplicate API calls
+   Single useEffect with proper 
+   dependencies
+   (we just fixed this bug too!)
+
+5. BrightBridge colors:
+   Primary: #1B3A6B (deep blue)
+   Accent: #0EA5C9 (teal)
+   Success: green
+   Warning: amber
+   Error: red
+
+6. Responsive layout — works on 
+   desktop and tablet
+
+7. Loading states for ALL data 
+   fetching sections
+
+8. Error handling — if any API 
+   fails show friendly message 
+   not a blank section
+
+9. All amounts in dollar format
+   $1,234.56 not 123456
+
+10. Keep sandbox banner at top
+
+---
+
+TESTING CHECKLIST:
+
+✅ KPI cards show real data
+   from selected company
+✅ Health score calculates correctly
+✅ Timeline shows current step
+✅ Smart insights generate from
+   real payroll data
+✅ Payroll grid shows current
+   and recent periods
+✅ Status badges color coded
+✅ Row actions work correctly
+✅ Right sidebar shows deadlines
+✅ Bottom widgets show data
+✅ Payroll History tab works
+✅ Company switching still works
+✅ No duplicate API calls
+✅ No cross-company requests
+✅ Existing payroll features
+   still accessible
+✅ Paystub view still works
+✅ Submit payroll still works
+✅ Tax breakdown still works
+✅ Confirmed vs estimated badges
+   still work
+✅ Mobile/tablet responsive
+
+---
+
+DELIVERABLE SUMMARY:
+After building provide:
+1. List of files changed
+2. Confirmation no new API 
+   endpoints were created
+3. Confirmation existing features
+   still work
+4. Any data gaps found where
+   the endpoint does not return
+   enough detail for a widget

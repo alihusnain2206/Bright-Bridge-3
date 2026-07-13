@@ -22,6 +22,7 @@ import Roles from "@/pages/roles";
 import SuperAdminDashboard from "@/pages/dashboard-super-admin";
 import ManagerDashboard from "@/pages/dashboard-manager";
 import ManagerTeam from "@/pages/manager-team";
+import ManagerPayroll from "@/pages/manager-payroll";
 import EmployeeDashboard from "@/pages/dashboard-employee";
 import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
@@ -97,6 +98,9 @@ function Router() {
             </Route>
             <Route path="/my-team">
               <ProtectedRoute component={ManagerTeam} roles={["manager"]} />
+            </Route>
+            <Route path="/manager-payroll">
+              <ProtectedRoute component={ManagerPayroll} roles={["manager"]} />
             </Route>
             <Route path="/dashboard/employee">
               <ProtectedRoute component={EmployeeDashboard} roles={["employee"]} />
