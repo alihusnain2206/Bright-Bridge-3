@@ -362,8 +362,8 @@ function RunPayrollPanel({ companyId, payPeriod, preview, onDone }: {
 
 // ── Payroll Grid ──────────────────────────────────────────────
 
-function PayrollGrid({ companyId, currentPeriod, history, preview, onViewPaystubs }: {
-  companyId: string; currentPeriod?: PayPeriod;
+function PayrollGrid({ companyId, currentPeriod, currentPeriodTotal, history, preview, onViewPaystubs }: {
+  companyId: string; currentPeriod?: PayPeriod; currentPeriodTotal?: number;
   history?: HistoryPeriod[]; preview?: PayrollPreview;
   onViewPaystubs: (payPeriodId: string) => void;
 }) {
@@ -377,7 +377,9 @@ function PayrollGrid({ companyId, currentPeriod, history, preview, onViewPaystub
       id: currentPeriod.payPeriodId, begin: currentPeriod.payBeginDate,
       end: currentPeriod.payEndDate, payDate: currentPeriod.payDate,
       employees: preview?.employees?.filter(e => e.onboardedToRollfi).length ?? 0,
-      status: currentPeriod.payPeriodStatus, total: currentPeriod.payrollAmount ?? 0,
+      status: currentPeriod.payPeriodStatus,
+      // Use corrected total (gross + employer taxes) when available; fall back to payrollAmount
+      total: currentPeriodTotal ?? currentPeriod.payrollAmount ?? 0,
       isCurrent: true,
     });
   }
@@ -686,7 +688,7 @@ function BottomWidgets({ companyId, detail, history, preview }: {
             <div className="flex justify-between"><span className="text-gray-500">Total Net</span><span className="font-semibold">{fmtD(netTotal)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Employee Tax</span><span className="font-semibold">{fmtD(detail?.employeeTaxSum ?? 0)}</span></div>
             <div className="flex justify-between"><span className="text-gray-500">Employer Tax</span><span className="font-semibold">{fmtD(detail?.employerTaxSum ?? 0)}</span></div>
-            {detail?.total && <div className="flex justify-between border-t pt-2 font-bold text-gray-800"><span>Total Debit</span><span>{fmtD(detail.total)}</span></div>}
+            {detail?.total != null && <div className="flex justify-between border-t pt-2 font-bold text-gray-800"><span>Total Debit</span><span>{fmtD((detail.total) + (detail.employerTaxSum ?? 0))}</span></div>}
           </div>
         ) : (
           preview ? (
@@ -837,7 +839,10 @@ export default function ManagerPayroll() {
   const payStatus = detail?.PayPeriodStatus ?? payPeriod?.payPeriodStatus ?? "New";
   const daysToPayDate = daysUntil(payPeriod?.payDate);
   const empCount = detail?.payrollLineItems?.length ?? preview?.employees?.filter(e => e.onboardedToRollfi).length ?? 0;
-  const cashRequired = detail?.total ?? 0;
+  // Cash Required = gross total + employer taxes (matches Rollfi "Debit amount" / "Total cash required")
+  const grossTotal = detail?.total ?? 0;
+  const employerTaxes = detail?.employerTaxSum ?? 0;
+  const cashRequired = grossTotal + employerTaxes;
 
   if (!companyId) return null;
 
@@ -937,7 +942,9 @@ export default function ManagerPayroll() {
                 </div>
               ) : (
                 <PayrollGrid
-                  companyId={companyId} currentPeriod={payPeriod} history={history.slice(0, 5)}
+                  companyId={companyId} currentPeriod={payPeriod}
+                  currentPeriodTotal={cashRequired > 0 ? cashRequired : undefined}
+                  history={history.slice(0, 5)}
                   preview={preview} onViewPaystubs={id => setPaystubsPeriodId(id)}
                 />
               )}
