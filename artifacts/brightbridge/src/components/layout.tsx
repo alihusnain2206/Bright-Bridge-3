@@ -1,16 +1,23 @@
-import React from "react";
-import { Link, useLocation } from "wouter";
+import React, { useState } from "react";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
-  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign, Users, Briefcase,
+  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
+  Users, Briefcase, ChevronDown, ChevronRight,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+
+interface NavSubItem {
+  href: string;
+  label: string;
+}
 
 interface NavItem {
   href: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
+  children?: NavSubItem[];
 }
 
 function getNavItems(role: string | undefined): NavItem[] {
@@ -32,8 +39,17 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
         { href: "/timesheets",            label: "Timesheets",      icon: CalendarDays },
         { href: "/my-team",               label: "My Team",         icon: Users },
-        { href: "/manager-payroll",       label: "Payroll",         icon: Briefcase },
-        { href: "/roles",                 label: "Role Comparison", icon: Scale },
+        {
+          href: "/manager-payroll",
+          label: "Payroll",
+          icon: Briefcase,
+          children: [
+            { href: "/manager-payroll",               label: "Current Payrolls" },
+            { href: "/manager-payroll?tab=history",   label: "Payroll History" },
+            { href: "/manager-payroll?tab=offcycle",  label: "Off-Cycle Payrolls" },
+          ],
+        },
+        { href: "/roles", label: "Role Comparison", icon: Scale },
       ];
     case "employee":
       return [
@@ -60,7 +76,11 @@ const ROLE_COLOR: Record<string, string> = {
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
+  const search = useSearch();
   const navItems = getNavItems(user?.role);
+
+  // Track manually-toggled groups (in addition to auto-expand)
+  const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
 
   const handleLogout = async () => {
     await logout();
@@ -70,6 +90,30 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const isActive = (href: string) => {
     if (href === "/") return location === "/";
     return location.startsWith(href);
+  };
+
+  // An item is expanded if we're on one of its child paths, OR user manually expanded it
+  const isGroupExpanded = (item: NavItem) => {
+    if (!item.children) return false;
+    const onChildPath = location.startsWith(item.href);
+    return onChildPath || manualExpanded.has(item.href);
+  };
+
+  const toggleGroup = (href: string) => {
+    setManualExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(href)) { next.delete(href); } else { next.add(href); }
+      return next;
+    });
+  };
+
+  // Check if a child sub-item is the active one (match path + query param)
+  const isSubItemActive = (childHref: string) => {
+    const [childPath, childQuery] = childHref.split("?");
+    if (location !== childPath) return false;
+    const childTab = new URLSearchParams(childQuery ?? "").get("tab") ?? "current";
+    const currentTab = new URLSearchParams(search).get("tab") ?? "current";
+    return childTab === currentTab;
   };
 
   return (
@@ -107,20 +151,71 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
           {/* Nav items */}
           <nav className="flex-1 px-3 py-4 space-y-0.5">
-            {navItems.map(({ href, label, icon: Icon }) => (
-              <Link key={href} href={href}>
-                <button
-                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
-                    isActive(href)
-                      ? "bg-[#E8622A] text-white shadow-sm"
-                      : "text-white/60 hover:text-white hover:bg-white/10"
-                  }`}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  {label}
-                </button>
-              </Link>
-            ))}
+            {navItems.map((item) => {
+              const { href, label, icon: Icon, children } = item;
+
+              if (!children) {
+                return (
+                  <Link key={href} href={href}>
+                    <button
+                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
+                        isActive(href)
+                          ? "bg-[#E8622A] text-white shadow-sm"
+                          : "text-white/60 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      {label}
+                    </button>
+                  </Link>
+                );
+              }
+
+              // ── Group item with sub-menu ──
+              const expanded = isGroupExpanded(item);
+              const parentActive = isActive(href);
+
+              return (
+                <div key={href}>
+                  {/* Parent row — navigate to href + toggle expand */}
+                  <Link href={href}>
+                    <button
+                      onClick={() => { if (parentActive) toggleGroup(href); }}
+                      className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
+                        parentActive
+                          ? "bg-[#E8622A]/20 text-white"
+                          : "text-white/60 hover:text-white hover:bg-white/10"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" />
+                      <span className="flex-1">{label}</span>
+                      {expanded
+                        ? <ChevronDown className="h-3.5 w-3.5 opacity-60" />
+                        : <ChevronRight className="h-3.5 w-3.5 opacity-40" />}
+                    </button>
+                  </Link>
+
+                  {/* Sub-items */}
+                  {expanded && (
+                    <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-white/10 pl-3">
+                      {children.map(child => (
+                        <Link key={child.href} href={child.href}>
+                          <button
+                            className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                              isSubItemActive(child.href)
+                                ? "bg-[#E8622A] text-white shadow-sm"
+                                : "text-white/50 hover:text-white hover:bg-white/10"
+                            }`}
+                          >
+                            {child.label}
+                          </button>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </nav>
 
           {/* EasyTeam live indicator */}

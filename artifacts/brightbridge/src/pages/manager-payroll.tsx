@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import {
@@ -763,7 +764,23 @@ type TabId = "current" | "history" | "offcycle";
 export default function ManagerPayroll() {
   const { user, company } = useAuth();
   const companyId = user?.companyId ?? "";
-  const [activeTab, setActiveTab] = useState<TabId>("current");
+  const search = useSearch();
+  const [, setLocation] = useLocation();
+
+  // Derive active tab from URL ?tab= query param
+  const tabFromUrl = (new URLSearchParams(search).get("tab") ?? "current") as TabId;
+  const [activeTab, setActiveTab] = useState<TabId>(tabFromUrl);
+
+  // Keep local tab state in sync if URL changes (e.g. clicking nav sub-items)
+  useEffect(() => {
+    setActiveTab(tabFromUrl);
+  }, [tabFromUrl]);
+
+  const handleTabChange = (tab: TabId) => {
+    setActiveTab(tab);
+    setLocation(tab === "current" ? "/manager-payroll" : `/manager-payroll?tab=${tab}`);
+  };
+
   const [paystubsPeriodId, setPaystubsPeriodId] = useState<string | null>(null);
 
   // ── Data fetching ─────────────────────────────────────────
@@ -840,7 +857,7 @@ export default function ManagerPayroll() {
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-gray-200">
         {([ ["current","Current Payrolls"], ["history","Payroll History"], ["offcycle","Off-Cycle"] ] as [TabId,string][]).map(([id, label]) => (
-          <button key={id} onClick={() => setActiveTab(id)}
+          <button key={id} onClick={() => handleTabChange(id)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${activeTab === id ? "border-[#E8622A] text-[#E8622A]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
             {label}
           </button>
