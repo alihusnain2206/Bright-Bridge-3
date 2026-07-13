@@ -627,11 +627,20 @@ router.put("/employees/:employeeId", async (req: Request, res: Response) => {
 });
 
 // ── GET /api/companies/:companyId/pay-period ──────────────────
-// Returns the current pay-period date window based on the company's payFrequency.
-// Used by the manager dashboard to default its date range to the active pay period.
+// Returns the current pay-period date window.
+// Strategy 1: pull exact dates from Rollfi's live pay period (most accurate).
+// Strategy 2: fall back to anchor-based computation from payFrequency alone.
 
-const BIWEEKLY_ANCHOR = new Date("2025-01-06T00:00:00Z"); // Known Monday — biweekly anchor
+const BIWEEKLY_ANCHOR = new Date("2025-01-06T00:00:00Z");
 const MS_PER_DAY = 86400000;
+
+/** Parse any Rollfi date string ("Jul 9, 2026", "2026-07-09", "07/09/2026") to ISO YYYY-MM-DD. */
+function parseRollfiDate(d: string): string | null {
+  if (!d) return null;
+  const parsed = new Date(d);
+  if (!isNaN(parsed.getTime())) return parsed.toISOString().split("T")[0]!;
+  return null;
+}
 
 function computePayPeriod(frequency: string | null | undefined): { from: string; to: string; frequency: string } {
   const fmt = (d: Date) => d.toISOString().split("T")[0]!;
@@ -639,31 +648,20 @@ function computePayPeriod(frequency: string | null | undefined): { from: string;
   const freq = (frequency ?? "weekly").toLowerCase().replace(/[^a-z]/g, "");
 
   if (freq === "biweekly") {
-    // Count 14-day windows from the anchor to find the current period
     const daysSinceAnchor = Math.floor((today.getTime() - BIWEEKLY_ANCHOR.getTime()) / MS_PER_DAY);
     const windowIndex = Math.floor(daysSinceAnchor / 14);
     const from = new Date(BIWEEKLY_ANCHOR.getTime() + windowIndex * 14 * MS_PER_DAY);
     const to   = new Date(from.getTime() + 13 * MS_PER_DAY);
     return { from: fmt(from), to: fmt(to), frequency: "BiWeekly" };
   }
-
   if (freq === "semimonthly") {
     const day = today.getDate();
-    if (day <= 15) {
-      return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(new Date(today.getFullYear(), today.getMonth(), 15)), frequency: "SemiMonthly" };
-    } else {
-      return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 16)), to: fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)), frequency: "SemiMonthly" };
-    }
+    if (day <= 15) return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(new Date(today.getFullYear(), today.getMonth(), 15)), frequency: "SemiMonthly" };
+    return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 16)), to: fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)), frequency: "SemiMonthly" };
   }
-
   if (freq === "monthly") {
-    return {
-      from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)),
-      to:   fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)),
-      frequency: "Monthly",
-    };
+    return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)), frequency: "Monthly" };
   }
-
   // Default: weekly Mon–Sun
   const day = today.getDay();
   const monday = new Date(today);
@@ -677,23 +675,76 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const companyId = String(req.params.companyId);
 
+  // Resolve payFrequency label from DB then store
   let payFrequency: string | null = null;
-
-  // Try DB company first
   try {
     const [row] = await db.select({ payFrequency: companies.payFrequency }).from(companies).where(eq(companies.id, companyId));
     if (row?.payFrequency) payFrequency = row.payFrequency;
-  } catch { /* ignore — fall through to store */ }
-
-  // Fall back to in-memory store company
+  } catch { /* ignore */ }
   if (!payFrequency) {
     const storeCompany = store.getCompanyById(companyId);
     if (storeCompany?.payFrequency) payFrequency = storeCompany.payFrequency;
   }
 
+  // ── Strategy 1: Rollfi live pay period ────────────────────
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (rollfiCompany && ROLLFI_CLIENT_ID && ROLLFI_SECRET_KEY) {
+    try {
+      let rollfiFrom: string | null = null;
+      let rollfiTo: string | null = null;
+
+      // Try getPayPeriod first (recommended by Rollfi docs)
+      try {
+        const gpRes = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+          { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+          { headers: rollfiHeaders() }
+        );
+        const gp = gpRes.data as Record<string, unknown>;
+        if (gp.payPeriodId && gp.payBeginDate) {
+          rollfiFrom = parseRollfiDate(String(gp.payBeginDate));
+          rollfiTo   = gp.payEndDate ? parseRollfiDate(String(gp.payEndDate)) : null;
+        }
+      } catch { /* fall through to getUnProcessedPayPeriod */ }
+
+      // Fallback: getUnProcessedPayPeriod
+      if (!rollfiFrom) {
+        const upRes = await axios.post(
+          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+          { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+          { headers: rollfiHeaders() }
+        );
+        const raw = upRes.data as Record<string, unknown>;
+        const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+        if (periods.length > 0) {
+          // Pick the earliest open period (same logic as /rollfi/payperiod)
+          const STATUS_PRIORITY: Record<string, number> = { preprocess: 0, new: 1, inprocess: 2 };
+          const sorted = [...periods].sort((a, b) => {
+            const ap = STATUS_PRIORITY[String(a.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+            const bp = STATUS_PRIORITY[String(b.payPeriodStatus ?? "").toLowerCase()] ?? 99;
+            if (ap !== bp) return ap - bp;
+            return String(a.payBeginDate ?? "").localeCompare(String(b.payBeginDate ?? ""));
+          });
+          const best = sorted[0]!;
+          rollfiFrom = best.payBeginDate ? parseRollfiDate(String(best.payBeginDate)) : null;
+          rollfiTo   = best.payEndDate   ? parseRollfiDate(String(best.payEndDate))   : null;
+        }
+      }
+
+      if (rollfiFrom && rollfiTo) {
+        req.log.info({ companyId, from: rollfiFrom, to: rollfiTo, source: "rollfi" }, "pay-period from Rollfi");
+        res.json({ companyId, from: rollfiFrom, to: rollfiTo, frequency: payFrequency ?? "BiWeekly", source: "rollfi" });
+        return;
+      }
+    } catch (err) {
+      req.log.warn({ err, companyId }, "pay-period: Rollfi call failed — falling back to anchor computation");
+    }
+  }
+
+  // ── Strategy 2: anchor computation ────────────────────────
   const period = computePayPeriod(payFrequency);
-  req.log.info({ companyId, payFrequency, period }, "pay-period computed");
-  res.json({ companyId, ...period });
+  req.log.info({ companyId, payFrequency, period, source: "computed" }, "pay-period computed from anchor");
+  res.json({ companyId, ...period, source: "computed" });
 });
 
 export default router;
