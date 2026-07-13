@@ -41,6 +41,13 @@ function getCurrentWeek(): { from: string; to: string } {
   return { from: fmt(monday), to: fmt(sunday) };
 }
 
+const FREQ_LABEL: Record<string, string> = {
+  BiWeekly: "Bi-Weekly",
+  Weekly: "Weekly",
+  SemiMonthly: "Semi-Monthly",
+  Monthly: "Monthly",
+};
+
 function formatDateLabel(from: string, to: string): string {
   const f = new Date(from + "T12:00:00");
   const t = new Date(to + "T12:00:00");
@@ -93,6 +100,7 @@ export default function ManagerDashboard() {
   const initWeek = getCurrentWeek();
   const [fromDate, setFromDate] = useState(initWeek.from);
   const [toDate, setToDate] = useState(initWeek.to);
+  const [payFrequency, setPayFrequency] = useState<string | null>(null);
 
   // Build locations for EasyTeam SDK. Use the hardcoded map for known companies; fall back to
   // the location returned by the auth API (set on the manager's user record) so that dynamically-
@@ -180,6 +188,21 @@ export default function ManagerDashboard() {
   }, [user?.companyId]);
 
   useEffect(() => { void fetchCompanyEmployees(); }, [fetchCompanyEmployees]);
+
+  // Fetch the company's pay schedule and snap the date range to the current pay period
+  useEffect(() => {
+    if (!user?.companyId) return;
+    fetch(`/api/companies/${user.companyId}/pay-period`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { from: string; to: string; frequency: string }) => {
+        if (d.from && d.to) {
+          setFromDate(d.from);
+          setToDate(d.to);
+        }
+        if (d.frequency) setPayFrequency(d.frequency);
+      })
+      .catch(() => { /* keep default week on error */ });
+  }, [user?.companyId]);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -337,7 +360,13 @@ export default function ManagerDashboard() {
               </div>
               <p className="text-white/50 text-sm mt-0.5">
                 <Clock className="h-3 w-3 inline mr-1 opacity-50" />
-                <span className="text-white/70 font-medium">{company?.name}</span> · <span className="text-white/70">{formatDateLabel(fromDate, toDate)}</span>
+                <span className="text-white/70 font-medium">{company?.name}</span>
+                {payFrequency && (
+                  <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/10 text-white/60 border border-white/10">
+                    {FREQ_LABEL[payFrequency] ?? payFrequency}
+                  </span>
+                )}
+                {" · "}<span className="text-white/70">{formatDateLabel(fromDate, toDate)}</span>
               </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">

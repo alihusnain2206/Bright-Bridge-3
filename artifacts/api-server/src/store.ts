@@ -33,6 +33,7 @@ export interface Company {
   address?: string;
   latitude?: number;
   longitude?: number;
+  payFrequency?: string; // "BiWeekly" | "Weekly" | "SemiMonthly" | "Monthly"
 }
 
 export interface Location {
@@ -121,9 +122,9 @@ const testUsers: TestUser[] = [
 // ─── COMPANIES ───────────────────────────────────────────────
 
 const companies: Company[] = [
-  { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist", type: "headquarters" },
-  { id: "ORG-SUNSHINE", name: "Sunshine Daycare Centre", type: "daycare", locationId: "LOC-SUNSHINE", address: "123 Main St, Newark NJ", latitude: 40.7357, longitude: -74.1724 },
-  { id: "ORG-RAINBOW", name: "Rainbow Kids Daycare", type: "daycare", locationId: "LOC-RAINBOW", address: "456 Oak Ave, Jersey City NJ", latitude: 40.7178, longitude: -74.0431 },
+  { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist", type: "headquarters", payFrequency: "BiWeekly" },
+  { id: "ORG-SUNSHINE", name: "Sunshine Daycare Centre", type: "daycare", locationId: "LOC-SUNSHINE", address: "123 Main St, Newark NJ", latitude: 40.7357, longitude: -74.1724, payFrequency: "BiWeekly" },
+  { id: "ORG-RAINBOW", name: "Rainbow Kids Daycare", type: "daycare", locationId: "LOC-RAINBOW", address: "456 Oak Ave, Jersey City NJ", latitude: 40.7178, longitude: -74.0431, payFrequency: "BiWeekly" },
 ];
 
 // ─── LOCATIONS ───────────────────────────────────────────────
@@ -144,6 +145,9 @@ const children: Child[] = [
 
 export const store = {
   // ── Auth Users ──
+  getCompanyById(id: string): Company | undefined {
+    return companies.find((c) => c.id === id);
+  },
   getUserByEmail(email: string): TestUser | undefined {
     return testUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
   },

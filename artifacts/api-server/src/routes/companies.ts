@@ -626,4 +626,74 @@ router.put("/employees/:employeeId", async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /api/companies/:companyId/pay-period ──────────────────
+// Returns the current pay-period date window based on the company's payFrequency.
+// Used by the manager dashboard to default its date range to the active pay period.
+
+const BIWEEKLY_ANCHOR = new Date("2025-01-06T00:00:00Z"); // Known Monday — biweekly anchor
+const MS_PER_DAY = 86400000;
+
+function computePayPeriod(frequency: string | null | undefined): { from: string; to: string; frequency: string } {
+  const fmt = (d: Date) => d.toISOString().split("T")[0]!;
+  const today = new Date();
+  const freq = (frequency ?? "weekly").toLowerCase().replace(/[^a-z]/g, "");
+
+  if (freq === "biweekly") {
+    // Count 14-day windows from the anchor to find the current period
+    const daysSinceAnchor = Math.floor((today.getTime() - BIWEEKLY_ANCHOR.getTime()) / MS_PER_DAY);
+    const windowIndex = Math.floor(daysSinceAnchor / 14);
+    const from = new Date(BIWEEKLY_ANCHOR.getTime() + windowIndex * 14 * MS_PER_DAY);
+    const to   = new Date(from.getTime() + 13 * MS_PER_DAY);
+    return { from: fmt(from), to: fmt(to), frequency: "BiWeekly" };
+  }
+
+  if (freq === "semimonthly") {
+    const day = today.getDate();
+    if (day <= 15) {
+      return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)), to: fmt(new Date(today.getFullYear(), today.getMonth(), 15)), frequency: "SemiMonthly" };
+    } else {
+      return { from: fmt(new Date(today.getFullYear(), today.getMonth(), 16)), to: fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)), frequency: "SemiMonthly" };
+    }
+  }
+
+  if (freq === "monthly") {
+    return {
+      from: fmt(new Date(today.getFullYear(), today.getMonth(), 1)),
+      to:   fmt(new Date(today.getFullYear(), today.getMonth() + 1, 0)),
+      frequency: "Monthly",
+    };
+  }
+
+  // Default: weekly Mon–Sun
+  const day = today.getDay();
+  const monday = new Date(today);
+  monday.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return { from: fmt(monday), to: fmt(sunday), frequency: "Weekly" };
+}
+
+router.get("/companies/:companyId/pay-period", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const companyId = String(req.params.companyId);
+
+  let payFrequency: string | null = null;
+
+  // Try DB company first
+  try {
+    const [row] = await db.select({ payFrequency: companies.payFrequency }).from(companies).where(eq(companies.id, companyId));
+    if (row?.payFrequency) payFrequency = row.payFrequency;
+  } catch { /* ignore — fall through to store */ }
+
+  // Fall back to in-memory store company
+  if (!payFrequency) {
+    const storeCompany = store.getCompanyById(companyId);
+    if (storeCompany?.payFrequency) payFrequency = storeCompany.payFrequency;
+  }
+
+  const period = computePayPeriod(payFrequency);
+  req.log.info({ companyId, payFrequency, period }, "pay-period computed");
+  res.json({ companyId, ...period });
+});
+
 export default router;
