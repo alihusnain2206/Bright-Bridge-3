@@ -95,8 +95,9 @@ function StatusBadge({ status }: { status: string }) {
 interface KpiCardProps {
   icon: React.ReactNode; label: string; value: string;
   sub1?: string; sub2?: string; accent?: string; loading?: boolean;
+  onAction?: () => void; actionLabel?: string;
 }
-function KpiCard({ icon, label, value, sub1, sub2, accent = "#284362", loading }: KpiCardProps) {
+function KpiCard({ icon, label, value, sub1, sub2, accent = "#284362", loading, onAction, actionLabel }: KpiCardProps) {
   return (
     <div className="bg-white rounded-xl border shadow-sm p-4 flex flex-col gap-2">
       <div className="flex items-center justify-between">
@@ -110,6 +111,11 @@ function KpiCard({ icon, label, value, sub1, sub2, accent = "#284362", loading }
       )}
       {sub1 && <div className="text-xs text-gray-500">{sub1}</div>}
       {sub2 && <div className="text-xs font-medium" style={{ color: accent }}>{sub2}</div>}
+      {onAction && actionLabel && (
+        <button onClick={onAction} className="flex items-center gap-1 text-xs font-semibold mt-1 w-fit" style={{ color: accent }}>
+          {actionLabel} <ArrowRight className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -478,43 +484,232 @@ function PayrollGrid({ companyId, currentPeriod, currentPeriodTotal, history, pr
 
 // ── Paystubs Modal ────────────────────────────────────────────
 
+interface TaxRow { taxName: string; taxAmount: number; taxAmountYtd: number; isEmployerTax: boolean }
 interface PayStub {
-  name: string; position: string; grossPay: number; netPay: number;
-  federalTax: number; stateTax: number; fica: number; hoursWorked: number;
+  employeeId?: string | null; rollfiUserId?: string | null;
+  name: string; position: string; hourlyRate: number; hoursWorked: number;
+  grossPay: number; baseTotal: number | null; netPay: number;
+  federalTax: number; stateTax: number; fica: number; deductions: number; ytdGross: number;
+  fromRollfi: boolean; isProcessed: boolean;
+  employeeTaxDetails: TaxRow[] | null;
+  employerTaxDetails: TaxRow[] | null;
+  additionalCompensations: { payrollLineItemAdditionalCompensationVertexCompensationIdentifier: { compensationDescription: string }; amount: number }[] | null;
+  overTimes: { type: string; amount: number; numberOfHours: number }[] | null;
 }
-interface PayStubsData { stubs: PayStub[] }
+interface PayStubsData {
+  payPeriodId: string | null; stubs: PayStub[];
+  periodTotal: number | null; employeeTaxSum: number | null; employerTaxSum: number | null;
+  isProcessed: boolean;
+}
 
-function PaystubsModal({ companyId, payPeriodId, onClose }: { companyId: string; payPeriodId: string; onClose: () => void }) {
+// ── Employee Detail Modal ─────────────────────────────────────
+
+function EmployeeDetailModal({ stub, payDate, periodLabel, onBack }: {
+  stub: PayStub; payDate?: string; periodLabel?: string; onBack: () => void;
+}) {
+  const totalEmpTax = (stub.employeeTaxDetails ?? []).reduce((s, t) => s + t.taxAmount, 0);
+  const totalErTax = (stub.employerTaxDetails ?? []).reduce((s, t) => s + t.taxAmount, 0);
+  const addComp = (stub.additionalCompensations ?? []).reduce((s, a) => s + a.amount, 0);
+
+  return (
+    <div className="overflow-y-auto px-6 pb-6">
+      {/* Back */}
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-[#284362] hover:underline mb-4 mt-2">
+        ← Back to employees
+      </button>
+
+      {/* Name + period */}
+      <h4 className="font-bold text-gray-900 text-base mb-1">
+        {stub.name}&apos;s Payroll Details
+      </h4>
+      {periodLabel && <p className="text-xs text-gray-400 mb-4">{periodLabel}</p>}
+
+      {/* Summary row */}
+      <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="bg-gray-50 rounded-lg p-3">
+          <div className="text-xs text-gray-500 mb-0.5">Base Earnings</div>
+          <div className="text-xl font-bold text-gray-900">{fmtD(stub.baseTotal ?? stub.grossPay)}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-3">
+          <div className="text-xs text-gray-500 mb-0.5">Gross Earnings</div>
+          <div className="text-xl font-bold text-gray-900">{fmtD(stub.grossPay + addComp)}</div>
+        </div>
+        <div className="bg-gray-50 rounded-lg p-3">
+          <div className="text-xs text-gray-500 mb-0.5">Net Earnings</div>
+          <div className="text-xl font-bold text-emerald-600">{fmtD(stub.netPay)}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-4 mb-6 text-xs">
+        <div><span className="text-gray-500">Regular Hours</span><br /><span className="font-semibold text-gray-800">{stub.hoursWorked}</span></div>
+        <div><span className="text-gray-500">Total Hours</span><br /><span className="font-semibold text-gray-800">{stub.hoursWorked}</span></div>
+        <div><span className="text-gray-500">Pay Date</span><br /><span className="font-semibold text-gray-800">{fmtDate(payDate)}</span></div>
+      </div>
+
+      {/* Employee Taxes */}
+      <div className="border rounded-lg overflow-hidden mb-4">
+        <div className="bg-gray-50 px-4 py-2.5 border-b">
+          <span className="font-semibold text-gray-800 text-sm">Employee Taxes</span>
+          <span className="ml-auto float-right font-semibold text-gray-800 text-sm">Total</span>
+        </div>
+        {stub.employeeTaxDetails && stub.employeeTaxDetails.length > 0 ? (
+          stub.employeeTaxDetails.map((t, i) => (
+            <div key={i} className="flex justify-between px-4 py-2.5 border-b last:border-b-0 text-sm">
+              <span className="text-gray-700">{t.taxName}</span>
+              <span className="font-medium text-gray-900">{fmtD(t.taxAmount)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="px-4 py-3 text-xs text-gray-400">
+            {stub.fromRollfi
+              ? "No employee tax details returned by Rollfi for this period."
+              : "Employee not yet processed in Rollfi."}
+          </div>
+        )}
+        <div className="flex justify-between px-4 py-2.5 bg-gray-50 border-t font-bold text-sm">
+          <span>Total</span><span>{fmtD(totalEmpTax)}</span>
+        </div>
+      </div>
+
+      {/* Employer Taxes */}
+      <div className="border rounded-lg overflow-hidden">
+        <div className="bg-gray-50 px-4 py-2.5 border-b">
+          <span className="font-semibold text-gray-800 text-sm">Employer Taxes</span>
+          <span className="ml-auto float-right font-semibold text-gray-800 text-sm">Total</span>
+        </div>
+        {stub.employerTaxDetails && stub.employerTaxDetails.length > 0 ? (
+          stub.employerTaxDetails.map((t, i) => (
+            <div key={i} className="flex justify-between px-4 py-2.5 border-b last:border-b-0 text-sm">
+              <span className="text-gray-700">{t.taxName}</span>
+              <span className="font-medium text-gray-900">{fmtD(t.taxAmount)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="px-4 py-3 text-xs text-gray-400">No employer tax details available.</div>
+        )}
+        <div className="flex justify-between px-4 py-2.5 bg-gray-50 border-t font-bold text-sm">
+          <span>Total</span><span>{fmtD(totalErTax)}</span>
+        </div>
+      </div>
+
+      {/* Additional Compensations */}
+      {stub.additionalCompensations && stub.additionalCompensations.length > 0 && (
+        <div className="border rounded-lg overflow-hidden mt-4">
+          <div className="bg-gray-50 px-4 py-2.5 border-b font-semibold text-gray-800 text-sm">Additional Compensation</div>
+          {stub.additionalCompensations.map((a, i) => (
+            <div key={i} className="flex justify-between px-4 py-2.5 border-b last:border-b-0 text-sm">
+              <span className="text-gray-700">{a.payrollLineItemAdditionalCompensationVertexCompensationIdentifier.compensationDescription}</span>
+              <span className="font-medium">{fmtD(a.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Employees Panel (list → detail) ───────────────────────────
+
+function EmployeesPanel({ companyId, payPeriodId, payDate, periodLabel, onClose }: {
+  companyId: string; payPeriodId: string; payDate?: string; periodLabel?: string; onClose: () => void;
+}) {
+  const [selectedStub, setSelectedStub] = useState<PayStub | null>(null);
+
   const { data, isLoading, isError } = useQuery({
     queryKey: ["mgr-paystubs", companyId, payPeriodId],
     queryFn: () => api.get<PayStubsData>(`/rollfi/paystubs?companyId=${companyId}&payPeriodId=${encodeURIComponent(payPeriodId)}`),
   });
+
+  const periodTotal = data?.periodTotal ?? 0;
+  const employerTaxSum = data?.employerTaxSum ?? 0;
+  const employeeTaxSum = data?.employeeTaxSum ?? 0;
+  const totalDebit = periodTotal + employerTaxSum;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
-          <h3 className="font-bold text-gray-900">Paystubs</h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl leading-none">×</button>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col">
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+          <div>
+            <h3 className="font-bold text-gray-900">{selectedStub ? selectedStub.name : "Employees to Pay"}</h3>
+            {periodLabel && <p className="text-xs text-gray-400 mt-0.5">{periodLabel}</p>}
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
-        <div className="overflow-y-auto p-6">
-          {isLoading && <div className="text-center py-8 text-gray-400"><Loader2 className="h-6 w-6 animate-spin mx-auto" /></div>}
-          {isError && <p className="text-red-500 text-sm">Failed to load paystubs.</p>}
-          {data?.stubs?.map((s, i) => (
-            <div key={i} className="border rounded-lg p-4 mb-3">
-              <div className="flex justify-between mb-2">
-                <div><div className="font-semibold text-gray-900">{s.name}</div><div className="text-xs text-gray-500">{s.position}</div></div>
-                <div className="text-right"><div className="font-bold text-gray-900">{fmtD(s.netPay)} net</div><div className="text-xs text-gray-500">{fmtD(s.grossPay)} gross</div></div>
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-xs text-gray-600">
-                <div>Hours: <span className="font-medium">{s.hoursWorked}h</span></div>
-                <div>Federal Tax: <span className="font-medium">{fmtD(s.federalTax)}</span></div>
-                <div>State Tax: <span className="font-medium">{fmtD(s.stateTax)}</span></div>
-                <div>FICA: <span className="font-medium">{fmtD(s.fica)}</span></div>
-              </div>
+
+        {isLoading && (
+          <div className="flex-1 flex items-center justify-center text-gray-400">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+        )}
+        {isError && <div className="p-6 text-red-500 text-sm">Failed to load employee data.</div>}
+
+        {/* Detail view */}
+        {selectedStub && data && (
+          <EmployeeDetailModal
+            stub={selectedStub} payDate={payDate}
+            periodLabel={periodLabel}
+            onBack={() => setSelectedStub(null)}
+          />
+        )}
+
+        {/* List view */}
+        {!selectedStub && data && (
+          <>
+            {/* Period summary banner */}
+            <div className="grid grid-cols-4 gap-px bg-gray-100 border-b shrink-0">
+              {[
+                { label: "Total employer taxes", value: fmtD(employerTaxSum) },
+                { label: "Total cash required", value: fmtD(totalDebit), highlight: true },
+                { label: "Total deductions", value: fmtD(employeeTaxSum) },
+                { label: "Debit amount", value: fmtD(totalDebit), highlight: true },
+              ].map(item => (
+                <div key={item.label} className="bg-white px-4 py-3">
+                  <div className="text-[11px] text-gray-400">{item.label}</div>
+                  <div className={`text-lg font-bold ${item.highlight ? "text-[#284362]" : "text-gray-800"}`}>{item.value}</div>
+                </div>
+              ))}
             </div>
-          ))}
-          {data && data.stubs?.length === 0 && <p className="text-gray-400 text-sm text-center py-4">No paystub data available for this period.</p>}
-        </div>
+
+            {/* Employee table */}
+            <div className="overflow-y-auto flex-1">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50 border-b">
+                  <tr>
+                    {["Name", "Base Pay", "Employer Tax", "Additional Comp", "Deductions", "Subtotal"].map(h => (
+                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-gray-500">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {data.stubs.map((stub, i) => {
+                    const addComp = (stub.additionalCompensations ?? []).reduce((s, a) => s + a.amount, 0);
+                    const erTax = (stub.employerTaxDetails ?? []).reduce((s, t) => s + t.taxAmount, 0);
+                    const subtotal = stub.grossPay + erTax + addComp;
+                    return (
+                      <tr key={i}
+                        onClick={() => setSelectedStub(stub)}
+                        className="hover:bg-blue-50 cursor-pointer transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="font-semibold text-gray-900">{stub.name}</div>
+                          <div className="text-xs text-gray-400">{stub.position}</div>
+                        </td>
+                        <td className="px-4 py-3 text-gray-700">{fmtD(stub.baseTotal ?? stub.grossPay)}</td>
+                        <td className="px-4 py-3 text-gray-700">{fmtD(erTax)}</td>
+                        <td className="px-4 py-3 text-gray-700">{fmtD(addComp)}</td>
+                        <td className="px-4 py-3 text-gray-700">{fmtD(stub.deductions)}</td>
+                        <td className="px-4 py-3 font-semibold text-gray-900">{fmtD(subtotal)}</td>
+                      </tr>
+                    );
+                  })}
+                  {data.stubs.length === 0 && (
+                    <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-400 text-sm">No employee data for this period.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -706,7 +901,7 @@ function BottomWidgets({ companyId, detail, history, preview }: {
 // ── History Tab ───────────────────────────────────────────────
 
 function HistoryTab({ companyId, history, onViewPaystubs }: {
-  companyId: string; history?: HistoryPeriod[]; onViewPaystubs: (id: string) => void;
+  companyId: string; history?: HistoryPeriod[]; onViewPaystubs: (id: string, payDate?: string, label?: string) => void;
 }) {
   if (!history || history.length === 0) return (
     <div className="text-center py-20 text-gray-400 text-sm">No processed payroll periods found yet.</div>
@@ -728,22 +923,29 @@ function HistoryTab({ companyId, history, onViewPaystubs }: {
           {history.map((h, i) => {
             const id = String(h.payPeriodId ?? h.payBeginDate ?? i);
             const status = String(h.payPeriodStatus ?? "processed");
+            // total = gross pay from Rollfi; debit = gross + employer taxes
             const total = (h.total as number | undefined) ?? (h.payrollAmount as number | undefined) ?? 0;
+            const erTax = (h.employerTaxSum as number | undefined) ?? 0;
+            const debit = total + erTax;
             return (
               <tr key={id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-4 py-3 text-xs text-gray-700 font-medium">
                   {fmtDate(String(h.payBeginDate ?? ""))} – {fmtDate(String(h.payEndDate ?? ""))}
                 </td>
                 <td className="px-4 py-3 text-xs text-gray-600">{fmtDate(String(h.payDate ?? ""))}</td>
-                <td className="px-4 py-3 text-right text-xs font-semibold text-gray-800">{total > 0 ? fmtD(total * 0.85) : "—"}</td>
-                <td className="px-4 py-3 text-right text-xs font-semibold text-gray-900">{total > 0 ? fmtD(total) : "—"}</td>
+                <td className="px-4 py-3 text-right text-xs font-semibold text-gray-800">{total > 0 ? fmtD(total) : "—"}</td>
+                <td className="px-4 py-3 text-right text-xs font-semibold text-gray-900">{debit > 0 ? fmtD(debit) : total > 0 ? fmtD(total) : "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={status} /></td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-center gap-1.5">
                     <button
-                      onClick={() => onViewPaystubs(id)}
+                      onClick={() => onViewPaystubs(
+                        id,
+                        String(h.payDate ?? ""),
+                        `${fmtDate(String(h.payBeginDate ?? ""))} – ${fmtDate(String(h.payEndDate ?? ""))}`
+                      )}
                       className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium bg-[#284362]/10 text-[#284362] hover:bg-[#284362]/20 transition-colors">
-                      <Receipt className="h-3 w-3" />Paystubs
+                      <Users className="h-3 w-3" />View Employees
                     </button>
                     <button className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium bg-gray-100 text-gray-500 cursor-not-allowed opacity-60">
                       <Download className="h-3 w-3" />Export
@@ -783,7 +985,17 @@ export default function ManagerPayroll() {
     setLocation(tab === "current" ? "/manager-payroll" : `/manager-payroll?tab=${tab}`);
   };
 
-  const [paystubsPeriodId, setPaystubsPeriodId] = useState<string | null>(null);
+  // Employees panel state — stores the period to show, its pay date, and a label
+  const [empsPanelPeriodId, setEmpsPanelPeriodId] = useState<string | null>(null);
+  const [empsPanelPayDate, setEmpsPanelPayDate] = useState<string | undefined>(undefined);
+  const [empsPanelLabel, setEmpsPanelLabel] = useState<string | undefined>(undefined);
+
+  const openEmpsPanel = (periodId: string, pd?: string, label?: string) => {
+    setEmpsPanelPeriodId(periodId);
+    setEmpsPanelPayDate(pd);
+    setEmpsPanelLabel(label);
+  };
+  const closeEmpsPanel = () => { setEmpsPanelPeriodId(null); setEmpsPanelPayDate(undefined); setEmpsPanelLabel(undefined); };
 
   // ── Data fetching ─────────────────────────────────────────
 
@@ -880,7 +1092,7 @@ export default function ManagerPayroll() {
 
       {/* ── History Tab ── */}
       {activeTab === "history" && (
-        <HistoryTab companyId={companyId} history={history} onViewPaystubs={id => setPaystubsPeriodId(id)} />
+        <HistoryTab companyId={companyId} history={history} onViewPaystubs={(id, pd, label) => openEmpsPanel(id, pd, label)} />
       )}
 
       {/* ── Current Tab ── */}
@@ -914,6 +1126,12 @@ export default function ManagerPayroll() {
               value={loadingPreview || loadingDetail ? "…" : String(empCount || "—")}
               sub1={statuses.filter(e => e.userStatus.toLowerCase() === "active").length > 0 ? `${statuses.filter(e => e.userStatus.toLowerCase() === "active").length} Active` : undefined}
               accent="#284362" loading={loadingPreview && loadingDetail}
+              onAction={payPeriod?.payPeriodId ? () => openEmpsPanel(
+                payPeriod.payPeriodId,
+                payPeriod.payDate,
+                `${fmtDate(payPeriod.payBeginDate)} – ${fmtDate(payPeriod.payEndDate)}`
+              ) : undefined}
+              actionLabel={payPeriod?.payPeriodId ? "View employees" : undefined}
             />
             <KpiCard
               icon={<DollarSign className="h-4 w-4" />} label="Cash Required"
@@ -945,7 +1163,11 @@ export default function ManagerPayroll() {
                   companyId={companyId} currentPeriod={payPeriod}
                   currentPeriodTotal={cashRequired > 0 ? cashRequired : undefined}
                   history={history.slice(0, 5)}
-                  preview={preview} onViewPaystubs={id => setPaystubsPeriodId(id)}
+                  preview={preview} onViewPaystubs={id => openEmpsPanel(
+                    id,
+                    payPeriod?.payDate,
+                    payPeriod ? `${fmtDate(payPeriod.payBeginDate)} – ${fmtDate(payPeriod.payEndDate)}` : undefined
+                  )}
                 />
               )}
             </div>
@@ -957,9 +1179,15 @@ export default function ManagerPayroll() {
         </>
       )}
 
-      {/* Paystubs modal */}
-      {paystubsPeriodId && (
-        <PaystubsModal companyId={companyId} payPeriodId={paystubsPeriodId} onClose={() => setPaystubsPeriodId(null)} />
+      {/* Employees panel */}
+      {empsPanelPeriodId && (
+        <EmployeesPanel
+          companyId={companyId}
+          payPeriodId={empsPanelPeriodId}
+          payDate={empsPanelPayDate}
+          periodLabel={empsPanelLabel}
+          onClose={closeEmpsPanel}
+        />
       )}
     </div>
   );
