@@ -47,6 +47,7 @@ function getNavItems(role: string | undefined): NavItem[] {
             { href: "/manager-payroll",               label: "Current Payrolls" },
             { href: "/manager-payroll?tab=history",   label: "Payroll History" },
             { href: "/manager-payroll?tab=offcycle",  label: "Off-Cycle Payrolls" },
+            { href: "/manager-payroll/submit",        label: "Submit Payroll" },
           ],
         },
         { href: "/roles", label: "Role Comparison", icon: Scale },
