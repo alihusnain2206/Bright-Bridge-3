@@ -549,9 +549,13 @@ interface EasyTeamShift {
   active?: boolean;
 }
 
-/** Returns worked minutes for a timesheet entry. Prefers startTime/endTime arithmetic
- *  because EasyTeam's `payableDuration` field is in milliseconds (not minutes). */
+/** Returns worked minutes for a timesheet entry. Prefers payableDuration (EasyTeam's
+ *  net payable time, matching what the iframe displays) over raw clock arithmetic.
+ *  payableDuration is in milliseconds when > 10000, otherwise already in minutes. */
 function shiftDurationMinutes(s: EasyTeamShift): number {
+  if (s.payableDuration != null && s.payableDuration > 0) {
+    return s.payableDuration > 10000 ? s.payableDuration / 60000 : s.payableDuration;
+  }
   if (s.startTime && s.endTime) {
     const norm = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
     const start = new Date(norm(s.startTime));
@@ -559,9 +563,6 @@ function shiftDurationMinutes(s: EasyTeamShift): number {
     if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
       return (end.getTime() - start.getTime()) / 60000;
     }
-  }
-  if (s.payableDuration != null && s.payableDuration > 0) {
-    return s.payableDuration > 10000 ? s.payableDuration / 60000 : s.payableDuration;
   }
   return 0;
 }
