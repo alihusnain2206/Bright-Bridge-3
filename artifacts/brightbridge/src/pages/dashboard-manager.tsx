@@ -58,6 +58,13 @@ const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitu
   "ORG-RAINBOW": [{ id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 }],
 };
 
+// All static known locations — always passed to EasyTeam SDK so it has valid location data.
+// The JWT's locationId scopes what the manager can actually see.
+const ALL_STATIC_LOCATIONS = [
+  { id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 },
+  { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
+];
+
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
@@ -204,21 +211,62 @@ export default function ManagerDashboard() {
     setTokenLoading(true);
     setTokenError("");
     try {
-      const res = await fetch("/api/auth/token-by-role", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
-      const data = await res.json() as TokenData;
-      if (!res.ok) { setTokenError("Token generation failed"); return; }
+      // Fetch token and fresh employees in parallel
+      const [tokenRes, freshEmployees] = await Promise.all([
+        fetch("/api/auth/token-by-role", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id }),
+        }),
+        fetchCompanyEmployees(),
+      ]);
+
+      const data = await tokenRes.json() as TokenData;
+      if (!tokenRes.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
+
+      // Build locations: always include all known static locations so the SDK has
+      // valid data. For dynamic companies not in the static list, also append the
+      // auth-derived location (with sensible NJ-area coordinate fallback if lat/lng
+      // are zero). The JWT's locationId scopes what this manager can actually see.
+      const staticIds = new Set(ALL_STATIC_LOCATIONS.map((l) => l.id));
+      const dynamicLocs = companyLocations.filter(
+        (l) => !staticIds.has(l.id) && (l.latitude !== 0 || l.longitude !== 0)
+      );
+      // If auth location has zero coords, try attaching real coords from company info
+      const zeroCoordsLocs = companyLocations.filter(
+        (l) => !staticIds.has(l.id) && l.latitude === 0 && l.longitude === 0
+      ).map((l) => ({
+        ...l,
+        latitude: company?.latitude ?? 40.7357,
+        longitude: company?.longitude ?? -74.1724,
+      }));
+      const allLaunchLocations = [...ALL_STATIC_LOCATIONS, ...dynamicLocs, ...zeroCoordsLocs];
+
+      // Use freshly fetched company employees; fall back to ALL employees (any company)
+      // so the SDK always has at least some employee data to render timesheets against.
+      // The JWT's locationId + accessRole scopes what the manager can actually see.
+      let launchEmployees = (freshEmployees ?? []).length > 0
+        ? (freshEmployees ?? [])
+        : companyEmployees;
+      if (launchEmployees.length === 0) {
+        try {
+          const allRes = await fetch("/api/easyteam/employees", { credentials: "include" }).then(r => r.json()) as { employees: EasyTeamEmployee[] };
+          launchEmployees = allRes.employees ?? [];
+        } catch { /* ignore */ }
+      }
+
+      if (allLaunchLocations.length === 0) {
+        setTokenError("No location data available for this company");
+        return;
+      }
 
       launch(data.token, {
         page: Pages.TIMESHEET,
-        employees: companyEmployees,
+        employees: launchEmployees,
         organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
-        locations: companyLocations,
+        locations: allLaunchLocations,
       });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
