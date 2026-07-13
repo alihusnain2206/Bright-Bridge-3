@@ -257,9 +257,25 @@ export default function ManagerDashboard() {
         ? (freshEmployees ?? [])
         : companyEmployees;
 
+      // EasyTeam iframe requires the JWT's employeeId to be present in the employees array.
+      // The employees endpoint only returns staff — the manager themselves is never included.
+      // Without this, the iframe throws "Current employee ID ... not found in the provided
+      // employees list" for every manager on every company.
+      const managerSelf: EasyTeamEmployee = {
+        id: user.employeeId!,
+        name: user.name,
+        role: user.position,
+        timeTrackingEnabled: true,
+        wage: user.hourlyWage ?? 2500,
+        wageType: "hourly",
+      };
+      const allLaunchEmployees = user.employeeId && !launchEmployees.some(e => e.id === user.employeeId)
+        ? [managerSelf, ...launchEmployees]
+        : launchEmployees;
+
       launch(data.token, {
         page: Pages.TIMESHEET,
-        employees: launchEmployees,
+        employees: allLaunchEmployees,
         organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations: allLaunchLocations,
       });
