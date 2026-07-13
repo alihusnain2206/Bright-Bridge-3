@@ -5,10 +5,10 @@ import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
   Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
-  Clock, ThumbsUp, Loader2, Download, UserPlus,
+  Clock, ThumbsUp, Loader2, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { AddEmployeeModal } from "@/components/AddEmployeeModal";
+import { ManagerTeamTab } from "@/components/ManagerTeamTab";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
@@ -62,15 +62,21 @@ const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitu
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
+type TabId = "timesheets" | "team";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "timesheets", label: "Timesheets & Approval" },
+  { id: "team",       label: "My Team" },
+];
+
 export default function ManagerDashboard() {
   const { user, company, location } = useAuth();
+  const [activeTab, setActiveTab] = useState<TabId>("timesheets");
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
   const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [companyEmployees, setCompanyEmployees] = useState<EasyTeamEmployee[]>([]);
   const [clientId, setClientId] = useState<string | null>(null);
-  const [showAddEmployee, setShowAddEmployee] = useState(false);
 
   // Approval state
   const [hours, setHours] = useState<TimesheetEntry[]>([]);
@@ -201,19 +207,6 @@ export default function ManagerDashboard() {
     } catch { /* ignore */ }
   };
 
-  const handleEmployeeAdded = async () => {
-    setShowAddEmployee(false);
-    const updated = await fetchCompanyEmployees();
-    if (tokenData) {
-      launch(tokenData.token, {
-        page: Pages.TIMESHEET,
-        employees: updated,
-        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
-        locations: companyLocations,
-      });
-    }
-  };
-
   const generateToken = async () => {
     if (!user) return;
     setTokenLoading(true);
@@ -241,6 +234,7 @@ export default function ManagerDashboard() {
 
   return (
     <div className="space-y-6 max-w-6xl">
+      {/* Page header */}
       <div>
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-bold text-[#284362]">{company?.name ?? "Manager"} Dashboard</h1>
@@ -248,40 +242,47 @@ export default function ManagerDashboard() {
         </div>
         <p className="text-sm text-muted-foreground mt-0.5">Welcome, {user?.name}</p>
       </div>
-        {/* Company info */}
-        <div className="rounded-2xl bg-white border p-5 shadow-sm">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="font-bold text-lg text-gray-900">{company?.name}</h2>
-              <p className="text-sm text-muted-foreground">Your managed location</p>
-            </div>
-            <div className="flex items-center gap-2">
-              {clientId && (
-                <Button
-                  size="sm"
-                  onClick={() => setShowAddEmployee(true)}
-                  className="gap-1.5 text-xs text-white border-0 h-8"
-                  style={{ background: ORANGE }}
-                >
-                  <UserPlus className="h-3.5 w-3.5" />Add Employee
-                </Button>
-              )}
-              <Building2 className="h-6 w-6 text-[#E8622A]" />
-            </div>
+
+      {/* Company info card — always visible */}
+      <div className="rounded-2xl bg-white border p-5 shadow-sm">
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h2 className="font-bold text-lg text-gray-900">{company?.name}</h2>
+            <p className="text-sm text-muted-foreground">Your managed location</p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <MapPin className="h-4 w-4 shrink-0" />{location?.address ?? company?.address ?? "—"}
-            </div>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Users className="h-4 w-4 shrink-0" />{companyEmployees.length} staff members
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              <span className="text-emerald-600 font-medium">Location active</span>
-            </div>
+          <Building2 className="h-6 w-6 text-[#E8622A]" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <MapPin className="h-4 w-4 shrink-0" />{location?.address ?? company?.address ?? "—"}
+          </div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Users className="h-4 w-4 shrink-0" />{companyEmployees.length} staff members
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            <span className="text-emerald-600 font-medium">Location active</span>
           </div>
         </div>
+      </div>
+
+      {/* Tab row */}
+      <div className="flex gap-1 border-b border-gray-200">
+        {TABS.map(({ id, label }) => (
+          <button key={id} onClick={() => setActiveTab(id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${activeTab === id ? "border-[#E8622A] text-[#E8622A]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── My Team tab ───────────────────────────────────────── */}
+      {activeTab === "team" && user?.companyId && (
+        <ManagerTeamTab companyId={user.companyId} clientId={clientId} />
+      )}
+
+      {/* ── Timesheets tab ────────────────────────────────────── */}
+      {activeTab === "timesheets" && <>
 
         {/* Timesheets & Approval — combined panel */}
         <div className="rounded-2xl overflow-hidden border" style={PANEL}>
@@ -535,14 +536,7 @@ export default function ManagerDashboard() {
           )}
         </div>
 
-      {showAddEmployee && clientId && (
-        <AddEmployeeModal
-          clientId={clientId}
-          locationName={company?.name ?? "Your Location"}
-          onClose={() => setShowAddEmployee(false)}
-          onSuccess={handleEmployeeAdded}
-        />
-      )}
+      </>}
       </div>
   );
 }
