@@ -21,6 +21,7 @@ import Payroll from "@/pages/payroll";
 import Roles from "@/pages/roles";
 import SuperAdminDashboard from "@/pages/dashboard-super-admin";
 import ManagerDashboard from "@/pages/dashboard-manager";
+import ManagerTeam from "@/pages/manager-team";
 import EmployeeDashboard from "@/pages/dashboard-employee";
 import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
@@ -94,6 +95,9 @@ function Router() {
             <Route path="/dashboard/manager">
               <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
             </Route>
+            <Route path="/my-team">
+              <ProtectedRoute component={ManagerTeam} roles={["manager"]} />
+            </Route>
             <Route path="/dashboard/employee">
               <ProtectedRoute component={EmployeeDashboard} roles={["employee"]} />
             </Route>
@@ -106,7 +110,7 @@ function Router() {
               <ProtectedRoute component={ClientsNew} roles={["super_admin"]} />
             </Route>
             <Route path="/clients/:companyId/employees/new">
-              <ProtectedRoute component={ClientEmployeesNew} roles={["super_admin"]} />
+              <ProtectedRoute component={ClientEmployeesNew} roles={["super_admin", "manager"]} />
             </Route>
             <Route path="/clients/:companyId">
               <ProtectedRoute component={ClientDetail} roles={["super_admin"]} />

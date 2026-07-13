@@ -8,7 +8,6 @@ import {
   Clock, ThumbsUp, Loader2, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ManagerTeamTab } from "@/components/ManagerTeamTab";
 
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
@@ -62,15 +61,8 @@ const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitu
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
 
-type TabId = "timesheets" | "team";
-const TABS: { id: TabId; label: string }[] = [
-  { id: "timesheets", label: "Timesheets & Approval" },
-  { id: "team",       label: "My Team" },
-];
-
 export default function ManagerDashboard() {
   const { user, company, location } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabId>("timesheets");
   const [tokenData, setTokenData] = useState<TokenData | null>(null);
   const [tokenLoading, setTokenLoading] = useState(false);
   const [tokenError, setTokenError] = useState("");
@@ -266,25 +258,7 @@ export default function ManagerDashboard() {
         </div>
       </div>
 
-      {/* Tab row */}
-      <div className="flex gap-1 border-b border-gray-200">
-        {TABS.map(({ id, label }) => (
-          <button key={id} onClick={() => setActiveTab(id)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${activeTab === id ? "border-[#E8622A] text-[#E8622A]" : "border-transparent text-gray-500 hover:text-gray-800"}`}>
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* ── My Team tab ───────────────────────────────────────── */}
-      {activeTab === "team" && user?.companyId && (
-        <ManagerTeamTab companyId={user.companyId} clientId={clientId} />
-      )}
-
-      {/* ── Timesheets tab ────────────────────────────────────── */}
-      {activeTab === "timesheets" && <>
-
-        {/* Timesheets & Approval — combined panel */}
+      {/* Timesheets & Approval — combined panel */}
         <div className="rounded-2xl overflow-hidden border" style={PANEL}>
 
           {/* Header */}
@@ -536,7 +510,6 @@ export default function ManagerDashboard() {
           )}
         </div>
 
-      </>}
       </div>
   );
 }

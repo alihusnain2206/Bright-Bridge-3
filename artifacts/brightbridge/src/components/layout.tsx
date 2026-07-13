@@ -2,7 +2,7 @@ import React from "react";
 import { Link, useLocation } from "wouter";
 import {
   FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
-  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
+  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign, Users,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,7 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
         { href: "/timesheets",            label: "Timesheets",      icon: CalendarDays },
+        { href: "/my-team",               label: "My Team",         icon: Users },
         { href: "/roles",                 label: "Role Comparison", icon: Scale },
       ];
     case "employee":
