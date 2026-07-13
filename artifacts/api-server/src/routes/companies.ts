@@ -717,23 +717,33 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
         const raw = upRes.data as Record<string, unknown>;
         const periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
         if (periods.length > 0) {
-          // Pick the earliest open period (same logic as /rollfi/payperiod)
-          const STATUS_PRIORITY: Record<string, number> = { preprocess: 0, new: 1, inprocess: 2 };
-          const sorted = [...periods].sort((a, b) => {
-            const ap = STATUS_PRIORITY[String(a.payPeriodStatus ?? "").toLowerCase()] ?? 99;
-            const bp = STATUS_PRIORITY[String(b.payPeriodStatus ?? "").toLowerCase()] ?? 99;
-            if (ap !== bp) return ap - bp;
-            return String(a.payBeginDate ?? "").localeCompare(String(b.payBeginDate ?? ""));
-          });
-          const best = sorted[0]!;
-          rollfiFrom = best.payBeginDate ? parseRollfiDate(String(best.payBeginDate)) : null;
-          rollfiTo   = best.payEndDate   ? parseRollfiDate(String(best.payEndDate))   : null;
+          // Priority 1: find the period whose date range contains today (what the manager is working in)
+          // Priority 2: most recent period by start date
+          const todayTs = Date.now();
+          const parsedPeriods = periods.map(p => ({
+            raw: p,
+            from: p.payBeginDate ? parseRollfiDate(String(p.payBeginDate)) : null,
+            to:   p.payEndDate   ? parseRollfiDate(String(p.payEndDate))   : null,
+          }));
+          const containsToday = parsedPeriods.filter(p =>
+            p.from && p.to &&
+            new Date(p.from).getTime() <= todayTs &&
+            todayTs <= new Date(p.to + "T23:59:59Z").getTime()
+          );
+          const best = containsToday.length > 0
+            ? containsToday[0]!
+            : [...parsedPeriods].sort((a, b) => (b.from ?? "").localeCompare(a.from ?? ""))[0]!;
+          rollfiFrom = best.from;
+          rollfiTo   = best.to;
         }
       }
 
       if (rollfiFrom && rollfiTo) {
-        req.log.info({ companyId, from: rollfiFrom, to: rollfiTo, source: "rollfi" }, "pay-period from Rollfi");
-        res.json({ companyId, from: rollfiFrom, to: rollfiTo, frequency: payFrequency ?? "BiWeekly", source: "rollfi" });
+        // Infer frequency from actual date range — more reliable than DB field
+        const rangeDays = Math.round((new Date(rollfiTo).getTime() - new Date(rollfiFrom).getTime()) / MS_PER_DAY) + 1;
+        const inferredFreq = rangeDays >= 28 ? "Monthly" : rangeDays >= 13 ? "BiWeekly" : rangeDays >= 10 ? "SemiMonthly" : "Weekly";
+        req.log.info({ companyId, from: rollfiFrom, to: rollfiTo, rangeDays, inferredFreq, source: "rollfi" }, "pay-period from Rollfi");
+        res.json({ companyId, from: rollfiFrom, to: rollfiTo, frequency: inferredFreq, source: "rollfi" });
         return;
       }
     } catch (err) {
