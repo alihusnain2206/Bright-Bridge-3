@@ -51,7 +51,7 @@ function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
 
-interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
+interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly" }
 
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
   "ORG-SUNSHINE": [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }],
@@ -261,11 +261,16 @@ export default function ManagerDashboard() {
       // The employees endpoint only returns staff — the manager themselves is never included.
       // Without this, the iframe throws "Current employee ID ... not found in the provided
       // employees list" for every manager on every company.
+      // timeTrackingEnabled: false + isVisible: false tells EasyTeam this person is a
+      // reviewer, not a tracked employee, so they don't appear as a row in the timesheet.
+      // The entry still satisfies EasyTeam's requirement that the JWT's employeeId exists
+      // in the employees list — there is no "reviewer-only" role in EasyTeam's SDK.
       const managerSelf: EasyTeamEmployee = {
         id: user.employeeId!,
         name: user.name,
         role: user.position,
-        timeTrackingEnabled: true,
+        timeTrackingEnabled: false,
+        isVisible: false,
         wage: user.hourlyWage ?? 2500,
         wageType: "hourly",
       };
