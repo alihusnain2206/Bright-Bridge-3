@@ -2427,23 +2427,26 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       );
       const dr = detailsResp.data as Record<string, unknown>;
       req.log.info({ detailsRaw: dr }, "getPayPeriodDetails after import");
-      const payDetails = (dr.payDetails ?? dr.employeeDetails ?? []) as Array<Record<string, unknown>>;
-      let grossPay = 0, netPay = 0, employeeTax = 0, employerTax = 0;
-      for (const emp of payDetails) {
-        grossPay    += Number(emp.grossTotal    ?? emp.grossPay   ?? 0);
-        netPay      += Number(emp.netTotal      ?? emp.netPay     ?? 0);
-        const empTaxObj = emp.employeeTax as Record<string, unknown> | undefined;
-        employeeTax += Number(empTaxObj?.employeeTax ?? emp.deductions ?? emp.totalDeductions ?? 0);
-        const erArr = (emp.employerTaxDetails ?? []) as Array<Record<string, unknown>>;
-        employerTax += erArr.reduce((s, t) => s + Number(t.taxAmount ?? 0), 0);
+      // Rollfi getPayPeriodDetails response shape:
+      //   { payPeriod: [{ total, employeeTaxSum, employerTaxSum, payrollLineItems: [{ grossTotal, netTotal, userId }] }] }
+      // `total` = gross-only (not the bank debit); totalDebit = total + employerTaxSum
+      const periodArr = (dr.payPeriod ?? []) as Array<Record<string, unknown>>;
+      const pd = periodArr[0] as Record<string, unknown> | undefined;
+      if (pd) {
+        const lineItems = (pd.payrollLineItems ?? []) as Array<Record<string, unknown>>;
+        const grossPay   = Math.round(lineItems.reduce((s, e) => s + Number(e.grossTotal ?? 0), 0) * 100) / 100;
+        const netPay     = Math.round(lineItems.reduce((s, e) => s + Number(e.netTotal   ?? 0), 0) * 100) / 100;
+        const employeeTax = Math.round(Number(pd.employeeTaxSum ?? 0) * 100) / 100;
+        const employerTax = Math.round(Number(pd.employerTaxSum ?? 0) * 100) / 100;
+        const rollfiTotal = Number(pd.total ?? 0); // Rollfi `total` = gross only
+        realTotals = {
+          grossPay,
+          netPay,
+          employeeTax,
+          employerTax,
+          totalDebit: Math.round((rollfiTotal + employerTax) * 100) / 100,
+        };
       }
-      realTotals = {
-        grossPay:    Math.round(grossPay    * 100) / 100,
-        netPay:      Math.round(netPay      * 100) / 100,
-        employeeTax: Math.round(employeeTax * 100) / 100,
-        employerTax: Math.round(employerTax * 100) / 100,
-        totalDebit:  Math.round((grossPay + employerTax) * 100) / 100,
-      };
     } catch (detailsErr) {
       req.log.warn({ detailsErr }, "getPayPeriodDetails after import failed — realTotals unavailable");
     }
