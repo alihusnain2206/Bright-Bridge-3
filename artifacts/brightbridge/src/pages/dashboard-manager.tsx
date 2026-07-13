@@ -12,9 +12,11 @@ import { Button } from "@/components/ui/button";
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
 const ORANGE = "#E8622A";
 
-/** Format decimal hours into human-readable "Xm" / "Xh Ym" — matches EasyTeam's display style */
+/** Format decimal hours into human-readable "Xm" / "Xh Ym" — matches EasyTeam's display style.
+ *  Uses Math.round to avoid floating-point floor errors (e.g. 2min stored as 0.0333h → 1.998m
+ *  would floor to 1m incorrectly). */
 function formatHours(h: number): string {
-  const totalMin = Math.floor(h * 60);
+  const totalMin = Math.round(h * 60);
   if (totalMin === 0) return "0m";
   if (totalMin < 60) return `${totalMin}m`;
   const hrs = Math.floor(totalMin / 60);

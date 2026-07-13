@@ -494,15 +494,15 @@ router.post("/easyteam/hours/sync", async (req, res) => {
           continue;
         }
         const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
-        const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
-        const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 100) / 100;
+        const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
+        const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 10000) / 10000;
         await upsertTimesheetEntry({
           employeeId: internalEmpId,
           companyId:  matched?.companyId ?? co.id,
           periodKey,
           hoursWorked,
           breakDeduction: breakHours,
-          approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
+          approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 10000) / 10000),
           source: "easyteam",
           syncedAt: new Date().toISOString(),
         });
@@ -795,18 +795,18 @@ router.post("/easyteam/hours/approve", async (req, res) => {
           }
           const matchedUser = companyUsers.find((u) => u.employeeId === internalEmpId);
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
-          const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
+          const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
           // Never overwrite existing data with zero — skip employees whose EasyTeam data
           // is empty/reset so we preserve the last known good value.
           if (hoursWorked <= 0) continue;
-          const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 100) / 100;
+          const breakHours  = Math.round(((breaksByEmployee.get(etEmployeeId) ?? 0) / 60) * 10000) / 10000;
           await upsertTimesheetEntry({
             employeeId: internalEmpId,
             companyId: resolvedCompanyId,
             periodKey,
             hoursWorked,
             breakDeduction: breakHours,
-            approvedHours: Math.max(0, Math.round((hoursWorked - breakHours) * 100) / 100),
+            approvedHours: Math.max(0, Math.round((hoursWorked - breakHours) * 10000) / 10000),
             source: "easyteam",
             syncedAt: new Date().toISOString(),
           });
