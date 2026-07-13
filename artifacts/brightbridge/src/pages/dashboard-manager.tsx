@@ -226,41 +226,36 @@ export default function ManagerDashboard() {
       if (!tokenRes.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
 
-      // Build locations: always include all known static locations so the SDK has
-      // valid data. For dynamic companies not in the static list, also append the
-      // auth-derived location (with sensible NJ-area coordinate fallback if lat/lng
-      // are zero). The JWT's locationId scopes what this manager can actually see.
-      const staticIds = new Set(ALL_STATIC_LOCATIONS.map((l) => l.id));
-      const dynamicLocs = companyLocations.filter(
-        (l) => !staticIds.has(l.id) && (l.latitude !== 0 || l.longitude !== 0)
-      );
-      // If auth location has zero coords, try attaching real coords from company info
-      const zeroCoordsLocs = companyLocations.filter(
-        (l) => !staticIds.has(l.id) && l.latitude === 0 && l.longitude === 0
-      ).map((l) => ({
-        ...l,
-        latitude: company?.latitude ?? 40.7357,
-        longitude: company?.longitude ?? -74.1724,
-      }));
-      const allLaunchLocations = [...ALL_STATIC_LOCATIONS, ...dynamicLocs, ...zeroCoordsLocs];
+      const isStaticCompany = !!(COMPANY_LOCATIONS[user.companyId ?? ""]);
 
-      // Use freshly fetched company employees; fall back to ALL employees (any company)
-      // so the SDK always has at least some employee data to render timesheets against.
-      // The JWT's locationId + accessRole scopes what the manager can actually see.
-      let launchEmployees = (freshEmployees ?? []).length > 0
+      let allLaunchLocations: Array<{ id: string; name: string; latitude: number; longitude: number }>;
+      if (isStaticCompany) {
+        // Known company: pass all static locations; the JWT's locationId scopes the view.
+        allLaunchLocations = ALL_STATIC_LOCATIONS;
+      } else {
+        // Dynamic company (created via wizard): pass ONLY this manager's own location.
+        // Including other locations (LOC-SUNSHINE, LOC-RAINBOW) would cause resolvedLocations
+        // to map Sunshine/Rainbow employees to this location, which makes EasyTeam show a
+        // blank timesheet because those employees have no shifts here.
+        const authLoc = companyLocations[0];
+        if (!authLoc) {
+          setTokenError("No location data available for this company");
+          return;
+        }
+        allLaunchLocations = [{
+          ...authLoc,
+          latitude: authLoc.latitude !== 0 ? authLoc.latitude : (company?.latitude ?? 40.7357),
+          longitude: authLoc.longitude !== 0 ? authLoc.longitude : (company?.longitude ?? -74.1724),
+        }];
+      }
+
+      // Company employees for dynamic companies may be empty (not seeded in our store).
+      // Pass whatever we have — EasyTeam fetches its own employee records from its backend.
+      // Do NOT fall back to other companies' employees; that maps the wrong people to this
+      // location and causes a blank timesheet in the iframe.
+      const launchEmployees = (freshEmployees ?? []).length > 0
         ? (freshEmployees ?? [])
         : companyEmployees;
-      if (launchEmployees.length === 0) {
-        try {
-          const allRes = await fetch("/api/easyteam/employees", { credentials: "include" }).then(r => r.json()) as { employees: EasyTeamEmployee[] };
-          launchEmployees = allRes.employees ?? [];
-        } catch { /* ignore */ }
-      }
-
-      if (allLaunchLocations.length === 0) {
-        setTokenError("No location data available for this company");
-        return;
-      }
 
       launch(data.token, {
         page: Pages.TIMESHEET,
