@@ -2024,13 +2024,6 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       return entry;
     });
 
-    // Build a name lookup so skipped-employee responses show readable names.
-    const employeeNameByRollfiId = new Map<string, string>(
-      onboardedStaff.map((u) => [
-        store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase(),
-        u.name,
-      ])
-    );
 
     // Pre-identify zero-hours employees BEFORE enrollment so they are never added to the pay period.
     const zeroHoursIds = new Set<string>(
@@ -2043,14 +2036,13 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         .map((entry) => (entry.userId as string).toUpperCase())
     );
 
-    // Only enroll employees who have billable hours or bonuses.
-    const staffToEnroll = onboardedStaff.filter((u) => {
-      const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
-      return !zeroHoursIds.has(uid);
-    });
+    // Enroll ALL onboarded employees — addUsersToRegularPayPeriod is idempotent.
+    // Zero-hour employees are included so importRegularPayrollData can explicitly
+    // reset their hours to 0 (Rollfi ignores payHours: 0 only when not enrolled).
+    const staffToEnroll = onboardedStaff;
 
     if (zeroHoursIds.size > 0) {
-      req.log.info({ zeroHoursIds: [...zeroHoursIds] }, "Payroll: skipping enrollment for zero-hours employees");
+      req.log.info({ zeroHoursIds: [...zeroHoursIds] }, "Payroll: zero-hours employees included in enrollment so Rollfi resets their hours to 0");
     }
 
     // Step 1a: addUsersToRegularPayPeriod — employees must be enrolled in the pay period
@@ -2174,39 +2166,12 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       }
     }
 
-    // Remove employees with zero hours from filteredPayrollData (already excluded from enrollment
-    // via staffToEnroll, but this guards against any edge cases and populates skippedEmployees).
-    filteredPayrollData = filteredPayrollData.filter((entry) => {
-      const uid = (entry.userId as string).toUpperCase();
-      if (zeroHoursIds.has(uid)) {
-        const name = employeeNameByRollfiId.get(uid);
-        skippedEmployees.push({ rollfiUserId: entry.userId as string, name, type: "zero_hours", reason: "No hours or bonus for this pay period — excluded from payroll run" });
-        req.log.warn({ rollfiUserId: entry.userId, name }, "Excluding employee — 0 hours and no bonus");
-        return false;
-      }
-      return true;
-    });
-
-    // Fire-and-forget: remove zero-hours employees from the open pay period in case they were
-    // enrolled in a prior submission attempt. Errors are non-fatal (they may not be enrolled).
-    if (zeroHoursIds.size > 0) {
-      axios.post(
-        `${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
-        {
-          method: "removeUsersFromRegularPayPeriod",
-          companyId: rollfiCompany.rollfiCompanyId,
-          payPeriodId,
-          userIds: [...zeroHoursIds],
-        },
-        { headers: rollfiHeaders() }
-      ).then((r) => {
-        req.log.info({ rollfiResponse: r.data, count: zeroHoursIds.size }, "removeUsersFromRegularPayPeriod: cleaned up zero-hours employees");
-      }).catch((e: unknown) => {
-        req.log.warn({ err: e }, "removeUsersFromRegularPayPeriod failed — employees may not have been enrolled (non-fatal)");
-      });
-    }
-
-    if (filteredPayrollData.length === 0) {
+    // Only block submission when EVERY employee has zero hours AND zero bonus.
+    // Zero-hour employees are kept in filteredPayrollData so Rollfi explicitly resets
+    // their stale hours to 0 (importRegularPayrollData only updates employees in the payload).
+    if (filteredPayrollData.length > 0 && filteredPayrollData.every((entry) =>
+      zeroHoursIds.has((entry.userId as string).toUpperCase())
+    )) {
       res.status(400).json({
         error: "No employees have billable hours or bonuses for this pay period. Use the Payroll Adjustments section to add hours or bonuses before submitting.",
         skippedEmployees,
@@ -2330,10 +2295,6 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       return entry;
     });
 
-    const employeeNameByRollfiId = new Map<string, string>(
-      onboardedStaff.map((u) => [store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase(), u.name])
-    );
-
     const zeroHoursIds = new Set<string>(
       payrollData
         .filter((entry) => {
@@ -2344,7 +2305,9 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         .map((entry) => (entry.userId as string).toUpperCase())
     );
 
-    const staffToEnroll = onboardedStaff.filter((u) => !zeroHoursIds.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
+    // Enroll ALL onboarded employees — addUsersToRegularPayPeriod is idempotent.
+    // Zero-hour employees must be enrolled so importRegularPayrollData can explicitly reset their hours to 0.
+    const staffToEnroll = onboardedStaff;
 
     const addUsersResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
@@ -2397,23 +2360,11 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       }
     }
 
-    filteredPayrollData = filteredPayrollData.filter((entry) => {
-      const uid = (entry.userId as string).toUpperCase();
-      if (zeroHoursIds.has(uid)) {
-        skippedEmployees.push({ rollfiUserId: entry.userId as string, name: employeeNameByRollfiId.get(uid), type: "zero_hours", reason: "No hours or bonus — excluded" });
-        return false;
-      }
-      return true;
-    });
-
-    if (zeroHoursIds.size > 0) {
-      axios.post(`${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
-        { method: "removeUsersFromRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, userIds: [...zeroHoursIds] },
-        { headers: rollfiHeaders() }
-      ).catch((e: unknown) => req.log.warn({ err: e }, "removeUsersFromRegularPayPeriod failed (non-fatal)"));
-    }
-
-    if (filteredPayrollData.length === 0) {
+    // Only block submission when EVERY employee has zero hours AND zero bonus.
+    // Zero-hour employees stay in filteredPayrollData so Rollfi explicitly resets stale hours to 0.
+    if (filteredPayrollData.length > 0 && filteredPayrollData.every((entry) =>
+      zeroHoursIds.has((entry.userId as string).toUpperCase())
+    )) {
       res.status(400).json({ error: "No employees have billable hours for this pay period.", skippedEmployees });
       return;
     }

@@ -1,0 +1,70 @@
+Fix a bug in the Rollfi payroll integration in artifacts/api-server/src/routes/rollfi.ts:
+when importRegularPayrollData is called with payHours: 0 for an employee who was
+previously imported with non-zero hours, Rollfi doesn't reset their hours — the old
+non-zero value persists in the payroll dashboard.
+
+ROOT CAUSE: In both the `/rollfi/payroll/initiate` and `/rollfi/payroll/import` route
+handlers, the code computes a `zeroHoursIds` set (employees with 0 hours and 0 bonus)
+and then:
+  1. Excludes those employees from `staffToEnroll` before calling
+     `addUsersToRegularPayPeriod` (so they're never (re-)enrolled), and
+  2. Filters them out of `filteredPayrollData` before calling
+     `importRegularPayrollData` (so payHours: 0 is never actually sent for them).
+
+Instead, it relies on a separate, non-awaited, fire-and-forget
+`removeUsersFromRegularPayPeriod` call whose errors are silently swallowed
+(logged as a non-fatal warning) and which races with the import call rather than
+happening before it. If that call fails, races, or doesn't fully reset Rollfi's
+cached hours the way an explicit import does, the employee's last non-zero
+payHours value is left untouched.
+
+FIX: In both handlers, stop excluding zero-hour employees from enrollment and
+from the import payload. Instead:
+
+1. Enroll ALL onboarded employees (including zero-hour ones) via
+   addUsersToRegularPayPeriod — this call is idempotent, so re-enrolling
+   already-enrolled employees is safe. Change `staffToEnroll` from a filtered
+   subset to simply `onboardedStaff` (no filter).
+
+2. Keep zero-hour employees IN `filteredPayrollData` so they're sent to
+   importRegularPayrollData with an explicit `payHours: 0` — this is what
+   actually causes Rollfi to overwrite/reset a stale non-zero value, since
+   Rollfi only updates hours for employees explicitly present in the payload.
+
+3. Remove the fire-and-forget `removeUsersFromRegularPayPeriod` axios.post
+   call entirely in both handlers — it's no longer needed once explicit 0
+   values are sent through the normal import call, and it was the source of
+   the unreliable, racy reset behavior.
+
+4. Remove the "filter out zero-hours entries" step that ran right before the
+   import call in both handlers (the one that pushed a `zero_hours` entry
+   into `skippedEmployees` and excluded the employee from
+   `filteredPayrollData`).
+
+5. Keep the existing "nothing to submit" validation (the 400 response telling
+   the manager to add hours/bonus before submitting), but change its
+   condition: it should only fire when EVERY employee in filteredPayrollData
+   has zero hours and zero bonus (i.e., literally nobody has anything to
+   pay), not when only some individuals are zero. Use something like:
+
+   if (filteredPayrollData.length > 0 && filteredPayrollData.every((entry) =>
+     zeroHoursIds.has((entry.userId as string).toUpperCase()))) {
+     // return the existing 400 error
+   }
+
+6. The `zeroHoursIds` set computation itself should stay — it's still used
+   for the "everyone is zero" check and for logging — just don't use it to
+   filter/exclude entries from enrollment or from the import payload anymore.
+
+7. If there's a `employeeNameByRollfiId` Map that was only used to attach a
+   name to the removed `zero_hours` skippedEmployees entries, remove it too
+   since it becomes dead code once that filtering step is deleted.
+
+Do NOT touch the `/rollfi/payroll/run-all` handler (cron/batch flow) — it
+already sends payHours for all onboarded employees without this exclusion
+bug, so it's unaffected.
+
+After making the changes, run the typecheck (e.g. `pnpm run typecheck` from
+the repo root, or the api-server package's typecheck script) to confirm no
+type errors were introduced, since `staffToEnroll`, `zeroHoursIds`, and
+`filteredPayrollData` are referenced in several places after these edits.
