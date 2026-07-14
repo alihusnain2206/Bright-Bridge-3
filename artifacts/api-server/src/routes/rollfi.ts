@@ -1862,12 +1862,14 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Fetch the most recent DB-approved hours per employee for this company.
-  // We intentionally ignore the exact periodKey so that a manager's weekly approval
-  // shows up correctly in a biweekly pay period (the periods rarely align).
-  const dbApprovals = companyId
-    ? await getLatestTimesheetApprovalsByCompany(companyId)
+  // Period-first lookup: try the exact pay period first, fall back to latest per employee
+  // only when no period-matched approvals exist (e.g. first run before any hours are approved).
+  const dbApprovalsByPeriod = companyId
+    ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
     : [];
+  const dbApprovals = dbApprovalsByPeriod.length > 0
+    ? dbApprovalsByPeriod
+    : companyId ? await getLatestTimesheetApprovalsByCompany(companyId) : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
   const entries = allStaff.map((u) => {
@@ -1994,9 +1996,11 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
 
-    // Fetch the most recent DB-approved hours per employee for this company.
-    // Ignore exact periodKey so manager's weekly approval covers biweekly pay periods.
-    const dbApprovals = await getLatestTimesheetApprovalsByCompany(companyId);
+    // Period-first lookup: exact pay period first, fall back to latest only if nothing found.
+    const dbApprovalsByPeriod1 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
+    const dbApprovals = dbApprovalsByPeriod1.length > 0
+      ? dbApprovalsByPeriod1
+      : await getLatestTimesheetApprovalsByCompany(companyId);
     const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
     const payrollData = onboardedStaff.map((u) => {
@@ -2302,7 +2306,11 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     if (onboardedStaff.length === 0) { res.status(400).json({ error: "No onboarded employees found" }); return; }
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
-    const dbApprovals = await getLatestTimesheetApprovalsByCompany(companyId);
+    // Period-first lookup: exact pay period first, fall back to latest only if nothing found.
+    const dbApprovalsByPeriod2 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
+    const dbApprovals = dbApprovalsByPeriod2.length > 0
+      ? dbApprovalsByPeriod2
+      : await getLatestTimesheetApprovalsByCompany(companyId);
     const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
     const payrollData = onboardedStaff.map((u) => {

@@ -822,11 +822,27 @@ router.post("/easyteam/hours/approve", async (req, res) => {
     }
   }
 
-  // ── Step 3: Seed fallback ──
+  // ── Step 3: Write explicit 0-hour entries when EasyTeam has no shifts this period ──
+  // Never seed demo data — real 0s ensure the Rollfi import correctly sends 0 instead of
+  // picking up stale approvals from a previous period via the latest-per-employee fallback.
   const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
   if (existing.length === 0) {
-    const all = store.seedTimesheetHours(periodKey);
-    req.log.info({ count: all.length }, "Seeded fallback hours for approval");
+    const companyStaff = store.getAllStaffUsers()
+      .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
+    const zeroNow = new Date().toISOString();
+    for (const u of companyStaff) {
+      await upsertTimesheetEntry({
+        employeeId: u.employeeId!,
+        companyId,
+        periodKey,
+        hoursWorked: 0,
+        breakDeduction: 0,
+        approvedHours: 0,
+        source: "easyteam",
+        syncedAt: zeroNow,
+      });
+    }
+    req.log.info({ count: companyStaff.length, periodKey }, "No EasyTeam shifts this period — wrote 0-hour entries for all company employees");
   }
 
   const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
