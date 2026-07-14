@@ -274,7 +274,7 @@ function RunPayrollPanel({ companyId, payPeriod, preview, onDone }: {
   const importHours = useMutation({
     mutationFn: () => {
       const employeeHours = (preview?.employees ?? [])
-        .filter(e => e.rollfiUserId && e.netPayableHours > 0)
+        .filter(e => e.rollfiUserId)
         .map(e => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
       return api.post<ImportResult>("/rollfi/payroll/import", {
         companyId, payPeriodId: payPeriod.payPeriodId,

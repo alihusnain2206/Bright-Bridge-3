@@ -241,7 +241,7 @@ export default function ManagerPayrollSubmit() {
     mutationFn: () => {
       if (!payPeriod || !preview) throw new Error("No period or preview");
       const employeeHours = preview.employees
-        .filter((e) => e.rollfiUserId && e.netPayableHours > 0)
+        .filter((e) => e.rollfiUserId)
         .map((e) => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
       const adjs = Object.entries(adjustments)
         .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)

@@ -2006,16 +2006,18 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      // Priority: DB approval > in-memory store entry > frontend-supplied hours > 0
-      const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
-      const synced = !approval && u.employeeId
+      // Priority: frontend-supplied hours (what the manager reviewed on screen) > DB approval > store > 0
+      // frontendH takes highest priority because the submit page sends the exact hours the manager confirmed.
+      // DB approval / store are fallbacks for employees not represented in the frontend payload.
+      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
+      const approval = frontendH === undefined && u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
+      const synced = frontendH === undefined && !approval && u.employeeId
         ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
         : null;
-      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
-      const payHours = approval ? approval.approvedHours : (synced ? synced.approvedHours : (frontendH ?? 0));
-      if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours");
-      else if (!synced && frontendH) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (no store entry)");
-      else if (!synced && !frontendH) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours found — defaulting to 0h");
+      const payHours = frontendH !== undefined ? frontendH : (approval ? approval.approvedHours : (synced ? synced.approvedHours : 0));
+      if (frontendH !== undefined) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (manager-reviewed)");
+      else if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours");
+      else if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours found — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
@@ -2316,12 +2318,12 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
-      const synced = !approval && u.employeeId
+      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
+      const approval = frontendH === undefined && u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
+      const synced = frontendH === undefined && !approval && u.employeeId
         ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
         : null;
-      const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
-      const payHours = approval ? approval.approvedHours : (synced ? synced.approvedHours : (frontendH ?? 0));
+      const payHours = frontendH !== undefined ? frontendH : (approval ? approval.approvedHours : (synced ? synced.approvedHours : 0));
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
       if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
