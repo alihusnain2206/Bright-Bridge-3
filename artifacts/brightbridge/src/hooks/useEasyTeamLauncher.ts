@@ -95,7 +95,7 @@ export function useEasyTeamLauncher(
 
     // Pass date range as searchParams so EasyTeam's iframe opens on the correct period
     const dateParams = config.fromDate && config.toDate
-      ? { searchParams: new URLSearchParams({ from: config.fromDate, to: config.toDate }) }
+      ? { searchParams: new URLSearchParams({ start: config.fromDate, end: config.toDate }) }
       : undefined;
     launcher.run(containerId, config.page, dateParams);
     launcherRef.current = launcher;
@@ -112,7 +112,7 @@ export function useEasyTeamLauncher(
   const navigateToDate = useCallback((fromDate: string, toDate: string) => {
     if (!launcherRef.current) return;
     launcherRef.current.navigate(Pages.TIMESHEET, {
-      searchParams: new URLSearchParams({ from: fromDate, to: toDate }),
+      searchParams: new URLSearchParams({ start: fromDate, end: toDate }),
     });
   }, []);
 
