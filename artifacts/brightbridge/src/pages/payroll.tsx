@@ -774,6 +774,26 @@ export default function Payroll() {
   const [runAllResults, setRunAllResults] = useState<RunAllResult[] | null>(null);
   const [adjustments, setAdjustments] = useState<AdjMap>({});
   const [adjOpen, setAdjOpen] = useState(false);
+
+  const { data: otTypesRaw } = useQuery<Record<string, unknown>>({
+    queryKey: ["rollfi-ot-types", selectedCompanyId],
+    queryFn: () => api.get<Record<string, unknown>>(`/rollfi/overtime-types?companyId=${selectedCompanyId}`),
+    enabled: selectedCompanyId !== "all" && adjOpen,
+    staleTime: 10 * 60 * 1000,
+  });
+  const { data: compTypesRaw } = useQuery<Record<string, unknown>>({
+    queryKey: ["rollfi-comp-types", selectedCompanyId],
+    queryFn: () => api.get<Record<string, unknown>>(`/rollfi/compensation-types?companyId=${selectedCompanyId}`),
+    enabled: selectedCompanyId !== "all" && adjOpen,
+    staleTime: 10 * 60 * 1000,
+  });
+  const otTypes: string[] = Array.isArray((otTypesRaw as Record<string, unknown> | undefined)?.overTimeTypes)
+    ? (otTypesRaw as Record<string, string[]>).overTimeTypes
+    : [];
+  const compDescriptions: string[] = Array.isArray((compTypesRaw as Record<string, unknown> | undefined)?.additionalCompensationDescriptions)
+    ? (compTypesRaw as Record<string, string[]>).additionalCompensationDescriptions
+    : [];
+
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -1645,7 +1665,7 @@ export default function Payroll() {
                   >
                     <SlidersHorizontal className="h-4 w-4" />
                     <span className="font-semibold">Payroll Adjustments</span>
-                    {Object.values(adjustments).some((a) => a.bonusPay > 0 || a.overtimePay > 0) && (
+                    {Object.values(adjustments).some((a) => a.compAmount > 0 || a.otHours > 0) && (
                       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-500/20 text-orange-300 border border-orange-500/20">Active</span>
                     )}
                     <ChevronRight className={`h-3.5 w-3.5 ml-1 transition-transform duration-200 ${adjOpen ? "rotate-90" : ""}`} />
@@ -1653,57 +1673,85 @@ export default function Payroll() {
                   {adjOpen && (
                     <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
                       <div className="px-5 py-3 border-b border-white/10" style={{ background: "rgba(255,255,255,0.04)" }}>
-                        <p className="text-white/40 text-xs">Add one-time bonuses or overtime hours for this pay run. These are sent to Rollfi when you submit.</p>
+                        <p className="text-white/40 text-xs">Add one-time compensation or overtime for this pay run. Types are pulled from Rollfi and carry specific tax rules.</p>
                       </div>
                       <div className="divide-y divide-white/5">
                         {preview.employees.filter((e) => e.onboardedToRollfi && e.rollfiUserId).map((emp) => {
                           const key = emp.rollfiUserId!;
-                          const adj = adjustments[key] ?? { bonusPay: 0, overtimePay: 0 };
-                          const hasAdj = adj.bonusPay > 0 || adj.overtimePay > 0;
+                          const adj = adjustments[key] ?? { compDescription: "", compAmount: 0, otType: "", otHours: 0, otMultiplier: 1.5 };
+                          const hasAdj = adj.compAmount > 0 || adj.otHours > 0;
                           return (
-                            <div key={emp.employeeId} className="px-5 py-3 flex items-center gap-4">
-                              <div className="flex-1 min-w-0">
-                                <div className="text-white text-sm font-medium">{emp.name}</div>
-                                <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate.toFixed(2)}/hr</div>
-                              </div>
-                              <div className="flex items-center gap-3 shrink-0">
-                                <label className="flex items-center gap-1.5">
-                                  <span className="text-white/40 text-xs whitespace-nowrap">Bonus $</span>
-                                  <input
-                                    type="number" min="0" step="50"
-                                    value={adj.bonusPay || ""}
-                                    placeholder="0"
-                                    onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, bonusPay: Number(e.target.value) || 0 } }))}
-                                    className="w-24 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 transition-colors"
-                                  />
-                                </label>
-                                <label className="flex items-center gap-1.5">
-                                  <span className="text-white/40 text-xs whitespace-nowrap">OT hrs</span>
-                                  <input
-                                    type="number" min="0" step="0.5"
-                                    value={adj.overtimePay || ""}
-                                    placeholder="0"
-                                    onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, overtimePay: Number(e.target.value) || 0 } }))}
-                                    className="w-20 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 transition-colors"
-                                  />
-                                </label>
+                            <div key={emp.employeeId} className="px-5 py-4 space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <div className="text-white text-sm font-medium">{emp.name}</div>
+                                  <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate.toFixed(2)}/hr</div>
+                                </div>
                                 {hasAdj && (
                                   <button
                                     onClick={() => setAdjustments((prev) => { const n = { ...prev }; delete n[key]; return n; })}
-                                    className="text-white/20 hover:text-white/50 text-xs px-1"
-                                  >✕</button>
+                                    className="text-white/20 hover:text-white/50 text-xs"
+                                  >Clear ✕</button>
                                 )}
+                              </div>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-white/40 w-20 shrink-0">Comp type</span>
+                                <select
+                                  value={adj.compDescription}
+                                  onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, compDescription: e.target.value, compAmount: e.target.value ? adj.compAmount : 0 } }))}
+                                  className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
+                                >
+                                  <option value="">— none —</option>
+                                  {compDescriptions.length === 0 && <option disabled>Loading…</option>}
+                                  {compDescriptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                                </select>
+                                <input
+                                  type="number" min="0" step="50"
+                                  value={adj.compAmount || ""}
+                                  placeholder="$0"
+                                  disabled={!adj.compDescription}
+                                  onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, compAmount: Number(e.target.value) || 0 } }))}
+                                  className="w-24 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 disabled:opacity-40 transition-colors shrink-0"
+                                />
+                              </div>
+                              <div className="flex items-center gap-2 text-xs">
+                                <span className="text-white/40 w-20 shrink-0">OT type</span>
+                                <select
+                                  value={adj.otType}
+                                  onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, otType: e.target.value, otHours: e.target.value ? adj.otHours : 0 } }))}
+                                  className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
+                                >
+                                  <option value="">— none —</option>
+                                  {otTypes.length === 0 && <option disabled>Loading…</option>}
+                                  {otTypes.map((t) => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                                <input
+                                  type="number" min="0" step="0.5"
+                                  value={adj.otHours || ""}
+                                  placeholder="0 hrs"
+                                  disabled={!adj.otType}
+                                  onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, otHours: Number(e.target.value) || 0 } }))}
+                                  className="w-16 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 disabled:opacity-40 transition-colors shrink-0"
+                                />
+                                <span className="text-white/30 text-xs shrink-0">×</span>
+                                <input
+                                  type="number" min="0.5" step="0.5"
+                                  value={adj.otMultiplier}
+                                  disabled={!adj.otType}
+                                  onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, otMultiplier: Number(e.target.value) || 1.5 } }))}
+                                  className="w-14 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs text-right outline-none focus:border-orange-400/50 disabled:opacity-40 transition-colors shrink-0"
+                                />
                               </div>
                             </div>
                           );
                         })}
                       </div>
-                      {Object.values(adjustments).some((a) => a.bonusPay > 0 || a.overtimePay > 0) && (
+                      {Object.values(adjustments).some((a) => a.compAmount > 0 || a.otHours > 0) && (
                         <div className="px-5 py-2.5 border-t border-white/10 flex items-center justify-between text-xs" style={{ background: "rgba(255,255,255,0.02)" }}>
                           <span className="text-white/40">
-                            Bonus total: <span className="text-orange-400 font-semibold">${Object.values(adjustments).reduce((s, a) => s + (a.bonusPay || 0), 0).toLocaleString()}</span>
+                            Comp total: <span className="text-orange-400 font-semibold">${Object.values(adjustments).reduce((s, a) => s + (a.compAmount || 0), 0).toLocaleString()}</span>
                             <span className="mx-2 text-white/20">·</span>
-                            OT hours: <span className="text-orange-400 font-semibold">{Object.values(adjustments).reduce((s, a) => s + (a.overtimePay || 0), 0)}h</span>
+                            OT hours: <span className="text-orange-400 font-semibold">{Object.values(adjustments).reduce((s, a) => s + (a.otHours || 0), 0)}h</span>
                           </span>
                           <button onClick={() => setAdjustments({})} className="text-white/30 hover:text-white/60 transition-colors">Clear all</button>
                         </div>
@@ -1742,8 +1790,16 @@ export default function Payroll() {
                       if (payPeriod && selectedCompanyId !== "all" && preview.allOnboarded && periodSubmittable) {
                         setImportResult(null);
                         const adjs = Object.entries(adjustments)
-                          .filter(([, a]) => a.bonusPay > 0 || a.overtimePay > 0)
-                          .map(([rollfiUserId, a]) => ({ rollfiUserId, bonusPay: a.bonusPay || undefined, overtimePay: a.overtimePay || undefined }));
+                          .filter(([, a]) => a.compAmount > 0 || a.otHours > 0)
+                          .map(([rollfiUserId, a]) => ({
+                            rollfiUserId,
+                            additionalCompensation: a.compDescription && a.compAmount > 0
+                              ? [{ description: a.compDescription, amount: a.compAmount }]
+                              : undefined,
+                            overTime: a.otType && a.otHours > 0
+                              ? [{ type: a.otType, noOfHours: a.otHours, multiplier: a.otMultiplier }]
+                              : undefined,
+                          }));
                         const employeeHours = (preview?.employees ?? [])
                           .filter((e) => e.rollfiUserId && e.netPayableHours > 0)
                           .map((e) => ({ rollfiUserId: e.rollfiUserId!, hours: e.netPayableHours }));
