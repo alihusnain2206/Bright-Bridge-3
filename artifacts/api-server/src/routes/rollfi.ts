@@ -1931,7 +1931,7 @@ router.get("/rollfi/overtime-types", async (req, res) => {
   try {
     const resp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#getOverTimeTypes`,
-      { method: "getOverTimeTypes", companyId: rollfiCompany.rollfiCompanyId },
+      { method: "getOverTimeTypes", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
       { headers: rollfiHeaders() }
     );
     res.json(resp.data);
@@ -1952,7 +1952,7 @@ router.get("/rollfi/compensation-types", async (req, res) => {
   try {
     const resp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#getAdditionalCompensationDescription`,
-      { method: "getAdditionalCompensationDescription", companyId: rollfiCompany.rollfiCompanyId },
+      { method: "getAdditionalCompensationDescription", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
       { headers: rollfiHeaders() }
     );
     res.json(resp.data);

@@ -237,17 +237,19 @@ export default function ManagerPayrollSubmit() {
       enabled: !!companyId,
     });
 
-  const { data: otTypesRaw } = useQuery<Record<string, unknown>>({
+  const { data: otTypesRaw, isLoading: otLoading, isError: otError } = useQuery<Record<string, unknown>>({
     queryKey: ["rollfi-ot-types", companyId],
     queryFn: () => api.get<Record<string, unknown>>(`/rollfi/overtime-types?companyId=${companyId}`),
     enabled: !!companyId && adjOpen,
     staleTime: 10 * 60 * 1000,
+    retry: 1,
   });
-  const { data: compTypesRaw } = useQuery<Record<string, unknown>>({
+  const { data: compTypesRaw, isLoading: compLoading, isError: compError } = useQuery<Record<string, unknown>>({
     queryKey: ["rollfi-comp-types", companyId],
     queryFn: () => api.get<Record<string, unknown>>(`/rollfi/compensation-types?companyId=${companyId}`),
     enabled: !!companyId && adjOpen,
     staleTime: 10 * 60 * 1000,
+    retry: 1,
   });
   const otTypes: string[] = Array.isArray((otTypesRaw as Record<string, unknown> | undefined)?.overTimeTypes)
     ? (otTypesRaw as Record<string, string[]>).overTimeTypes
@@ -639,7 +641,8 @@ export default function ManagerPayrollSubmit() {
                                 className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
                               >
                                 <option value="">— none —</option>
-                                {compDescriptions.length === 0 && <option disabled>Loading…</option>}
+                                {compLoading && <option disabled>Loading…</option>}
+                                {compError && <option disabled>Unavailable — check Rollfi</option>}
                                 {compDescriptions.map((d) => <option key={d} value={d}>{d}</option>)}
                               </select>
                               <input
@@ -659,7 +662,8 @@ export default function ManagerPayrollSubmit() {
                                 className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
                               >
                                 <option value="">— none —</option>
-                                {otTypes.length === 0 && <option disabled>Loading…</option>}
+                                {otLoading && <option disabled>Loading…</option>}
+                                {otError && <option disabled>Unavailable — check Rollfi</option>}
                                 {otTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                               </select>
                               <input
