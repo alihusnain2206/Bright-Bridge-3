@@ -2036,142 +2036,46 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
         .map((entry) => (entry.userId as string).toUpperCase())
     );
 
-    // Enroll ALL onboarded employees — addUsersToRegularPayPeriod is idempotent.
-    // Zero-hour employees are included so importRegularPayrollData can explicitly
-    // reset their hours to 0 (Rollfi ignores payHours: 0 only when not enrolled).
-    const staffToEnroll = onboardedStaff;
-
-    if (zeroHoursIds.size > 0) {
-      req.log.info({ zeroHoursIds: [...zeroHoursIds] }, "Payroll: zero-hours employees included in enrollment so Rollfi resets their hours to 0");
-    }
-
-    // Step 1a: addUsersToRegularPayPeriod — employees must be enrolled in the pay period
-    // before hours can be imported. This call is idempotent — re-enrolling is safe.
-    const addUsersResp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
-      {
-        method: "addUsersToRegularPayPeriod",
-        companyId: rollfiCompany.rollfiCompanyId,
-        payPeriodId,
-        payrollLineItems: staffToEnroll.map((u) => ({
-          userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
-          paymentMethod: "Direct Deposit",
-        })),
-      },
-      { headers: rollfiHeaders() }
-    );
-    req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod response");
-
-    // Parse any per-user validation errors from addUsersToRegularPayPeriod.
-    // Rollfi embeds the rejected UUID in the error message.
-    // TWO distinct rejection reasons require different treatment:
-    //   "already has a payroll line item" → employee is ALREADY ENROLLED; keep in import payload,
-    //     just skip re-adding them (calling importRegularPayrollData still updates their hours).
-    //   anything else (invalid status, KYC failure, etc.) → truly invalid; exclude from import.
-    const addUsersRaw = addUsersResp.data as Record<string, unknown>;
-    const addUsersErrMsg: string = (addUsersRaw?.error as Record<string, unknown>)?.message as string ?? "";
-    const UUID_RE = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/gi;
-    const isAlreadyEnrolledErr = (msg: string) => msg.toLowerCase().includes("already has a payroll line item");
-
-    const rejectedUuids = new Set<string>(
-      addUsersErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
-    );
+    // Per Rollfi support: employees are auto-enrolled when a pay period is created.
+    // addUsersToRegularPayPeriod is only needed if an employee was previously removed
+    // or does not appear in getPayPeriodDetails — we do not call it here.
+    //
+    // For employees with no hours AND no bonus: remove them from the pay period so they
+    // don't appear with stale data. For employees with no hours but a bonus (payHours: 0),
+    // they stay in the import payload so the bonus can still be processed.
 
     const skippedEmployees: { rollfiUserId: string; name?: string; type?: "zero_hours" | "onboarding"; reason: string }[] = [];
-    let filteredPayrollData = payrollData;
-    // Track which employees still need to be added via addUsersToRegularPayPeriod retry.
-    // "Already enrolled" employees are removed from this set but kept in filteredPayrollData.
-    let filteredOnboardedStaff = staffToEnroll;
 
-    if (rejectedUuids.size > 0) {
-      if (isAlreadyEnrolledErr(addUsersErrMsg)) {
-        // Already enrolled — keep in import payload, just skip the re-add retry for them.
-        req.log.info({ alreadyEnrolled: [...rejectedUuids] }, "addUsersToRegularPayPeriod: employees already enrolled — keeping in import payload");
-        filteredOnboardedStaff = onboardedStaff.filter((u) => {
-          const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
-          return !rejectedUuids.has(uid);
-        });
-        // filteredPayrollData unchanged — those employees will have their hours updated via import
-      } else {
-        // Truly invalid (bad KYC, wrong status, etc.) — exclude from import entirely.
-        filteredPayrollData = payrollData.filter((entry) => {
-          const uid = (entry.userId as string).toUpperCase();
-          if (rejectedUuids.has(uid)) {
-            skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg });
-            req.log.warn({ rollfiUserId: entry.userId, reason: addUsersErrMsg }, "Excluding employee from payroll — Rollfi rejected them in addUsersToRegularPayPeriod");
-            return false;
-          }
-          return true;
-        });
-        filteredOnboardedStaff = onboardedStaff.filter((u) => {
-          const uid = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase();
-          return !rejectedUuids.has(uid);
-        });
-
-        if (filteredPayrollData.length === 0) {
-          const names = skippedEmployees.map((s) => s.rollfiUserId).join(", ");
-          res.status(400).json({
-            error: `All employees were rejected by Rollfi for this pay period. They may have incomplete onboarding (KYC/bank account). Rejected: ${names}`,
-            skippedEmployees,
-          });
-          return;
-        }
-      }
-
-      // Retry addUsersToRegularPayPeriod for employees not yet enrolled (filteredOnboardedStaff).
-      if (filteredOnboardedStaff.length > 0) {
-        // addUsersToRegularPayPeriod is atomic — when one user is rejected the whole batch fails.
-        // Retry with only the employees that still need enrolling.
-        req.log.info({ retryCount: filteredOnboardedStaff.length }, "Retrying addUsersToRegularPayPeriod without already-enrolled employees");
-        const retryResp = await axios.post(
-          `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
+    // Step 1: Remove employees with zero hours and zero bonus from the pay period.
+    if (zeroHoursIds.size > 0) {
+      req.log.info({ count: zeroHoursIds.size, ids: [...zeroHoursIds] }, "Payroll: removing zero-hours/zero-bonus employees from pay period");
+      try {
+        const removeResp = await axios.post(
+          `${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
           {
-            method: "addUsersToRegularPayPeriod",
+            method: "removeUsersFromRegularPayPeriod",
             companyId: rollfiCompany.rollfiCompanyId,
             payPeriodId,
-            payrollLineItems: filteredOnboardedStaff.map((u) => ({
-              userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId,
-              paymentMethod: "Direct Deposit",
-            })),
+            userIds: [...zeroHoursIds],
           },
           { headers: rollfiHeaders() }
         );
-        req.log.info({ rollfiResponse: retryResp.data }, "Rollfi addUsersToRegularPayPeriod retry response");
-        const retryRaw = retryResp.data as Record<string, unknown>;
-        const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
-        const retryRejectedUuids = new Set<string>(
-          retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []
-        );
-        if (retryRejectedUuids.size > 0) {
-          if (isAlreadyEnrolledErr(retryErrMsg)) {
-            // Also already enrolled — keep in import payload.
-            req.log.info({ alreadyEnrolled: [...retryRejectedUuids] }, "addUsersToRegularPayPeriod retry: employees also already enrolled — keeping in import payload");
-          } else {
-            // Genuinely invalid — exclude from import.
-            filteredPayrollData = filteredPayrollData.filter((entry) => {
-              const uid = (entry.userId as string).toUpperCase();
-              if (retryRejectedUuids.has(uid)) {
-                skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg });
-                req.log.warn({ rollfiUserId: entry.userId, reason: retryErrMsg }, "Excluding employee from payroll — rejected in addUsersToRegularPayPeriod retry");
-                return false;
-              }
-              return true;
-            });
-          }
-        } else if (retryRaw?.error) {
-          req.log.warn({ rollfiError: retryRaw.error }, "addUsersToRegularPayPeriod retry had error — proceeding to import");
+        req.log.info({ rollfiResponse: removeResp.data, count: zeroHoursIds.size }, "removeUsersFromRegularPayPeriod succeeded");
+        for (const uid of zeroHoursIds) {
+          skippedEmployees.push({ rollfiUserId: uid, type: "zero_hours", reason: "No hours or bonus for this pay period — removed from pay period" });
         }
-      } else {
-        req.log.info("All employees already enrolled in pay period — skipping addUsersToRegularPayPeriod retry");
+      } catch (removeErr) {
+        req.log.warn({ err: removeErr, count: zeroHoursIds.size }, "removeUsersFromRegularPayPeriod failed — employee may not be enrolled yet (non-fatal)");
       }
     }
 
-    // Only block submission when EVERY employee has zero hours AND zero bonus.
-    // Zero-hour employees are kept in filteredPayrollData so Rollfi explicitly resets
-    // their stale hours to 0 (importRegularPayrollData only updates employees in the payload).
-    if (filteredPayrollData.length > 0 && filteredPayrollData.every((entry) =>
-      zeroHoursIds.has((entry.userId as string).toUpperCase())
-    )) {
+    // Step 2: Import all employees who have hours or a bonus.
+    // Employees with payHours: 0 but a bonus are NOT in zeroHoursIds and stay in the payload.
+    const filteredPayrollData = payrollData.filter(
+      (entry) => !zeroHoursIds.has((entry.userId as string).toUpperCase())
+    );
+
+    if (filteredPayrollData.length === 0) {
       res.status(400).json({
         error: "No employees have billable hours or bonuses for this pay period. Use the Payroll Adjustments section to add hours or bonuses before submitting.",
         skippedEmployees,
@@ -2305,66 +2209,42 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         .map((entry) => (entry.userId as string).toUpperCase())
     );
 
-    // Enroll ALL onboarded employees — addUsersToRegularPayPeriod is idempotent.
-    // Zero-hour employees must be enrolled so importRegularPayrollData can explicitly reset their hours to 0.
-    const staffToEnroll = onboardedStaff;
-
-    const addUsersResp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
-      { method: "addUsersToRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, payrollLineItems: staffToEnroll.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, paymentMethod: "Direct Deposit" })) },
-      { headers: rollfiHeaders() }
-    );
-    req.log.info({ rollfiResponse: addUsersResp.data }, "Rollfi addUsersToRegularPayPeriod (import step)");
-
-    const UUID_RE = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/gi;
-    const isAlreadyEnrolledErr = (msg: string) => msg.toLowerCase().includes("already has a payroll line item");
-    const addUsersRaw = addUsersResp.data as Record<string, unknown>;
-    const addUsersErrMsg: string = (addUsersRaw?.error as Record<string, unknown>)?.message as string ?? "";
-    const rejectedUuids = new Set<string>(addUsersErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []);
+    // Per Rollfi support: employees are auto-enrolled when a pay period is created.
+    // addUsersToRegularPayPeriod is only needed if an employee was previously removed
+    // or does not appear in getPayPeriodDetails — we do not call it here.
 
     const skippedEmployees: { rollfiUserId: string; name?: string; type?: "zero_hours" | "onboarding"; reason: string }[] = [];
-    let filteredPayrollData = payrollData;
-    let filteredOnboardedStaff = staffToEnroll;
 
-    if (rejectedUuids.size > 0) {
-      if (isAlreadyEnrolledErr(addUsersErrMsg)) {
-        filteredOnboardedStaff = onboardedStaff.filter((u) => !rejectedUuids.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
-      } else {
-        filteredPayrollData = payrollData.filter((entry) => {
-          const uid = (entry.userId as string).toUpperCase();
-          if (rejectedUuids.has(uid)) { skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: addUsersErrMsg }); return false; }
-          return true;
-        });
-        filteredOnboardedStaff = onboardedStaff.filter((u) => !rejectedUuids.has(store.getRollfiEmployee(u.employeeId!)!.rollfiUserId.toUpperCase()));
-        if (filteredPayrollData.length === 0) {
-          res.status(400).json({ error: "All employees were rejected by Rollfi.", skippedEmployees });
-          return;
-        }
-      }
-      if (filteredOnboardedStaff.length > 0) {
-        const retryResp = await axios.post(
-          `${ROLLFI_BASE_URL}/payroll#addUsersToRegularPayPeriod`,
-          { method: "addUsersToRegularPayPeriod", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, payrollLineItems: filteredOnboardedStaff.map((u) => ({ userId: store.getRollfiEmployee(u.employeeId!)!.rollfiUserId, paymentMethod: "Direct Deposit" })) },
+    // Step 1: Remove employees with zero hours and zero bonus from the pay period.
+    // Employees with payHours: 0 but a bonus are NOT in zeroHoursIds and stay in the import payload.
+    if (zeroHoursIds.size > 0) {
+      req.log.info({ count: zeroHoursIds.size, ids: [...zeroHoursIds] }, "Payroll import: removing zero-hours/zero-bonus employees from pay period");
+      try {
+        const removeResp = await axios.post(
+          `${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
+          {
+            method: "removeUsersFromRegularPayPeriod",
+            companyId: rollfiCompany.rollfiCompanyId,
+            payPeriodId,
+            userIds: [...zeroHoursIds],
+          },
           { headers: rollfiHeaders() }
         );
-        const retryRaw = retryResp.data as Record<string, unknown>;
-        const retryErrMsg: string = (retryRaw?.error as Record<string, unknown>)?.message as string ?? "";
-        const retryRejectedUuids = new Set<string>(retryErrMsg.match(UUID_RE)?.map((id) => id.toUpperCase()) ?? []);
-        if (retryRejectedUuids.size > 0 && !isAlreadyEnrolledErr(retryErrMsg)) {
-          filteredPayrollData = filteredPayrollData.filter((entry) => {
-            const uid = (entry.userId as string).toUpperCase();
-            if (retryRejectedUuids.has(uid)) { skippedEmployees.push({ rollfiUserId: entry.userId as string, reason: retryErrMsg }); return false; }
-            return true;
-          });
+        req.log.info({ rollfiResponse: removeResp.data, count: zeroHoursIds.size }, "removeUsersFromRegularPayPeriod succeeded");
+        for (const uid of zeroHoursIds) {
+          skippedEmployees.push({ rollfiUserId: uid, type: "zero_hours", reason: "No hours or bonus for this pay period — removed from pay period" });
         }
+      } catch (removeErr) {
+        req.log.warn({ err: removeErr, count: zeroHoursIds.size }, "removeUsersFromRegularPayPeriod failed — employee may not be enrolled yet (non-fatal)");
       }
     }
 
-    // Only block submission when EVERY employee has zero hours AND zero bonus.
-    // Zero-hour employees stay in filteredPayrollData so Rollfi explicitly resets stale hours to 0.
-    if (filteredPayrollData.length > 0 && filteredPayrollData.every((entry) =>
-      zeroHoursIds.has((entry.userId as string).toUpperCase())
-    )) {
+    // Step 2: Import all employees who have hours or a bonus.
+    const filteredPayrollData = payrollData.filter(
+      (entry) => !zeroHoursIds.has((entry.userId as string).toUpperCase())
+    );
+
+    if (filteredPayrollData.length === 0) {
       res.status(400).json({ error: "No employees have billable hours for this pay period.", skippedEmployees });
       return;
     }
