@@ -1,0 +1,54 @@
+James Gaskell  [7:25 PM]
+
+You're not actually required to use addUsersToRegularPayPeriod. If an employee is eligible for payroll (i.e. their startDate is before or during the payPeriod and they are Active) they will be added automatically and can be seen in both the payPeriod insert webhook and getPayPeriodDetails as soon as the pay period is added. I see a few calls where we returned the following error:
+{
+  "error": {
+    "code": 400,
+    "message": "Employee B7B17DF6-9575-4FF8-B4E5-3B89F01C5B36 already has a payroll line item for this pay period"
+  }
+}addUsersToRegularPayPeriod should only really be used if the employee has been previously removed from the payPeriod, or if they do not appear in getPayPeriodDetails after the new pay period is nserted.
+
+
+
+2. Calling removeUsersFromRegularPayPeriod is a good design choice if the employee has no payroll at all for the given payPeriod. However. importing with payHours: 0 does clear the hours for an employee - I looked through the API logs and it looks like Mary Johnson was still sent through with 0.1667 hours in the last import for Sunshine Daycare, so there may still be a rounding issue. This request:
+{
+  "method": "importRegularPayrollData",
+  "companyId": "43A90BF7-B2BB-4BB5-A6F5-090306556DC4",
+  "payPeriodId": "F0E873F7-1965-4224-B8A8-871EC76CBDF3",
+  "payrollData": [
+    {
+      "userId": "B7B17DF6-9575-4FF8-B4E5-3B89F01C5B36",
+      "basicPay": {
+        "payHours": 0
+      }
+    },
+    {
+      "userId": "BCFD3E3B-9AC6-432C-A0AE-49D4E5756000",
+      "basicPay": {
+        "payHours": 0.0
+      }
+    },
+    {
+      "userId": "B040CD34-6DC7-4751-ADF3-E3186B28FF95",
+      "basicPay": {
+        "payHours": 0
+      }
+    }
+  ]
+}Succeeded in setting the hours to 0. The advantage of keeping employees in the payPeriod is we can still generate stubs for them, and you can still add additional compensation, retro, etc. even if they do not have any regular hours.
+
+
+
+3. The recommended approach depends on the above. If the employee has other pay items in the pay period, e.g. additionalCompensation, you will need to keep them with payHours: 0 to add their payroll data.
+
+
+
+4. addUsersToRegularPayPeriod will return an error if you attempt to add them more than once. An employee can only exist once in the payPeriod, but as mentioned earlier you may not need to use this endpoint if you're going with the 0 payHours for employees.
+
+
+
+5. No, it is safe to have employees with 0 payHours, but we'd recommend removing them if they have no other payroll data for the pay period.
+
+
+
+Please let us know if you have any questions or need clarification. Also happy to do a live test of the payroll import to make sure we're getting through the correct hours without rounding issues.
