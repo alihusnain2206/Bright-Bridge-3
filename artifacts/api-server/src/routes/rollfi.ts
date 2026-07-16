@@ -1918,6 +1918,50 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
   });
 });
 
+// ── Payroll type lookups ──────────────────────────────────────
+
+router.get("/rollfi/overtime-types", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const { companyId } = req.query as { companyId?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+  try {
+    const resp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#getOverTimeTypes`,
+      { method: "getOverTimeTypes", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    res.json(resp.data);
+  } catch (err) {
+    req.log.error({ err }, "getOverTimeTypes failed");
+    res.status(500).json({ error: "Failed to fetch overtime types" });
+  }
+});
+
+router.get("/rollfi/compensation-types", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const { companyId } = req.query as { companyId?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+  try {
+    const resp = await axios.post(
+      `${ROLLFI_BASE_URL}/payroll#getAdditionalCompensationDescription`,
+      { method: "getAdditionalCompensationDescription", companyId: rollfiCompany.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    res.json(resp.data);
+  } catch (err) {
+    req.log.error({ err }, "getAdditionalCompensationDescription failed");
+    res.status(500).json({ error: "Failed to fetch compensation types" });
+  }
+});
+
 // ── Initiate payroll ─────────────────────────────────────────
 
 router.post("/rollfi/payroll/initiate", async (req, res) => {
@@ -1926,7 +1970,11 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     return;
   }
 
-  type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
+  type AdjInput = {
+    rollfiUserId: string;
+    additionalCompensation?: { description: string; amount: number }[];
+    overTime?: { type: string; noOfHours: number; multiplier: number }[];
+  };
   const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate, employeeHours = [] } = req.body as {
     companyId: string; payPeriodId: string; adjustments?: AdjInput[];
     payBeginDate?: string; payEndDate?: string;
@@ -2019,8 +2067,8 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       else if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours");
       else if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours found — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
-      if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
-      if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
+      if (adj?.additionalCompensation?.length) entry.additionalCompensation = adj.additionalCompensation;
+      if (adj?.overTime?.length) entry.overTime = adj.overTime;
       return entry;
     });
 
@@ -2030,8 +2078,9 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       payrollData
         .filter((entry) => {
           const hours = (entry.basicPay as Record<string, unknown>)?.payHours as number ?? 0;
-          const bonus = (entry.bonusPay as Record<string, unknown>)?.amount as number ?? 0;
-          return hours === 0 && bonus === 0;
+          const hasComp = Array.isArray(entry.additionalCompensation) && (entry.additionalCompensation as unknown[]).length > 0;
+          const hasOT = Array.isArray(entry.overTime) && (entry.overTime as unknown[]).length > 0;
+          return hours === 0 && !hasComp && !hasOT;
         })
         .map((entry) => (entry.userId as string).toUpperCase())
     );
@@ -2134,7 +2183,11 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     return;
   }
 
-  type AdjInput = { rollfiUserId: string; bonusPay?: number; overtimePay?: number };
+  type AdjInput = {
+    rollfiUserId: string;
+    additionalCompensation?: { description: string; amount: number }[];
+    overTime?: { type: string; noOfHours: number; multiplier: number }[];
+  };
   const { companyId, payPeriodId, adjustments = [], payBeginDate, payEndDate, employeeHours = [] } = req.body as {
     companyId: string; payPeriodId: string; adjustments?: AdjInput[];
     payBeginDate?: string; payEndDate?: string;
@@ -2194,8 +2247,8 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         : null;
       const payHours = frontendH !== undefined ? frontendH : (approval ? approval.approvedHours : (synced ? synced.approvedHours : 0));
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
-      if (adj?.bonusPay && adj.bonusPay > 0)    entry.bonusPay    = { amount: adj.bonusPay };
-      if (adj?.overtimePay && adj.overtimePay > 0) entry.overtimePay = { payHours: adj.overtimePay };
+      if (adj?.additionalCompensation?.length) entry.additionalCompensation = adj.additionalCompensation;
+      if (adj?.overTime?.length) entry.overTime = adj.overTime;
       return entry;
     });
 
@@ -2203,8 +2256,9 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       payrollData
         .filter((entry) => {
           const hours = (entry.basicPay as Record<string, unknown>)?.payHours as number ?? 0;
-          const bonus = (entry.bonusPay as Record<string, unknown>)?.amount as number ?? 0;
-          return hours === 0 && bonus === 0;
+          const hasComp = Array.isArray(entry.additionalCompensation) && (entry.additionalCompensation as unknown[]).length > 0;
+          const hasOT = Array.isArray(entry.overTime) && (entry.overTime as unknown[]).length > 0;
+          return hours === 0 && !hasComp && !hasOT;
         })
         .map((entry) => (entry.userId as string).toUpperCase())
     );

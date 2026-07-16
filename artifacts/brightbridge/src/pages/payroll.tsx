@@ -83,7 +83,10 @@ interface RollfiPeriodDetailsResponse {
     payrollLineItems: Array<{ grossTotal: number; netTotal: number; userId: string }>;
   }>;
 }
-type AdjMap = Record<string, { bonusPay: number; overtimePay: number }>;
+type AdjMap = Record<string, {
+  compDescription: string; compAmount: number;
+  otType: string; otHours: number; otMultiplier: number;
+}>;
 
 // ── API helpers ──────────────────────────────────────────────
 
@@ -904,7 +907,7 @@ export default function Payroll() {
   });
 
   const importHours = useMutation({
-    mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; bonusPay?: number; overtimePay?: number }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
+    mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; additionalCompensation?: { description: string; amount: number }[]; overTime?: { type: string; noOfHours: number; multiplier: number }[] }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
       api.post<ImportResult>("/rollfi/payroll/import", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
     onSuccess: (data) => { setImportResult(data); },
     onError: (e) => { setImportResult({ success: false, payPeriodId: "", error: (e as Error).message }); },
