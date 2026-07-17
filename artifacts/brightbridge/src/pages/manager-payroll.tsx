@@ -576,9 +576,36 @@ function RightSidebar({ payPeriod }: { payPeriod?: PayPeriod }) {
 
 // ── Bottom Widgets ────────────────────────────────────────────
 
+interface ActivityFeedEvent {
+  id: string; type: string; description: string;
+  source: "app" | "rollfi"; actorName?: string; createdAt: string;
+}
+
+const TYPE_DOT: Record<string, string> = {
+  "payroll.initiated": "text-blue-500", "payroll.submitted": "text-blue-500",
+  "payroll.calculated": "text-emerald-500", "payroll.processed": "text-emerald-500",
+  "payroll.completed": "text-emerald-500", "payroll.approved": "text-emerald-500",
+  "payroll.failed": "text-red-500", "employee.added": "text-violet-500",
+  "hours.synced": "text-amber-500",
+};
+
 function BottomWidgets({ companyId, detail, history, preview }: {
   companyId: string; detail?: PeriodDetailItem; history?: HistoryPeriod[]; preview?: PayrollPreview;
 }) {
+  const { data: activityData } = useQuery<{ events: ActivityFeedEvent[] }>({
+    queryKey: ["activity-feed", companyId],
+    queryFn: async () => {
+      const r = await fetch(`/api/activity?companyId=${encodeURIComponent(companyId)}`, { credentials: "include" });
+      if (!r.ok) throw new Error("failed");
+      return r.json() as Promise<{ events: ActivityFeedEvent[] }>;
+    },
+    staleTime: 20_000,
+    refetchInterval: 30_000,
+    enabled: !!companyId,
+    retry: false,
+  });
+  const activityEvents = activityData?.events ?? [];
+
   const lastPeriod = history?.[0];
   const currentTotal = detail?.total ?? 0;
   const lastTotal = (lastPeriod?.total as number | undefined) ?? 0;
@@ -629,18 +656,47 @@ function BottomWidgets({ companyId, detail, history, preview }: {
       </div>
 
       {/* Recent Activity */}
-      <div className="bg-white rounded-xl border shadow-sm p-4">
-        <h4 className="font-semibold text-gray-800 text-sm mb-3 flex items-center gap-1.5"><Activity className="h-3.5 w-3.5 text-[#284362]" />Recent Activity</h4>
-        <div className="space-y-2">
-          {history && history.length > 0 ? history.slice(0, 4).map((h, i) => (
-            <div key={i} className="flex items-start gap-2 text-xs">
-              <CheckCircle2 className="h-3 w-3 text-emerald-500 mt-0.5 shrink-0" />
-              <div>
-                <div className="font-medium text-gray-700">Payroll completed</div>
-                <div className="text-gray-400">{fmtDate(String(h.payDate ?? ""))}</div>
+      <div className="bg-white rounded-xl border shadow-sm p-4 flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="font-semibold text-gray-800 text-sm flex items-center gap-1.5">
+            <Activity className="h-3.5 w-3.5 text-[#284362]" />Recent Activity
+          </h4>
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-600 font-semibold">App</span>
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-600 font-semibold">Rollfi</span>
+          </div>
+        </div>
+        <div className="space-y-2 flex-1">
+          {activityEvents.length > 0 ? activityEvents.slice(0, 5).map((ev) => {
+            const iconCls = TYPE_DOT[ev.type] ?? (ev.source === "app" ? "text-violet-500" : "text-blue-500");
+            const badgeCls = ev.source === "app"
+              ? "bg-violet-50 text-violet-600 border border-violet-200"
+              : "bg-blue-50 text-blue-600 border border-blue-200";
+            const timeAgo = (() => {
+              const mins = Math.floor((Date.now() - new Date(ev.createdAt).getTime()) / 60000);
+              if (mins < 60) return `${mins}m ago`;
+              const hrs = Math.floor(mins / 60);
+              if (hrs < 24) return `${hrs}h ago`;
+              return `${Math.floor(hrs / 24)}d ago`;
+            })();
+            return (
+              <div key={ev.id} className="flex items-start gap-2 text-xs">
+                <CheckCircle2 className={`h-3 w-3 mt-0.5 shrink-0 ${iconCls}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="font-medium text-gray-700 truncate">{ev.description}</span>
+                    <span className={`text-[9px] px-1 py-0.5 rounded font-semibold shrink-0 ${badgeCls}`}>
+                      {ev.source === "app" ? "App" : "Rollfi"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 text-gray-400 mt-0.5">
+                    {ev.actorName && <span>by {ev.actorName} ·</span>}
+                    <span>{timeAgo}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          )) : <p className="text-xs text-gray-400 italic">No activity yet.</p>}
+            );
+          }) : <p className="text-xs text-gray-400 italic">No activity yet. Events will appear as you process payroll or sync hours.</p>}
         </div>
       </div>
 
