@@ -96,6 +96,16 @@ export interface RollfiEmployeeRecord {
   onboardedAt: string;
 }
 
+export interface ActivityEvent {
+  id: string;
+  companyId: string;
+  type: string;
+  description: string;
+  actorName?: string;
+  actorRole?: string;
+  createdAt: string;
+}
+
 const rollfiCompanies = new Map<string, RollfiCompanyRecord>();
 const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
 
@@ -133,6 +143,10 @@ const locations: Location[] = [
   { id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", organizationId: "ORG-SUNSHINE", address: "123 Main St, Newark NJ", latitude: 40.7357, longitude: -74.1724 },
   { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", organizationId: "ORG-RAINBOW", address: "456 Oak Ave, Jersey City NJ", latitude: 40.7178, longitude: -74.0431 },
 ];
+
+// ─── ACTIVITY LOG ─────────────────────────────────────────────
+
+const activityLog: ActivityEvent[] = [];
 
 // ─── CHILDREN ────────────────────────────────────────────────
 
@@ -351,6 +365,20 @@ export const store = {
   setRollfiCompany(companyId: string, record: RollfiCompanyRecord): void { rollfiCompanies.set(companyId, record); },
   getRollfiEmployee(employeeId: string): RollfiEmployeeRecord | undefined { return rollfiEmployees.get(employeeId); },
   setRollfiEmployee(employeeId: string, record: RollfiEmployeeRecord): void { rollfiEmployees.set(employeeId, record); },
+
+  // ── Activity log ──
+  logActivity(event: Omit<ActivityEvent, "id" | "createdAt">): void {
+    const entry: ActivityEvent = {
+      id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: new Date().toISOString(),
+      ...event,
+    };
+    activityLog.unshift(entry);
+    if (activityLog.length > 300) activityLog.splice(300);
+  },
+  getActivity(companyId: string, limit = 50): ActivityEvent[] {
+    return activityLog.filter((e) => e.companyId === companyId).slice(0, limit);
+  },
 
   // ── Children ──
   getChildrenForParent(parentId: string): Child[] { return children.filter((c) => c.parentId === parentId); },

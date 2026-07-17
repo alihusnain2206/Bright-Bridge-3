@@ -345,6 +345,14 @@ router.post("/rollfi/employees", async (req, res) => {
     req.log
   ).catch((err: unknown) => req.log.warn({ err }, "EasyTeam registration failed for new employee — will retry on first login"));
 
+  const actor = req.session.userId ? store.getUserById(req.session.userId) : undefined;
+  store.logActivity({
+    companyId,
+    type: "employee.added",
+    description: `Employee "${name}" added`,
+    actorName: actor?.name,
+    actorRole: actor?.role,
+  });
   res.status(201).json(user);
 });
 
@@ -2166,6 +2174,14 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
 
+    const actor2 = req.session.userId ? store.getUserById(req.session.userId) : undefined;
+    store.logActivity({
+      companyId,
+      type: "payroll.initiated",
+      description: "Payroll run started",
+      actorName: actor2?.name,
+      actorRole: actor2?.role,
+    });
     res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
@@ -2374,6 +2390,14 @@ router.post("/rollfi/payroll/submit", async (req, res) => {
     req.log.info({ rollfiResponse: response.data }, "Rollfi initiatePayroll (submit step)");
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
+    const actorSub = req.session.userId ? store.getUserById(req.session.userId) : undefined;
+    store.logActivity({
+      companyId,
+      type: "payroll.submitted",
+      description: "Payroll submitted for processing",
+      actorName: actorSub?.name,
+      actorRole: actorSub?.role,
+    });
     res.json({ success: true, ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
@@ -2917,6 +2941,57 @@ router.post("/rollfi/webhook", async (req, res) => {
 
   req.log.info({ eventType, rollfiCompanyId, payPeriodId }, "Rollfi webhook received");
   res.json({ received: true });
+});
+
+// ── Activity feed helpers ─────────────────────────────────────
+
+function mapWebhookType(eventType: string): string {
+  const labels: Record<string, string> = {
+    "payroll.calculated": "Payroll calculated",
+    "payroll.submitted":  "Payroll submitted",
+    "payroll.processed":  "Payroll completed",
+    "payroll.approved":   "Payroll approved",
+    "payroll.failed":     "Payroll failed",
+  };
+  return labels[eventType] ?? eventType;
+}
+
+// GET /activity — app activities + Rollfi webhook events, merged by companyId
+router.get("/activity", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const { companyId, limit: limitStr } = req.query as { companyId?: string; limit?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  const limit = Math.min(parseInt(limitStr ?? "50", 10) || 50, 100);
+
+  const appEvents = store.getActivity(companyId, limit).map((e) => ({
+    id: e.id,
+    type: e.type,
+    description: e.description,
+    source: "app" as const,
+    actorName: e.actorName,
+    actorRole: e.actorRole,
+    createdAt: e.createdAt,
+  }));
+
+  await loadEventsFromDb(req.log);
+  const rollfiEvents = rollfiEventCache
+    .filter((e) => e.companyId === companyId)
+    .slice(0, limit)
+    .map((e) => ({
+      id: e.id,
+      type: e.eventType,
+      description: mapWebhookType(e.eventType),
+      source: "rollfi" as const,
+      actorName: undefined as string | undefined,
+      actorRole: undefined as string | undefined,
+      createdAt: e.receivedAt,
+    }));
+
+  const merged = [...appEvents, ...rollfiEvents]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, limit);
+
+  res.json({ events: merged });
 });
 
 // GET /rollfi/webhook/events — return stored events (requires session)

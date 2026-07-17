@@ -397,9 +397,12 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   }
 
   // ── Step 1: In-memory exportLog (populated by previous webhook or trigger) ──
+  const actorSync = req.session.userId ? store.getUserById(req.session.userId) : undefined;
+
   const step1 = await applyExportIfFound();
   if (step1 > 0) {
     req.log.info({ periodKey, companyId, synced: step1 }, "Sync: used cached export webhook data");
+    if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${step1} employee${step1 !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
     res.json({ success: true, source: "easyteam", periodKey, synced: step1 });
     return;
   }
@@ -419,6 +422,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
           const synced = await applyExportIfFound();
           if (synced > 0) {
             req.log.info({ periodKey, companyId, synced, pollAttempt: i + 1 }, "Sync: webhook arrived after export trigger");
+            if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${synced} employee${synced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
             res.json({ success: true, source: "easyteam", periodKey, synced });
             return;
           }
@@ -513,6 +517,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
 
   if (restApiResponded) {
     req.log.info({ periodKey, companyId, restSynced }, "Sync: used EasyTeam REST API data");
+    if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${restSynced} employee${restSynced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
     res.json({ success: true, source: "easyteam", periodKey, synced: restSynced });
     return;
   }
@@ -520,6 +525,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   // ── Step 4: Seed fallback — only if REST API never responded ──
   req.log.info({ periodKey, companyId }, "Sync: EasyTeam REST API unavailable — seeding fallback hours");
   const seeded = store.seedTimesheetHours(periodKey);
+  if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours seeded from EasyTeam demo data (${seeded.length} records)`, actorName: actorSync?.name, actorRole: actorSync?.role });
   res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data — seeded demo hours" });
 });
 
