@@ -639,11 +639,12 @@ export default function ManagerPayrollSubmit() {
                                 value={adj.compDescription}
                                 onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, compDescription: e.target.value, compAmount: e.target.value ? adj.compAmount : 0 } }))}
                                 className="flex-1 bg-gray-800 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
+                                style={{ colorScheme: 'dark' }}
                               >
-                                <option className="bg-gray-800 text-white" value="">— none —</option>
-                                {compLoading && <option className="bg-gray-800 text-white" disabled>Loading…</option>}
-                                {compError && <option className="bg-gray-800 text-white" disabled>Unavailable — check Rollfi</option>}
-                                {compDescriptions.map((d) => <option className="bg-gray-800 text-white" key={d} value={d}>{d}</option>)}
+                                <option value="">— none —</option>
+                                {compLoading && <option disabled>Loading…</option>}
+                                {compError && <option disabled>Unavailable — check Rollfi</option>}
+                                {compDescriptions.map((d) => <option key={d} value={d}>{d}</option>)}
                               </select>
                               <input
                                 type="number" min="0" step="50"
@@ -660,11 +661,12 @@ export default function ManagerPayrollSubmit() {
                                 value={adj.otType}
                                 onChange={(e) => setAdjustments((prev) => ({ ...prev, [key]: { ...adj, otType: e.target.value, otHours: e.target.value ? adj.otHours : 0 } }))}
                                 className="flex-1 bg-gray-800 border border-white/10 rounded px-2 py-1 text-white text-xs outline-none focus:border-orange-400/50 min-w-0"
+                                style={{ colorScheme: 'dark' }}
                               >
-                                <option className="bg-gray-800 text-white" value="">— none —</option>
-                                {otLoading && <option className="bg-gray-800 text-white" disabled>Loading…</option>}
-                                {otError && <option className="bg-gray-800 text-white" disabled>Unavailable — check Rollfi</option>}
-                                {otTypes.map((t) => <option className="bg-gray-800 text-white" key={t} value={t}>{t}</option>)}
+                                <option value="">— none —</option>
+                                {otLoading && <option disabled>Loading…</option>}
+                                {otError && <option disabled>Unavailable — check Rollfi</option>}
+                                {otTypes.map((t) => <option key={t} value={t}>{t}</option>)}
                               </select>
                               <input
                                 type="number" min="0" step="0.5"
