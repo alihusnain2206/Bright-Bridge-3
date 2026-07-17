@@ -792,8 +792,8 @@ export default function Payroll() {
   const otTypes: string[] = Array.isArray((otTypesRaw as Record<string, unknown> | undefined)?.overTimeTypes)
     ? (otTypesRaw as Record<string, string[]>).overTimeTypes
     : [];
-  const compDescriptions: string[] = Array.isArray((compTypesRaw as Record<string, unknown> | undefined)?.additionalCompensationDescriptions)
-    ? (compTypesRaw as Record<string, string[]>).additionalCompensationDescriptions
+  const compDescriptions: string[] = Array.isArray((compTypesRaw as Record<string, unknown> | undefined)?.additionalCompensationDescription)
+    ? (compTypesRaw as Record<string, string[]>).additionalCompensationDescription
     : [];
 
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);

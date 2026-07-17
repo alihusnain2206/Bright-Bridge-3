@@ -1930,8 +1930,8 @@ router.get("/rollfi/overtime-types", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
   try {
     const resp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#getOverTimeTypes`,
-      { method: "getOverTimeTypes", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+      `${ROLLFI_BASE_URL}/reports/getOverTimeTypes`,
+      { method: "getOverTimeTypes" },
       { headers: rollfiHeaders() }
     );
     res.json(resp.data);
@@ -1951,8 +1951,8 @@ router.get("/rollfi/compensation-types", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
   try {
     const resp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#getAdditionalCompensationDescription`,
-      { method: "getAdditionalCompensationDescription", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
+      `${ROLLFI_BASE_URL}/reports/getAdditionalCompensationDescription`,
+      { method: "getAdditionalCompensationDescription" },
       { headers: rollfiHeaders() }
     );
     res.json(resp.data);
