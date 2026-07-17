@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import { PayrollWidgets } from "./PayrollWidgets";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1935,6 +1936,15 @@ export default function Payroll() {
                     )}
                   </>
                 )}
+
+                {/* Operations Command Center Widgets */}
+                <PayrollWidgets
+                  selectedCompanyId={selectedCompanyId}
+                  history={history}
+                  currentPeriodDetails={payPeriodDetails}
+                  payPeriod={payPeriod}
+                  companies={companies}
+                />
               </>
             )}
               </>

@@ -1,0 +1,566 @@
+Here is your complete Replit prompt for the payroll bottom widgets:
+
+ROLE: You are a senior full-stack 
+TypeScript engineer adding new 
+widgets to the existing Payroll 
+section of BrightBridge Assist.
+
+SCOPE: Add 5 new widget cards to 
+the BOTTOM of the existing payroll 
+page. Do NOT rebuild the payroll page. 
+Do NOT touch the KPI cards, payroll 
+grid, timeline, or any existing 
+features. Just ADD these new widgets 
+below the existing content.
+
+Do NOT create any new Rollfi API 
+endpoints. Use ONLY existing 
+endpoints that are already in 
+rollfi.ts. All the data needed 
+is already available.
+
+---
+
+CONTEXT:
+
+The client wants the payroll page 
+to feel like an "Operations Command 
+Center." We need to add analytical 
+widgets at the bottom of the payroll 
+page that give managers deeper 
+insight into payroll trends, funding, 
+and activity.
+
+EXISTING ENDPOINTS TO USE 
+(already built — do not create new ones):
+
+GET /rollfi/payperiod?companyId=xxx
+→ Returns current unprocessed period
+→ Has: payPeriodId, payBeginDate, 
+  payEndDate, payDate, 
+  deadLineToRunPayroll
+
+GET /rollfi/payperiod/history?companyId=xxx
+→ Returns processed past periods
+→ Has: payPeriodId, payBeginDate, 
+  payEndDate, payDate, total amounts
+
+GET /rollfi/payperiod/details
+?companyId=xxx&payPeriodId=xxx
+→ Returns FULL period details
+→ Has: total (bank debit), 
+  employeeTaxSum, employerTaxSum,
+  payrollLineItems[] per employee
+  with grossTotal, netTotal, 
+  overTimes, deductions,
+  reimbursements
+
+GET /rollfi/paystubs
+?companyId=xxx&payPeriodId=xxx
+→ Returns per employee paystub data
+
+GET /rollfi/webhook/events
+→ Returns stored webhook events
+
+GET /rollfi/payroll/overview
+→ Returns all companies payroll summary
+
+---
+
+WIDGET 1 — PAYROLL FUNDING FORECAST
+
+PURPOSE:
+Show projected cash required for 
+the next 3-4 upcoming pay dates 
+so the business owner can plan 
+ahead and ensure sufficient funds.
+
+DATA SOURCE:
+1. Get past processed periods from:
+   GET /rollfi/payperiod/history
+   
+2. Calculate average total from 
+   the last 3 completed periods:
+   
+   const recentPeriods = history
+     .filter(p => p.total > 0)
+     .slice(0, 3);
+   
+   const avgTotal = recentPeriods
+     .reduce((sum, p) => sum + p.total, 0)
+     / recentPeriods.length;
+
+3. Get current period pay schedule 
+   frequency from:
+   GET /rollfi/payperiod
+   Use payDate and frequency to 
+   project next 3-4 pay dates
+
+DISPLAY:
+Title: "Payroll Funding Forecast"
+
+Show a table:
+| Pay Date    | Projected Cash Required |
+|-------------|------------------------|
+| Jul 15      | $2,400.00 →            |
+| Jul 29      | $2,400.00 →            |
+| Aug 12      | $2,400.00 →            |
+| Aug 26      | $2,400.00 →            |
+
+Each row clickable (future feature)
+
+Show green check if projected 
+amount is similar to recent average.
+Show amber warning if projected 
+is 10%+ higher than average.
+
+Below the table show:
+"Based on average of last 
+3 completed payrolls"
+
+If no history available:
+Show: "Forecast available after 
+first completed payroll"
+
+Link at bottom: "View full forecast →"
+(links to payroll history tab for now)
+
+STYLE:
+Card with white background
+Border radius matching other cards
+Shadow and padding consistent
+BrightBridge colors
+
+---
+
+WIDGET 2 — PAYROLL VARIANCE
+
+PURPOSE:
+Compare the current payroll period 
+to the previous completed period 
+and highlight what changed and why, 
+so managers can catch errors or 
+understand cost changes before 
+approving payroll.
+
+DATA SOURCE:
+1. Current period data from:
+   GET /rollfi/payperiod/details
+   → total, employeeTaxSum, 
+   employerTaxSum, payrollLineItems
+
+2. Last completed period from:
+   GET /rollfi/payperiod/history
+   → Get most recent processed period
+   → Then call details for that 
+   period too
+
+3. Calculate variance:
+   const currentTotal = currentPeriod.total;
+   const lastTotal = lastPeriod.total;
+   const varianceAmount = 
+     currentTotal - lastTotal;
+   const variancePercent = 
+     ((varianceAmount) / lastTotal) * 100;
+
+4. Calculate top variance drivers 
+   by comparing per-employee data:
+   
+   For each employee in current period:
+   → Find same employee in last period
+     (match by userId)
+   → Compare grossTotal
+   → If difference > 0: categorize why
+   
+   Categories:
+   → Overtime: sum of overTimes 
+     difference between periods
+   → New Hires: employees in current 
+     but NOT in last period
+   → Rate Changes: same employee 
+     different payRate
+   → Other: remaining difference
+
+DISPLAY:
+Title: "Payroll Variance"
+Subtitle: "(vs Last Pay Period)"
+
+Show large number:
+"8.3%" with up/down arrow
+Green if decrease, Red if increase
+
+Show dollar amount:
+"$12,345.25 Change in Cash Required"
+
+Show horizontal bar chart of 
+top variance drivers:
+Overtime     ████████  +$6,234
+New Hires    ██████    +$3,215
+Rate Changes █████     +$2,145
+Bonuses      ████      +$1,120
+Other        █         -$370
+
+Each bar colored:
+Red/amber for increases
+Green for decreases
+
+Link: "View full variance report →"
+
+If no history available:
+Show: "Variance available after 
+first completed payroll"
+
+If current period not yet calculated:
+Show: "Submit payroll to see 
+variance analysis"
+
+---
+
+WIDGET 3 — PAYROLL COST TREND
+
+PURPOSE:
+Show payroll costs over time as 
+a line chart so the owner can see 
+trends (costs going up or down).
+
+NOTE: The client's screenshot shows 
+"Bank Balance Trend" but this requires 
+a bank API integration (Plaid) which 
+is not available yet. We are replacing 
+it with "Payroll Cost Trend" which 
+uses data we already have and is 
+MORE useful for payroll managers.
+
+DATA SOURCE:
+GET /rollfi/payperiod/history
+→ Returns all processed periods
+→ Each has: total, payBeginDate, 
+  payDate, employeeTaxSum, 
+  employerTaxSum
+
+Take last 6-8 completed periods
+Plot them on a line chart
+
+DISPLAY:
+Title: "Payroll Cost Trend"
+
+Line chart with:
+X-axis: Pay dates (last 6-8 periods)
+Y-axis: Dollar amounts
+
+Show TWO lines:
+Line 1 (solid blue): Total Cash 
+  Required (the total field)
+Line 2 (dotted teal): Net Employee 
+  Pay (total - employeeTaxSum - 
+  employerTaxSum)
+
+Hover on any point shows tooltip:
+"Jun 14 - Jun 28
+Total: $2,400
+Net Pay: $1,960
+Employer Tax: $240
+Employee Tax: $200"
+
+Y-axis should auto-scale to data
+
+If less than 2 periods available:
+Show: "Trend chart available after 
+2+ completed payrolls"
+
+Use recharts library for the chart
+(already available in the project)
+
+---
+
+WIDGET 4 — RECENT PAYROLL ACTIVITY
+
+PURPOSE:
+Show a timeline of recent payroll 
+events so managers can track what 
+happened and when, providing an 
+audit trail.
+
+DATA SOURCE:
+1. Webhook events from:
+   GET /rollfi/webhook/events
+   → Returns stored Rollfi events
+   → Has: eventType, receivedAt, 
+   companyId, payload
+
+2. Filter events for the currently 
+   selected company only
+
+3. Sort by most recent first
+
+4. Take last 8-10 events
+
+DISPLAY:
+Title: "Recent Payroll Activity"
+Link: "View all activity →"
+
+Show as a vertical timeline:
+
+Each event shows:
+[icon] [description] [timestamp]
+       [who did it if available]
+
+Map event types to descriptions:
+"payroll.calculated" 
+→ "✅ Payroll calculated"
+
+"payroll.submitted"
+→ "✅ Payroll submitted"
+
+"payroll.processed"
+→ "✅ Payroll processed"
+
+"payroll.failed"
+→ "❌ Payroll failed"
+
+"payroll.approved"
+→ "✅ Payroll approved"
+
+For events from our own app 
+(not webhooks), also show:
+→ "👁 Payroll previewed"
+→ "📊 Payroll recalculated"
+→ "👤 Employee added to payroll"
+
+Each event shows:
+→ Relative timestamp: "2h ago"
+→ User name if available
+→ Company name
+
+If no events:
+Show: "No recent activity. 
+Events will appear here as 
+you process payroll."
+
+STYLE:
+Timeline with dots and lines
+connecting events vertically
+Most recent at top
+Green dots for success
+Red dots for failures
+Blue dots for info
+
+---
+
+WIDGET 5 — BANK ACCOUNT & FUNDING INFO
+
+PURPOSE:
+Show the company's connected funding 
+account and its status. This replaces 
+the "Bank Balance Verification" widget 
+from the client screenshot since live 
+bank balance checking requires a 
+separate bank API (Plaid) which is 
+not yet integrated.
+
+DATA SOURCE:
+Use existing company data:
+→ Company bank account info 
+  (from Rollfi onboarding)
+→ Bank verification status 
+  (from existing store data)
+→ Current payroll total 
+  (from getPayPeriodDetails → total)
+
+DISPLAY:
+Title: "Funding Account"
+
+Show:
+Bank name: "Chase Bank"
+Account: "Business Checking ****4821"
+Verification: "✅ Verified" 
+  OR "⚠️ Pending Verification"
+
+Show current payroll debit:
+"Next Debit: $2,400.00"
+"Debit Date: Jul 1, 2026"
+
+Show info banner:
+"ℹ️ Please verify your bank account 
+has sufficient funds before approving 
+payroll. BrightBridge does not 
+currently check your live bank 
+balance automatically."
+
+Show button: 
+"Manage Funding Account →"
+Links to company settings/bank 
+account section
+
+FUTURE BADGE (optional):
+Show small "Live Balance Coming Soon" 
+badge to signal this feature is 
+on the roadmap
+
+---
+
+LAYOUT — HOW TO ARRANGE ALL 5 WIDGETS
+
+Show in a responsive grid below 
+the existing payroll content:
+
+DESKTOP (wide screen):
+Row 1: [Funding Forecast] [Payroll Variance] [Payroll Cost Trend]
+Row 2: [Funding Account] [Recent Activity]
+
+Row 1 = three equal-width cards
+Row 2 = two cards
+  Funding Account = 1/3 width
+  Recent Activity = 2/3 width
+
+TABLET:
+Row 1: [Funding Forecast] [Payroll Variance]
+Row 2: [Payroll Cost Trend] [Funding Account]
+Row 3: [Recent Activity] (full width)
+
+MOBILE:
+Stack all 5 cards vertically
+Full width each
+
+---
+
+IMPORTANT TECHNICAL RULES:
+
+1. TypeScript throughout with 
+   proper interfaces for all data
+
+2. Use ONLY existing API endpoints
+   Do NOT create any new routes
+   in rollfi.ts or any backend file
+
+3. Use recharts for the Payroll 
+   Cost Trend chart (already 
+   available in the project)
+
+4. All data scoped to the currently 
+   selected companyId — do NOT 
+   fetch data for other companies
+
+5. No duplicate API calls — if 
+   the payroll page already fetches 
+   payperiod/history or payperiod/
+   details, reuse that data from 
+   the existing query/state rather 
+   than fetching again
+
+6. Handle empty/no-data states 
+   gracefully for every widget:
+   → If no history: show helpful 
+     message explaining when data 
+     will become available
+   → If API fails: show error 
+     message not blank card
+   → Never show NaN, undefined, 
+     or broken UI
+
+7. All dollar amounts formatted:
+   $1,234.56 (not 123456)
+   Use Intl.NumberFormat or existing 
+   formatting utility in the codebase
+
+8. BrightBridge colors:
+   Primary: #1B3A6B (deep blue)
+   Accent: #0EA5C9 (teal)
+   Success: #10B981 (green)
+   Warning: #F59E0B (amber)
+   Error: #EF4444 (red)
+   Background: #F8FAFC (light grey)
+
+9. Each widget card should have:
+   → White background
+   → Subtle shadow
+   → Rounded corners
+   → Consistent padding
+   → Loading spinner while 
+     fetching data
+   → Title + optional subtitle
+   → Optional action link at bottom
+
+10. Keep ALL existing payroll 
+    features working:
+    → Company selector ✅
+    → Pay period selector ✅
+    → Employee table ✅
+    → Tax breakdown ✅
+    → Submit payroll ✅
+    → Paystubs ✅
+    → Confirmed vs estimated ✅
+
+---
+
+TESTING CHECKLIST:
+
+PAYROLL FUNDING FORECAST:
+✅ Shows projected amounts for 
+   next 3-4 pay dates
+✅ Uses average of last 3 periods
+✅ Shows helpful message when 
+   no history exists
+✅ Dollar amounts formatted correctly
+
+PAYROLL VARIANCE:
+✅ Shows percentage change 
+   vs last period
+✅ Shows dollar amount change
+✅ Shows top variance drivers 
+   with bar chart
+✅ Green for decrease, red for increase
+✅ Helpful message when no 
+   history exists
+
+PAYROLL COST TREND:
+✅ Line chart renders correctly
+✅ Shows last 6-8 periods
+✅ Two lines: total and net pay
+✅ Hover tooltip shows details
+✅ Auto-scales Y axis
+✅ Helpful message when less than 
+   2 periods available
+
+RECENT PAYROLL ACTIVITY:
+✅ Shows webhook events for 
+   selected company only
+✅ Most recent events first
+✅ Timestamps show correctly
+✅ Event types mapped to 
+   readable descriptions
+✅ Icons match event type
+
+FUNDING ACCOUNT:
+✅ Shows bank name and masked 
+   account number
+✅ Shows verification status
+✅ Shows next debit amount and date
+✅ Shows info banner about 
+   checking balance manually
+✅ Link to manage account works
+
+GENERAL:
+✅ All 5 widgets render below 
+   existing payroll content
+✅ Responsive layout works
+✅ No new API endpoints created
+✅ No duplicate API calls
+✅ No cross-company data fetched
+✅ Loading states on all widgets
+✅ Error states handled gracefully
+✅ All existing payroll features 
+   still work perfectly
+
+---
+
+DELIVERABLE SUMMARY:
+After building provide:
+1. List of files changed
+2. Confirmation no new API 
+   endpoints were created
+3. Which existing queries/state 
+   were reused vs new fetches added
+4. Any data gaps found where 
+   existing endpoints do not return 
+   enough detail for a widget
