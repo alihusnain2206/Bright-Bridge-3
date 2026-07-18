@@ -38,7 +38,7 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
         { href: "/timesheets",            label: "Timesheets",      icon: CalendarDays },
-        { href: "/my-team",               label: "My Team",         icon: Users },
+        { href: "/people",                label: "People",          icon: Users },
         {
           href: "/manager-payroll",
           label: "Payroll",

@@ -29,6 +29,7 @@ import EmployeeDashboard from "@/pages/dashboard-employee";
 import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
 import Paystub from "@/pages/paystub";
+import PeoplePage from "@/pages/people";
 
 const queryClient = new QueryClient();
 
@@ -98,8 +99,12 @@ function Router() {
             <Route path="/dashboard/manager">
               <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
             </Route>
+            {/* /my-team kept as backward-compat alias for managers */}
             <Route path="/my-team">
-              <ProtectedRoute component={ManagerTeam} roles={["manager"]} />
+              <ProtectedRoute component={PeoplePage} roles={["manager"]} />
+            </Route>
+            <Route path="/people">
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
             </Route>
             <Route path="/manager-payroll/employees">
               <ProtectedRoute component={ManagerPayrollEmployees} roles={["manager"]} />

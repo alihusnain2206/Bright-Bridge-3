@@ -1,3 +1,7 @@
+// TODO: RETIREMENT CANDIDATE — This inline modal only covers basic fields (no state W-4, no bank setup).
+// The full 4-step wizard at /clients/:companyId/employees/new is the canonical flow.
+// New entry points (e.g. People page) should link to the wizard instead of using this component.
+// Safe to remove once all callers have been migrated to the wizard.
 import React, { useState } from "react";
 import { X, CheckCircle2, AlertTriangle, Loader2, UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
