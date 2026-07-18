@@ -1,6 +1,7 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import {
   db, companies, employees,
+  rollfiCompanyRecords, rollfiEmployeeRecords,
   onboardingTasks as onboardingTasksTable,
   complianceItems as complianceItemsTable,
   employeeDocuments as employeeDocumentsTable,
@@ -12,6 +13,15 @@ import { store, type Department } from "../store.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+import axios from "axios";
+
+const ROLLFI_BASE_URL  = process.env.ROLLFI_BASE_URL  ?? "https://sandbox.rollfi.xyz";
+const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
+const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
+function rollfiHeaders() {
+  const encoded = Buffer.from(`${ROLLFI_CLIENT_ID ?? ""}:${ROLLFI_SECRET_KEY ?? ""}`).toString("base64");
+  return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
+}
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -369,27 +379,149 @@ export async function backfillPeopleModule(): Promise<void> {
   }
 }
 
-// ─── PATCH /employees/:id ─────────────────────────────────────
+// ─── PATCH EMPLOYEE BY ID ───────────────────────────────────────
+
+// ─── Rollfi sync helper ────────────────────────────────────────
+
+interface RollfiCallResult { success: boolean; error?: string; status?: number }
+interface RollfiSyncResult {
+  skipped?: boolean; reason?: string;
+  updateUser?: RollfiCallResult | null;
+  updateKycInfo?: RollfiCallResult | null;
+  updateWage?: RollfiCallResult | null;
+}
+
+type EmpRow = typeof employees.$inferSelect;
+
+async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<RollfiSyncResult> {
+  const rollfiUserId = emp.rollfiUserId;
+  if (!rollfiUserId) return { skipped: true, reason: "no_rollfi_account" };
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) return { skipped: true, reason: "not_configured" };
+
+  const result: RollfiSyncResult = { skipped: false, updateUser: null, updateKycInfo: null, updateWage: null };
+
+  // updateUser — syncs: email, phoneNumber, dateOfJoin, workerType, jobTitle
+  const userFields = ["email","phone","startDate","workerType","jobTitle"];
+  if (userFields.some(f => changed.has(f))) {
+    try {
+      const user: Record<string, unknown> = { userId: rollfiUserId };
+      if (changed.has("email"))      user.email         = emp.email;
+      if (changed.has("phone"))      user.phoneNumber   = emp.phone;
+      if (changed.has("startDate"))  user.dateOfJoin    = emp.startDate;
+      if (changed.has("workerType")) user.workerType    = emp.workerType;
+      if (changed.has("jobTitle"))   user.jobTitle      = emp.jobTitle;
+      const r = await axios.put(
+        `${ROLLFI_BASE_URL}/adminPortal/updateUser`,
+        { method: "updateUser", user },
+        { headers: rollfiHeaders() },
+      );
+      result.updateUser = { success: true, status: r.status as number };
+    } catch (e) {
+      result.updateUser = { success: false, error: String(e) };
+    }
+  }
+
+  // updateKycInformation — syncs: address1, city, state, zipcode, phoneNumber
+  const kycFields = ["homeAddress","homeCity","homeState","homeZip","phone"];
+  if (kycFields.some(f => changed.has(f))) {
+    try {
+      const kycInfo: Record<string, unknown> = { userId: rollfiUserId };
+      if (changed.has("homeAddress")) kycInfo.address1     = emp.homeAddress;
+      if (changed.has("homeCity"))    kycInfo.city         = emp.homeCity;
+      if (changed.has("homeState"))   kycInfo.state        = emp.homeState;
+      if (changed.has("homeZip"))     kycInfo.zipcode      = emp.homeZip;
+      if (changed.has("phone"))       kycInfo.phoneNumber  = emp.phone;
+      const r = await axios.put(
+        `${ROLLFI_BASE_URL}/userPortal/updateKycInformation`,
+        { method: "updateKycInformation", kycInformation: kycInfo },
+        { headers: rollfiHeaders() },
+      );
+      result.updateKycInfo = { success: true, status: r.status as number };
+    } catch (e) {
+      result.updateKycInfo = { success: false, error: String(e) };
+    }
+  }
+
+  // updateUserWage — syncs hourlyWage (stored as cents, Rollfi wants dollars)
+  if (changed.has("hourlyWage")) {
+    try {
+      const [companyRec] = await db.select().from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, emp.companyId));
+      const [empRec]     = await db.select().from(rollfiEmployeeRecords).where(eq(rollfiEmployeeRecords.employeeId, emp.id));
+      if (companyRec && empRec) {
+        const wageInDollars = (emp.hourlyWage ?? 0) / 100;
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/adminPortal#updateUserWage`,
+          {
+            method: "updateUserWage",
+            userWage: {
+              companyId: companyRec.rollfiCompanyId,
+              userId: rollfiUserId,
+              userWageId: empRec.rollfiWageId ?? "",
+              wageRate: wageInDollars,
+              paymentType: "Regular",
+              wageBasis: "Per Hour",
+              workerType: emp.workerType ?? "W2",
+              paymentMethod: emp.paymentMethod ?? "Direct Deposit",
+            },
+          },
+          { headers: rollfiHeaders() },
+        );
+        result.updateWage = { success: true, status: r.status as number };
+      } else {
+        result.updateWage = { success: false, error: "Missing Rollfi company or wage record" };
+      }
+    } catch (e) {
+      result.updateWage = { success: false, error: String(e) };
+    }
+  }
+
+  return result;
+}
+
+// ─── PATCH EMPLOYEE ────────────────────────────────────────────
 
 router.patch("/employees/:id", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = String(req.params.id);
 
-  const allowed = [
+  // String fields (stored as-is)
+  const stringFields = [
     "firstName","lastName","email","phone",
     "position","jobTitle","employmentType","workerType",
     "department","managerId","managerName","startDate","status",
+    "payType","paymentMethod","ssn","dateOfBirth",
+    "homeAddress","homeCity","homeState","homeZip",
+    "w4FilingStatus","notes",
   ] as const;
 
-  type AllowedKey = (typeof allowed)[number];
-  const updates: Partial<Record<AllowedKey, string | null>> = {};
-  for (const key of allowed) {
-    if (key in req.body) {
-      updates[key] = req.body[key] as string | null;
+  // Integer fields
+  const intFields = ["hourlyWage","w4Dependents","w4ExtraWithholding"] as const;
+
+  // Boolean fields
+  const boolFields = ["overtimeEligible","w4MultipleJobs","taxExempt"] as const;
+
+  const dbUpdates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+  const changed = new Set<string>();
+
+  for (const k of stringFields) {
+    if (k in req.body) { dbUpdates[k] = req.body[k] as string | null; changed.add(k); }
+  }
+  for (const k of intFields) {
+    if (k in req.body) {
+      const v = req.body[k] as unknown;
+      dbUpdates[k] = (v === null || v === "") ? null : Number(v);
+      changed.add(k);
+    }
+  }
+  for (const k of boolFields) {
+    if (k in req.body) {
+      const v = req.body[k] as unknown;
+      dbUpdates[k] = v === null ? null : Boolean(v);
+      changed.add(k);
     }
   }
 
-  if (Object.keys(updates).length === 0) {
+  if (changed.size === 0) {
     res.status(400).json({ error: "No updatable fields provided" }); return;
   }
 
@@ -397,14 +529,15 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
     const [existing] = await db.select().from(employees).where(eq(employees.id, id));
     if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }
 
-    // Drizzle uses camelCase field names in .set() — pass updates directly
-    const dbUpdates = { ...updates, updatedAt: new Date().toISOString() };
+    await db.update(employees).set(dbUpdates).where(eq(employees.id, id));
 
-    await db.update(employees).set(dbUpdates as Record<string, unknown>).where(eq(employees.id, id));
-
-    // Re-fetch and return updated employee
+    // Re-fetch updated employee
     const [updated] = await db.select().from(employees).where(eq(employees.id, id));
-    res.json({ employee: updated });
+
+    // Rollfi sync (best-effort — DB update already succeeded)
+    const rollfiSync = await syncEmployeeToRollfi(updated, changed);
+
+    res.json({ employee: updated, rollfiSync });
   } catch (err) {
     req.log.error({ err }, "Failed to update employee");
     res.status(500).json({ error: "Failed to update employee" });

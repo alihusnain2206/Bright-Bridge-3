@@ -30,6 +30,9 @@ import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
 import Paystub from "@/pages/paystub";
 import PeoplePage from "@/pages/people";
+import EmployeeProfilePage from "@/pages/employee-profile";
+import EmployeeEditPage from "@/pages/employee-edit";
+import EmployeeCompliancePage from "@/pages/employee-compliance";
 
 const queryClient = new QueryClient();
 
@@ -102,6 +105,16 @@ function Router() {
             {/* /my-team kept as backward-compat alias for managers */}
             <Route path="/my-team">
               <ProtectedRoute component={PeoplePage} roles={["manager"]} />
+            </Route>
+            {/* People pages — order matters: most-specific routes first */}
+            <Route path="/people/:id/edit">
+              <ProtectedRoute component={EmployeeEditPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/:id/compliance">
+              <ProtectedRoute component={EmployeeCompliancePage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/:id">
+              <ProtectedRoute component={EmployeeProfilePage} roles={["super_admin", "manager"]} />
             </Route>
             <Route path="/people">
               <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />

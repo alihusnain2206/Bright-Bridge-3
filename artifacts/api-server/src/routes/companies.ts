@@ -472,7 +472,7 @@ router.get("/employees/:employeeId", async (req: Request, res: Response) => {
   try {
     const [row] = await db.select().from(employees).where(eq(employees.id, employeeId));
     if (!row) { res.status(404).json({ error: "Employee not found" }); return; }
-    res.json(row);
+    res.json({ employee: row });
   } catch (err) {
     req.log.error({ err }, "Failed to get employee");
     res.status(500).json({ error: "Failed to get employee" });
