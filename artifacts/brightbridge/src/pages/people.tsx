@@ -223,7 +223,7 @@ function SortTh({ col, label, current, dir, onSort, className = "" }: {
 
 // ── Actions Dropdown ──────────────────────────────────────────
 
-function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTasks, onContacts, onDocuments }: {
+function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTasks, onContacts, onDocuments, onProfile, onEdit, onCompliance }: {
   emp: PeopleEmployee;
   hasRollfi: boolean;
   onLeave: () => void;
@@ -232,9 +232,11 @@ function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTas
   onTasks: () => void;
   onContacts: () => void;
   onDocuments: () => void;
+  onProfile: () => void;
+  onEdit: () => void;
+  onCompliance: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [, navigate] = useLocation();
   const isTerminated = emp.status === "terminated";
   const isOnLeave    = emp.status === "on_leave";
 
@@ -251,19 +253,19 @@ function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTas
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-8 z-20 w-44 bg-white rounded-xl border border-gray-200 shadow-lg py-1 text-sm">
             <button
-              onClick={() => { setOpen(false); navigate(`/people/${emp.id}`); }}
+              onClick={() => { setOpen(false); onProfile(); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               <Eye className="h-3.5 w-3.5 text-gray-400" /> View Profile
             </button>
             <button
-              onClick={() => { setOpen(false); }}
+              onClick={() => { setOpen(false); onEdit(); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               <Pencil className="h-3.5 w-3.5 text-gray-400" /> Edit
             </button>
             <button
-              onClick={() => { setOpen(false); }}
+              onClick={() => { setOpen(false); onCompliance(); }}
               className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               <ShieldCheck className="h-3.5 w-3.5 text-gray-400" /> View Compliance
@@ -346,6 +348,349 @@ function exportCsv(employees: PeopleEmployee[]) {
   URL.revokeObjectURL(url);
 }
 
+// ── Profile Modal ─────────────────────────────────────────────
+
+function EmployeeProfileModal({ emp, onClose, onEdit, onCompliance }: {
+  emp: PeopleEmployee;
+  onClose: () => void;
+  onEdit: () => void;
+  onCompliance: () => void;
+}) {
+  const color = avatarColor(`${emp.firstName} ${emp.lastName}`);
+  const status = STATUS_CFG[emp.status] ?? { label: emp.status, dot: "bg-gray-400", bg: "bg-gray-100", text: "text-gray-500" };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+          <h2 className="font-semibold text-gray-900">Employee Profile</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {/* Identity */}
+          <div className="px-5 py-5 flex items-center gap-4 border-b">
+            {emp.photoUrl ? (
+              <img src={emp.photoUrl} alt="" className="w-16 h-16 rounded-full object-cover shrink-0" />
+            ) : (
+              <div className="w-16 h-16 rounded-full flex items-center justify-center shrink-0 text-white text-xl font-semibold" style={{ background: color }}>
+                {initials(emp.firstName, emp.lastName)}
+              </div>
+            )}
+            <div className="min-w-0">
+              <div className="text-lg font-semibold text-gray-900">{emp.firstName} {emp.lastName}</div>
+              {emp.employeeDisplayId && <div className="text-xs text-gray-400">{emp.employeeDisplayId}</div>}
+              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />{status.label}
+                </span>
+                {emp.jobTitle && <span className="text-xs text-gray-500">{emp.jobTitle}</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* Details grid */}
+          <div className="px-5 py-4 space-y-4">
+            <Section label="Contact">
+              <Row label="Email" value={emp.email || "—"} />
+              <Row label="Phone" value={emp.phone || "—"} />
+            </Section>
+            <Section label="Employment">
+              <Row label="Position" value={emp.position || "—"} />
+              <Row label="Type" value={emp.employmentType || "—"} />
+              <Row label="Worker" value={emp.workerType || "—"} />
+              <Row label="Start Date" value={fmtDate(emp.startDate)} />
+            </Section>
+            <Section label="Organisation">
+              <Row label="Department" value={emp.department || "—"} />
+              <Row label="Manager" value={emp.managerName || "—"} />
+            </Section>
+            {(emp.complianceScore != null || emp.onboardingProgress != null) && (
+              <Section label="Progress">
+                {emp.complianceScore != null && (
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-gray-500 shrink-0">Compliance</span>
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${emp.complianceScore}%`, background: emp.complianceScore >= 80 ? "#10b981" : emp.complianceScore >= 50 ? "#f59e0b" : "#ef4444" }} />
+                      </div>
+                      <span className="text-xs text-gray-500 shrink-0">{emp.complianceScore}%</span>
+                    </div>
+                  </div>
+                )}
+                {emp.onboardingProgress != null && (
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-gray-500 shrink-0">Onboarding</span>
+                    <div className="flex items-center gap-2 flex-1">
+                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full bg-blue-500" style={{ width: `${emp.onboardingProgress}%` }} />
+                      </div>
+                      <span className="text-xs text-gray-500 shrink-0">{emp.onboardingProgress}%</span>
+                    </div>
+                  </div>
+                )}
+              </Section>
+            )}
+          </div>
+        </div>
+
+        {/* Footer actions */}
+        <div className="px-5 py-3 border-t flex gap-2 justify-end shrink-0">
+          <button onClick={() => { onClose(); onCompliance(); }} className="px-3 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 flex items-center gap-1.5 text-gray-700">
+            <ShieldCheck className="h-3.5 w-3.5" /> Compliance
+          </button>
+          <button onClick={() => { onClose(); onEdit(); }} className="px-3 py-1.5 text-sm rounded-lg flex items-center gap-1.5 text-white" style={{ background: NAVY }}>
+            <Pencil className="h-3.5 w-3.5" /> Edit Profile
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{label}</div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between text-sm gap-3">
+      <span className="text-gray-500 shrink-0 w-28">{label}</span>
+      <span className="text-gray-800 text-right break-all">{value}</span>
+    </div>
+  );
+}
+
+// ── Edit Employee Modal ────────────────────────────────────────
+
+function EmployeeEditModal({ emp, onClose, onSaved }: {
+  emp: PeopleEmployee;
+  onClose: () => void;
+  onSaved: (updated: PeopleEmployee) => void;
+}) {
+  const [form, setForm] = useState({
+    firstName:      emp.firstName,
+    lastName:       emp.lastName,
+    email:          emp.email,
+    phone:          emp.phone ?? "",
+    position:       emp.position ?? "",
+    jobTitle:       emp.jobTitle ?? "",
+    employmentType: emp.employmentType ?? "",
+    workerType:     emp.workerType ?? "",
+    department:     emp.department ?? "",
+    startDate:      emp.startDate ?? "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error,  setError]  = useState<string | null>(null);
+
+  function set(k: keyof typeof form, v: string) { setForm(f => ({ ...f, [k]: v })); }
+
+  async function save() {
+    setSaving(true); setError(null);
+    try {
+      const r = await fetch(`/api/employees/${emp.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(form),
+      });
+      const data = await r.json() as { employee?: PeopleEmployee; error?: string };
+      if (!r.ok) { setError(data.error ?? "Failed to save"); return; }
+      onSaved(data.employee!);
+    } catch {
+      setError("Network error — please try again");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const EMP_TYPES = ["Full Time (30+ Hours per week)","Part Time (Under 30 Hours per week)","PRN / Casual","Seasonal"];
+  const WORKER_TYPES = ["W2","1099 Contractor","Volunteer","Intern"];
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+          <div>
+            <h2 className="font-semibold text-gray-900">Edit Employee</h2>
+            <p className="text-xs text-gray-400">{emp.firstName} {emp.lastName} · {emp.employeeDisplayId}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="px-5 py-4 overflow-y-auto flex-1 space-y-4">
+          {error && <div className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</div>}
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">First Name *</span>
+              <Input value={form.firstName} onChange={e => set("firstName", e.target.value)} className="mt-1 h-9 text-sm" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Last Name *</span>
+              <Input value={form.lastName} onChange={e => set("lastName", e.target.value)} className="mt-1 h-9 text-sm" />
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-xs text-gray-500 font-medium">Email *</span>
+            <Input type="email" value={form.email} onChange={e => set("email", e.target.value)} className="mt-1 h-9 text-sm" />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Phone</span>
+              <Input value={form.phone} onChange={e => set("phone", e.target.value)} className="mt-1 h-9 text-sm" placeholder="(555) 000-0000" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Start Date</span>
+              <Input type="date" value={form.startDate} onChange={e => set("startDate", e.target.value)} className="mt-1 h-9 text-sm" />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Position</span>
+              <Input value={form.position} onChange={e => set("position", e.target.value)} className="mt-1 h-9 text-sm" />
+            </label>
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Job Title</span>
+              <Input value={form.jobTitle} onChange={e => set("jobTitle", e.target.value)} className="mt-1 h-9 text-sm" />
+            </label>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Employment Type</span>
+              <select value={form.employmentType} onChange={e => set("employmentType", e.target.value)} className="mt-1 w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-[#0EA5C9]">
+                {EMP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs text-gray-500 font-medium">Worker Type</span>
+              <select value={form.workerType} onChange={e => set("workerType", e.target.value)} className="mt-1 w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-[#0EA5C9]">
+                {WORKER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <label className="block">
+            <span className="text-xs text-gray-500 font-medium">Department</span>
+            <Input value={form.department} onChange={e => set("department", e.target.value)} className="mt-1 h-9 text-sm" placeholder="e.g. Teaching Staff" />
+          </label>
+        </div>
+
+        <div className="px-5 py-3 border-t flex gap-2 justify-end shrink-0">
+          <button onClick={onClose} className="px-4 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700">Cancel</button>
+          <button onClick={() => void save()} disabled={saving} className="px-4 py-1.5 text-sm rounded-lg text-white disabled:opacity-50" style={{ background: NAVY }}>
+            {saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Compliance Modal ───────────────────────────────────────────
+
+interface ComplianceItemFull {
+  id: string; employeeId: string; type: string; name: string;
+  status: string; isRequired: boolean; completedAt?: string | null; notes?: string | null;
+}
+
+function EmployeeComplianceModal({ emp, onClose }: { emp: PeopleEmployee; onClose: () => void }) {
+  const { data, isLoading } = useQuery<{ items: ComplianceItemFull[]; score: number }>({
+    queryKey: ["compliance", emp.id],
+    queryFn: () => fetch(`/api/compliance?employeeId=${emp.id}`, { credentials: "include" }).then(r => r.json() as Promise<{ items: ComplianceItemFull[]; score: number }>),
+    staleTime: 0,
+  });
+
+  const items = data?.items ?? [];
+  const score = data?.score ?? emp.complianceScore ?? 0;
+
+  const groups = items.reduce<Record<string, ComplianceItemFull[]>>((acc, item) => {
+    const g = item.type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    (acc[g] ??= []).push(item);
+    return acc;
+  }, {});
+
+  const STATUS_STYLES: Record<string, string> = {
+    completed: "bg-emerald-50 text-emerald-700",
+    in_progress: "bg-blue-50 text-blue-700",
+    pending: "bg-gray-100 text-gray-500",
+    overdue: "bg-red-50 text-red-600",
+    waived: "bg-purple-50 text-purple-700",
+  };
+  const STATUS_ICONS: Record<string, React.ReactNode> = {
+    completed: <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />,
+    in_progress: <Clock className="h-3.5 w-3.5 text-blue-500" />,
+    pending: <Clock className="h-3.5 w-3.5 text-gray-400" />,
+    overdue: <XCircle className="h-3.5 w-3.5 text-red-500" />,
+    waived: <Ban className="h-3.5 w-3.5 text-purple-500" />,
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+          <div>
+            <h2 className="font-semibold text-gray-900">Compliance</h2>
+            <p className="text-xs text-gray-400">{emp.firstName} {emp.lastName}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+        </div>
+
+        {/* Score bar */}
+        <div className="px-5 py-3 border-b shrink-0 flex items-center gap-3">
+          <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full rounded-full transition-all" style={{ width: `${score}%`, background: score >= 80 ? "#10b981" : score >= 50 ? "#f59e0b" : "#ef4444" }} />
+          </div>
+          <span className="text-sm font-semibold text-gray-700 shrink-0">{score}%</span>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-4">
+          {isLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 bg-gray-100 rounded-lg animate-pulse" />)}</div>
+          ) : items.length === 0 ? (
+            <div className="text-center py-8 text-gray-400 text-sm">No compliance items found</div>
+          ) : (
+            Object.entries(groups).map(([group, groupItems]) => (
+              <div key={group}>
+                <div className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{group}</div>
+                <div className="space-y-1.5">
+                  {groupItems.map(item => (
+                    <div key={item.id} className="flex items-center gap-2.5 px-3 py-2 rounded-lg border border-gray-100 hover:bg-gray-50">
+                      <span className="shrink-0">{STATUS_ICONS[item.status] ?? <Clock className="h-3.5 w-3.5 text-gray-400" />}</span>
+                      <span className="flex-1 text-sm text-gray-700 min-w-0 truncate">{item.name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {item.isRequired && <span className="text-[10px] text-orange-500 font-medium">Required</span>}
+                        <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[item.status] ?? "bg-gray-100 text-gray-500"}`}>
+                          {item.status.replace(/_/g, " ")}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="px-5 py-3 border-t shrink-0 flex justify-end">
+          <button onClick={onClose} className="px-4 py-1.5 text-sm rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-700">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
@@ -387,6 +732,9 @@ export default function PeoplePage() {
   const [empContacts,  setEmpContacts]  = useState<PeopleEmployee | null>(null);
   const [empDocuments, setEmpDocuments] = useState<PeopleEmployee | null>(null);
   const [empTasks,     setEmpTasks]     = useState<PeopleEmployee | null>(null);
+  const [empProfile,   setEmpProfile]   = useState<PeopleEmployee | null>(null);
+  const [empEdit,      setEmpEdit]      = useState<PeopleEmployee | null>(null);
+  const [empCompliance,setEmpCompliance]= useState<PeopleEmployee | null>(null);
 
   // ── Data fetches ───────────────────────────────────────────
 
@@ -769,9 +1117,12 @@ export default function PeoplePage() {
                                     </div>
                                   )}
                                   <div className="min-w-0">
-                                    <div className={`font-medium text-sm text-gray-900 truncate ${isTerminated ? "line-through text-gray-400" : ""}`}>
+                                    <button
+                                      onClick={() => setEmpProfile(emp)}
+                                      className={`font-medium text-sm truncate text-left hover:underline ${isTerminated ? "line-through text-gray-400" : "text-[#1B3A6B] hover:text-[#0EA5C9]"}`}
+                                    >
                                       {emp.firstName} {emp.lastName}
-                                    </div>
+                                    </button>
                                     {emp.employeeDisplayId && (
                                       <div className="text-xs text-gray-400">{emp.employeeDisplayId}</div>
                                     )}
@@ -822,6 +1173,9 @@ export default function PeoplePage() {
                                   onTasks={() => setEmpTasks(emp)}
                                   onContacts={() => setEmpContacts(emp)}
                                   onDocuments={() => setEmpDocuments(emp)}
+                                  onProfile={() => setEmpProfile(emp)}
+                                  onEdit={() => setEmpEdit(emp)}
+                                  onCompliance={() => setEmpCompliance(emp)}
                                 />
                               </td>
                             </tr>
@@ -977,6 +1331,37 @@ export default function PeoplePage() {
           employee={empTasks}
           onClose={() => setEmpTasks(null)}
           onRefresh={refetchEmployees}
+        />
+      )}
+
+      {/* View Profile modal */}
+      {empProfile && (
+        <EmployeeProfileModal
+          emp={empProfile}
+          onClose={() => setEmpProfile(null)}
+          onEdit={() => { setEmpProfile(null); setEmpEdit(empProfile); }}
+          onCompliance={() => { setEmpProfile(null); setEmpCompliance(empProfile); }}
+        />
+      )}
+
+      {/* Edit Employee modal */}
+      {empEdit && (
+        <EmployeeEditModal
+          emp={empEdit}
+          onClose={() => setEmpEdit(null)}
+          onSaved={(updated) => {
+            setEmpEdit(null);
+            showToast(`✅ ${updated.firstName} ${updated.lastName} updated successfully.`);
+            void qc.invalidateQueries({ queryKey: ["people-employees", companyId] });
+          }}
+        />
+      )}
+
+      {/* View Compliance modal */}
+      {empCompliance && (
+        <EmployeeComplianceModal
+          emp={empCompliance}
+          onClose={() => setEmpCompliance(null)}
         />
       )}
     </div>

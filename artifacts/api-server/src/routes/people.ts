@@ -369,6 +369,48 @@ export async function backfillPeopleModule(): Promise<void> {
   }
 }
 
+// ─── PATCH /employees/:id ─────────────────────────────────────
+
+router.patch("/employees/:id", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = String(req.params.id);
+
+  const allowed = [
+    "firstName","lastName","email","phone",
+    "position","jobTitle","employmentType","workerType",
+    "department","managerId","managerName","startDate","status",
+  ] as const;
+
+  type AllowedKey = (typeof allowed)[number];
+  const updates: Partial<Record<AllowedKey, string | null>> = {};
+  for (const key of allowed) {
+    if (key in req.body) {
+      updates[key] = req.body[key] as string | null;
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No updatable fields provided" }); return;
+  }
+
+  try {
+    const [existing] = await db.select().from(employees).where(eq(employees.id, id));
+    if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }
+
+    // Drizzle uses camelCase field names in .set() — pass updates directly
+    const dbUpdates = { ...updates, updatedAt: new Date().toISOString() };
+
+    await db.update(employees).set(dbUpdates as Record<string, unknown>).where(eq(employees.id, id));
+
+    // Re-fetch and return updated employee
+    const [updated] = await db.select().from(employees).where(eq(employees.id, id));
+    res.json({ employee: updated });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update employee");
+    res.status(500).json({ error: "Failed to update employee" });
+  }
+});
+
 // ─── DEPARTMENTS ──────────────────────────────────────────────
 
 router.get("/departments", async (req: Request, res: Response) => {
