@@ -9,6 +9,28 @@ import {
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { store, type Department } from "../store.js";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+
+const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const multerStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
+  },
+});
+const upload = multer({
+  storage: multerStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (["application/pdf", "image/jpeg", "image/png"].includes(file.mimetype)) cb(null, true);
+    else cb(null, false);
+  },
+});
 
 const router: IRouter = Router();
 
@@ -627,6 +649,25 @@ router.post("/emergency-contacts", async (req: Request, res: Response) => {
       insuranceProvider: body.insuranceProvider ?? null, insurancePolicyNumber: body.insurancePolicyNumber ?? null,
       createdAt: now, updatedAt: now,
     }).returning();
+
+    // Auto-complete "Emergency Contact" onboarding task on first contact save (idempotent)
+    const existingContacts = await db.select({ id: emergencyContactsTable.id })
+      .from(emergencyContactsTable).where(eq(emergencyContactsTable.employeeId, body.employeeId!));
+    if (existingContacts.length === 1) {
+      const [ecTask] = await db.select().from(onboardingTasksTable)
+        .where(and(eq(onboardingTasksTable.employeeId, body.employeeId!), eq(onboardingTasksTable.taskName, "Emergency Contact")));
+      if (ecTask && ecTask.status !== "completed") {
+        await db.update(onboardingTasksTable)
+          .set({ status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now })
+          .where(eq(onboardingTasksTable.id, ecTask.id));
+        const allTaskRows = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, body.employeeId!));
+        const prog = allTaskRows.length > 0
+          ? Math.round(allTaskRows.filter(t => t.status === "completed" || t.status === "skipped").length / allTaskRows.length * 100)
+          : 0;
+        await db.update(employees).set({ onboardingProgress: prog, updatedAt: now }).where(eq(employees.id, body.employeeId!));
+      }
+    }
+    void logPeopleActivity({ companyId: body.companyId!, employeeId: body.employeeId, action: "emergency_contact.added", description: `Emergency contact "${body.name}" added`, category: "onboarding", performedBy: req.session.userId });
     res.status(201).json({ contact: created });
   } catch (err) {
     req.log.error({ err }, "Failed to create emergency contact");
@@ -674,6 +715,97 @@ router.get("/documents", async (req: Request, res: Response) => {
   } catch (err) {
     req.log.error({ err }, "Failed to get documents");
     res.status(500).json({ error: "Failed to get documents" });
+  }
+});
+
+router.get("/documents/:id/download", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  try {
+    const [doc] = await db.select().from(employeeDocumentsTable).where(eq(employeeDocumentsTable.id, req.params.id as string));
+    if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+    if (!doc.fileUrl || !fs.existsSync(doc.fileUrl)) { res.status(404).json({ error: "File not found on server" }); return; }
+    res.download(doc.fileUrl, doc.fileName);
+  } catch (err) {
+    req.log.error({ err }, "Failed to download document");
+    res.status(500).json({ error: "Failed to download document" });
+  }
+});
+
+router.post("/documents/upload", upload.single("file"), async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file provided or file type not allowed (PDF, JPG, PNG only)" }); return; }
+  const body = req.body as Record<string, string>;
+  const { employeeId, companyId, documentType, documentName, customTypeName, expiryDate, notes } = body;
+  if (!employeeId || !companyId || !documentType || !documentName) {
+    res.status(400).json({ error: "employeeId, companyId, documentType, documentName required" }); return;
+  }
+  try {
+    const now = nowIso();
+    const docId = `doc-${uid()}`;
+    const [created] = await db.insert(employeeDocumentsTable).values({
+      id: docId, employeeId, companyId,
+      documentName, documentType, customTypeName: customTypeName ?? null,
+      fileName: req.file.originalname,
+      fileUrl: req.file.path,
+      fileSize: req.file.size, mimeType: req.file.mimetype,
+      status: "uploaded", uploadedAt: now, uploadedBy: req.session.userId,
+      expiryDate: expiryDate || null, notes: notes || null,
+      createdAt: now, updatedAt: now,
+    }).returning();
+
+    // Link to matching compliance item
+    const DOC_TO_CI: Record<string, string> = {
+      i9: "i9", identification: "i9", w4: "w4",
+      background_check: "background_check", handbook: "handbook", policy: "policy",
+      certification: "certification", license: "certification",
+      physical_exam: "training", tb_test: "training", immunization: "training",
+    };
+    const ciType = DOC_TO_CI[documentType];
+    if (ciType) {
+      const cis = await db.select().from(complianceItemsTable)
+        .where(and(eq(complianceItemsTable.employeeId, employeeId), eq(complianceItemsTable.type, ciType)));
+      const ci = cis.find(c => c.status !== "completed");
+      if (ci) {
+        await db.update(complianceItemsTable).set({
+          status: "completed", completedAt: now, linkedDocumentId: docId,
+          expiryDate: expiryDate || null, updatedAt: now,
+        } as Record<string, unknown>).where(eq(complianceItemsTable.id, ci.id));
+      }
+    }
+
+    // Auto-complete matching onboarding task
+    const TASK_KW: Record<string, string> = {
+      i9: "I-9", identification: "Identification Upload",
+      immunization: "Immunization Records", physical_exam: "Physical Examination",
+      tb_test: "TB Test", certification: "Certification", background_check: "Background Check",
+    };
+    const kw = TASK_KW[documentType];
+    if (kw) {
+      const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
+      const task = allTasks.find(t => t.taskName.includes(kw) && t.status !== "completed");
+      if (task) {
+        await db.update(onboardingTasksTable)
+          .set({ status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now })
+          .where(eq(onboardingTasksTable.id, task.id));
+      }
+    }
+
+    // Recalculate compliance score + onboarding progress
+    const score = await calculateComplianceScore(employeeId);
+    const flags = await calculateReadinessFlags(employeeId);
+    const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
+    const prog = allTasks.length > 0
+      ? Math.round(allTasks.filter(t => t.status === "completed" || t.status === "skipped").length / allTasks.length * 100)
+      : 0;
+    await db.update(employees)
+      .set({ complianceScore: score, onboardingProgress: prog, ...flags, updatedAt: now } as Record<string, unknown>)
+      .where(eq(employees.id, employeeId));
+
+    void logPeopleActivity({ companyId, employeeId, action: "document.uploaded", description: `Document "${documentName}" uploaded`, category: "document", performedBy: req.session.userId });
+    res.status(201).json({ document: created });
+  } catch (err) {
+    req.log.error({ err }, "Failed to upload document");
+    res.status(500).json({ error: "Failed to upload document" });
   }
 });
 

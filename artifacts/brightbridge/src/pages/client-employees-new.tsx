@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Link, useLocation, useParams } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   User, DollarSign, Lock, CreditCard, CheckCircle2, AlertTriangle,
   ChevronLeft, ChevronRight, Loader2, Eye, EyeOff,
@@ -39,6 +39,7 @@ interface FormData {
   // Step 1
   firstName: string; lastName: string; email: string; phone: string;
   position: string; employmentType: string; workerType: string; startDate: string;
+  department: string; managerId: string; managerName: string;
   // Step 2
   payType: string; wageAmount: number; overtimeEligible: boolean;
   paymentMethod: string; taxExempt: boolean;
@@ -182,10 +183,12 @@ export default function ClientEmployeesNew() {
     enabled: !!companyId,
   });
   const company = companyData;
+  const queryClient = useQueryClient();
 
   const [form, setForm] = useState<FormData>({
     firstName: "", lastName: "", email: "", phone: "",
     position: "", employmentType: "Full Time (30+ Hours per week)", workerType: "W2", startDate: today(),
+    department: "", managerId: "", managerName: "",
     payType: "hourly", wageAmount: 18, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
     ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "NJ", homeZip: "",
     w4FilingStatus: "Single", w4MultipleJobs: false, w4Dependents: 0, w4ExtraWithholding: 0,
@@ -218,6 +221,47 @@ export default function ClientEmployeesNew() {
     });
     setForm((f) => ({ ...f, stateW4Fields: defaults }));
   }, [stateW4Data]);
+
+  // Department + manager data for Step 1
+  const { data: deptData } = useQuery<{ departments: Array<{ id: string; name: string }> }>({
+    queryKey: ["dept-wizard", companyId],
+    queryFn: () => fetch(`/api/departments?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ departments: Array<{ id: string; name: string }> }>),
+    enabled: !!companyId,
+    staleTime: 60_000,
+  });
+  const departments = deptData?.departments ?? [];
+
+  const { data: empListData } = useQuery<{ employees: Array<{ id: string; firstName: string; lastName: string; position: string; status: string }> }>({
+    queryKey: ["emp-wizard", companyId],
+    queryFn: () => fetch(`/api/employees?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ employees: Array<{ id: string; firstName: string; lastName: string; position: string; status: string }> }>),
+    enabled: !!companyId,
+    staleTime: 60_000,
+  });
+  const activeManagers = (empListData?.employees ?? []).filter(e => e.status === "active");
+
+  const [showCreateDept, setShowCreateDept] = useState(false);
+  const [newDeptName, setNewDeptName] = useState("");
+  const [creatingDept, setCreatingDept] = useState(false);
+
+  const handleCreateDept = async () => {
+    if (!newDeptName.trim() || creatingDept) return;
+    setCreatingDept(true);
+    try {
+      const r = await fetch("/api/departments", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, name: newDeptName.trim() }),
+      });
+      const d = await r.json() as { department?: { id: string; name: string } };
+      if (r.ok && d.department) {
+        set("department", d.department.name);
+        setShowCreateDept(false); setNewDeptName("");
+        await queryClient.invalidateQueries({ queryKey: ["dept-wizard", companyId] });
+      }
+    } finally { setCreatingDept(false); }
+  };
 
   const runWithProgress = async () => {
     const labels = [
@@ -394,6 +438,71 @@ export default function ClientEmployeesNew() {
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Department */}
+            <div className="space-y-1.5">
+              <Label>Department *</Label>
+              <Select
+                value={form.department || ""}
+                onValueChange={v => {
+                  if (v === "__create__") setShowCreateDept(true);
+                  else { set("department", v); setShowCreateDept(false); }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select department…" /></SelectTrigger>
+                <SelectContent>
+                  {departments.map(d => <SelectItem key={d.id} value={d.name}>{d.name}</SelectItem>)}
+                  <SelectItem value="__create__">+ Create new department</SelectItem>
+                </SelectContent>
+              </Select>
+              {showCreateDept && (
+                <div className="flex gap-2 mt-1">
+                  <Input
+                    value={newDeptName}
+                    onChange={e => setNewDeptName(e.target.value)}
+                    placeholder="New department name…"
+                    className="flex-1"
+                    onKeyDown={e => { if (e.key === "Enter") void handleCreateDept(); }}
+                  />
+                  <Button size="sm" disabled={creatingDept || !newDeptName.trim()} onClick={() => void handleCreateDept()}
+                    className="text-white text-xs shrink-0" style={{ background: ORANGE }}>
+                    {creatingDept ? "Creating…" : "Create"}
+                  </Button>
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => { setShowCreateDept(false); setNewDeptName(""); }}>
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Manager */}
+            <div className="space-y-1.5">
+              <Label>Manager / Supervisor <span className="text-[10px] text-gray-400 font-normal">Optional</span></Label>
+              <Select
+                value={form.managerId || "__none__"}
+                onValueChange={v => {
+                  if (v === "__none__") { set("managerId", ""); set("managerName", ""); }
+                  else {
+                    const emp = activeManagers.find(e => e.id === v);
+                    if (emp) { set("managerId", emp.id); set("managerName", `${emp.firstName} ${emp.lastName}`); }
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select manager (optional)…" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">None</SelectItem>
+                  {activeManagers.length === 0
+                    ? <SelectItem value="__no_mgr__" disabled>No active employees yet</SelectItem>
+                    : activeManagers.map(e => (
+                        <SelectItem key={e.id} value={e.id}>
+                          {e.firstName} {e.lastName}{e.position ? ` · ${e.position}` : ""}
+                        </SelectItem>
+                      ))
+                  }
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-400">Who does this person report to? Used for approvals and org chart.</p>
             </div>
           </div>
         )}

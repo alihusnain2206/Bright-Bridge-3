@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
-import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts, stateRegistrations as stateRegistrationsTable, onboardingTasks as onboardingTasksTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
 import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
@@ -498,6 +498,7 @@ router.post("/employees", async (req: Request, res: Response) => {
     stateW4Fields?: Record<string, string>;
     bankSetupMethod: "invite" | "manual";
     bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
+    department?: string; managerId?: string; managerName?: string;
   };
 
   if (!body.companyId || !body.firstName || !body.lastName || !body.email || !body.position) {
@@ -542,6 +543,9 @@ router.post("/employees", async (req: Request, res: Response) => {
       w4MultipleJobs: body.w4MultipleJobs ?? false,
       w4Dependents: body.w4Dependents ?? 0,
       w4ExtraWithholding: body.w4ExtraWithholding ?? 0,
+      department: body.department ?? null,
+      managerId: body.managerId ?? null,
+      managerName: body.managerName ?? null,
       status: "onboarding",
       kycStatus: "not_started",
       bankAccountAdded: body.bankSetupMethod === "manual",
@@ -622,6 +626,20 @@ router.post("/employees", async (req: Request, res: Response) => {
 
       // 4c. Seed onboarding tasks in DB
       await createOnboardingTasksInDb(employeeId, body.companyId, body.startDate, isDaycareEmployee, undefined, req.session.userId);
+
+      // 4c-post. Auto-complete dept/manager tasks if assigned during wizard (idempotent)
+      if (body.department || body.managerId) {
+        const seedNow = new Date().toISOString();
+        const newTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
+        const deptTask = body.department ? newTasks.find(t => t.taskName === "Assign Department" && t.status !== "completed") : undefined;
+        const mgrTask  = body.managerId  ? newTasks.find(t => t.taskName === "Assign Manager"     && t.status !== "completed") : undefined;
+        if (deptTask) await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, deptTask.id));
+        if (mgrTask)  await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, mgrTask.id));
+        const parts: string[] = [];
+        if (body.department) parts.push(`assigned to ${body.department}`);
+        if (body.managerName) parts.push(`reporting to ${body.managerName}`);
+        if (parts.length > 0) void logPeopleActivity({ companyId: body.companyId, employeeId, action: "employee.assignment", description: `${body.firstName} ${body.lastName} — ${parts.join(", ")}`, category: "onboarding", performedBy: req.session.userId ?? "system" });
+      }
 
       // 4d. Seed compliance items in DB
       await createComplianceItemsInDb(employeeId, body.companyId, isDaycareEmployee, {

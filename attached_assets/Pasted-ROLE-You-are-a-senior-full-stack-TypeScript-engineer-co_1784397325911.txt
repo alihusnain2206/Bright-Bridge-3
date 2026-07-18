@@ -1,0 +1,364 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer completing the 
+onboarding data collection layer 
+for the BrightBridge Assist People 
+Module.
+
+SCOPE BOUNDARY:
+This task adds: (1) Department and 
+Manager fields to the add-employee 
+wizard, (2) an Emergency Contacts 
+form, (3) a Document Upload UI, and 
+(4) a Task Action Modal that connects 
+onboarding tasks to their forms. 
+
+Do NOT touch Payroll, Time Clock, 
+Timesheets, Schedule, Webhooks, 
+Config, or any Rollfi/EasyTeam 
+integration code. Do NOT modify the 
+Rollfi API call chain in 
+rollfi-employee-sync.ts. Do NOT 
+rebuild the wizard — only ADD the 
+two new fields to Step 1. All 
+database tables already exist 
+(emergency_contacts, 
+employee_documents, onboarding_tasks, 
+compliance_items, people_activity_log) 
+— do NOT create new tables.
+
+---
+
+PART 1 — WIZARD: ADD DEPARTMENT 
+AND MANAGER TO STEP 1
+
+In client-employees-new.tsx Step 1, 
+after the Worker Type field, add:
+
+DEPARTMENT (required):
+→ Dropdown populated from 
+  GET /api/departments?companyId=xxx
+→ Show all departments for the 
+  selected company (standard + 
+  daycare + custom)
+→ Include a "+ Create new department" 
+  option at the bottom that shows 
+  an inline text input and calls 
+  POST /api/departments, then 
+  selects the new department
+
+MANAGER (optional):
+→ Dropdown labeled "Manager / 
+  Supervisor"
+→ Populated from the company's 
+  existing employees where 
+  status === "active"
+→ Display: name + job title
+→ Store managerId AND managerName 
+  (denormalized) on the employee
+→ Helper text: "Who does this 
+  person report to? Used for 
+  approvals and org chart."
+→ If company has no active 
+  employees yet, show "No managers 
+  available yet" and allow skipping
+
+ON SUBMIT additions:
+→ Save department, managerId, 
+  managerName to the employee record
+→ AUTO-COMPLETE the matching 
+  onboarding tasks: since department 
+  and manager were assigned during 
+  creation, mark the auto-generated 
+  tasks "Assign Department" and 
+  "Assign Manager" as completed 
+  (completedBy: the creating admin, 
+  completedAt: now) immediately 
+  after task generation
+→ Log activity: "[Name] assigned 
+  to [Department], reporting to 
+  [Manager]"
+
+---
+
+PART 2 — EMERGENCY CONTACTS FORM
+
+Create a reusable component:
+src/components/EmergencyContactForm.tsx
+
+Fields per contact:
+→ Contact Type (Primary / Secondary)
+→ Full Name (required)
+→ Relationship (required — dropdown: 
+  Spouse, Parent, Sibling, Child, 
+  Friend, Other)
+→ Phone Number (required)
+→ Alternate Phone (optional)
+→ Email (optional)
+→ Address (optional)
+Collapsible "Medical Information 
+(optional)" section:
+→ Physician Name, Physician Phone
+→ Insurance Provider, Policy Number
+
+Uses existing endpoints:
+GET /api/emergency-contacts?employeeId=xxx
+POST /api/emergency-contacts
+PUT /api/emergency-contacts/:id
+DELETE /api/emergency-contacts/:id
+
+WHERE IT APPEARS:
+→ In the People directory row 
+  actions dropdown, add "Emergency 
+  Contacts" — opens this form in 
+  a modal showing existing contacts 
+  (edit/delete) + "Add Contact" 
+  button
+→ Also used by the Task Action 
+  Modal (Part 4)
+
+ON SAVE of the FIRST contact for 
+an employee:
+→ Auto-complete the "Emergency 
+  Contact" onboarding task for 
+  that employee
+→ Log activity
+
+---
+
+PART 3 — DOCUMENT UPLOAD UI
+
+Create a reusable component:
+src/components/EmployeeDocuments.tsx
+
+UPLOAD FORM:
+→ Document Type dropdown: I-9, W-4, 
+  Handbook Acknowledgment, Policy 
+  Acknowledgment, Offer Letter, NDA, 
+  License, Certification, Background 
+  Check, Identification, Immunization 
+  Records, Physical Exam, TB Test, 
+  Custom
+→ If "Custom": show "Document Name" 
+  text input (the "Name Your 
+  Document" feature the client 
+  requested)
+→ File picker (accept PDF, JPG, 
+  PNG; max 10MB)
+→ Expiry Date (optional date field — 
+  shown with helper text "Set for 
+  certifications and licenses that 
+  expire")
+→ Notes (optional)
+
+DOCUMENT LIST:
+→ Table of the employee's documents: 
+  Name/Type, Uploaded date, Expiry 
+  (with color: red if expired, amber 
+  if within 30 days, green otherwise), 
+  Status chip, Download button, 
+  Delete button
+
+BACKEND:
+→ Use existing endpoints 
+  (POST /api/documents with multipart 
+  upload, GET /api/documents
+  ?employeeId=xxx, DELETE, 
+  GET /api/documents/:id/download)
+→ If the multipart upload handling 
+  is not fully implemented 
+  server-side yet, complete it now: 
+  store files under a persistent 
+  uploads directory, save metadata 
+  to the employee_documents table
+→ Validate file type and size 
+  server-side too
+
+WHERE IT APPEARS:
+→ People directory row actions: 
+  "Documents" — opens modal with 
+  this component
+→ Also used by Task Action Modal
+
+ON UPLOAD:
+→ If document type matches a 
+  compliance item type for that 
+  employee (e.g. certification, 
+  background_check, i9), link the 
+  document (linkedDocumentId) and 
+  mark that compliance item 
+  "completed" — and if an expiry 
+  date was provided, save it to 
+  the compliance item's expiryDate
+→ Auto-complete the matching 
+  upload-type onboarding task if 
+  one exists (match on task name 
+  containing the document type, 
+  e.g. "Identification Upload", 
+  "Immunization Records")
+→ Recalculate and persist the 
+  employee's complianceScore
+→ Log activity
+
+---
+
+PART 4 — TASK ACTION MODAL 
+(THE GLUE)
+
+Create:
+src/components/TaskActionModal.tsx
+
+PURPOSE: When a user clicks an 
+onboarding task, open the RIGHT 
+interaction instead of a bare 
+checkbox.
+
+First, add a simple task list UI 
+so tasks are clickable:
+→ In the People directory row 
+  actions, add "Onboarding Tasks" — 
+  opens a modal listing that 
+  employee's tasks grouped by stage 
+  (from GET /api/onboarding-tasks
+  ?employeeId=xxx), each with status 
+  badge, due date, assigned role, 
+  and overdue highlighting (red 
+  due date if past due and not 
+  completed)
+→ Show overall progress bar at top 
+  (completed required / total 
+  required)
+
+TASK ROUTING — when a task row is 
+clicked, open the matching action 
+inside the modal:
+
+1. Task name contains "Emergency 
+   Contact" → render 
+   EmergencyContactForm (Part 2)
+
+2. Task name contains "Upload", 
+   "Records", "Identification", 
+   "Certification", "Immunization", 
+   "Physical", "TB Test" → render 
+   EmployeeDocuments upload form 
+   (Part 3) with the document type 
+   pre-selected where it can be 
+   inferred from the task name
+
+3. Task name contains 
+   "Acknowledgment", "Acknowledge", 
+   "E-Sign", "Handbook", "Policy", 
+   "Code of Conduct", "NDA", 
+   "Confidentiality" → render an 
+   acknowledgment view: task name, 
+   a checkbox "I acknowledge I have 
+   read and agree", a "Signed by" 
+   name input (pre-filled with 
+   logged-in user name), and a 
+   Confirm button. On confirm: 
+   complete the task, log activity 
+   with "acknowledged by [name]"
+
+4. Task assignedToRole is "hr", 
+   "manager", "it", or "admin" and 
+   none of the above matched 
+   (verification/assignment style 
+   tasks like "I-9 Section 2 
+   Verification", "Run Background 
+   Check", "Issue Key Card") → 
+   render a verification view: 
+   task name, optional Notes 
+   textarea, and a "Mark as 
+   Completed" button
+
+5. Everything else → simple 
+   completion view: task name, 
+   description, "Mark as Completed" 
+   button
+
+All completions go through the 
+existing POST /api/onboarding-tasks/
+:id/complete endpoint (which already 
+handles readiness flags, activity 
+logging, and auto-activating the 
+employee when all required tasks 
+finish). Do not duplicate that 
+logic client-side — just call the 
+endpoint and refresh.
+
+Non-required tasks also show a 
+"Skip" link calling the existing 
+skip endpoint.
+
+---
+
+PART 5 — DATA & BEHAVIOR RULES
+
+1. All fetches scoped to the 
+   selected company / employee — 
+   no cross-company requests, no 
+   duplicate calls (single query 
+   per modal open)
+2. All modals: loading states, 
+   error states with retry, never 
+   blank
+3. Auto-completions (Parts 1-3) 
+   must be idempotent — if the 
+   task is already completed, 
+   do nothing, no errors
+4. TypeScript throughout; reuse 
+   existing interfaces from the 
+   data layer
+5. BrightBridge styling consistent 
+   with the People directory 
+   (colors #1B3A6B / #0EA5C9, 
+   same badge and modal patterns)
+6. Keep the sandbox banner and 
+   all existing features working
+
+---
+
+TESTING CHECKLIST:
+
+✅ Wizard Step 1 shows Department 
+   (required) + Manager (optional)
+✅ Creating a department inline works
+✅ New employee saves department/
+   managerId/managerName
+✅ "Assign Department" and "Assign 
+   Manager" tasks auto-complete 
+   when set via wizard
+✅ Emergency contact form saves, 
+   edits, deletes; first save 
+   completes the task
+✅ Document upload works with type, 
+   expiry, custom name; list shows 
+   expiry colors; download works
+✅ Uploading a matching document 
+   completes its compliance item 
+   AND its onboarding task AND 
+   updates complianceScore
+✅ Onboarding Tasks modal lists 
+   tasks grouped by stage with 
+   progress bar
+✅ Clicking each task type opens 
+   the correct form variant 
+   (contact / upload / acknowledge / 
+   verify / simple)
+✅ Completing all required tasks 
+   flips employee to Active 
+   (existing behavior preserved)
+✅ Compliance popover in directory 
+   reflects new completions
+✅ Existing features unaffected 
+   (payroll, clients page, time 
+   clock, add-employee Rollfi chain)
+
+DELIVERABLE SUMMARY REQUIRED:
+1. Files created/changed
+2. Which task-name → form-type 
+   routing rules were implemented
+3. Confirmation the Rollfi sync 
+   chain was untouched
+4. Any endpoint gaps found and 
+   completed (e.g. multipart upload)

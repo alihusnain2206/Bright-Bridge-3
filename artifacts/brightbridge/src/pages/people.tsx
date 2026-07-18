@@ -4,8 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, Plus, Download, Search, ChevronUp, ChevronDown, ChevronsUpDown,
   MoreHorizontal, Eye, Pencil, ShieldCheck, Pause, Ban, RotateCcw, Building2,
-  UserX, AlertTriangle, X, CheckCircle2, Clock, XCircle,
+  UserX, AlertTriangle, X, CheckCircle2, Clock, XCircle, ClipboardList, FolderOpen, Phone,
 } from "lucide-react";
+import EmergencyContactForm from "@/components/EmergencyContactForm";
+import EmployeeDocuments from "@/components/EmployeeDocuments";
+import TaskActionModal from "@/components/TaskActionModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -220,12 +223,15 @@ function SortTh({ col, label, current, dir, onSort, className = "" }: {
 
 // ── Actions Dropdown ──────────────────────────────────────────
 
-function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate }: {
+function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTasks, onContacts, onDocuments }: {
   emp: PeopleEmployee;
   hasRollfi: boolean;
   onLeave: () => void;
   terminate: () => void;
   reactivate: () => void;
+  onTasks: () => void;
+  onContacts: () => void;
+  onDocuments: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [, navigate] = useLocation();
@@ -261,6 +267,24 @@ function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate }: {
               className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
             >
               <ShieldCheck className="h-3.5 w-3.5 text-gray-400" /> View Compliance
+            </button>
+            <button
+              onClick={() => { setOpen(false); onTasks(); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              <ClipboardList className="h-3.5 w-3.5 text-gray-400" /> Onboarding Tasks
+            </button>
+            <button
+              onClick={() => { setOpen(false); onContacts(); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              <Phone className="h-3.5 w-3.5 text-gray-400" /> Emergency Contacts
+            </button>
+            <button
+              onClick={() => { setOpen(false); onDocuments(); }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-gray-700 hover:bg-gray-50"
+            >
+              <FolderOpen className="h-3.5 w-3.5 text-gray-400" /> Documents
             </button>
             {!isTerminated && (
               <>
@@ -360,6 +384,9 @@ export default function PeoplePage() {
   const [onLeaveEmp,   setOnLeaveEmp]   = useState<ModalEmployee | null>(null);
   const [terminateEmp, setTerminateEmp] = useState<ModalEmployee | null>(null);
   const [reactivateEmp, setReactivateEmp] = useState<ModalEmployee | null>(null);
+  const [empContacts,  setEmpContacts]  = useState<PeopleEmployee | null>(null);
+  const [empDocuments, setEmpDocuments] = useState<PeopleEmployee | null>(null);
+  const [empTasks,     setEmpTasks]     = useState<PeopleEmployee | null>(null);
 
   // ── Data fetches ───────────────────────────────────────────
 
@@ -792,6 +819,9 @@ export default function PeoplePage() {
                                   onLeave={() => setOnLeaveEmp(emp)}
                                   terminate={() => setTerminateEmp(emp)}
                                   reactivate={() => setReactivateEmp(emp)}
+                                  onTasks={() => setEmpTasks(emp)}
+                                  onContacts={() => setEmpContacts(emp)}
+                                  onDocuments={() => setEmpDocuments(emp)}
                                 />
                               </td>
                             </tr>
@@ -891,6 +921,62 @@ export default function PeoplePage() {
             setReactivateEmp(null);
             refetchEmployees();
           }}
+        />
+      )}
+
+      {/* Emergency Contacts modal */}
+      {empContacts && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+              <div>
+                <h2 className="font-semibold text-gray-900">Emergency Contacts</h2>
+                <p className="text-xs text-gray-400">{empContacts.firstName} {empContacts.lastName}</p>
+              </div>
+              <button onClick={() => setEmpContacts(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <EmergencyContactForm
+                employeeId={empContacts.id}
+                companyId={empContacts.companyId}
+                onFirstSave={() => void qc.invalidateQueries({ queryKey: ["people-employees", companyId] })}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Documents modal */}
+      {empDocuments && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[88vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0">
+              <div>
+                <h2 className="font-semibold text-gray-900">Documents</h2>
+                <p className="text-xs text-gray-400">{empDocuments.firstName} {empDocuments.lastName}</p>
+              </div>
+              <button onClick={() => setEmpDocuments(null)} className="text-gray-400 hover:text-gray-600 transition-colors">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto flex-1">
+              <EmployeeDocuments
+                employeeId={empDocuments.id}
+                companyId={empDocuments.companyId}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Onboarding Tasks modal */}
+      {empTasks && (
+        <TaskActionModal
+          employee={empTasks}
+          onClose={() => setEmpTasks(null)}
+          onRefresh={refetchEmployees}
         />
       )}
     </div>
