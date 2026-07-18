@@ -1,0 +1,88 @@
+Here is your prompt to ask Replit AI:
+
+Before I give you the next feature 
+to build, I need to understand the 
+current data architecture of this 
+project. Please audit and answer 
+these questions:
+
+1. DATA STORAGE:
+How is data currently stored in 
+this project? Is it using:
+→ JSON files on disk?
+→ PostgreSQL database?
+→ SQLite?
+→ A mix of both?
+
+Please list every data storage 
+location (JSON files AND database 
+tables) and what data each one holds.
+
+2. DATABASE:
+I can see the project imports from 
+"@workspace/db" and uses Drizzle ORM 
+(e.g. rollfiWebhookEvents table). 
+
+→ What database is connected? 
+  (PostgreSQL/Neon/Supabase?)
+→ What tables currently exist 
+  in the Drizzle schema?
+→ Where is the schema file located?
+→ What is the database connection 
+  string environment variable name?
+
+3. EMPLOYEE DATA:
+Where are employees currently stored?
+→ JSON file? Which one?
+→ Database table? Which one?
+→ In-memory store? (store.ts?)
+Please show me the current employee 
+data structure/interface.
+
+4. COMPANY DATA:
+Same question for companies/clients.
+Where are they stored and what 
+is the current data structure?
+
+5. EXISTING TABLES:
+List ALL database tables that 
+currently exist in the Drizzle 
+schema with their columns.
+
+6. JSON FILES:
+List ALL JSON data files in 
+/server/data/ or similar directories 
+and what each one stores.
+
+7. STORE.TS:
+What does store.ts do? Is it 
+an in-memory cache? Does it 
+read from JSON files or database?
+Please summarize its role.
+
+8. YOUR RECOMMENDATION:
+For the next phase we need to add 
+these new data tables:
+→ departments
+→ onboarding_tasks (64 tasks 
+  per employee auto-generated)
+→ employee_documents (file uploads)
+→ emergency_contacts
+→ compliance_items
+→ activity_log
+
+Given the current architecture, 
+what is your recommendation:
+
+Option A: Use JSON files 
+(matching current pattern)
+
+Option B: Use the existing database 
+via Drizzle ORM 
+(matching rollfiWebhookEvents pattern)
+
+Option C: Migrate everything to 
+database first, then build new tables
+
+Please explain your reasoning 
+and any risks with each option.

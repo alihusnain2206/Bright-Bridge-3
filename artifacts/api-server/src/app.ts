@@ -6,6 +6,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
+import { backfillPeopleModule } from "./routes/people.js";
 
 const PgStore = connectPgSimple(session);
 const isProd = process.env.NODE_ENV === "production";

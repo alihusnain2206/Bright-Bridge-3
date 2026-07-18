@@ -6,6 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
+import { createOnboardingTasks, createComplianceItems, generateDisplayIdFromExisting, seedDepartmentsForCompany } from "./people.js";
 
 const router: IRouter = Router();
 
