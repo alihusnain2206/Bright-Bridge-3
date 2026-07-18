@@ -1,7 +1,14 @@
 import { Router, type Request, type Response, type IRouter } from "express";
-import { db, companies, employees } from "@workspace/db";
-import { eq } from "drizzle-orm";
-import { store, type OnboardingTask, type ComplianceItem, type Department } from "../store.js";
+import {
+  db, companies, employees,
+  onboardingTasks as onboardingTasksTable,
+  complianceItems as complianceItemsTable,
+  employeeDocuments as employeeDocumentsTable,
+  emergencyContacts as emergencyContactsTable,
+  peopleActivityLog as peopleActivityLogTable,
+} from "@workspace/db";
+import { eq, and, inArray } from "drizzle-orm";
+import { store, type Department } from "../store.js";
 
 const router: IRouter = Router();
 
@@ -13,113 +20,111 @@ function addDays(dateStr: string | undefined, days: number): string {
   return base.toISOString().split("T")[0]!;
 }
 
+// ─── DB ROW TYPES ─────────────────────────────────────────────
+
+type TaskRow       = typeof onboardingTasksTable.$inferSelect;
+type CompRow       = typeof complianceItemsTable.$inferSelect;
+type DocRow        = typeof employeeDocumentsTable.$inferSelect;
+type ContactRow    = typeof emergencyContactsTable.$inferSelect;
+
 // ─── ONBOARDING TASK TEMPLATES ────────────────────────────────
 
 type TaskTemplate = {
   taskName: string;
-  category: OnboardingTask["category"];
-  stage: OnboardingTask["stage"];
-  assignedToRole: OnboardingTask["assignedToRole"];
+  category: string;
+  stage: string;
+  assignedToRole: string;
   dueDaysAfterHire: number;
   isRequired: boolean;
 };
 
 const STANDARD_HR_PAYROLL_TASKS: TaskTemplate[] = [
-  { taskName: "Complete Personal Information", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Emergency Contact", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Federal W-4", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "State Tax Form", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "I-9 Section 1", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "I-9 Section 2 Verification", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Direct Deposit Setup", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Employee Handbook Acknowledgment", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Company Policy Acknowledgment", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Confidentiality/NDA", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: false },
-  { taskName: "Code of Conduct Acknowledgment", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "IT Acceptable Use Policy", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Benefit Enrollment", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
-  { taskName: "Retirement Plan Enrollment", category: "hr_payroll", stage: "preboarding", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
-  { taskName: "Assign Pay Schedule", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Department", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Manager", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Job Title", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Work Location", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Issue Employee ID", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Time & Attendance Profile", category: "hr_payroll", stage: "preboarding", assignedToRole: "hr", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Upload Required Documents", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "E-Sign All Required Forms", category: "hr_payroll", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
+  { taskName: "Complete Personal Information",      category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Emergency Contact",                  category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Federal W-4",                        category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "State Tax Form",                     category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "I-9 Section 1",                      category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "I-9 Section 2 Verification",         category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Direct Deposit Setup",               category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Employee Handbook Acknowledgment",   category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Company Policy Acknowledgment",      category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Confidentiality/NDA",               category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: false },
+  { taskName: "Code of Conduct Acknowledgment",     category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "IT Acceptable Use Policy",           category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Benefit Enrollment",                 category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
+  { taskName: "Retirement Plan Enrollment",         category: "hr_payroll", stage: "preboarding",    assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
+  { taskName: "Assign Pay Schedule",                category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Department",                  category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Manager",                     category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Job Title",                   category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Work Location",               category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Issue Employee ID",                  category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Time & Attendance Profile",   category: "hr_payroll", stage: "preboarding",    assignedToRole: "hr",       dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Upload Required Documents",          category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "E-Sign All Required Forms",          category: "hr_payroll", stage: "documents",      assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
 ];
 
 const MANAGER_TASKS: TaskTemplate[] = [
-  { taskName: "Schedule Orientation", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Schedule First Day Meeting", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Mentor/Buddy", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 3, isRequired: false },
-  { taskName: "Assign Training Plan", category: "manager", stage: "training", assignedToRole: "manager", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Assign Learning Courses", category: "manager", stage: "training", assignedToRole: "manager", dueDaysAfterHire: 7, isRequired: false },
-  { taskName: "Set 30/60/90 Day Goals", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Schedule 30-Day Review", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 30, isRequired: true },
-  { taskName: "Schedule 60-Day Review", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 60, isRequired: true },
-  { taskName: "Schedule 90-Day Review", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 90, isRequired: true },
+  { taskName: "Schedule Orientation",     category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Schedule First Day Meeting", category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Assign Mentor/Buddy",      category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 3,  isRequired: false },
+  { taskName: "Assign Training Plan",     category: "manager", stage: "training",      assignedToRole: "manager", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Assign Learning Courses",  category: "manager", stage: "training",      assignedToRole: "manager", dueDaysAfterHire: 7,  isRequired: false },
+  { taskName: "Set 30/60/90 Day Goals",   category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Schedule 30-Day Review",   category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 30, isRequired: true  },
+  { taskName: "Schedule 60-Day Review",   category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 60, isRequired: true  },
+  { taskName: "Schedule 90-Day Review",   category: "manager", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 90, isRequired: true  },
 ];
 
 const IT_TASKS: TaskTemplate[] = [
-  { taskName: "Create Company Email", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Create System Login", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Assign Software Access", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Assign Security Roles", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Enable MFA", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 3, isRequired: false },
-  { taskName: "Issue Laptop/Desktop", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Issue Phone", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Issue Key Card/Badge", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Assign Equipment", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
-  { taskName: "Collect Equipment Signature", category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 3, isRequired: false },
+  { taskName: "Create Company Email",         category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Create System Login",          category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: true  },
+  { taskName: "Assign Software Access",       category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Assign Security Roles",        category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: true  },
+  { taskName: "Enable MFA",                   category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 3, isRequired: false },
+  { taskName: "Issue Laptop/Desktop",         category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Issue Phone",                  category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Issue Key Card/Badge",         category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Assign Equipment",             category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 1, isRequired: false },
+  { taskName: "Collect Equipment Signature",  category: "it", stage: "equipment", assignedToRole: "it", dueDaysAfterHire: 3, isRequired: false },
 ];
 
 const COMPLIANCE_TASKS: TaskTemplate[] = [
-  { taskName: "Background Check", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Drug Screening", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 7, isRequired: false },
-  { taskName: "Employment Eligibility Verification", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Professional License Verification", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 14, isRequired: false },
-  { taskName: "Driver's License Verification", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 14, isRequired: false },
-  { taskName: "Certification Uploads", category: "compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
-  { taskName: "Work Authorization Expiration Tracking", category: "compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 7, isRequired: false },
+  { taskName: "Background Check",                       category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Drug Screening",                         category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 7,  isRequired: false },
+  { taskName: "Employment Eligibility Verification",    category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Professional License Verification",      category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 14, isRequired: false },
+  { taskName: "Driver's License Verification",          category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 14, isRequired: false },
+  { taskName: "Certification Uploads",                  category: "compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: false },
+  { taskName: "Work Authorization Expiration Tracking", category: "compliance", stage: "compliance", assignedToRole: "hr",       dueDaysAfterHire: 7,  isRequired: false },
 ];
 
 const DAYCARE_COMPLIANCE_TASKS: TaskTemplate[] = [
-  { taskName: "Fingerprint Clearance", category: "daycare_compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "State Central Registry Verification", category: "daycare_compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Child Abuse Training", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "Health & Safety Training", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "CPR Certification", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true },
-  { taskName: "First Aid Certification", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true },
-  { taskName: "Medication Administration Training", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true },
-  { taskName: "Physical Examination", category: "daycare_compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "TB Test", category: "daycare_compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "Immunization Records", category: "daycare_compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "Identification Upload", category: "daycare_compliance", stage: "documents", assignedToRole: "employee", dueDaysAfterHire: 3, isRequired: true },
-  { taskName: "Education Verification", category: "daycare_compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "Professional References", category: "daycare_compliance", stage: "compliance", assignedToRole: "hr", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "Staff Health Statement", category: "daycare_compliance", stage: "compliance", assignedToRole: "employee", dueDaysAfterHire: 7, isRequired: true },
-  { taskName: "Mandated Reporter Training", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true },
-  { taskName: "OCFS Training Hours", category: "daycare_compliance", stage: "training", assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true },
-  { taskName: "Group Assignment", category: "daycare_compliance", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Classroom Assignment", category: "daycare_compliance", stage: "manager_tasks", assignedToRole: "manager", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Ratio Verification", category: "daycare_compliance", stage: "compliance", assignedToRole: "manager", dueDaysAfterHire: 1, isRequired: true },
-  { taskName: "Staff File Completion", category: "daycare_compliance", stage: "ready_to_start", assignedToRole: "hr", dueDaysAfterHire: 14, isRequired: true },
+  { taskName: "Fingerprint Clearance",             category: "daycare_compliance", stage: "compliance",    assignedToRole: "hr",       dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "State Central Registry Verification", category: "daycare_compliance", stage: "compliance",  assignedToRole: "hr",       dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Child Abuse Training",              category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "Health & Safety Training",          category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "CPR Certification",                 category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true  },
+  { taskName: "First Aid Certification",           category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true  },
+  { taskName: "Medication Administration Training", category: "daycare_compliance", stage: "training",     assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true  },
+  { taskName: "Physical Examination",              category: "daycare_compliance", stage: "compliance",    assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "TB Test",                           category: "daycare_compliance", stage: "compliance",    assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "Immunization Records",              category: "daycare_compliance", stage: "compliance",    assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "Identification Upload",             category: "daycare_compliance", stage: "documents",     assignedToRole: "employee", dueDaysAfterHire: 3,  isRequired: true  },
+  { taskName: "Education Verification",            category: "daycare_compliance", stage: "compliance",    assignedToRole: "hr",       dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "Professional References",           category: "daycare_compliance", stage: "compliance",    assignedToRole: "hr",       dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "Staff Health Statement",            category: "daycare_compliance", stage: "compliance",    assignedToRole: "employee", dueDaysAfterHire: 7,  isRequired: true  },
+  { taskName: "Mandated Reporter Training",        category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 14, isRequired: true  },
+  { taskName: "OCFS Training Hours",               category: "daycare_compliance", stage: "training",      assignedToRole: "employee", dueDaysAfterHire: 30, isRequired: true  },
+  { taskName: "Group Assignment",                  category: "daycare_compliance", stage: "manager_tasks", assignedToRole: "manager",  dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Classroom Assignment",              category: "daycare_compliance", stage: "manager_tasks", assignedToRole: "manager",  dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Ratio Verification",                category: "daycare_compliance", stage: "compliance",    assignedToRole: "manager",  dueDaysAfterHire: 1,  isRequired: true  },
+  { taskName: "Staff File Completion",             category: "daycare_compliance", stage: "ready_to_start", assignedToRole: "hr",      dueDaysAfterHire: 14, isRequired: true  },
 ];
 
-// ─── HELPER FUNCTIONS ─────────────────────────────────────────
+// ─── HELPER: DISPLAY ID ───────────────────────────────────────
 
-export function generateEmployeeDisplayId(companyId: string): string {
-  const existing = store.getDepartments(companyId); // just to use store — actual logic below
-  void existing;
-  const all = store.getOnboardingTasks({ companyId }); // not the right source — use employees from DB
-  void all;
-  // This function is called after DB fetch — see generateDisplayIdFromExisting
-  return "E1001";
-}
-
-export function generateDisplayIdFromExisting(companyId: string, existingIds: string[]): string {
+export function generateDisplayIdFromExisting(existingIds: string[]): string {
   const nums = existingIds
     .filter(Boolean)
     .map((id) => parseInt(id.replace("E", ""), 10))
@@ -128,14 +133,16 @@ export function generateDisplayIdFromExisting(companyId: string, existingIds: st
   return `E${max + 1}`;
 }
 
-export function createOnboardingTasks(
+// ─── HELPER: CREATE ONBOARDING TASKS ─────────────────────────
+
+export async function createOnboardingTasksInDb(
   employeeId: string,
   companyId: string,
   startDate: string,
   isDaycare: boolean,
   managerUserId?: string,
   adminUserId?: string,
-): OnboardingTask[] {
+): Promise<void> {
   const now = nowIso();
   let template: TaskTemplate[] = [
     ...STANDARD_HR_PAYROLL_TASKS,
@@ -145,11 +152,11 @@ export function createOnboardingTasks(
   ];
   if (isDaycare) template = [...template, ...DAYCARE_COMPLIANCE_TASKS];
 
-  return template.map((t): OnboardingTask => {
+  const rows = template.map((t) => {
     let assignedToUserId: string | undefined;
     if (t.assignedToRole === "employee") assignedToUserId = employeeId;
     else if (t.assignedToRole === "manager") assignedToUserId = managerUserId;
-    else if (t.assignedToRole === "hr" || t.assignedToRole === "admin" || t.assignedToRole === "it") assignedToUserId = adminUserId;
+    else if (["hr", "admin", "it"].includes(t.assignedToRole)) assignedToUserId = adminUserId;
 
     return {
       id: `task-${uid()}`,
@@ -159,7 +166,7 @@ export function createOnboardingTasks(
       category: t.category,
       stage: t.stage,
       assignedToRole: t.assignedToRole,
-      assignedToUserId,
+      assignedToUserId: assignedToUserId ?? null,
       status: "pending",
       isRequired: t.isRequired,
       dueDaysAfterHire: t.dueDaysAfterHire,
@@ -169,96 +176,114 @@ export function createOnboardingTasks(
       updatedAt: now,
     };
   });
+
+  // Insert in chunks of 50 to avoid large param lists
+  for (let i = 0; i < rows.length; i += 50) {
+    await db.insert(onboardingTasksTable).values(rows.slice(i, i + 50));
+  }
 }
 
-export function createComplianceItems(
+// ─── HELPER: CREATE COMPLIANCE ITEMS ─────────────────────────
+
+export async function createComplianceItemsInDb(
   employeeId: string,
   companyId: string,
   isDaycare: boolean,
-  existingFlags?: { w4Submitted?: boolean; bankAccountAdded?: boolean; kycStatus?: string | null },
-): ComplianceItem[] {
+  flags?: { w4Submitted?: boolean; bankAccountAdded?: boolean; kycStatus?: string | null },
+): Promise<void> {
   const now = nowIso();
-  const mk = (
-    type: ComplianceItem["type"],
-    name: string,
-    isRequired: boolean,
-    preStatus?: ComplianceItem["status"],
-  ): ComplianceItem => ({
+
+  const mk = (type: string, name: string, isRequired: boolean, preCompleted = false) => ({
     id: `ci-${uid()}`,
     employeeId,
     companyId,
     type,
     name,
-    status: preStatus ?? "not_started",
+    status: preCompleted ? "completed" : "not_started",
     isRequired,
-    completedAt: preStatus === "completed" ? now : undefined,
+    completedAt: preCompleted ? now : null,
     createdAt: now,
     updatedAt: now,
   });
 
-  const w4Status: ComplianceItem["status"] = existingFlags?.w4Submitted ? "completed" : "not_started";
-  const ddStatus: ComplianceItem["status"] = existingFlags?.bankAccountAdded ? "completed" : "not_started";
-  const i9Status: ComplianceItem["status"] = existingFlags?.kycStatus === "verified" ? "completed" : "not_started";
-
-  const items: ComplianceItem[] = [
-    mk("i9", "I-9 Employment Eligibility", true, i9Status),
-    mk("w4", "Federal W-4", true, w4Status),
-    mk("state_w4", "State Tax Form", true),
-    mk("direct_deposit", "Direct Deposit", true, ddStatus),
-    mk("background_check", "Background Check", true),
-    mk("handbook", "Employee Handbook Acknowledgment", true),
-    mk("policy", "Company Policies Acknowledgment", true),
+  const items = [
+    mk("i9",               "I-9 Employment Eligibility",          true,  flags?.kycStatus === "verified"),
+    mk("w4",               "Federal W-4",                          true,  flags?.w4Submitted ?? false),
+    mk("state_w4",         "State Tax Form",                        true),
+    mk("direct_deposit",   "Direct Deposit",                        true,  flags?.bankAccountAdded ?? false),
+    mk("background_check", "Background Check",                      true),
+    mk("handbook",         "Employee Handbook Acknowledgment",      true),
+    mk("policy",           "Company Policies Acknowledgment",       true),
   ];
 
   if (isDaycare) {
     items.push(
-      mk("fingerprint", "Fingerprint Clearance", true),
-      mk("certification", "CPR Certification", true),
-      mk("certification", "First Aid Certification", true),
-      mk("training", "TB Test", true),
-      mk("training", "Physical Examination", true),
-      mk("training", "Child Abuse Training", true),
-      mk("training", "Mandated Reporter Training", true),
+      mk("fingerprint",   "Fingerprint Clearance",     true),
+      mk("certification", "CPR Certification",          true),
+      mk("certification", "First Aid Certification",    true),
+      mk("training",      "TB Test",                    true),
+      mk("training",      "Physical Examination",       true),
+      mk("training",      "Child Abuse Training",       true),
+      mk("training",      "Mandated Reporter Training", true),
     );
   }
 
-  return items;
+  await db.insert(complianceItemsTable).values(items);
 }
 
-function calculateComplianceScore(employeeId: string): number {
-  const items = store.getComplianceItems({ employeeId });
+// ─── HELPER: COMPLIANCE SCORE ─────────────────────────────────
+
+async function calculateComplianceScore(employeeId: string): Promise<number> {
+  const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
   const required = items.filter((i) => i.isRequired);
   if (required.length === 0) return 100;
   const completed = required.filter((i) => i.status === "completed");
   return Math.round((completed.length / required.length) * 100);
 }
 
-function calculateReadinessFlags(employeeId: string): { payrollReady: boolean; hrReady: boolean; complianceReady: boolean; firstPayrollReady: boolean } {
-  const items = store.getComplianceItems({ employeeId });
-  const getStatus = (type: ComplianceItem["type"], name?: string) =>
-    items.find((i) => i.type === type && (!name || i.name === name))?.status === "completed";
-
-  const payrollReady = getStatus("w4") && getStatus("direct_deposit");
-  const hrReady = getStatus("i9") && getStatus("handbook") && getStatus("policy");
-  const complianceReady = getStatus("background_check");
+async function calculateReadinessFlags(employeeId: string) {
+  const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
+  const done = (type: string) => items.some((i) => i.type === type && i.status === "completed");
+  const payrollReady   = done("w4") && done("direct_deposit");
+  const hrReady        = done("i9") && done("handbook") && done("policy");
+  const complianceReady = done("background_check");
   const firstPayrollReady = payrollReady && hrReady;
-
   return { payrollReady, hrReady, complianceReady, firstPayrollReady };
 }
 
-// ─── DEFAULT DEPARTMENTS ──────────────────────────────────────
+// ─── HELPER: LOG ACTIVITY ─────────────────────────────────────
 
-const STANDARD_DEPARTMENTS = ["Operations", "Finance", "Human Resources", "Sales", "Marketing", "IT", "Customer Service", "Administration"];
-const DAYCARE_DEPARTMENTS = ["Infant Room", "Toddler Room", "Preschool", "Pre-K", "Kitchen", "Front Desk"];
+export async function logPeopleActivity(params: {
+  companyId: string; employeeId?: string; action: string;
+  description: string; category: string; performedBy: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  await db.insert(peopleActivityLogTable).values({
+    id: `pal-${uid()}`,
+    companyId: params.companyId,
+    employeeId: params.employeeId ?? null,
+    action: params.action,
+    description: params.description,
+    category: params.category,
+    performedBy: params.performedBy,
+    metadata: params.metadata ? JSON.stringify(params.metadata) : null,
+    timestamp: nowIso(),
+  });
+}
+
+// ─── DEFAULT DEPARTMENTS (in-memory — small, static) ─────────
+
+const STANDARD_DEPTS = ["Operations","Finance","Human Resources","Sales","Marketing","IT","Customer Service","Administration"];
+const DAYCARE_DEPTS  = ["Infant Room","Toddler Room","Preschool","Pre-K","Kitchen","Front Desk"];
 
 export function seedDepartmentsForCompany(companyId: string, isDaycare: boolean): void {
   if (store.hasDepartmentsForCompany(companyId)) return;
   const now = nowIso();
-  for (const name of STANDARD_DEPARTMENTS) {
+  for (const name of STANDARD_DEPTS) {
     store.addDepartment({ id: `dept-${uid()}`, companyId, name, type: "standard", isDefault: true, isActive: true, createdAt: now });
   }
   if (isDaycare) {
-    for (const name of DAYCARE_DEPARTMENTS) {
+    for (const name of DAYCARE_DEPTS) {
       store.addDepartment({ id: `dept-${uid()}`, companyId, name, type: "daycare", isDefault: true, isActive: true, createdAt: now });
     }
   }
@@ -267,17 +292,17 @@ export function seedDepartmentsForCompany(companyId: string, isDaycare: boolean)
 // ─── STARTUP BACKFILL ─────────────────────────────────────────
 
 export async function backfillPeopleModule(): Promise<void> {
-  // 1. Seed departments for existing companies
   const allCompanies = await db.select().from(companies);
+
+  // Seed departments for every existing company
   for (const company of allCompanies) {
-    const isDaycare = company.industry === "daycare" || company.package === "full_daycare" || company.type === "daycare";
+    const isDaycare = company.industry === "daycare" || company.package === "full_daycare";
     seedDepartmentsForCompany(company.id, isDaycare);
   }
 
-  // 2. Backfill existing employees: assign display IDs + compliance items
   const allEmployees = await db.select().from(employees);
 
-  // Group by company to generate sequential IDs
+  // Group employees by company for sequential display ID generation
   const byCompany = new Map<string, typeof allEmployees>();
   for (const emp of allEmployees) {
     const arr = byCompany.get(emp.companyId) ?? [];
@@ -286,38 +311,37 @@ export async function backfillPeopleModule(): Promise<void> {
   }
 
   for (const [companyId, emps] of byCompany) {
-    const existingDisplayIds = emps.map((e) => e.employeeDisplayId ?? "").filter(Boolean);
     const company = allCompanies.find((c) => c.id === companyId);
-    const isDaycare = company ? (company.industry === "daycare" || company.package === "full_daycare" || company.type === "daycare") : false;
+    const isDaycare = company ? (company.industry === "daycare" || company.package === "full_daycare") : false;
+    const existingDisplayIds = emps.map((e) => e.employeeDisplayId ?? "").filter(Boolean);
 
     for (const emp of emps) {
-      const updates: Record<string, unknown> = { updatedAt: nowIso() };
+      const updates: Record<string, unknown> = {};
 
-      // Generate display ID if missing
+      // 1. Assign display ID if missing
       if (!emp.employeeDisplayId) {
-        const newId = generateDisplayIdFromExisting(companyId, existingDisplayIds);
+        const newId = generateDisplayIdFromExisting(existingDisplayIds);
         updates.employeeDisplayId = newId;
         existingDisplayIds.push(newId);
       }
 
-      // Create compliance items if not yet created for this employee
-      const existing = store.getComplianceItems({ employeeId: emp.id });
-      if (existing.length === 0) {
-        const items = createComplianceItems(emp.id, companyId, isDaycare, {
+      // 2. Create compliance items if not yet created for this employee
+      const existingCI = await db.select({ id: complianceItemsTable.id })
+        .from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, emp.id));
+      if (existingCI.length === 0) {
+        await createComplianceItemsInDb(emp.id, companyId, isDaycare, {
           w4Submitted: emp.w4Submitted,
           bankAccountAdded: emp.bankAccountAdded,
           kycStatus: emp.kycStatus,
         });
-        store.addComplianceItems(items);
-
-        // Calculate and store compliance score
-        const score = calculateComplianceScore(emp.id);
+        const score = await calculateComplianceScore(emp.id);
         updates.complianceScore = score;
-        updates.onboardingProgress = score; // proxy
+        updates.onboardingProgress = score;
       }
 
-      if (Object.keys(updates).length > 1) {
-        await db.update(employees).set(updates as Parameters<typeof db.update>[0] extends infer T ? T : never).where(eq(employees.id, emp.id)).catch(() => {});
+      if (Object.keys(updates).length > 0) {
+        updates.updatedAt = nowIso();
+        await db.update(employees).set(updates as Record<string, unknown>).where(eq(employees.id, emp.id)).catch(() => {});
       }
     }
   }
@@ -325,450 +349,424 @@ export async function backfillPeopleModule(): Promise<void> {
 
 // ─── DEPARTMENTS ──────────────────────────────────────────────
 
-router.get("/departments", (req: Request, res: Response) => {
+router.get("/departments", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
 
   const depts = store.getDepartments(companyId);
-  const tasks = store.getOnboardingTasks({ companyId });
-  const empTasks = new Map<string, number>();
-  for (const t of tasks) {
-    const key = t.companyId;
-    empTasks.set(key, (empTasks.get(key) ?? 0) + 1);
-  }
+  const empRows = await db.select({ id: employees.id, dept: employees.department })
+    .from(employees).where(eq(employees.companyId, companyId));
 
-  const allEmployees = store.getUsersForCompany(companyId);
   const result = depts.map((d) => ({
     ...d,
-    employeeCount: allEmployees.filter((e) => (e as unknown as Record<string, unknown>).department === d.name).length,
+    employeeCount: empRows.filter((e) => e.dept === d.name).length,
   }));
-
   res.json({ departments: result });
 });
 
-router.post("/departments", async (req: Request, res: Response) => {
+router.post("/departments", (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const { companyId, name } = req.body as { companyId?: string; name?: string };
   if (!companyId || !name) { res.status(400).json({ error: "companyId and name required" }); return; }
 
-  const dept: Department = {
-    id: `dept-${uid()}`,
-    companyId,
-    name: name.trim(),
-    type: "custom",
-    isDefault: false,
-    isActive: true,
-    createdAt: nowIso(),
-  };
+  const dept: Department = { id: `dept-${uid()}`, companyId, name: name.trim(), type: "custom", isDefault: false, isActive: true, createdAt: nowIso() };
   store.addDepartment(dept);
   res.status(201).json({ department: dept });
 });
 
 router.put("/departments/:id", (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-  const { name } = req.body as { name?: string };
-  if (!name) { res.status(400).json({ error: "name required" }); return; }
-
-  const dept = store.getDepartmentById(id);
+  const dept = store.getDepartmentById(req.params.id as string);
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
   if (dept.isDefault) { res.status(400).json({ error: "Cannot rename a default department" }); return; }
-
-  store.updateDepartment(id, { name: name.trim() });
+  const { name } = req.body as { name?: string };
+  if (!name) { res.status(400).json({ error: "name required" }); return; }
+  store.updateDepartment(dept.id, { name: name.trim() });
   res.json({ department: { ...dept, name: name.trim() } });
 });
 
 router.delete("/departments/:id", (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-
-  const dept = store.getDepartmentById(id);
+  const dept = store.getDepartmentById(req.params.id as string);
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
   if (dept.isDefault) { res.status(400).json({ error: "Cannot delete a default department" }); return; }
-
-  store.deleteDepartment(id);
+  store.deleteDepartment(dept.id);
   res.json({ success: true });
 });
 
 // ─── ONBOARDING TASKS ─────────────────────────────────────────
 
-router.get("/onboarding-tasks", (req: Request, res: Response) => {
+router.get("/onboarding-tasks", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const { employeeId, companyId, status, userId } = req.query as Record<string, string | undefined>;
+  const { employeeId, companyId, status } = req.query as Record<string, string | undefined>;
 
-  if (userId) {
-    const tasks = store.getOnboardingTasks({ assignedToUserId: userId });
-    res.json({ tasks });
-    return;
-  }
-
-  if (employeeId) {
-    const tasks = store.getOnboardingTasks({ employeeId });
-    const total = tasks.length;
-    const completed = tasks.filter((t) => t.status === "completed" || t.status === "skipped").length;
-    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
-
-    const stages: Record<string, OnboardingTask[]> = {};
-    for (const t of tasks) {
-      if (!stages[t.stage]) stages[t.stage] = [];
-      stages[t.stage]!.push(t);
+  try {
+    if (employeeId) {
+      const tasks = await db.select().from(onboardingTasksTable)
+        .where(eq(onboardingTasksTable.employeeId, employeeId));
+      const total = tasks.length;
+      const completed = tasks.filter((t) => t.status === "completed" || t.status === "skipped").length;
+      const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+      const byStage: Record<string, TaskRow[]> = {};
+      for (const t of tasks) {
+        if (!byStage[t.stage]) byStage[t.stage] = [];
+        byStage[t.stage]!.push(t);
+      }
+      res.json({ tasks, byStage, completionPercentage: pct, total, completed });
+      return;
     }
-    res.json({ tasks, byStage: stages, completionPercentage: pct, total, completed });
-    return;
-  }
 
-  if (companyId) {
-    const filter: Parameters<typeof store.getOnboardingTasks>[0] = { companyId };
-    if (status) filter.status = status;
-    const tasks = store.getOnboardingTasks(filter);
-    res.json({ tasks, count: tasks.length });
-    return;
-  }
+    if (companyId) {
+      const conds = [eq(onboardingTasksTable.companyId, companyId)];
+      if (status) conds.push(eq(onboardingTasksTable.status, status));
+      const tasks = await db.select().from(onboardingTasksTable).where(and(...conds));
+      res.json({ tasks, count: tasks.length });
+      return;
+    }
 
-  res.status(400).json({ error: "employeeId, companyId, or userId required" });
+    res.status(400).json({ error: "employeeId or companyId required" });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get onboarding tasks");
+    res.status(500).json({ error: "Failed to get onboarding tasks" });
+  }
 });
 
-router.get("/onboarding-tasks/pipeline", (req: Request, res: Response) => {
+router.get("/onboarding-tasks/pipeline", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
 
-  const all = store.getOnboardingTasks({ companyId });
-  const STAGES: OnboardingTask["stage"][] = ["preboarding", "documents", "training", "equipment", "manager_tasks", "compliance", "ready_to_start"];
-
-  const pipeline = STAGES.map((stage) => {
-    const stageTasks = all.filter((t) => t.stage === stage);
-    const completed = stageTasks.filter((t) => t.status === "completed").length;
-    const inProgress = stageTasks.filter((t) => t.status === "in_progress").length;
-    const pending = stageTasks.filter((t) => t.status === "pending").length;
-    const total = stageTasks.length;
-    return { stage, totalTasks: total, completed, inProgress, pending, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 };
-  });
-
-  res.json({ pipeline, totalTasks: all.length, completedTasks: all.filter((t) => t.status === "completed").length });
+  try {
+    const all = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.companyId, companyId));
+    const STAGES = ["preboarding","documents","training","equipment","manager_tasks","compliance","ready_to_start"];
+    const pipeline = STAGES.map((stage) => {
+      const s = all.filter((t) => t.stage === stage);
+      const completed = s.filter((t) => t.status === "completed").length;
+      return { stage, totalTasks: s.length, completed, inProgress: s.filter((t) => t.status === "in_progress").length, pending: s.filter((t) => t.status === "pending").length, percentage: s.length > 0 ? Math.round((completed / s.length) * 100) : 0 };
+    });
+    res.json({ pipeline, totalTasks: all.length, completedTasks: all.filter((t) => t.status === "completed").length });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get pipeline");
+    res.status(500).json({ error: "Failed to get pipeline" });
+  }
 });
 
 router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = req.params.id as string;
-  const task = store.getOnboardingTaskById(id);
-  if (!task) { res.status(404).json({ error: "Task not found" }); return; }
 
-  const now = nowIso();
-  store.updateOnboardingTask(id, { status: "completed", completedAt: now, completedBy: req.session.userId });
+  try {
+    const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
 
-  // Update linked compliance item if applicable
-  const complianceMap: Record<string, ComplianceItem["type"]> = {
-    "Federal W-4": "w4", "I-9 Section 1": "i9", "I-9 Section 2 Verification": "i9",
-    "Direct Deposit Setup": "direct_deposit", "Background Check": "background_check",
-    "Employee Handbook Acknowledgment": "handbook", "Company Policy Acknowledgment": "policy",
-    "Fingerprint Clearance": "fingerprint",
-  };
-  const ciType = complianceMap[task.taskName];
-  if (ciType) {
-    const ci = store.getComplianceItems({ employeeId: task.employeeId }).find((c) => c.type === ciType && c.status !== "completed");
-    if (ci) store.updateComplianceItem(ci.id, { status: "completed", completedAt: now });
+    const now = nowIso();
+    await db.update(onboardingTasksTable).set({ status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now }).where(eq(onboardingTasksTable.id, id));
+
+    // Update linked compliance item if applicable
+    const complianceMap: Record<string, string> = {
+      "Federal W-4": "w4", "I-9 Section 1": "i9", "I-9 Section 2 Verification": "i9",
+      "Direct Deposit Setup": "direct_deposit", "Background Check": "background_check",
+      "Employee Handbook Acknowledgment": "handbook", "Company Policy Acknowledgment": "policy",
+      "Fingerprint Clearance": "fingerprint",
+    };
+    const ciType = complianceMap[task.taskName];
+    if (ciType) {
+      const [ci] = await db.select().from(complianceItemsTable)
+        .where(and(eq(complianceItemsTable.employeeId, task.employeeId), eq(complianceItemsTable.type, ciType)));
+      if (ci && ci.status !== "completed") {
+        await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, ci.id));
+      }
+    }
+
+    // Check completion, update readiness + progress
+    const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, task.employeeId));
+    const progress = Math.round((allTasks.filter((t) => t.status === "completed" || t.status === "skipped").length / allTasks.length) * 100);
+    const allRequiredDone = allTasks.filter((t) => t.isRequired).every((t) => t.status === "completed" || t.status === "skipped");
+    const flags = await calculateReadinessFlags(task.employeeId);
+    const score = await calculateComplianceScore(task.employeeId);
+
+    const empUpdates: Record<string, unknown> = { onboardingProgress: progress, complianceScore: score, updatedAt: now, ...flags };
+    if (allRequiredDone) { empUpdates.status = "active"; empUpdates.onboardingCompletedAt = now; }
+    await db.update(employees).set(empUpdates as Record<string, unknown>).where(eq(employees.id, task.employeeId));
+
+    void logPeopleActivity({ companyId: task.companyId, employeeId: task.employeeId, action: "task.completed", description: `Task "${task.taskName}" completed`, category: "onboarding", performedBy: req.session.userId });
+
+    const [updated] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    res.json({ success: true, task: updated, allRequiredDone, progress });
+  } catch (err) {
+    req.log.error({ err }, "Failed to complete task");
+    res.status(500).json({ error: "Failed to complete task" });
   }
-
-  // Check if all required tasks for this employee are done
-  const allTasks = store.getOnboardingTasks({ employeeId: task.employeeId });
-  const required = allTasks.filter((t) => t.isRequired);
-  const allRequiredDone = required.every((t) => t.status === "completed" || t.status === "skipped" || t.id === id);
-  const progress = Math.round((allTasks.filter((t) => t.status === "completed" || t.status === "skipped").length / allTasks.length) * 100);
-  const flags = calculateReadinessFlags(task.employeeId);
-
-  const dbUpdates: Record<string, unknown> = {
-    onboardingProgress: progress,
-    payrollReady: flags.payrollReady,
-    hrReady: flags.hrReady,
-    complianceReady: flags.complianceReady,
-    firstPayrollReady: flags.firstPayrollReady,
-    complianceScore: calculateComplianceScore(task.employeeId),
-    updatedAt: now,
-  };
-  if (allRequiredDone) {
-    dbUpdates.status = "active";
-    dbUpdates.onboardingCompletedAt = now;
-  }
-
-  await db.update(employees).set(dbUpdates as Parameters<typeof db.update>[0] extends infer T ? T : never).where(eq(employees.id, task.employeeId)).catch(() => {});
-
-  store.logPeopleActivity({
-    companyId: task.companyId,
-    employeeId: task.employeeId,
-    action: "task.completed",
-    description: `Task "${task.taskName}" completed`,
-    category: "onboarding",
-    performedBy: req.session.userId,
-  });
-
-  res.json({ success: true, task: store.getOnboardingTaskById(id), allRequiredDone, progress });
 });
 
-router.post("/onboarding-tasks/:id/skip", (req: Request, res: Response) => {
+router.post("/onboarding-tasks/:id/skip", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = req.params.id as string;
-  const task = store.getOnboardingTaskById(id);
-  if (!task) { res.status(404).json({ error: "Task not found" }); return; }
-  if (task.isRequired) { res.status(400).json({ error: "Cannot skip a required task" }); return; }
-
-  store.updateOnboardingTask(id, { status: "skipped" });
-  res.json({ success: true });
+  try {
+    const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (task.isRequired) { res.status(400).json({ error: "Cannot skip a required task" }); return; }
+    await db.update(onboardingTasksTable).set({ status: "skipped", updatedAt: nowIso() }).where(eq(onboardingTasksTable.id, id));
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to skip task");
+    res.status(500).json({ error: "Failed to skip task" });
+  }
 });
 
 // ─── COMPLIANCE ───────────────────────────────────────────────
 
-router.get("/compliance", (req: Request, res: Response) => {
+router.get("/compliance", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const employeeId = String(req.query.employeeId ?? "");
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
 
-  const items = store.getComplianceItems({ employeeId });
-  const score = calculateComplianceScore(employeeId);
-  res.json({ items, score });
+  try {
+    const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
+    const score = await calculateComplianceScore(employeeId);
+    res.json({ items, score });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get compliance");
+    res.status(500).json({ error: "Failed to get compliance" });
+  }
 });
 
-router.get("/compliance/company-overview", (req: Request, res: Response) => {
+router.get("/compliance/company-overview", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
 
-  const all = store.getComplianceItems({ companyId });
-  const categories: ComplianceItem["type"][] = ["i9", "w4", "direct_deposit", "background_check", "handbook", "policy", "fingerprint", "certification", "training"];
-  const overview = categories.map((cat) => {
-    const items = all.filter((i) => i.type === cat);
-    const completed = items.filter((i) => i.status === "completed").length;
-    return { category: cat, total: items.length, completed, percentage: items.length > 0 ? Math.round((completed / items.length) * 100) : 0 };
-  }).filter((o) => o.total > 0);
+  try {
+    const all = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.companyId, companyId));
+    const types = ["i9","w4","direct_deposit","background_check","handbook","policy","fingerprint","certification","training"];
+    const overview = types.map((cat) => {
+      const items = all.filter((i) => i.type === cat);
+      const completed = items.filter((i) => i.status === "completed").length;
+      return { category: cat, total: items.length, completed, percentage: items.length > 0 ? Math.round((completed / items.length) * 100) : 0 };
+    }).filter((o) => o.total > 0);
 
-  const required = all.filter((i) => i.isRequired);
-  const completedRequired = required.filter((i) => i.status === "completed");
-  const overallScore = required.length > 0 ? Math.round((completedRequired.length / required.length) * 100) : 100;
-
-  res.json({ overview, overallScore, totalItems: all.length, completedItems: completedRequired.length });
+    const required = all.filter((i) => i.isRequired);
+    const completedRequired = required.filter((i) => i.status === "completed");
+    const overallScore = required.length > 0 ? Math.round((completedRequired.length / required.length) * 100) : 100;
+    res.json({ overview, overallScore, totalItems: all.length, completedItems: completedRequired.length });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get company compliance overview");
+    res.status(500).json({ error: "Failed to get company compliance overview" });
+  }
 });
 
 router.post("/compliance/:id/complete", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = req.params.id as string;
-  const item = store.getComplianceItemById(id);
-  if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+  try {
+    const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
+    if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    const now = nowIso();
+    await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, id));
 
-  const now = nowIso();
-  store.updateComplianceItem(id, { status: "completed", completedAt: now });
+    const i9Up   = item.type === "i9"               ? { i9Status: "verified" }               : {};
+    const bgUp   = item.type === "background_check"  ? { backgroundCheckStatus: "completed" } : {};
+    const flags  = await calculateReadinessFlags(item.employeeId);
+    const score  = await calculateComplianceScore(item.employeeId);
+    await db.update(employees).set({ ...i9Up, ...bgUp, ...flags, complianceScore: score, updatedAt: now } as Record<string, unknown>).where(eq(employees.id, item.employeeId));
 
-  // Update i9Status / backgroundCheckStatus on employee record
-  const dbField: Record<ComplianceItem["type"], string | null> = {
-    i9: "i9Status", background_check: "backgroundCheckStatus", w4: null,
-    state_w4: null, direct_deposit: null, handbook: null, policy: null,
-    training: null, certification: null, fingerprint: null, custom: null,
-  };
-  const field = dbField[item.type];
-  const updates: Record<string, unknown> = { updatedAt: now, complianceScore: calculateComplianceScore(item.employeeId) };
-  if (field === "i9Status") updates.i9Status = "verified";
-  if (field === "backgroundCheckStatus") updates.backgroundCheckStatus = "completed";
+    void logPeopleActivity({ companyId: item.companyId, employeeId: item.employeeId, action: "compliance.completed", description: `"${item.name}" marked complete`, category: "compliance", performedBy: req.session.userId });
 
-  const flags = calculateReadinessFlags(item.employeeId);
-  updates.payrollReady = flags.payrollReady;
-  updates.hrReady = flags.hrReady;
-  updates.complianceReady = flags.complianceReady;
-  updates.firstPayrollReady = flags.firstPayrollReady;
-
-  await db.update(employees).set(updates as Parameters<typeof db.update>[0] extends infer T ? T : never).where(eq(employees.id, item.employeeId)).catch(() => {});
-
-  store.logPeopleActivity({
-    companyId: item.companyId,
-    employeeId: item.employeeId,
-    action: "compliance.item_completed",
-    description: `Compliance item "${item.name}" marked complete`,
-    category: "compliance",
-    performedBy: req.session.userId,
-  });
-
-  res.json({ success: true, item: store.getComplianceItemById(id), score: calculateComplianceScore(item.employeeId) });
+    const [updated] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
+    res.json({ success: true, item: updated, score });
+  } catch (err) {
+    req.log.error({ err }, "Failed to complete compliance item");
+    res.status(500).json({ error: "Failed to complete compliance item" });
+  }
 });
 
-router.post("/compliance/:id/waive", (req: Request, res: Response) => {
+router.post("/compliance/:id/waive", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = req.params.id as string;
-  const item = store.getComplianceItemById(id);
-  if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
-  if (item.isRequired) { res.status(400).json({ error: "Cannot waive a required compliance item" }); return; }
-
-  store.updateComplianceItem(id, { status: "waived" });
-  res.json({ success: true });
+  try {
+    const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
+    if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    if (item.isRequired) { res.status(400).json({ error: "Cannot waive a required compliance item" }); return; }
+    await db.update(complianceItemsTable).set({ status: "waived", updatedAt: nowIso() }).where(eq(complianceItemsTable.id, id));
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to waive compliance item");
+    res.status(500).json({ error: "Failed to waive compliance item" });
+  }
 });
 
 // ─── EMERGENCY CONTACTS ───────────────────────────────────────
 
-router.get("/emergency-contacts", (req: Request, res: Response) => {
+router.get("/emergency-contacts", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const employeeId = String(req.query.employeeId ?? "");
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
-  res.json({ contacts: store.getEmergencyContacts(employeeId) });
-});
-
-router.post("/emergency-contacts", (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const body = req.body as {
-    employeeId?: string; companyId?: string; contactType?: "primary" | "secondary";
-    name?: string; relationship?: string; phoneNumber?: string;
-    alternatePhone?: string; email?: string; address?: string;
-    physicianName?: string; physicianPhone?: string; insuranceProvider?: string; insurancePolicyNumber?: string;
-  };
-  if (!body.employeeId || !body.companyId || !body.name || !body.relationship || !body.phoneNumber) {
-    res.status(400).json({ error: "employeeId, companyId, name, relationship, and phoneNumber required" });
-    return;
+  try {
+    const contacts = await db.select().from(emergencyContactsTable).where(eq(emergencyContactsTable.employeeId, employeeId));
+    res.json({ contacts });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get emergency contacts");
+    res.status(500).json({ error: "Failed to get emergency contacts" });
   }
-  const now = nowIso();
-  const contact = {
-    id: `ec-${uid()}`,
-    employeeId: body.employeeId,
-    companyId: body.companyId,
-    contactType: body.contactType ?? "primary",
-    name: body.name,
-    relationship: body.relationship,
-    phoneNumber: body.phoneNumber,
-    alternatePhone: body.alternatePhone,
-    email: body.email,
-    address: body.address,
-    physicianName: body.physicianName,
-    physicianPhone: body.physicianPhone,
-    insuranceProvider: body.insuranceProvider,
-    insurancePolicyNumber: body.insurancePolicyNumber,
-    createdAt: now,
-    updatedAt: now,
-  };
-  store.addEmergencyContact(contact);
-  res.status(201).json({ contact });
 });
 
-router.put("/emergency-contacts/:id", (req: Request, res: Response) => {
+router.post("/emergency-contacts", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-  const contact = store.getEmergencyContactById(id);
-  if (!contact) { res.status(404).json({ error: "Contact not found" }); return; }
-  store.updateEmergencyContact(id, req.body as Record<string, unknown>);
-  res.json({ contact: store.getEmergencyContactById(id) });
+  const body = req.body as Partial<ContactRow> & { employeeId?: string; companyId?: string };
+  if (!body.employeeId || !body.companyId || !body.name || !body.relationship || !body.phoneNumber) {
+    res.status(400).json({ error: "employeeId, companyId, name, relationship, and phoneNumber required" }); return;
+  }
+  try {
+    const now = nowIso();
+    const [created] = await db.insert(emergencyContactsTable).values({
+      id: `ec-${uid()}`, employeeId: body.employeeId, companyId: body.companyId,
+      contactType: body.contactType ?? "primary", name: body.name, relationship: body.relationship,
+      phoneNumber: body.phoneNumber, alternatePhone: body.alternatePhone ?? null, email: body.email ?? null,
+      address: body.address ?? null, physicianName: body.physicianName ?? null, physicianPhone: body.physicianPhone ?? null,
+      insuranceProvider: body.insuranceProvider ?? null, insurancePolicyNumber: body.insurancePolicyNumber ?? null,
+      createdAt: now, updatedAt: now,
+    }).returning();
+    res.status(201).json({ contact: created });
+  } catch (err) {
+    req.log.error({ err }, "Failed to create emergency contact");
+    res.status(500).json({ error: "Failed to create emergency contact" });
+  }
 });
 
-router.delete("/emergency-contacts/:id", (req: Request, res: Response) => {
+router.put("/emergency-contacts/:id", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-  store.deleteEmergencyContact(id);
-  res.json({ success: true });
+  try {
+    const [updated] = await db.update(emergencyContactsTable)
+      .set({ ...(req.body as Record<string, unknown>), updatedAt: nowIso() })
+      .where(eq(emergencyContactsTable.id, req.params.id as string)).returning();
+    if (!updated) { res.status(404).json({ error: "Contact not found" }); return; }
+    res.json({ contact: updated });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update emergency contact");
+    res.status(500).json({ error: "Failed to update emergency contact" });
+  }
+});
+
+router.delete("/emergency-contacts/:id", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  try {
+    await db.delete(emergencyContactsTable).where(eq(emergencyContactsTable.id, req.params.id as string));
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete emergency contact");
+    res.status(500).json({ error: "Failed to delete emergency contact" });
+  }
 });
 
 // ─── DOCUMENTS ────────────────────────────────────────────────
 
-router.get("/documents", (req: Request, res: Response) => {
+router.get("/documents", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const { employeeId, companyId } = req.query as Record<string, string | undefined>;
   if (!employeeId && !companyId) { res.status(400).json({ error: "employeeId or companyId required" }); return; }
-  res.json({ documents: store.getDocuments({ employeeId, companyId }) });
-});
-
-router.post("/documents", (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const body = req.body as {
-    employeeId?: string; companyId?: string; documentName?: string;
-    documentType?: "i9" | "w4" | "handbook" | "policy" | "offer_letter" | "nda" | "license" | "certification" | "background_check" | "tax_form" | "custom";
-    customTypeName?: string; fileName?: string; fileUrl?: string; fileSize?: number; mimeType?: string;
-    requiresSignature?: boolean; expiryDate?: string; notes?: string;
-  };
-  if (!body.employeeId || !body.companyId || !body.documentName || !body.documentType || !body.fileName) {
-    res.status(400).json({ error: "employeeId, companyId, documentName, documentType, fileName required" });
-    return;
+  try {
+    const cond = employeeId
+      ? eq(employeeDocumentsTable.employeeId, employeeId)
+      : eq(employeeDocumentsTable.companyId, companyId!);
+    const docs = await db.select().from(employeeDocumentsTable).where(cond);
+    res.json({ documents: docs });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get documents");
+    res.status(500).json({ error: "Failed to get documents" });
   }
-  const now = nowIso();
-  const doc = {
-    id: `doc-${uid()}`,
-    employeeId: body.employeeId,
-    companyId: body.companyId,
-    documentName: body.documentName,
-    documentType: body.documentType,
-    customTypeName: body.customTypeName,
-    fileName: body.fileName,
-    fileUrl: body.fileUrl ?? `/api/documents/placeholder/${body.fileName}`,
-    fileSize: body.fileSize,
-    mimeType: body.mimeType,
-    status: "uploaded" as const,
-    uploadedAt: now,
-    uploadedBy: req.session.userId,
-    expiryDate: body.expiryDate,
-    requiresSignature: body.requiresSignature ?? false,
-    notes: body.notes,
-    createdAt: now,
-    updatedAt: now,
-  };
-  store.addDocument(doc);
-
-  store.logPeopleActivity({
-    companyId: body.companyId,
-    employeeId: body.employeeId,
-    action: "document.uploaded",
-    description: `Document "${body.documentName}" uploaded`,
-    category: "document",
-    performedBy: req.session.userId,
-  });
-
-  res.status(201).json({ document: doc });
 });
 
-router.put("/documents/:id", (req: Request, res: Response) => {
+router.post("/documents", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-  const doc = store.getDocumentById(id);
-  if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
-  store.updateDocument(id, req.body as Record<string, unknown>);
-  res.json({ document: store.getDocumentById(id) });
+  const body = req.body as Partial<DocRow>;
+  if (!body.employeeId || !body.companyId || !body.documentName || !body.documentType || !body.fileName) {
+    res.status(400).json({ error: "employeeId, companyId, documentName, documentType, fileName required" }); return;
+  }
+  try {
+    const now = nowIso();
+    const [created] = await db.insert(employeeDocumentsTable).values({
+      id: `doc-${uid()}`, employeeId: body.employeeId, companyId: body.companyId,
+      documentName: body.documentName, documentType: body.documentType,
+      customTypeName: body.customTypeName ?? null, fileName: body.fileName,
+      fileUrl: body.fileUrl ?? `/api/documents/placeholder/${body.fileName}`,
+      fileSize: body.fileSize ?? null, mimeType: body.mimeType ?? null,
+      status: "uploaded", uploadedAt: now, uploadedBy: req.session.userId,
+      requiresSignature: body.requiresSignature ?? false,
+      expiryDate: body.expiryDate ?? null, notes: body.notes ?? null,
+      createdAt: now, updatedAt: now,
+    }).returning();
+    void logPeopleActivity({ companyId: body.companyId, employeeId: body.employeeId, action: "document.uploaded", description: `Document "${body.documentName}" uploaded`, category: "document", performedBy: req.session.userId });
+    res.status(201).json({ document: created });
+  } catch (err) {
+    req.log.error({ err }, "Failed to create document");
+    res.status(500).json({ error: "Failed to create document" });
+  }
 });
 
-router.delete("/documents/:id", (req: Request, res: Response) => {
+router.put("/documents/:id", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = req.params.id as string;
-  store.updateDocument(id, { status: "rejected" });
-  res.json({ success: true });
+  try {
+    const [updated] = await db.update(employeeDocumentsTable)
+      .set({ ...(req.body as Record<string, unknown>), updatedAt: nowIso() })
+      .where(eq(employeeDocumentsTable.id, req.params.id as string)).returning();
+    if (!updated) { res.status(404).json({ error: "Document not found" }); return; }
+    res.json({ document: updated });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update document");
+    res.status(500).json({ error: "Failed to update document" });
+  }
+});
+
+router.delete("/documents/:id", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  try {
+    await db.update(employeeDocumentsTable).set({ status: "rejected", updatedAt: nowIso() }).where(eq(employeeDocumentsTable.id, req.params.id as string));
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete document");
+    res.status(500).json({ error: "Failed to delete document" });
+  }
 });
 
 // ─── ACTIVITY LOG ─────────────────────────────────────────────
 
-router.get("/activity-log", (req: Request, res: Response) => {
+router.get("/activity-log", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const { companyId, employeeId, category, limit } = req.query as Record<string, string | undefined>;
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
 
-  const entries = store.getPeopleActivity({
-    companyId,
-    employeeId,
-    category,
-    limit: limit ? parseInt(limit, 10) : 20,
-  });
-  res.json({ entries });
+  try {
+    const conds = [eq(peopleActivityLogTable.companyId, companyId)];
+    if (employeeId) conds.push(eq(peopleActivityLogTable.employeeId, employeeId));
+    if (category) conds.push(eq(peopleActivityLogTable.category, category));
+
+    const rows = await db.select().from(peopleActivityLogTable)
+      .where(and(...conds))
+      .orderBy(peopleActivityLogTable.timestamp)
+      .limit(limit ? parseInt(limit, 10) : 20);
+
+    // DB returns oldest-first; reverse for newest-first
+    res.json({ entries: rows.reverse() });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get activity log");
+    res.status(500).json({ error: "Failed to get activity log" });
+  }
 });
 
-router.post("/activity-log", (req: Request, res: Response) => {
+router.post("/activity-log", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const body = req.body as {
-    companyId?: string; employeeId?: string; action?: string;
-    description?: string; category?: "employee" | "onboarding" | "compliance" | "payroll" | "document" | "system";
-    performedBy?: string; metadata?: Record<string, unknown>;
-  };
+  const body = req.body as { companyId?: string; employeeId?: string; action?: string; description?: string; category?: string; performedBy?: string; metadata?: Record<string, unknown> };
   if (!body.companyId || !body.action || !body.description || !body.category) {
-    res.status(400).json({ error: "companyId, action, description, category required" });
-    return;
+    res.status(400).json({ error: "companyId, action, description, category required" }); return;
   }
-  store.logPeopleActivity({
-    companyId: body.companyId,
-    employeeId: body.employeeId,
-    action: body.action,
-    description: body.description,
-    category: body.category,
-    performedBy: body.performedBy ?? req.session.userId,
-    metadata: body.metadata,
-  });
-  res.status(201).json({ success: true });
+  try {
+    await logPeopleActivity({ companyId: body.companyId, employeeId: body.employeeId, action: body.action, description: body.description, category: body.category, performedBy: body.performedBy ?? req.session.userId, metadata: body.metadata });
+    res.status(201).json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to log activity");
+    res.status(500).json({ error: "Failed to log activity" });
+  }
 });
 
 export default router;

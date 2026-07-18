@@ -51,4 +51,11 @@ app.use(
 
 app.use("/api", router);
 
+// Backfill People Module data for existing employees/companies at startup
+void backfillPeopleModule().then(() => {
+  logger.info("People Module backfill complete");
+}).catch((err: unknown) => {
+  logger.warn({ err }, "People Module backfill had errors (non-fatal)");
+});
+
 export default app;

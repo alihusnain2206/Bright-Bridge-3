@@ -6,7 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
-import { createOnboardingTasks, createComplianceItems, generateDisplayIdFromExisting, seedDepartmentsForCompany } from "./people.js";
+import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity } from "./people.js";
 
 const router: IRouter = Router();
 
@@ -300,6 +300,13 @@ router.post("/companies", async (req: Request, res: Response) => {
         rollfiResult = { error: msg };
       }
     }
+
+    // Seed default departments for this company (in-memory, fast)
+    const isDaycare = body.industry === "daycare" || body.package === "full_daycare";
+    seedDepartmentsForCompany(companyId, isDaycare);
+    req.log.info({ companyId, isDaycare }, "Departments seeded");
+
+    void logPeopleActivity({ companyId, action: "company.created", description: `Company "${body.companyName}" created`, category: "company", performedBy: req.session.userId ?? "system" });
 
     const [saved] = await db.select().from(companies).where(eq(companies.id, companyId));
     const stateRegCount = (rollfiResult as Record<string, unknown>).stateRegSuccessCount as number | undefined;
@@ -599,6 +606,36 @@ router.post("/employees", async (req: Request, res: Response) => {
       await persistUserAccount(newLoginUser).catch((err) => {
         req.log.warn({ err, email: body.email }, "Failed to persist employee login account to DB");
       });
+    }
+
+    // 4. People Module: assign display ID + seed onboarding tasks + compliance items in DB
+    try {
+      // 4a. Generate and assign display ID
+      const companyEmps = await db.select({ id: employees.employeeDisplayId }).from(employees).where(eq(employees.companyId, body.companyId));
+      const existingIds = companyEmps.map((e) => e.id ?? "").filter(Boolean);
+      const displayId = generateDisplayIdFromExisting(existingIds);
+      await db.update(employees).set({ employeeDisplayId: displayId, updatedAt: new Date().toISOString() }).where(eq(employees.id, employeeId));
+
+      // 4b. Detect daycare context
+      const [co] = await db.select({ industry: companies.industry, package: companies.package }).from(companies).where(eq(companies.id, body.companyId));
+      const isDaycareEmployee = co ? (co.industry === "daycare" || co.package === "full_daycare") : false;
+
+      // 4c. Seed onboarding tasks in DB
+      await createOnboardingTasksInDb(employeeId, body.companyId, body.startDate, isDaycareEmployee, undefined, req.session.userId);
+
+      // 4d. Seed compliance items in DB
+      await createComplianceItemsInDb(employeeId, body.companyId, isDaycareEmployee, {
+        w4Submitted: !!(body.w4FilingStatus),
+        bankAccountAdded: body.bankSetupMethod === "manual",
+        kycStatus: null,
+      });
+
+      // 4e. Log activity
+      void logPeopleActivity({ companyId: body.companyId, employeeId, action: "employee.created", description: `${body.firstName} ${body.lastName} added (${displayId})`, category: "onboarding", performedBy: req.session.userId ?? "system" });
+
+      req.log.info({ employeeId, displayId, isDaycareEmployee }, "People Module seeded for new employee");
+    } catch (pmErr) {
+      req.log.warn({ pmErr, employeeId }, "People Module seed failed — employee still created (non-fatal)");
     }
 
     const [saved] = await db.select().from(employees).where(eq(employees.id, employeeId));
