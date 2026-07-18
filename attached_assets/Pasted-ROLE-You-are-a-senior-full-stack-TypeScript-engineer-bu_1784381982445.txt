@@ -1,0 +1,382 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer building the 
+Employee Directory UI (the "People" 
+section) for BrightBridge Assist.
+
+SCOPE BOUNDARY:
+This task builds the Employee 
+Directory page UI ONLY. Do NOT touch 
+Payroll, Time Clock, Timesheets, 
+Schedule, Webhooks, Config, or the 
+existing client onboarding wizard. 
+Do NOT modify any Rollfi or EasyTeam 
+integration code. Do NOT create new 
+database tables — the data layer is 
+already complete from the previous 
+task (onboarding_tasks, compliance_items, 
+employee_documents, emergency_contacts, 
+people_activity_log tables all exist 
+in PostgreSQL, plus in-memory 
+departments and the expanded employee 
+record with employeeDisplayId, 
+department, managerId, complianceScore, 
+onboarding fields etc).
+
+KPI cards, bottom widgets (onboarding 
+pipeline, compliance overview donut, 
+department headcount), and the 
+Employee Profile page are SEPARATE 
+future tasks — do NOT build them now. 
+This task is the directory table 
+page only.
+
+---
+
+CONTEXT:
+
+The data layer is complete:
+→ Employees have employeeDisplayId 
+  (E1001, E1002 per company)
+→ Employees have department, 
+  managerId, managerName, jobTitle, 
+  complianceScore, onboardingProgress, 
+  status fields
+→ compliance_items table has 14 items 
+  per employee with calculated scores
+→ onboarding_tasks auto-generate 
+  (62-82 per new employee)
+→ Departments exist per company 
+  (standard + daycare defaults + custom)
+→ Existing endpoints:
+  GET /api/departments?companyId=xxx
+  GET /api/compliance?employeeId=xxx
+  GET /api/compliance/company-overview?companyId=xxx
+  GET /api/onboarding-tasks?employeeId=xxx
+  GET /api/onboarding-tasks?companyId=xxx&status=pending
+  GET /api/activity-log?companyId=xxx
+  Plus existing employee CRUD and 
+  status endpoints (deactivate/
+  terminate/reactivate)
+
+The client (competing with ADP, 
+Rippling, Gusto) wants a professional 
+Employee Directory as the centerpiece 
+of the People section.
+
+---
+
+PART 1 — NAVIGATION
+
+Add "People" as a main sidebar item 
+(if the existing "Clients" section 
+already shows employees per company, 
+keep that working — this new People 
+section is the dedicated workforce 
+view).
+
+People section route: /people
+Default view: Employee Directory
+
+Add a sub-navigation bar at top:
+[Employee Directory] [New Hires] [Onboarding]
+
+→ Employee Directory = this task
+→ New Hires = filtered view of the 
+  same table (status = pending/
+  onboarding OR hired in last 30 days)
+→ Onboarding = placeholder tab 
+  showing "Coming Soon" (built in 
+  a future task)
+
+Company selector must work: the 
+directory shows employees for the 
+currently selected company only. 
+Reuse the existing company selector 
+pattern from the payroll page.
+
+---
+
+PART 2 — EMPLOYEE DIRECTORY TABLE
+
+The main table with these columns:
+
+| Photo | Employee | Job Title | Department | Manager | Status | Hire Date | Compliance | Payroll | Actions |
+
+COLUMN DETAILS:
+
+PHOTO:
+→ Circle avatar
+→ If photoUrl exists, show image
+→ Otherwise show initials on a 
+  colored circle (color derived 
+  from name hash for consistency)
+
+EMPLOYEE:
+→ Line 1: Full name (medium weight)
+→ Line 2: employeeDisplayId in 
+  smaller muted text (E1001)
+
+JOB TITLE:
+→ jobTitle field, fallback to 
+  existing position field
+
+DEPARTMENT:
+→ department field
+→ Show "—" if not set
+
+MANAGER:
+→ managerName field
+→ Show "—" if not set
+
+STATUS:
+→ Badge component with colors:
+  Active = green dot + green bg
+  On Leave = amber dot + amber bg
+  Onboarding = blue dot + blue bg
+  Pending = grey
+  Terminated = red, row at 60% opacity
+
+HIRE DATE:
+→ Format: "Mar 15, 2026"
+→ Below in muted small text: 
+  tenure like "1y 2m" or "22d"
+
+COMPLIANCE:
+→ Circular badge showing the 
+  complianceScore number (0-100)
+→ Color: green ≥90, amber 70-89, 
+  red <70
+→ Clicking it opens a small 
+  popover listing that employee's 
+  compliance items with status 
+  (from GET /api/compliance?employeeId=xxx)
+  — load on demand, not upfront
+
+PAYROLL:
+→ Simple status chip derived from 
+  existing employee data:
+  "Ready" (green) if rollfiUserId 
+  exists AND wage set AND bank added
+  "Pending" (amber) if partially set up
+  "Not Started" (grey) otherwise
+
+ACTIONS:
+→ Three-dot dropdown menu per row:
+  → View Profile (navigates to 
+    /people/:employeeId — this page 
+    is a future task; for now route 
+    can show a simple "Profile coming 
+    soon" placeholder with the 
+    employee's name)
+  → Edit (opens existing employee 
+    edit flow if one exists, 
+    otherwise "Coming Soon")
+  → View Compliance (opens the 
+    compliance popover)
+  → Put On Leave (existing flow — 
+    reuse the existing modal!)
+  → Terminate (existing flow — 
+    reuse the existing modal!)
+  → Reactivate (only for on_leave)
+  
+  Reuse the EXISTING on leave/
+  terminate/reactivate modals and 
+  endpoints — do not rebuild them!
+  Status-dependent visibility rules 
+  already exist — keep them.
+
+---
+
+PART 3 — FILTERS AND SEARCH BAR
+
+Above the table:
+
+SEARCH:
+→ Text input searching name, 
+  employeeDisplayId, email, jobTitle
+→ Client-side filtering is fine 
+  for now
+
+FILTER DROPDOWNS:
+→ Department (populated from 
+  GET /api/departments?companyId=xxx)
+→ Status (All, Active, On Leave, 
+  Onboarding, Terminated)
+→ Employment Type (Full Time, 
+  Part Time, Contractor, Seasonal)
+→ Compliance (All, 90+, 70-89, 
+  Below 70)
+
+Filters combine (AND logic).
+Show active filter count and a 
+"Clear filters" link when any 
+filter is applied.
+
+RESULTS COUNT:
+"Showing X of Y employees"
+
+---
+
+PART 4 — TABLE BEHAVIOR
+
+SORTING:
+→ Clickable column headers for: 
+  Employee (name), Department, 
+  Status, Hire Date, Compliance
+→ Toggle asc/desc with arrow 
+  indicator
+
+PAGINATION:
+→ 20 employees per page
+→ Standard pagination controls 
+  at bottom
+→ Client-side pagination is 
+  acceptable for now given small 
+  data volumes — but structure the 
+  data fetching so server-side 
+  pagination can be added later 
+  without UI changes
+
+EMPTY STATES:
+→ No employees at all: friendly 
+  empty state with "Add your first 
+  employee" button linking to the 
+  existing add-employee flow
+→ No results from filters: "No 
+  employees match your filters" 
+  with clear filters link
+
+LOADING:
+→ Skeleton rows while data loads
+→ Never show a blank table
+
+TERMINATED employees:
+→ Included in results only when 
+  Status filter = All or Terminated
+→ Default view (no filter) shows 
+  non-terminated only
+
+---
+
+PART 5 — HEADER AREA
+
+Page title: "People"
+Subtitle: "Manage your workforce"
+
+Top-right buttons:
+→ [+ Add Employee] (primary button, 
+  links to existing add-employee 
+  wizard for the selected company)
+→ [Export CSV] — exports the 
+  currently filtered employee list 
+  as CSV (columns: Display ID, Name, 
+  Email, Job Title, Department, 
+  Manager, Status, Hire Date, 
+  Compliance Score). Generate 
+  client-side.
+
+---
+
+PART 6 — DATA FETCHING RULES
+
+1. ONE primary fetch per company 
+   selection: the employee list 
+   (with all fields needed for the 
+   table already on the employee 
+   record — displayId, department, 
+   managerName, complianceScore, 
+   status are all stored fields)
+
+2. Departments fetched once per 
+   company for the filter dropdown
+
+3. Compliance item DETAILS fetched 
+   on demand only (when popover 
+   opened) — NOT for every row 
+   upfront
+
+4. No duplicate calls — single 
+   useEffect keyed on companyId, 
+   following the same pattern we 
+   fixed on the payroll page
+
+5. No cross-company requests — 
+   only the selected company's data
+
+6. If complianceScore is null/
+   undefined on an employee 
+   (older records), display "—" 
+   in the compliance column rather 
+   than 0 or NaN
+
+---
+
+PART 7 — STYLE
+
+→ BrightBridge colors: primary 
+  #1B3A6B, accent #0EA5C9
+→ Match the visual quality of the 
+  redesigned payroll page (cards, 
+  spacing, badge styles)
+→ Table rows: comfortable height 
+  (~64px), hover highlight, subtle 
+  row dividers
+→ Responsive: horizontal scroll 
+  on small screens with Employee 
+  column sticky if straightforward; 
+  otherwise plain horizontal scroll 
+  is acceptable
+→ Keep the sandbox banner
+
+---
+
+TESTING CHECKLIST:
+
+✅ Directory loads for selected 
+   company only
+✅ Display IDs show (E1001 etc)
+✅ Department column populated 
+   where set, "—" where not
+✅ Status badges correct for 
+   active/on_leave/terminated
+✅ Compliance score badges show 
+   with correct colors
+✅ Compliance popover loads items 
+   on click
+✅ Search filters by name/ID/email
+✅ All filter dropdowns work and 
+   combine
+✅ Sorting works on designated 
+   columns
+✅ Pagination works
+✅ On Leave / Terminate / Reactivate 
+   actions still work via existing 
+   modals from the new table
+✅ Terminated rows greyed and 
+   hidden by default
+✅ Add Employee button opens 
+   existing flow
+✅ Export CSV downloads correct 
+   filtered data
+✅ New Hires tab shows recent/
+   onboarding employees
+✅ Company switching refetches 
+   cleanly with no duplicate or 
+   cross-company requests
+✅ All existing features still work 
+   (payroll, time clock, clients 
+   section, employee creation)
+
+---
+
+DELIVERABLE SUMMARY REQUIRED:
+1. Files created/changed
+2. Confirmation existing on leave/
+   terminate modals were reused, 
+   not rebuilt
+3. Confirmation of the data fetching 
+   pattern used (no duplicates, 
+   company-scoped)
+4. Any fields found missing on 
+   employee records that the table 
+   needed
