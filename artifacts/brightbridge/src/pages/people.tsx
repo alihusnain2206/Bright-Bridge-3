@@ -329,7 +329,7 @@ const SUB_TABS = ["Employee Directory", "New Hires", "Onboarding"] as const;
 type SubTab = typeof SUB_TABS[number];
 
 export default function PeoplePage() {
-  const { user } = useAuth();
+  const { user, isLoading: authLoading } = useAuth();
   const qc = useQueryClient();
 
   // Company selection: super_admin gets a picker; managers are auto-scoped
@@ -372,11 +372,14 @@ export default function PeoplePage() {
   });
   const allCompanies = companiesData?.companies ?? [];
 
-  const { data: empData, isLoading: empLoading } = useQuery<{ employees: PeopleEmployee[] }>({
+  const { data: empData, isLoading: empLoading, isError: empError } = useQuery<{ employees: PeopleEmployee[] }>({
     queryKey: ["people-employees", companyId],
-    queryFn: () => fetch(`/api/employees?companyId=${companyId}`, { credentials: "include" })
-      .then(r => r.json() as Promise<{ employees: PeopleEmployee[] }>),
-    enabled: !!companyId,
+    queryFn: async () => {
+      const r = await fetch(`/api/employees?companyId=${companyId}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Failed to load employees (${r.status})`);
+      return r.json() as Promise<{ employees: PeopleEmployee[] }>;
+    },
+    enabled: !!companyId && !authLoading,
     staleTime: 60 * 1000,
   });
   const allEmployees: PeopleEmployee[] = empData?.employees ?? [];
@@ -680,8 +683,19 @@ export default function PeoplePage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                      {empLoading ? (
+                      {(authLoading || empLoading) ? (
                         <SkeletonRows />
+                      ) : empError ? (
+                        <tr>
+                          <td colSpan={9} className="px-4 py-16 text-center">
+                            <div className="space-y-3">
+                              <AlertTriangle className="h-10 w-10 text-amber-400 mx-auto" />
+                              <p className="text-gray-600 font-medium">Couldn't load employees</p>
+                              <p className="text-xs text-gray-400">Your session may have expired — try logging out and back in</p>
+                              <Button size="sm" variant="outline" onClick={refetchEmployees}>Retry</Button>
+                            </div>
+                          </td>
+                        </tr>
                       ) : paginated.length === 0 ? (
                         <tr>
                           <td colSpan={9} className="px-4 py-16 text-center">
