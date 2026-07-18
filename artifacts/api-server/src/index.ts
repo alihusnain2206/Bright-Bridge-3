@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { pool } from "@workspace/db";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts } from "./lib/user-account-persist.js";
@@ -8,6 +9,24 @@ import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
 import { db, companies, employees } from "@workspace/db";
 import { eq } from "drizzle-orm";
+
+/**
+ * connect-pg-simple's `createTableIfMissing` reads a `table.sql` file from disk.
+ * esbuild doesn't copy that file, so it fails in production with ENOENT.
+ * We create the session table ourselves instead.
+ */
+async function bootSessionTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "session" (
+      "sid"    varchar      NOT NULL COLLATE "default",
+      "sess"   json         NOT NULL,
+      "expire" timestamp(6) NOT NULL,
+      CONSTRAINT "session_pkey" PRIMARY KEY ("sid") NOT DEFERRABLE INITIALLY IMMEDIATE
+    ) WITH (OIDS=FALSE);
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");`);
+  logger.info("Session table ready");
+}
 
 const rawPort = process.env["PORT"];
 
@@ -161,6 +180,7 @@ async function bootEasyTeamSync() {
 }
 
 Promise.all([
+  bootSessionTable(),
   bootSeedCompanies().then(() => bootSeedEmployees()),
   loadRollfiStateFromDb().then(({ companies, employees }) => {
     logger.info({ companies, employees }, "Rollfi state restored from DB");

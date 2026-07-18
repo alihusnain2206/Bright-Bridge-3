@@ -35,7 +35,8 @@ app.use(
     store: new PgStore({
       pool,
       tableName: "session",
-      createTableIfMissing: true,
+      // Table is created via bootSessionTable() in index.ts on startup.
+      // createTableIfMissing reads a .sql file from disk which esbuild doesn't copy.
     }),
     secret: process.env.SESSION_SECRET ?? "brightbridge-sandbox-secret",
     resave: false,
