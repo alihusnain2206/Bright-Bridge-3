@@ -1,0 +1,78 @@
+Before we build the next feature, 
+I need a complete audit of the 
+current employee creation flow. 
+Do NOT build or change anything — 
+just answer these questions:
+
+1. ADD EMPLOYEE WIZARD STEPS:
+Walk me through the existing 
+add-employee wizard at 
+/clients/:companyId/employees/new 
+step by step. For EACH step, list 
+every single field that is 
+collected (field name, whether it 
+is required or optional, and any 
+validation).
+
+2. WHAT HAPPENS ON SUBMIT:
+When the wizard is submitted, list 
+in order everything that happens:
+→ Which Rollfi API calls are made 
+  and with what data?
+→ Which fields are saved to our 
+  own database/store?
+→ Which onboarding tasks are 
+  auto-created?
+→ Which compliance items are 
+  auto-created?
+→ Is the employee display ID 
+  (E1001) generated?
+→ Is an activity log entry created?
+
+3. NEW PEOPLE MODULE FIELDS:
+We recently added these fields to 
+the employee record: department, 
+managerId, managerName, jobTitle, 
+employeeType, workLocation, 
+photoUrl, notes.
+
+→ Which of these are currently 
+  collected in the add-employee 
+  wizard? 
+→ Which exist in the database but 
+  are NOT collected anywhere in 
+  the UI yet?
+
+4. STATE W-4 STEP:
+Confirm the state W-4 step 
+(getStateW4FormFields / 
+addStateW4Information) is part of 
+the wizard flow. At which point 
+does it appear and can it be 
+skipped?
+
+5. EMERGENCY CONTACTS:
+Is there ANY place in the UI right 
+now where emergency contacts can 
+be entered? Or does the table 
+exist with no UI?
+
+6. DOCUMENTS:
+Is there ANY place in the UI right 
+now where employee documents can 
+be uploaded? Or does the table 
+exist with no UI?
+
+7. GAPS SUMMARY:
+Give me a simple table:
+Field/Data → Collected in wizard? 
+→ Collected elsewhere? → No UI at all?
+
+For everything an employee record 
+can hold (basic info, pay, KYC, 
+federal W4, state W4, bank, 
+department, manager, emergency 
+contacts, documents, photo).
+
+Just report — do not modify 
+any code.
