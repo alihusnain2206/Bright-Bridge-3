@@ -169,6 +169,30 @@ export const employees = pgTable("employees", {
   // Sync
   syncStatus:        text("sync_status").notNull().default("pending"),
   lastSyncError:     text("last_sync_error"),
+  // People Module — display ID
+  employeeDisplayId: text("employee_display_id"),
+  // People Module — org
+  department:        text("department"),
+  managerId:         text("manager_id"),
+  managerName:       text("manager_name"),
+  jobTitle:          text("job_title"),
+  employeeType:      text("employee_type"),
+  workLocation:      text("work_location"),
+  // People Module — compliance
+  complianceScore:   integer("compliance_score"),
+  i9Status:          text("i9_status").default("not_started"),
+  backgroundCheckStatus: text("background_check_status").default("not_started"),
+  // People Module — onboarding
+  onboardingProgress:    integer("onboarding_progress").default(0),
+  onboardingStartedAt:   text("onboarding_started_at"),
+  onboardingCompletedAt: text("onboarding_completed_at"),
+  payrollReady:      boolean("payroll_ready").default(false),
+  hrReady:           boolean("hr_ready").default(false),
+  complianceReady:   boolean("compliance_ready").default(false),
+  firstPayrollReady: boolean("first_payroll_ready").default(false),
+  // People Module — profile
+  photoUrl:          text("photo_url"),
+  notes:             text("notes"),
   createdAt:         text("created_at").notNull(),
   updatedAt:         text("updated_at").notNull(),
 });
