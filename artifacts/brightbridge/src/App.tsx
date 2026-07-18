@@ -33,6 +33,9 @@ import PeoplePage from "@/pages/people";
 import EmployeeProfilePage from "@/pages/employee-profile";
 import EmployeeEditPage from "@/pages/employee-edit";
 import EmployeeCompliancePage from "@/pages/employee-compliance";
+import EmployeeTasksPage from "@/pages/employee-tasks";
+import EmployeeContactsPage from "@/pages/employee-contacts";
+import EmployeeDocumentsPage from "@/pages/employee-documents";
 
 const queryClient = new QueryClient();
 
@@ -112,6 +115,15 @@ function Router() {
             </Route>
             <Route path="/people/:id/compliance">
               <ProtectedRoute component={EmployeeCompliancePage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/:id/tasks">
+              <ProtectedRoute component={EmployeeTasksPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/:id/contacts">
+              <ProtectedRoute component={EmployeeContactsPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/:id/documents">
+              <ProtectedRoute component={EmployeeDocumentsPage} roles={["super_admin", "manager"]} />
             </Route>
             <Route path="/people/:id">
               <ProtectedRoute component={EmployeeProfilePage} roles={["super_admin", "manager"]} />

@@ -237,7 +237,7 @@ export default function EmployeeProfilePage() {
         ].map(({ icon, label, path }) => (
           <button
             key={path}
-            onClick={() => path === "compliance" ? navigate(`/people/${emp.id}/compliance`) : navigate(`/people/${emp.id}/edit?tab=${path}`)}
+            onClick={() => navigate(`/people/${emp.id}/${path}`)}
             className="flex flex-col items-center gap-2 p-3 rounded-xl border border-gray-200 bg-white hover:border-[#0EA5C9] hover:bg-blue-50/30 transition-colors text-gray-600 hover:text-[#0EA5C9] text-xs font-medium"
           >
             {icon}{label}
