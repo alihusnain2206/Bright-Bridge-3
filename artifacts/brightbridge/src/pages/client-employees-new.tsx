@@ -579,7 +579,7 @@ export default function ClientEmployeesNew() {
                   </button>
                 </div>
               </div>
-              <div className="space-y-1.5"><Label>Date of Birth *</Label><Input value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} placeholder="MM/DD/YYYY" /></div>
+              <div className="space-y-1.5"><Label>Date of Birth *</Label><Input value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} type="date" /></div>
             </div>
             <div className="border-t pt-4">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Personal Address</p>
@@ -588,7 +588,7 @@ export default function ClientEmployeesNew() {
                 <div className="space-y-1.5"><Label>City *</Label><Input value={form.homeCity} onChange={(e) => set("homeCity", e.target.value)} placeholder="Newark" /></div>
                 <div className="space-y-1.5">
                   <Label>State *</Label>
-                  <Select value={form.homeState} onValueChange={(v) => set("homeState", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
+                  <Select value={form.homeState} onValueChange={(v) => set("homeState", v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent className="max-h-60 overflow-y-auto">{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select>
                   {NO_INCOME_TAX_STATES.has(form.homeState)
                     ? <p className="text-xs text-gray-400 mt-1">No state income tax — federal W-4 only</p>
                     : !STATES_WITH_OWN_W4.has(form.homeState)

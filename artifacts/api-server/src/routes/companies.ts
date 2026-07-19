@@ -484,7 +484,9 @@ router.get("/employees/:employeeId", async (req: Request, res: Response) => {
 router.post("/employees", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const caller = store.getUserById(req.session.userId);
-  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin access required" }); return; }
+  if (!caller || (caller.role !== "super_admin" && caller.role !== "manager")) {
+    res.status(403).json({ error: "Super admin or manager access required" }); return;
+  }
 
   const body = req.body as {
     companyId: string;
@@ -504,6 +506,10 @@ router.post("/employees", async (req: Request, res: Response) => {
   if (!body.companyId || !body.firstName || !body.lastName || !body.email || !body.position) {
     res.status(400).json({ error: "companyId, firstName, lastName, email, and position are required" });
     return;
+  }
+
+  if (caller.role === "manager" && caller.companyId !== body.companyId) {
+    res.status(403).json({ error: "Managers can only add employees to their own company" }); return;
   }
 
   const [company] = await db.select().from(companies).where(eq(companies.id, body.companyId));
