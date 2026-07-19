@@ -16,7 +16,6 @@ const ACCENT = "#0EA5C9";
 interface LinkedTask {
   id: string; taskName: string; status: string; isRequired: boolean;
 }
-
 interface ComplianceItem {
   id: string; employeeId: string; companyId: string;
   type: string; name: string; status: string; isRequired: boolean;
@@ -24,7 +23,6 @@ interface ComplianceItem {
   dueDate?: string | null; linkedDocumentId?: string | null;
   linkedTasks: LinkedTask[];
 }
-
 interface FullTask {
   id: string; employeeId: string; companyId: string;
   taskName: string; description?: string | null; category: string; stage: string;
@@ -34,7 +32,6 @@ interface FullTask {
   acknowledgedBy?: string | null; acknowledgedAt?: string | null;
   reopenedCount?: number | null; linkedDocumentIds?: string | null;
 }
-
 interface EmployeeSummary {
   id: string; firstName: string; lastName: string;
   employeeDisplayId?: string | null; companyId: string;
@@ -66,7 +63,36 @@ function fmtDateTime(iso?: string | null) {
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-// ── Evidence Modal (direct completion — no linked tasks) ───────
+// ── Ring / Donut stat card ─────────────────────────────────────
+function RingStat({
+  value, max, displayLabel, sublabel, colorOverride,
+}: {
+  value: number; max: number; displayLabel: string; sublabel: string; colorOverride?: string;
+}) {
+  const pct = max > 0 ? Math.min(value / max, 1) : 0;
+  const r = 26;
+  const circ = 2 * Math.PI * r;
+  const dash = pct * circ;
+  const color = colorOverride ?? (pct >= 0.8 ? "#10b981" : pct >= 0.5 ? "#f59e0b" : "#ef4444");
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col items-center gap-2">
+      <div className="relative w-[68px] h-[68px]">
+        <svg viewBox="0 0 64 64" className="w-full h-full -rotate-90">
+          <circle cx="32" cy="32" r={r} fill="none" stroke="#f3f4f6" strokeWidth="9" />
+          <circle cx="32" cy="32" r={r} fill="none" stroke={color} strokeWidth="9"
+            strokeDasharray={`${dash} ${circ}`} strokeLinecap="round"
+            style={{ transition: "stroke-dasharray 0.4s ease" }} />
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-[13px] font-bold text-gray-900 leading-none">{displayLabel}</span>
+        </div>
+      </div>
+      <span className="text-xs text-gray-500 text-center leading-tight">{sublabel}</span>
+    </div>
+  );
+}
+
+// ── Evidence Modal ─────────────────────────────────────────────
 interface EvidenceModalProps {
   item: ComplianceItem; emp: EmployeeSummary;
   onClose: () => void; onComplete: () => void;
@@ -76,7 +102,6 @@ function EvidenceModal({ item, emp, onClose, onComplete }: EvidenceModalProps) {
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
   const noteOk = note.trim().length >= 5;
 
   const submit = async () => {
@@ -124,12 +149,9 @@ function EvidenceModal({ item, emp, onClose, onComplete }: EvidenceModalProps) {
               Note <span className="text-red-500">*</span>
               <span className="font-normal text-gray-400 ml-1">(min 5 characters)</span>
             </label>
-            <textarea
-              value={note} onChange={e => setNote(e.target.value)}
-              placeholder='e.g. "Verified from existing staff file"'
-              rows={3}
-              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0EA5C9]/30 resize-none"
-            />
+            <textarea value={note} onChange={e => setNote(e.target.value)}
+              placeholder='e.g. "Verified from existing staff file"' rows={3}
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0EA5C9]/30 resize-none" />
             {note.trim().length > 0 && note.trim().length < 5 && (
               <p className="text-[10px] text-amber-600">{5 - note.trim().length} more character{5 - note.trim().length !== 1 ? "s" : ""} required</p>
             )}
@@ -144,9 +166,7 @@ function EvidenceModal({ item, emp, onClose, onComplete }: EvidenceModalProps) {
               <input type="file" accept=".pdf,.jpg,.jpeg,.png" className="sr-only"
                 onChange={e => setFile(e.target.files?.[0] ?? null)} />
             </label>
-            {file && (
-              <button onClick={() => setFile(null)} className="text-[10px] text-gray-400 hover:text-red-500">Remove file</button>
-            )}
+            {file && <button onClick={() => setFile(null)} className="text-[10px] text-gray-400 hover:text-red-500">Remove file</button>}
           </div>
           {error && (
             <p className="text-xs text-red-600 flex items-center gap-1">
@@ -156,8 +176,7 @@ function EvidenceModal({ item, emp, onClose, onComplete }: EvidenceModalProps) {
         </div>
         <div className="px-6 pb-5 flex gap-2 justify-end">
           <Button size="sm" variant="outline" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button size="sm" disabled={!noteOk || saving}
-            onClick={() => void submit()}
+          <Button size="sm" disabled={!noteOk || saving} onClick={() => void submit()}
             className="text-white gap-1.5" style={{ background: NAVY }}>
             {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
             Mark Done
@@ -168,7 +187,7 @@ function EvidenceModal({ item, emp, onClose, onComplete }: EvidenceModalProps) {
   );
 }
 
-// ── Review Modal (completed item, directly completed) ──────────
+// ── Review Modal ───────────────────────────────────────────────
 interface ReviewModalProps {
   item: ComplianceItem; emp: EmployeeSummary;
   onClose: () => void; onReopen: () => void;
@@ -181,19 +200,12 @@ function ReviewModal({ item, emp, onClose, onReopen }: ReviewModalProps) {
   const doReopen = async () => {
     setReopening(true); setError("");
     try {
-      const r = await fetch(`/api/compliance/${item.id}/reopen`, {
-        method: "POST", credentials: "include",
-      });
-      if (!r.ok) {
-        const d = await r.json() as { error?: string };
-        throw new Error(d.error ?? "Failed to reopen");
-      }
+      const r = await fetch(`/api/compliance/${item.id}/reopen`, { method: "POST", credentials: "include" });
+      if (!r.ok) { const d = await r.json() as { error?: string }; throw new Error(d.error ?? "Failed to reopen"); }
       onReopen();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to reopen");
-    } finally {
-      setReopening(false);
-    }
+    } finally { setReopening(false); }
   };
 
   return (
@@ -209,18 +221,14 @@ function ReviewModal({ item, emp, onClose, onReopen }: ReviewModalProps) {
         <div className="p-6 space-y-4">
           <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 space-y-1.5">
             <p className="text-xs font-semibold text-emerald-800">Completed</p>
-            {item.completedAt && (
-              <p className="text-xs text-emerald-700">Date: {fmtDateTime(item.completedAt)}</p>
-            )}
+            {item.completedAt && <p className="text-xs text-emerald-700">Date: {fmtDateTime(item.completedAt)}</p>}
           </div>
-
           {item.notes && (
             <div className="space-y-1">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Note</p>
               <p className="text-sm text-gray-700 bg-gray-50 rounded-lg px-3 py-2">{item.notes}</p>
             </div>
           )}
-
           {item.linkedDocumentId && (
             <div className="space-y-1">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Supporting Document</p>
@@ -230,11 +238,9 @@ function ReviewModal({ item, emp, onClose, onReopen }: ReviewModalProps) {
               </a>
             </div>
           )}
-
           {!item.notes && !item.linkedDocumentId && (
             <p className="text-sm text-gray-400 italic">No evidence recorded.</p>
           )}
-
           <div className="pt-2 border-t border-gray-100">
             {reopenConfirm ? (
               <div className="rounded-xl bg-amber-50 border border-amber-200 p-4 space-y-3">
@@ -242,8 +248,7 @@ function ReviewModal({ item, emp, onClose, onReopen }: ReviewModalProps) {
                 {error && <p className="text-xs text-red-600">{error}</p>}
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => setReopenConfirm(false)} className="h-8">Cancel</Button>
-                  <Button size="sm" disabled={reopening}
-                    onClick={() => void doReopen()}
+                  <Button size="sm" disabled={reopening} onClick={() => void doReopen()}
                     className="h-8 text-white gap-1.5" style={{ background: "#d97706" }}>
                     {reopening ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCcw className="h-3.5 w-3.5" />}
                     Confirm Reopen
@@ -266,7 +271,7 @@ function ReviewModal({ item, emp, onClose, onReopen }: ReviewModalProps) {
   );
 }
 
-// ── Task Picker (multiple pending linked tasks) ────────────────
+// ── Task Picker ────────────────────────────────────────────────
 interface TaskPickerProps {
   item: ComplianceItem; tasks: LinkedTask[];
   onPick: (task: LinkedTask) => void; onClose: () => void;
@@ -317,10 +322,11 @@ export default function EmployeeCompliancePage() {
   const [modal, setModal] = useState<ModalState>(null);
   const [loadingTaskId, setLoadingTaskId] = useState<string | null>(null);
 
-  const { data: empData } = useQuery<EmployeeSummary>({
+  // NOTE: /api/employees/:id returns { employee: {...} } — must extract .employee
+  const { data: empData } = useQuery<{ employee: EmployeeSummary }>({
     queryKey: ["employee-detail", empId],
     queryFn: () => fetch(`/api/employees/${empId}`, { credentials: "include" })
-      .then(r => r.json() as Promise<EmployeeSummary>),
+      .then(r => r.json() as Promise<{ employee: EmployeeSummary }>),
     enabled: !!empId,
   });
 
@@ -332,7 +338,7 @@ export default function EmployeeCompliancePage() {
     staleTime: 0,
   });
 
-  const emp = empData as EmployeeSummary | undefined;
+  const emp = empData?.employee;
   const items = data?.items ?? [];
   const score = data?.score ?? 0;
 
@@ -342,9 +348,9 @@ export default function EmployeeCompliancePage() {
     return acc;
   }, {});
 
-  const completed      = items.filter(i => i.status === "completed").length;
-  const required       = items.filter(i => i.isRequired);
-  const completedReq   = required.filter(i => i.status === "completed").length;
+  const completed    = items.filter(i => i.status === "completed").length;
+  const required     = items.filter(i => i.isRequired);
+  const completedReq = required.filter(i => i.status === "completed").length;
 
   const invalidate = async () => {
     await refetch();
@@ -365,51 +371,33 @@ export default function EmployeeCompliancePage() {
 
   const handleItemClick = (item: ComplianceItem) => {
     const pending = item.linkedTasks.filter(t => t.status !== "completed" && t.status !== "skipped");
+
     if (item.status === "completed" || item.status === "waived") {
-      // Review mode
-      if (item.linkedTasks.some(t => t.status === "completed" || t.status === "skipped")) {
-        // Completed via task — open task modal for first completed linked task
-        const doneTask = item.linkedTasks.find(t => t.status === "completed");
-        if (doneTask) { void openTask(doneTask.id); return; }
-      }
-      // Directly completed — show evidence review
+      const doneTask = item.linkedTasks.find(t => t.status === "completed");
+      if (doneTask) { void openTask(doneTask.id); return; }
       setModal({ mode: "review", item });
       return;
     }
-    // Pending — route to completion
-    if (pending.length === 0 && item.linkedTasks.length > 0) {
-      // All tasks done but item still pending (edge case) — direct complete
-      setModal({ mode: "direct", item });
-      return;
-    }
-    if (pending.length === 1) {
-      void openTask(pending[0]!.id);
-      return;
-    }
-    if (pending.length > 1) {
-      setModal({ mode: "picker", item, tasks: pending });
-      return;
-    }
-    // No linked tasks — direct evidence modal
+
+    if (pending.length === 1) { void openTask(pending[0]!.id); return; }
+    if (pending.length > 1)   { setModal({ mode: "picker", item, tasks: pending }); return; }
+    // No pending linked tasks — direct evidence
     setModal({ mode: "direct", item });
   };
 
   const getButtonLabel = (item: ComplianceItem): string => {
     const pending = item.linkedTasks.filter(t => t.status !== "completed" && t.status !== "skipped");
-    if (pending.length > 0) return "Complete via Task";
-    return "Mark Done";
+    return pending.length > 0 ? "Complete via Task" : "Mark Done";
   };
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <button onClick={() => navigate(`/people/${empId}`)}
-          className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
-          <ArrowLeft className="h-4 w-4" />
-          {emp ? `${emp.firstName} ${emp.lastName}` : "Back"}
-        </button>
-      </div>
+      <button onClick={() => navigate(`/people/${empId}`)}
+        className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors">
+        <ArrowLeft className="h-4 w-4" />
+        {emp ? `${emp.firstName} ${emp.lastName}` : "Back"}
+      </button>
 
       <div className="flex items-start gap-3">
         <ShieldCheck className="h-6 w-6 mt-1 shrink-0" style={{ color: NAVY }} />
@@ -419,27 +407,26 @@ export default function EmployeeCompliancePage() {
         </div>
       </div>
 
-      {/* Score cards */}
+      {/* Ring stat cards */}
       {!isLoading && items.length > 0 && (
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-gray-900">{score}%</div>
-            <div className="text-xs text-gray-500 mt-0.5">Overall Score</div>
-            <div className="mt-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full rounded-full" style={{
-                width: `${score}%`,
-                background: score >= 80 ? "#10b981" : score >= 50 ? "#f59e0b" : "#ef4444",
-              }} />
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-gray-900">{completedReq}/{required.length}</div>
-            <div className="text-xs text-gray-500 mt-0.5">Required Items</div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 p-4 text-center">
-            <div className="text-2xl font-bold text-gray-900">{completed}/{items.length}</div>
-            <div className="text-xs text-gray-500 mt-0.5">Total Items</div>
-          </div>
+          <RingStat
+            value={score} max={100}
+            displayLabel={`${score}%`}
+            sublabel="Overall Score"
+          />
+          <RingStat
+            value={completedReq} max={required.length}
+            displayLabel={`${completedReq}/${required.length}`}
+            sublabel="Required Items"
+            colorOverride={completedReq === required.length ? "#10b981" : completedReq / (required.length || 1) >= 0.5 ? "#f59e0b" : "#ef4444"}
+          />
+          <RingStat
+            value={completed} max={items.length}
+            displayLabel={`${completed}/${items.length}`}
+            sublabel="Total Items"
+            colorOverride={completed === items.length ? "#10b981" : completed / (items.length || 1) >= 0.5 ? "#f59e0b" : NAVY}
+          />
         </div>
       )}
 
@@ -470,9 +457,8 @@ export default function EmployeeCompliancePage() {
                 {groupItems.map(item => {
                   const isDone = item.status === "completed" || item.status === "waived";
                   const pendingLinked = item.linkedTasks.filter(t => t.status !== "completed" && t.status !== "skipped");
-                  const hasLinked = item.linkedTasks.length > 0;
-                  const isLoadingThis = pendingLinked.some(t => loadingTaskId === t.id) ||
-                    (isDone && item.linkedTasks.some(t => loadingTaskId === t.id));
+                  const isLoadingThis = loadingTaskId !== null &&
+                    (item.linkedTasks.some(t => t.id === loadingTaskId));
                   const buttonLabel = getButtonLabel(item);
                   const isTaskRouted = buttonLabel === "Complete via Task";
 
@@ -493,7 +479,8 @@ export default function EmployeeCompliancePage() {
                         {item.completedAt && (
                           <div className="text-xs text-gray-400 mt-0.5">Completed {fmtDate(item.completedAt)}</div>
                         )}
-                        {!isDone && hasLinked && pendingLinked.length > 0 && (
+                        {/* Show pending linked task chips */}
+                        {!isDone && pendingLinked.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-1">
                             {item.linkedTasks.map(t => (
                               <span key={t.id}
@@ -505,25 +492,16 @@ export default function EmployeeCompliancePage() {
                         )}
                       </div>
 
-                      {/* Action button */}
                       {isDone ? (
-                        <button
-                          onClick={() => handleItemClick(item)}
-                          disabled={isLoadingThis}
+                        <button onClick={() => handleItemClick(item)} disabled={isLoadingThis}
                           className="text-xs text-gray-400 hover:text-[#0EA5C9] flex items-center gap-1 shrink-0 transition-colors">
-                          {isLoadingThis
-                            ? <Loader2 className="h-3 w-3 animate-spin" />
-                            : <ExternalLink className="h-3 w-3" />}
+                          {isLoadingThis ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
                           View
                         </button>
                       ) : (
-                        <Button
-                          size="sm"
-                          variant={isTaskRouted ? "outline" : "outline"}
-                          disabled={isLoadingThis}
+                        <Button size="sm" variant="outline" disabled={isLoadingThis}
                           onClick={() => handleItemClick(item)}
-                          className={`text-xs shrink-0 h-7 gap-1 ${isTaskRouted ? "border-[#0EA5C9] text-[#0EA5C9] hover:bg-blue-50" : ""}`}
-                        >
+                          className={`text-xs shrink-0 h-7 gap-1 ${isTaskRouted ? "border-[#0EA5C9] text-[#0EA5C9] hover:bg-blue-50" : ""}`}>
                           {isLoadingThis
                             ? <Loader2 className="h-3 w-3 animate-spin" />
                             : isTaskRouted
@@ -542,7 +520,6 @@ export default function EmployeeCompliancePage() {
       )}
 
       {/* ── Modals ── */}
-
       {modal?.mode === "task" && emp && (
         <TaskActionModal
           employee={{ id: emp.id, companyId: emp.companyId, firstName: emp.firstName, lastName: emp.lastName }}
@@ -551,32 +528,20 @@ export default function EmployeeCompliancePage() {
           onRefresh={() => void invalidate()}
         />
       )}
-
       {modal?.mode === "picker" && (
-        <TaskPicker
-          item={modal.item}
-          tasks={modal.tasks}
+        <TaskPicker item={modal.item} tasks={modal.tasks}
           onPick={t => { setModal(null); void openTask(t.id); }}
-          onClose={() => setModal(null)}
-        />
+          onClose={() => setModal(null)} />
       )}
-
       {modal?.mode === "direct" && emp && (
-        <EvidenceModal
-          item={modal.item}
-          emp={emp}
+        <EvidenceModal item={modal.item} emp={emp}
           onClose={() => setModal(null)}
-          onComplete={() => { setModal(null); void invalidate(); }}
-        />
+          onComplete={() => { setModal(null); void invalidate(); }} />
       )}
-
       {modal?.mode === "review" && emp && (
-        <ReviewModal
-          item={modal.item}
-          emp={emp}
+        <ReviewModal item={modal.item} emp={emp}
           onClose={() => setModal(null)}
-          onReopen={() => { setModal(null); void invalidate(); }}
-        />
+          onReopen={() => { setModal(null); void invalidate(); }} />
       )}
     </div>
   );
