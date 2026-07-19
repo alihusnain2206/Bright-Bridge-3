@@ -370,8 +370,12 @@ export default function PeoplePage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const companyId = user?.role === "super_admin" ? selectedCompanyId : (user?.companyId ?? "");
 
-  // Sub-nav: initialise from URL path so KPI card links land on the right tab
+  // Sub-nav: initialise from URL path and keep in sync as URL changes
+  // (useState initializer only runs once; useEffect re-syncs on navigation)
   const [subTab, setSubTab] = useState<SubTab>(() => pathToSubTab(location));
+  React.useEffect(() => {
+    setSubTab(pathToSubTab(location));
+  }, [location]);
 
   // Filters
   const [search, setSearch]       = useState("");
