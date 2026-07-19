@@ -173,6 +173,23 @@ router.post("/auth/token-by-role", async (req, res) => {
       wageType: "hourly",
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
+  } else if (user.role === "owner") {
+    // Company owner: admin-level EasyTeam access scoped to their own company's location
+    const ownerLocationId = user.locationId ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
+    payload = {
+      employeeId: user.employeeId,
+      organizationId: "ORG-BRIGHTBRIDGE",
+      locationId: ownerLocationId,
+      ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+      accessRole: {
+        name: "manager",
+        permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
+      },
+      role: { name: user.position, hourlyWage: (user.hourlyWage ?? 2500) / 100 },
+      wage: (user.hourlyWage ?? 2500) / 100,
+      wageType: "hourly",
+      features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+    };
   } else if (user.role === "manager") {
     // Unified location resolver: store company → DB rollfiLocationId → LOC-${id}
     const mgrLocationId = user.locationId ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
@@ -271,7 +288,7 @@ router.post("/auth/create-manager", async (req, res) => {
     });
   }
 
-  req.log.info({ userId: user.id, name, companyId }, "Manager account created by super_admin");
+  req.log.info({ userId: user.id, name, companyId }, "Owner account created by super_admin");
   res.status(201).json({ ...user, password, loginEmail: email });
 });
 

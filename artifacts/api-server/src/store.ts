@@ -2,7 +2,7 @@ export type EmployeeStatus = "hired" | "invited" | "onboarding" | "active" | "on
 
 // ─── ROLE-BASED DATA ────────────────────────────────────────
 
-export type UserRole = "super_admin" | "manager" | "employee" | "parent";
+export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent";
 
 export interface TestUser {
   id: string;
@@ -232,8 +232,8 @@ const peopleActivityLog: PeopleActivityEntry[] = [];
 
 const testUsers: TestUser[] = [
   { id: "USER-001", name: "Joanne Indiviglio", email: "joanne@brightbridgeassist.com", password: "Admin123!", role: "super_admin", companyId: "ORG-BRIGHTBRIDGE", employeeId: "ADMIN-JOANNE", position: "Super Admin" },
-  { id: "USER-002", name: "Susan Manager", email: "manager@sunshine.com", password: "Manager123!", role: "manager", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "MGR-SUNSHINE-001", position: "Daycare Manager" },
-  { id: "USER-003", name: "Mike Manager", email: "manager@rainbow.com", password: "Manager123!", role: "manager", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "MGR-RAINBOW-001", position: "Daycare Manager" },
+  { id: "USER-002", name: "Susan Manager", email: "manager@sunshine.com", password: "Manager123!", role: "owner", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "MGR-SUNSHINE-001", position: "Daycare Manager" },
+  { id: "USER-003", name: "Mike Manager", email: "manager@rainbow.com", password: "Manager123!", role: "owner", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "MGR-RAINBOW-001", position: "Daycare Manager" },
   { id: "USER-004", name: "John Smith", email: "john@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-001", position: "Teacher", hourlyWage: 1800 },
   { id: "USER-005", name: "Mary Johnson", email: "mary@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-002", position: "Assistant", hourlyWage: 1500 },
   { id: "USER-006", name: "Tom Wilson", email: "tom@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-001", position: "Teacher", hourlyWage: 1800 },
@@ -429,7 +429,7 @@ export const store = {
       name: data.name,
       email: data.email,
       password,
-      role: "manager",
+      role: "owner",
       companyId: data.companyId,
       locationId,
       employeeId,
@@ -449,7 +449,7 @@ export const store = {
     return testUsers.find((u) => u.id === userId);
   },
   deleteStaffUser(userId: string): boolean {
-    const idx = testUsers.findIndex((u) => u.id === userId && (u.role === "employee" || u.role === "manager"));
+    const idx = testUsers.findIndex((u) => u.id === userId && (u.role === "employee" || u.role === "owner" || u.role === "manager"));
     if (idx === -1) return false;
     testUsers.splice(idx, 1);
     return true;

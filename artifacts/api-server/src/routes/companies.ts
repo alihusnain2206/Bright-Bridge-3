@@ -343,7 +343,7 @@ router.get("/companies/:companyId/users", async (req: Request, res: Response) =>
   try {
     // From in-memory store (hardcoded test users with manager/employee roles)
     const storeUsers = store.getUsersForCompany(companyId)
-      .filter((u) => u.role === "manager" || u.role === "super_admin");
+      .filter((u) => u.role === "owner" || u.role === "manager" || u.role === "super_admin");
 
     // From DB user_accounts (managers created via the wizard)
     const storeEmails = new Set(storeUsers.map((u) => u.email.toLowerCase()));
@@ -359,7 +359,7 @@ router.get("/companies/:companyId/users", async (req: Request, res: Response) =>
       .where(and(eq(userAccounts.companyId, companyId)));
 
     const dbFiltered = dbUsers
-      .filter((u) => (u.role === "manager" || u.role === "super_admin") && !storeEmails.has(u.email.toLowerCase()));
+      .filter((u) => (u.role === "owner" || u.role === "manager" || u.role === "super_admin") && !storeEmails.has(u.email.toLowerCase()));
 
     const merged = [
       ...storeUsers.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, position: u.position ?? "", source: "store" })),

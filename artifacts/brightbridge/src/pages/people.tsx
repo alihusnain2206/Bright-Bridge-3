@@ -511,7 +511,7 @@ export default function PeoplePage() {
 
   // ── Derived company name ──────────────────────────────────
 
-  const selectedCompanyName = user?.role === "manager"
+  const selectedCompanyName = (user?.role === "owner" || user?.role === "manager")
     ? (user?.name ? "Your Company" : "")
     : allCompanies.find(c => c.id === selectedCompanyId)?.name ?? "";
 

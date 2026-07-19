@@ -75,7 +75,7 @@ const MANAGER_ACTIONS: Action[] = [
 ];
 
 export default function QuickActions({ role }: { role?: string }) {
-  const actions = (role === "super_admin" || role === "admin") ? ADMIN_ACTIONS : MANAGER_ACTIONS;
+  const actions = (role === "super_admin" || role === "owner" || role === "admin") ? ADMIN_ACTIONS : MANAGER_ACTIONS;
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">

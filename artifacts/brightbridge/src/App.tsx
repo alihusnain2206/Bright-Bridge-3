@@ -20,6 +20,7 @@ import Config from "@/pages/config";
 import Payroll from "@/pages/payroll";
 import Roles from "@/pages/roles";
 import SuperAdminDashboard from "@/pages/dashboard-super-admin";
+import OwnerDashboard from "@/pages/dashboard-owner";
 import ManagerDashboard from "@/pages/dashboard-manager";
 import ManagerTeam from "@/pages/manager-team";
 import ManagerPayroll from "@/pages/manager-payroll";
@@ -105,59 +106,62 @@ function Router() {
             <Route path="/dashboard/super-admin">
               <ProtectedRoute component={SuperAdminDashboard} roles={["super_admin"]} />
             </Route>
+            <Route path="/dashboard/owner">
+              <ProtectedRoute component={OwnerDashboard} roles={["owner"]} />
+            </Route>
             <Route path="/dashboard/manager">
               <ProtectedRoute component={ManagerDashboard} roles={["manager"]} />
             </Route>
-            {/* /my-team kept as backward-compat alias for managers */}
+            {/* /my-team kept as backward-compat alias */}
             <Route path="/my-team">
-              <ProtectedRoute component={PeoplePage} roles={["manager"]} />
+              <ProtectedRoute component={PeoplePage} roles={["owner", "manager"]} />
             </Route>
             {/* People hub pages — must be before /people/:id to avoid param collision */}
             <Route path="/people/onboarding">
-              <ProtectedRoute component={PeopleOnboardingPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeopleOnboardingPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/compliance">
-              <ProtectedRoute component={PeopleComplianceHubPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeopleComplianceHubPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/documents">
-              <ProtectedRoute component={PeopleDocumentsHubPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeopleDocumentsHubPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/new-hires">
-              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/contacts">
-              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             {/* People pages — order matters: most-specific routes first */}
             <Route path="/people/:id/edit">
-              <ProtectedRoute component={EmployeeEditPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeEditPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/:id/compliance">
-              <ProtectedRoute component={EmployeeCompliancePage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeCompliancePage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/:id/tasks">
-              <ProtectedRoute component={EmployeeTasksPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeTasksPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/:id/contacts">
-              <ProtectedRoute component={EmployeeContactsPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeContactsPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/:id/documents">
-              <ProtectedRoute component={EmployeeDocumentsPage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeDocumentsPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/:id">
-              <ProtectedRoute component={EmployeeProfilePage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={EmployeeProfilePage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people">
-              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/manager-payroll/employees">
-              <ProtectedRoute component={ManagerPayrollEmployees} roles={["manager"]} />
+              <ProtectedRoute component={ManagerPayrollEmployees} roles={["owner", "manager"]} />
             </Route>
             <Route path="/manager-payroll/submit">
-              <ProtectedRoute component={ManagerPayrollSubmit} roles={["manager"]} />
+              <ProtectedRoute component={ManagerPayrollSubmit} roles={["owner", "manager"]} />
             </Route>
             <Route path="/manager-payroll">
-              <ProtectedRoute component={ManagerPayroll} roles={["manager"]} />
+              <ProtectedRoute component={ManagerPayroll} roles={["owner", "manager"]} />
             </Route>
             <Route path="/dashboard/employee">
               <ProtectedRoute component={EmployeeDashboard} roles={["employee"]} />
@@ -181,19 +185,19 @@ function Router() {
             </Route>
 
             <Route path="/timeclock">
-              <ProtectedRoute component={TimeClock} roles={["super_admin"]} />
+              <ProtectedRoute component={TimeClock} roles={["super_admin", "owner"]} />
             </Route>
             <Route path="/timesheets">
-              <ProtectedRoute component={Timesheets} roles={["super_admin"]} />
+              <ProtectedRoute component={Timesheets} roles={["super_admin", "owner"]} />
             </Route>
             <Route path="/schedule">
-              <ProtectedRoute component={Schedule} roles={["super_admin"]} />
+              <ProtectedRoute component={Schedule} roles={["super_admin", "owner"]} />
             </Route>
             <Route path="/webhooks">
-              <ProtectedRoute component={Webhooks} roles={["super_admin"]} />
+              <ProtectedRoute component={Webhooks} roles={["super_admin", "owner"]} />
             </Route>
             <Route path="/config">
-              <ProtectedRoute component={Config} roles={["super_admin"]} />
+              <ProtectedRoute component={Config} roles={["super_admin", "owner"]} />
             </Route>
             <Route path="/payroll">
               <ProtectedRoute component={Payroll} roles={["super_admin"]} />

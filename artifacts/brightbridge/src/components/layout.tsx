@@ -56,6 +56,28 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: "/webhooks",             label: "Webhooks",   icon: Webhook },
         { href: "/config",               label: "Config",     icon: Settings },
       ];
+    case "owner":
+      return [
+        { href: "/dashboard/owner",  label: "Dashboard",  icon: LayoutDashboard },
+        { href: "/people",           label: "People",     icon: Users, children: PEOPLE_SUBNAV },
+        { href: "/timeclock",        label: "Time Clock", icon: Clock },
+        { href: "/timesheets",       label: "Timesheets", icon: CalendarDays },
+        { href: "/schedule",         label: "Schedule",   icon: Calendar },
+        {
+          href: "/manager-payroll",
+          label: "Payroll",
+          icon: Briefcase,
+          children: [
+            { href: "/manager-payroll",               label: "Current Payrolls" },
+            { href: "/manager-payroll?tab=history",   label: "Payroll History" },
+            { href: "/manager-payroll?tab=offcycle",  label: "Off-Cycle Payrolls" },
+            { href: "/manager-payroll/submit",        label: "Submit Payroll" },
+          ],
+        },
+        { href: "/webhooks", label: "Webhooks", icon: Webhook },
+        { href: "/config",   label: "Config",   icon: Settings },
+        { href: "/roles",    label: "Roles",    icon: Scale },
+      ];
     case "manager":
       return [
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
@@ -91,6 +113,7 @@ function getNavItems(role: string | undefined): NavItem[] {
 
 const ROLE_COLOR: Record<string, string> = {
   super_admin: "#dc2626",
+  owner:       "#7c3aed",
   manager:     "#d97706",
   employee:    "#16a34a",
   parent:      "#2563eb",

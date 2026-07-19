@@ -7,14 +7,14 @@ import { Label } from "@/components/ui/label";
 import { AlertCircle, LogIn, Zap } from "lucide-react";
 
 const QUICK_LOGINS = [
-  { label: "Super Admin — Joanne", email: "joanne@brightbridgeassist.com", password: "Admin123!", dot: "#ef4444" },
-  { label: "Manager — Sunshine",   email: "manager@sunshine.com",          password: "Manager123!", dot: "#f59e0b" },
-  { label: "Manager — Rainbow",    email: "manager@rainbow.com",           password: "Manager123!", dot: "#f59e0b" },
-  { label: "Employee — John Smith",email: "john@sunshine.com",             password: "Staff123!",   dot: "#22c55e" },
-  { label: "Employee — Tom Wilson",  email: "tom@rainbow.com",           password: "Staff123!",   dot: "#22c55e" },
-  { label: "Employee — Ali Husnain",email: "ali@rainbow.com",             password: "Staff123!",   dot: "#22c55e" },
-  { label: "Employee — Lisa Chen",   email: "lisa.chen@rainbow.com",      password: "Staff123!",   dot: "#22c55e" },
-  { label: "Parent — Sarah",         email: "sarah@parent.com",           password: "Parent123!",  dot: "#3b82f6" },
+  { label: "Super Admin — Joanne",  email: "joanne@brightbridgeassist.com", password: "Admin123!",   dot: "#ef4444" },
+  { label: "Owner — Sunshine",      email: "manager@sunshine.com",          password: "Manager123!", dot: "#7c3aed" },
+  { label: "Owner — Rainbow",       email: "manager@rainbow.com",           password: "Manager123!", dot: "#7c3aed" },
+  { label: "Employee — John Smith", email: "john@sunshine.com",             password: "Staff123!",   dot: "#22c55e" },
+  { label: "Employee — Tom Wilson", email: "tom@rainbow.com",               password: "Staff123!",   dot: "#22c55e" },
+  { label: "Employee — Ali Husnain",email: "ali@rainbow.com",               password: "Staff123!",   dot: "#22c55e" },
+  { label: "Employee — Lisa Chen",  email: "lisa.chen@rainbow.com",         password: "Staff123!",   dot: "#22c55e" },
+  { label: "Parent — Sarah",        email: "sarah@parent.com",              password: "Parent123!",  dot: "#3b82f6" },
 ];
 
 /* ── Canvas mesh animation ── */

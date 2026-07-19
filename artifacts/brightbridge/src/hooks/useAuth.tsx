@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
-export type UserRole = "super_admin" | "manager" | "employee" | "parent";
+export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent";
 
 export interface AuthUser {
   id: string;
@@ -124,4 +124,15 @@ export function useAuth() {
 
 export function dashboardPath(role: UserRole): string {
   return `/dashboard/${role.replace("_", "-")}`;
+}
+
+export function roleLabel(role: UserRole | string): string {
+  const map: Record<string, string> = {
+    super_admin: "Super Admin",
+    owner: "Owner",
+    manager: "Manager",
+    employee: "Employee",
+    parent: "Parent",
+  };
+  return map[role] ?? role;
 }
