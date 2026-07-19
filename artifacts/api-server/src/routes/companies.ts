@@ -639,12 +639,16 @@ router.post("/employees", async (req: Request, res: Response) => {
         const newTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
         const complete = async (name: string) => {
           const task = newTasks.find(t => t.taskName === name && t.status !== "completed");
-          if (task) await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, task.id));
+          if (task) await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: "system", completionMethod: "auto", completionNote: "Auto-completed: collected during employee creation wizard", updatedAt: seedNow } as Record<string, unknown>).where(eq(onboardingTasksTable.id, task.id));
         };
 
-        // Always: display ID was just auto-generated, position is always provided
+        // Always: data collected/created during employee creation wizard
         await complete("Issue Employee ID");
         await complete("Assign Job Title");
+        await complete("Complete Personal Information");
+        await complete("Assign Pay Schedule");
+        await complete("Create System Login");
+        if (easyteamSynced) await complete("Assign Time & Attendance Profile");
 
         // Conditionally from wizard data
         if (body.department) await complete("Assign Department");

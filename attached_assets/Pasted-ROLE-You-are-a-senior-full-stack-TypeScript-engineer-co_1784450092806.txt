@@ -1,0 +1,355 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer completing the 
+Task Action Modal system for 
+onboarding tasks in the BrightBridge 
+Assist People Module.
+
+SCOPE BOUNDARY:
+This task upgrades the task 
+interaction system on 
+/people/:employeeId/tasks and the 
+TaskActionModal component. Do NOT 
+touch Payroll, Rollfi sync, EasyTeam, 
+Time Clock, or other pages. All 
+tables and endpoints already exist — 
+extend them only where specified 
+(task view/reopen/notes).
+
+---
+
+PART 1 — ADDITIONAL AUTO-COMPLETIONS
+
+These tasks are already satisfied 
+by wizard data and must auto-complete 
+at employee creation (and be 
+retroactively completed for Sophia 
+Bennett EMP-MRRHKZZU-6S9WW1):
+
+→ "Complete Personal Information" 
+  (wizard collects SSN, DOB, address)
+→ "Assign Pay Schedule" (wage/pay 
+  type set in wizard, schedule set 
+  at company level)
+→ "Assign Job Title" (position 
+  collected in wizard)
+→ "Create System Login" (userAccount 
+  is created on submit)
+→ "Assign Time & Attendance Profile" 
+  (active employees automatically 
+  appear in EasyTeam)
+→ "Assign Work Location" IF the 
+  wizard collects work location; 
+  otherwise leave manual
+
+For every auto-completed task, set:
+completedBy: "system"
+completionMethod: "auto"
+completionNote: short explanation, 
+e.g. "Auto-completed: collected 
+during employee creation wizard"
+
+---
+
+PART 2 — TASK DATA MODEL EXTENSIONS
+
+Add to onboarding_tasks (DB columns 
++ TypeScript interface), all optional:
+
+completionMethod?: "auto" | "manual" 
+  | "form" | "upload" | "acknowledge" 
+  | "verify";
+completionNote?: string;
+notes?: TaskNote[]; // separate 
+  small table task_notes OR jsonb: 
+  { id, text, authorId, authorName, 
+  createdAt }
+linkedDocumentIds?: string[]; 
+  // documents attached via this task
+acknowledgedBy?: string;
+acknowledgedAt?: string;
+reopenedCount?: number;
+lastReopenedAt?: string;
+lastReopenedBy?: string;
+
+New/extended endpoints:
+POST /api/onboarding-tasks/:id/reopen
+→ Sets status back to "pending", 
+  clears completedAt/completedBy 
+  (but KEEPS notes, linked documents, 
+  and history), increments 
+  reopenedCount, logs activity 
+  "Task reopened by [name]"
+→ If the task had auto-completed a 
+  compliance item, set that 
+  compliance item back to "pending" 
+  too and recalculate complianceScore
+
+POST /api/onboarding-tasks/:id/notes
+→ Adds a note { text } by the 
+  logged-in user; allowed on ANY 
+  task regardless of status
+
+GET /api/onboarding-tasks/:id
+→ Full task detail: all fields 
+  above + linked documents metadata 
+  + linked compliance item status
+
+---
+
+PART 3 — THE TASK ACTION MODAL: 
+TWO MODES
+
+MODE A — PENDING TASK (action mode):
+Opens the correct interaction by 
+task type (routing table in Part 4).
+
+MODE B — COMPLETED TASK (detail/
+review mode): EVERY completed task 
+row must remain CLICKABLE. Clicking 
+opens the modal in review mode 
+showing:
+
+→ Green "Completed" header with: 
+  completed date, completed by 
+  (person name or "System 
+  (auto-completed)"), completion 
+  method badge (Auto / Manual / 
+  Form / Upload / Acknowledged / 
+  Verified)
+→ WHAT WAS DONE — content depends 
+  on how it was completed:
+  • Auto tasks: show the actual 
+    wizard data that satisfied it 
+    in read-only fields (e.g. 
+    Personal Information task shows 
+    masked SSN ***-**-7890, DOB, 
+    address; Federal W-4 shows 
+    filing status, dependents; 
+    Direct Deposit shows bank name 
+    + masked account; Assign 
+    Department shows department + 
+    manager). Include an "Edit" 
+    link where a real edit surface 
+    exists (e.g. links to employee 
+    edit page) — do not build new 
+    edit forms for wizard data in 
+    this task.
+  • Form tasks (Emergency Contact): 
+    show the saved contact(s) 
+    read-only + "Edit Contacts" 
+    button opening the existing 
+    EmergencyContactForm.
+  • Upload tasks: show the linked 
+    document(s): name, type, upload 
+    date, expiry date with color 
+    status, Download button, and 
+    "Upload Replacement" button 
+    (replacement adds a new document 
+    version, keeps the old one, 
+    updates the link).
+  • Acknowledge tasks: show "Signed 
+    by [name] on [date]" with the 
+    acknowledgment text that was 
+    agreed to.
+  • Verify tasks: show the 
+    verification note and verifier.
+→ NOTES section (all tasks, both 
+  modes): list of notes with author 
+  + timestamp, and an "Add Note" 
+  input. Notes can be added even 
+  after completion.
+→ REOPEN: a "Mark as Not Completed" 
+  (reopen) button with a confirm 
+  step ("This will move the task 
+  back to pending. Attached 
+  documents and notes are kept."). 
+  Calls the reopen endpoint. After 
+  reopening, the task returns to 
+  the pending list and progress/
+  score numbers update.
+
+---
+
+PART 4 — ROUTING TABLE FOR 
+PENDING TASKS (MODE A)
+
+Route by task name matching 
+(case-insensitive contains), in 
+this priority order:
+
+1) FORM — EMERGENCY CONTACT
+Match: "Emergency Contact"
+→ Render EmergencyContactForm 
+inline. Saving first contact 
+completes the task 
+(completionMethod: "form").
+
+2) UPLOAD WITH EXPIRY (certifications 
+that expire — expiry date REQUIRED)
+Match: "CPR", "First Aid", "Child 
+Abuse Training", "Health & Safety 
+Training", "Medication Administration", 
+"Mandated Reporter", "Fingerprint 
+Clearance", "License Verification", 
+"Driver's License", "Certification 
+Uploads", "Work Authorization"
+→ Render EmployeeDocuments upload 
+form, document type pre-selected 
+from task name, EXPIRY DATE field 
+required. On upload: complete task 
+(method "upload"), link document, 
+complete matching compliance item 
+WITH expiryDate, recalc score.
+
+3) UPLOAD WITHOUT REQUIRED EXPIRY
+Match: "I-9 Section 1", 
+"Identification Upload", 
+"Immunization Records", "Physical 
+Examination", "TB Test", "Staff 
+Health Statement", "Upload Required 
+Documents", "Equipment Signature"
+→ Same upload flow, expiry optional.
+
+4) ACKNOWLEDGE / E-SIGN
+Match: "Handbook", "Policy 
+Acknowledgment", "Code of Conduct", 
+"NDA", "Confidentiality", "IT 
+Acceptable Use", "E-Sign"
+→ Render acknowledgment view: task 
+name, statement "I acknowledge I 
+have read and agree to the [task 
+name]", checkbox, "Signed by" input 
+pre-filled with logged-in user's 
+name, Confirm button (disabled 
+until checkbox + name). On confirm: 
+complete (method "acknowledge"), 
+store acknowledgedBy/At.
+Special case "E-Sign All Required 
+Forms": instead show a checklist 
+summary of all acknowledge-type 
+tasks for this employee with their 
+status; enable "Mark Complete" only 
+when all of them are completed.
+
+5) NUMBER/DATE ENTRY
+Match: "OCFS Training Hours" → 
+number input "Training hours 
+completed" + verify button; store 
+value in completionNote 
+("OCFS hours: 30").
+Match: "Work Authorization 
+Expiration" → date input; store 
+date; if a work-authorization 
+compliance item exists, set its 
+expiryDate.
+
+6) VERIFY WITH NOTES (default for 
+hr/manager/it real-world tasks)
+Match: everything else with 
+assignedToRole in ["hr","manager",
+"it","admin"] — e.g. I-9 Section 2 
+Verification, Background Check, 
+Drug Screening, Education 
+Verification, Professional 
+References, Ratio Verification, 
+Group Assignment, Classroom 
+Assignment, all Schedule/Assign 
+manager tasks, all IT issue tasks
+→ Render: task name + description, 
+optional Notes textarea (e.g. 
+"Orientation scheduled for Jul 22"), 
+"Mark as Completed" button 
+(method "verify"). For "Background 
+Check" additionally show an 
+optional "Attach result document" 
+upload and update 
+backgroundCheckStatus to "completed".
+For "Staff File Completion": show 
+a read-only summary of the 
+employee's overall required-task 
+progress; allow completion only 
+when it is the last remaining 
+required task or all others are 
+done.
+
+7) SIMPLE CONFIRM (fallback)
+Anything unmatched → task name + 
+description + "Mark as Completed".
+
+---
+
+PART 5 — BEHAVIOR RULES
+
+1. Idempotent completions — 
+   completing an already-completed 
+   task is a no-op.
+2. Reopen keeps history: documents 
+   stay linked, notes stay, 
+   acknowledgment record stays 
+   visible in the detail view 
+   labeled "Previous completion".
+3. Every complete/reopen/note 
+   action logs to 
+   people_activity_log.
+4. Compliance sync both ways: 
+   complete → compliance item 
+   completed; reopen → compliance 
+   item pending; score recalculated 
+   and directory badge reflects it.
+5. Employee auto-activation logic 
+   unchanged (all required done → 
+   active). If a task is REOPENED 
+   after the employee became 
+   active, do NOT revert the 
+   employee to onboarding — instead 
+   log activity and let the 
+   compliance score reflect the gap.
+6. All modals: loading, error, and 
+   empty states; masked SSN/account 
+   numbers everywhere; TypeScript 
+   throughout; existing styling 
+   patterns.
+
+---
+
+TESTING CHECKLIST:
+✅ Sophia's 6 additional tasks 
+   auto-completed retroactively 
+   with method "auto" and 
+   explanatory note
+✅ Clicking a COMPLETED auto task 
+   shows the wizard data read-only 
+   (masked SSN etc)
+✅ Clicking a completed upload task 
+   shows the document with download 
+   + replace
+✅ Emergency Contact task opens 
+   form; saving completes it; 
+   reviewing shows saved contact 
+   with Edit
+✅ CPR-type task upload REQUIRES 
+   expiry; compliance item gets 
+   the expiry date
+✅ Acknowledge tasks capture 
+   signer + date and display them 
+   after completion
+✅ Notes can be added to pending 
+   AND completed tasks
+✅ Reopen moves task to pending, 
+   keeps documents/notes, updates 
+   progress + compliance score, 
+   logs activity
+✅ E-Sign summary task only 
+   completable when all acknowledge 
+   tasks done
+✅ No regressions: payroll, Rollfi 
+   sync, directory, compliance page
+
+DELIVERABLE SUMMARY:
+1. Files changed, new endpoints added
+2. Routing rules implemented (list 
+   each match group)
+3. Which tasks now auto-complete 
+   at creation (full list)
+4. Confirmation reopen syncs 
+   compliance items + score

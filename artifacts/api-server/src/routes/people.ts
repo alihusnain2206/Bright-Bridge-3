@@ -7,6 +7,7 @@ import {
   employeeDocuments as employeeDocumentsTable,
   emergencyContacts as emergencyContactsTable,
   peopleActivityLog as peopleActivityLogTable,
+  taskNotes as taskNotesTable,
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { store, type Department } from "../store.js";
@@ -331,6 +332,7 @@ export async function backfillEmployeeScores(): Promise<void> {
     bankAccountAdded: employees.bankAccountAdded,
     w4Submitted: employees.w4Submitted,
     homeState: employees.homeState,
+    easyteamSynced: employees.easyteamSynced,
   }).from(employees);
 
   let updatedScores = 0;
@@ -351,15 +353,18 @@ export async function backfillEmployeeScores(): Promise<void> {
       const task = pendingTasks.find(t => t.taskName === name && t.status === "pending");
       if (!task) return;
       await db.update(onboardingTasksTable)
-        .set({ status: "completed", completedAt: seedNow, completedBy: "system_backfill", updatedAt: seedNow })
+        .set({ status: "completed", completedAt: seedNow, completedBy: "system", completionMethod: "auto", completionNote: "Auto-completed: collected during employee creation wizard", updatedAt: seedNow } as Record<string, unknown>)
         .where(eq(onboardingTasksTable.id, task.id));
       autoCompletedTasks++;
     };
 
+    // Always auto-complete tasks whose data is satisfied at wizard creation time
+    await completeTask("Complete Personal Information");
+    await completeTask("Assign Pay Schedule");
+    await completeTask("Create System Login");
+    if (emp.easyteamSynced) await completeTask("Assign Time & Attendance Profile");
     if (emp.bankAccountAdded) await completeTask("Direct Deposit Setup");
     if (emp.w4Submitted)      await completeTask("Federal W-4");
-    // State Tax Form: mark complete if W-4 was submitted and employee has a home state
-    // (the wizard always prompts for state W-4 when a home state is set)
     if (emp.w4Submitted && emp.homeState) await completeTask("State Tax Form");
 
     // Also fix compliance items to match
@@ -754,7 +759,39 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
 
     const now = nowIso();
-    await db.update(onboardingTasksTable).set({ status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now }).where(eq(onboardingTasksTable.id, id));
+    const { completionMethod, completionNote, acknowledgedBy, acknowledgedAt, linkedDocumentId } = req.body as Record<string, string>;
+
+    // Idempotent: if already completed, just update metadata fields without touching status/timestamp
+    if (task.status === "completed") {
+      let ldIds = task.linkedDocumentIds ?? null;
+      if (linkedDocumentId) {
+        const arr: string[] = ldIds ? JSON.parse(ldIds) as string[] : [];
+        if (!arr.includes(linkedDocumentId)) { arr.push(linkedDocumentId); ldIds = JSON.stringify(arr); }
+      }
+      await db.update(onboardingTasksTable).set({
+        ...(completionMethod ? { completionMethod } : {}),
+        ...(completionNote !== undefined ? { completionNote: completionNote ?? null } : {}),
+        ...(ldIds !== null ? { linkedDocumentIds: ldIds } : {}),
+        updatedAt: now,
+      } as Record<string, unknown>).where(eq(onboardingTasksTable.id, id));
+      const [already] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+      res.json({ success: true, task: already, allRequiredDone: false, progress: 0 });
+      return;
+    }
+
+    let ldIds = task.linkedDocumentIds ?? null;
+    if (linkedDocumentId) {
+      const arr: string[] = ldIds ? JSON.parse(ldIds) as string[] : [];
+      if (!arr.includes(linkedDocumentId)) { arr.push(linkedDocumentId); ldIds = JSON.stringify(arr); }
+    }
+    await db.update(onboardingTasksTable).set({
+      status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now,
+      completionMethod: completionMethod ?? "manual",
+      completionNote: completionNote ?? null,
+      acknowledgedBy: acknowledgedBy ?? null,
+      acknowledgedAt: acknowledgedAt ?? null,
+      ...(ldIds !== null ? { linkedDocumentIds: ldIds } : {}),
+    } as Record<string, unknown>).where(eq(onboardingTasksTable.id, id));
 
     // Update linked compliance item if applicable
     const complianceMap: Record<string, string> = {
@@ -805,6 +842,96 @@ router.post("/onboarding-tasks/:id/skip", async (req: Request, res: Response) =>
   } catch (err) {
     req.log.error({ err }, "Failed to skip task");
     res.status(500).json({ error: "Failed to skip task" });
+  }
+});
+
+router.get("/onboarding-tasks/:id", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = req.params.id as string;
+  try {
+    const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    const notes = await db.select().from(taskNotesTable).where(eq(taskNotesTable.taskId, id));
+    let linkedDocuments: DocRow[] = [];
+    if (task.linkedDocumentIds) {
+      const ids = JSON.parse(task.linkedDocumentIds) as string[];
+      if (ids.length > 0) linkedDocuments = await db.select().from(employeeDocumentsTable).where(inArray(employeeDocumentsTable.id, ids));
+    }
+    res.json({ task, notes, linkedDocuments });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get task detail");
+    res.status(500).json({ error: "Failed to get task detail" });
+  }
+});
+
+router.post("/onboarding-tasks/:id/reopen", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = req.params.id as string;
+  try {
+    const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (task.status === "pending") { res.status(400).json({ error: "Task is already pending" }); return; }
+
+    const now = nowIso();
+    await db.update(onboardingTasksTable).set({
+      status: "pending", completedAt: null, completedBy: null, updatedAt: now,
+      reopenedCount: (task.reopenedCount ?? 0) + 1,
+      lastReopenedAt: now, lastReopenedBy: req.session.userId,
+    } as Record<string, unknown>).where(eq(onboardingTasksTable.id, id));
+
+    // Revert linked compliance item if applicable
+    const complianceMap: Record<string, string> = {
+      "Federal W-4": "w4", "I-9 Section 1": "i9", "I-9 Section 2 Verification": "i9",
+      "Direct Deposit Setup": "direct_deposit", "Background Check": "background_check",
+      "Employee Handbook Acknowledgment": "handbook", "Company Policy Acknowledgment": "policy",
+      "Fingerprint Clearance": "fingerprint",
+    };
+    const ciType = complianceMap[task.taskName];
+    if (ciType) {
+      const [ci] = await db.select().from(complianceItemsTable)
+        .where(and(eq(complianceItemsTable.employeeId, task.employeeId), eq(complianceItemsTable.type, ciType)));
+      if (ci && ci.status === "completed") {
+        await db.update(complianceItemsTable).set({ status: "not_started", completedAt: null, updatedAt: now } as Record<string, unknown>).where(eq(complianceItemsTable.id, ci.id));
+      }
+    }
+
+    // Recalculate scores (spec rule 5: do NOT revert active status)
+    const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, task.employeeId));
+    const progress = Math.round((allTasks.filter(t => t.status === "completed" || t.status === "skipped").length / allTasks.length) * 100);
+    const flags = await calculateReadinessFlags(task.employeeId);
+    const score = await calculateComplianceScore(task.employeeId);
+    await db.update(employees).set({ onboardingProgress: progress, complianceScore: score, updatedAt: now, ...flags } as Record<string, unknown>).where(eq(employees.id, task.employeeId));
+
+    void logPeopleActivity({ companyId: task.companyId, employeeId: task.employeeId, action: "task.reopened", description: `Task "${task.taskName}" reopened`, category: "onboarding", performedBy: req.session.userId });
+
+    const [updated] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
+    res.json({ success: true, task: updated, progress });
+  } catch (err) {
+    req.log.error({ err }, "Failed to reopen task");
+    res.status(500).json({ error: "Failed to reopen task" });
+  }
+});
+
+router.post("/onboarding-tasks/:id/notes", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const taskId = req.params.id as string;
+  const { text } = req.body as { text?: string };
+  if (!text?.trim()) { res.status(400).json({ error: "Note text is required" }); return; }
+  try {
+    const [task] = await db.select({ id: onboardingTasksTable.id, employeeId: onboardingTasksTable.employeeId, companyId: onboardingTasksTable.companyId, taskName: onboardingTasksTable.taskName }).from(onboardingTasksTable).where(eq(onboardingTasksTable.id, taskId));
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    const storeUser = store.getUserById(req.session.userId);
+    const authorName = storeUser?.name ?? req.session.userId;
+    const now = nowIso();
+    const [note] = await db.insert(taskNotesTable).values({
+      id: `tnote-${uid()}`, taskId, employeeId: task.employeeId, companyId: task.companyId,
+      text: text.trim(), authorId: req.session.userId, authorName, createdAt: now,
+    }).returning();
+    void logPeopleActivity({ companyId: task.companyId, employeeId: task.employeeId, action: "task.note_added", description: `Note added to "${task.taskName}"`, category: "onboarding", performedBy: req.session.userId });
+    res.status(201).json({ note });
+  } catch (err) {
+    req.log.error({ err }, "Failed to add task note");
+    res.status(500).json({ error: "Failed to add task note" });
   }
 });
 
@@ -1054,9 +1181,11 @@ router.post("/documents/upload", upload.single("file"), async (req: Request, res
     if (kw) {
       const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
       const task = allTasks.find(t => t.taskName.includes(kw) && t.status !== "completed");
-      if (task) {
+      if (task && task.status !== "completed") {
+        const existIds: string[] = task.linkedDocumentIds ? JSON.parse(task.linkedDocumentIds) as string[] : [];
+        if (!existIds.includes(docId)) existIds.push(docId);
         await db.update(onboardingTasksTable)
-          .set({ status: "completed", completedAt: now, completedBy: req.session.userId, updatedAt: now })
+          .set({ status: "completed", completedAt: now, completedBy: req.session.userId, completionMethod: "upload", linkedDocumentIds: JSON.stringify(existIds), updatedAt: now } as Record<string, unknown>)
           .where(eq(onboardingTasksTable.id, task.id));
       }
     }

@@ -15,6 +15,9 @@ interface OnboardingTask {
   assignedToRole: string; status: string; isRequired: boolean; dueDate?: string|null;
   completedAt?: string|null; completedBy?: string|null; notes?: string|null;
   category: string; description?: string|null;
+  completionMethod?: string|null; completionNote?: string|null;
+  acknowledgedBy?: string|null; acknowledgedAt?: string|null;
+  reopenedCount?: number|null; linkedDocumentIds?: string|null;
 }
 interface EmployeeSummary {
   id: string; companyId: string; firstName: string; lastName: string; employeeDisplayId?: string|null;
@@ -169,8 +172,8 @@ export default function EmployeeTasksPage() {
                     return (
                       <div
                         key={task.id}
-                        className={`flex items-center gap-3 px-4 py-3 ${isDone ? "" : "cursor-pointer hover:bg-blue-50/40 transition-colors"}`}
-                        onClick={() => { if (!isDone) openModal(task); }}
+                        className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-blue-50/40 transition-colors`}
+                        onClick={() => openModal(task)}
                       >
                         {task.status === "completed" ? (
                           <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />

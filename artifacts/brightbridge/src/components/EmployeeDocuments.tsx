@@ -36,7 +36,8 @@ interface Props {
   employeeId: string;
   companyId: string;
   preselectedType?: string;
-  onUpload?: () => void;
+  requireExpiry?: boolean;
+  onUpload?: (documentId?: string) => void;
 }
 
 function expiryClass(expiryDate?: string | null): string {
@@ -59,7 +60,7 @@ function fmtSize(bytes?: number | null) {
   return `${(bytes / 1048576).toFixed(1)} MB`;
 }
 
-export default function EmployeeDocuments({ employeeId, companyId, preselectedType, onUpload }: Props) {
+export default function EmployeeDocuments({ employeeId, companyId, preselectedType, requireExpiry, onUpload }: Props) {
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [docType, setDocType] = useState(preselectedType ?? "");
@@ -97,6 +98,7 @@ export default function EmployeeDocuments({ employeeId, companyId, preselectedTy
   const handleUpload = async () => {
     if (!docType) { setUploadError("Please select a document type"); return; }
     if (!selectedFile) { setUploadError("Please select a file"); return; }
+    if (requireExpiry && !expiryDate) { setUploadError("An expiry date is required for this document type"); return; }
     if (selectedFile.size > 10 * 1024 * 1024) { setUploadError("File must be 10MB or less"); return; }
     if (!["application/pdf", "image/jpeg", "image/png"].includes(selectedFile.type)) {
       setUploadError("Only PDF, JPG, and PNG files are allowed"); return;
@@ -126,7 +128,7 @@ export default function EmployeeDocuments({ employeeId, companyId, preselectedTy
       await qc.invalidateQueries({ queryKey: ["people-employees"] });
       setUploadSuccess(`"${displayName}" uploaded successfully`);
       resetForm();
-      if (onUpload) onUpload();
+      if (onUpload) onUpload(d.document?.id);
     } catch (e) {
       setUploadError(e instanceof Error ? e.message : "Upload failed");
     } finally {
