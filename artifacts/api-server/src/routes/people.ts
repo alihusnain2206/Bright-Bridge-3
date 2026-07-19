@@ -328,29 +328,76 @@ export async function backfillEmployeeScores(): Promise<void> {
     id: employees.id,
     complianceScore: employees.complianceScore,
     onboardingProgress: employees.onboardingProgress,
+    bankAccountAdded: employees.bankAccountAdded,
+    w4Submitted: employees.w4Submitted,
+    homeState: employees.homeState,
   }).from(employees);
 
-  let updated = 0;
-  for (const emp of allEmployees) {
-    // Only recalculate if either score looks stale (0)
-    if ((emp.complianceScore ?? 0) > 0 && (emp.onboardingProgress ?? 0) > 0) continue;
+  let updatedScores = 0;
+  let autoCompletedTasks = 0;
 
+  for (const emp of allEmployees) {
+    // ── Step 1: Auto-complete tasks whose data is already on the employee row ──
+    // This catches employees created before the wizard auto-completion fix was deployed.
+    const pendingTasks = await db.select({
+      id: onboardingTasksTable.id,
+      taskName: onboardingTasksTable.taskName,
+      status: onboardingTasksTable.status,
+    }).from(onboardingTasksTable)
+      .where(eq(onboardingTasksTable.employeeId, emp.id));
+
+    const seedNow = nowIso();
+    const completeTask = async (name: string) => {
+      const task = pendingTasks.find(t => t.taskName === name && t.status === "pending");
+      if (!task) return;
+      await db.update(onboardingTasksTable)
+        .set({ status: "completed", completedAt: seedNow, completedBy: "system_backfill", updatedAt: seedNow })
+        .where(eq(onboardingTasksTable.id, task.id));
+      autoCompletedTasks++;
+    };
+
+    if (emp.bankAccountAdded) await completeTask("Direct Deposit Setup");
+    if (emp.w4Submitted)      await completeTask("Federal W-4");
+    // State Tax Form: mark complete if W-4 was submitted and employee has a home state
+    // (the wizard always prompts for state W-4 when a home state is set)
+    if (emp.w4Submitted && emp.homeState) await completeTask("State Tax Form");
+
+    // Also fix compliance items to match
+    if (emp.bankAccountAdded) {
+      await db.update(complianceItemsTable)
+        .set({ status: "completed", completedAt: seedNow, updatedAt: seedNow })
+        .where(and(eq(complianceItemsTable.employeeId, emp.id), eq(complianceItemsTable.type, "direct_deposit")));
+    }
+    if (emp.w4Submitted) {
+      await db.update(complianceItemsTable)
+        .set({ status: "completed", completedAt: seedNow, updatedAt: seedNow })
+        .where(and(eq(complianceItemsTable.employeeId, emp.id), eq(complianceItemsTable.type, "w4")));
+    }
+    if (emp.w4Submitted && emp.homeState) {
+      await db.update(complianceItemsTable)
+        .set({ status: "completed", completedAt: seedNow, updatedAt: seedNow })
+        .where(and(eq(complianceItemsTable.employeeId, emp.id), eq(complianceItemsTable.type, "state_w4")));
+    }
+
+    // ── Step 2: Recalculate scores for employees with stale (0) scores ──
     const [taskRows, complianceRows] = await Promise.all([
       db.select({ status: onboardingTasksTable.status }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, emp.id)),
       db.select({ id: complianceItemsTable.id }).from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, emp.id)),
     ]);
 
-    // Skip employees with no tasks and no compliance items (not yet onboarded)
     if (taskRows.length === 0 && complianceRows.length === 0) continue;
 
     const updates: Record<string, unknown> = { updatedAt: nowIso() };
+    let needsUpdate = false;
 
-    if (taskRows.length > 0 && (emp.onboardingProgress ?? 0) === 0) {
+    if (taskRows.length > 0) {
       const prog = Math.round(taskRows.filter(t => t.status === "completed" || t.status === "skipped").length / taskRows.length * 100);
+      // Always recalculate progress (may have changed from step 1 above)
       updates.onboardingProgress = prog;
+      needsUpdate = true;
     }
 
-    if (complianceRows.length > 0 && (emp.complianceScore ?? 0) === 0) {
+    if (complianceRows.length > 0) {
       const score = await calculateComplianceScore(emp.id);
       const flags = await calculateReadinessFlags(emp.id);
       updates.complianceScore = score;
@@ -358,15 +405,17 @@ export async function backfillEmployeeScores(): Promise<void> {
       updates.hrReady = flags.hrReady;
       updates.complianceReady = flags.complianceReady;
       updates.firstPayrollReady = flags.firstPayrollReady;
+      needsUpdate = true;
     }
 
-    await db.update(employees).set(updates as Record<string, unknown>).where(eq(employees.id, emp.id)).catch(() => {});
-    updated++;
+    if (needsUpdate) {
+      await db.update(employees).set(updates as Record<string, unknown>).where(eq(employees.id, emp.id)).catch(() => {});
+      updatedScores++;
+    }
   }
 
-  if (updated > 0) {
-    // logger is not available here, but the caller will log
-    console.info(`backfillEmployeeScores: updated ${updated} employees`);
+  if (updatedScores > 0 || autoCompletedTasks > 0) {
+    console.info(`backfillEmployeeScores: updated ${updatedScores} employees, auto-completed ${autoCompletedTasks} tasks`);
   }
 }
 

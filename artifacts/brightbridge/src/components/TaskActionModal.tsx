@@ -24,6 +24,7 @@ interface Employee {
 
 interface Props {
   employee: Employee;
+  initialTask?: Task | null;
   onClose: () => void;
   onRefresh?: () => void;
 }
@@ -74,9 +75,9 @@ function isOverdue(task: Task): boolean {
   return new Date(task.dueDate) < new Date();
 }
 
-export default function TaskActionModal({ employee, onClose, onRefresh }: Props) {
+export default function TaskActionModal({ employee, initialTask, onClose, onRefresh }: Props) {
   const qc = useQueryClient();
-  const [selected, setSelected] = useState<Task | null>(null);
+  const [selected, setSelected] = useState<Task | null>(initialTask ?? null);
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState("");
   const [ackChecked, setAckChecked] = useState(false);

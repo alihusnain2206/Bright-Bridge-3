@@ -1,20 +1,24 @@
-import React from "react";
+import React, { useState } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, CheckCircle2, Clock, SkipForward, ClipboardList, AlertCircle,
+  ArrowLeft, CheckCircle2, Clock, SkipForward, ClipboardList, AlertCircle, ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import TaskActionModal from "@/components/TaskActionModal";
 
 const NAVY = "#1B3A6B";
 
 interface OnboardingTask {
-  id: string; employeeId: string; taskName: string; stage: string;
-  status: string; isRequired: boolean; dueDate?: string|null;
+  id: string; employeeId: string; companyId: string; taskName: string; stage: string;
+  assignedToRole: string; status: string; isRequired: boolean; dueDate?: string|null;
   completedAt?: string|null; completedBy?: string|null; notes?: string|null;
+  category: string; description?: string|null;
 }
-interface EmployeeSummary { id: string; firstName: string; lastName: string; employeeDisplayId?: string|null; }
+interface EmployeeSummary {
+  id: string; companyId: string; firstName: string; lastName: string; employeeDisplayId?: string|null;
+}
 
 function fmtDate(iso?: string|null) {
   if (!iso) return null;
@@ -38,6 +42,8 @@ export default function EmployeeTasksPage() {
   const qc = useQueryClient();
   const empId = params?.id ?? "";
 
+  const [modalTask, setModalTask] = useState<OnboardingTask | null>(null);
+
   const { data: empData } = useQuery<{ employee: EmployeeSummary }>({
     queryKey: ["employee-detail", empId],
     queryFn: () => fetch(`/api/employees/${empId}`, { credentials: "include" }).then(r => r.json() as Promise<{ employee: EmployeeSummary }>),
@@ -51,28 +57,17 @@ export default function EmployeeTasksPage() {
     staleTime: 0,
   });
 
-  const completeMutation = useMutation({
-    mutationFn: (taskId: string) => fetch(`/api/onboarding-tasks/${taskId}/complete`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes: "" }),
-    }).then(r => r.json()),
-    onSuccess: () => {
+  const skipMutation = {
+    mutate: async (taskId: string) => {
+      await fetch(`/api/onboarding-tasks/${taskId}/skip`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: "" }),
+      });
       void qc.invalidateQueries({ queryKey: ["onboarding-tasks", empId] });
       void qc.invalidateQueries({ queryKey: ["employee-detail", empId] });
     },
-  });
-
-  const skipMutation = useMutation({
-    mutationFn: (taskId: string) => fetch(`/api/onboarding-tasks/${taskId}/skip`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notes: "" }),
-    }).then(r => r.json()),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["onboarding-tasks", empId] });
-    },
-  });
+  };
 
   const emp = empData?.employee;
   const tasks = data?.tasks ?? [];
@@ -88,7 +83,15 @@ export default function EmployeeTasksPage() {
   const stageOrder = ["preboarding", "documents", "training", "equipment", "manager_tasks", "compliance", "daycare_compliance", "ready_to_start"];
   const sortedStages = stageOrder.filter(s => groups[s]);
 
-  const isPending = completeMutation.isPending || skipMutation.isPending;
+  const openModal = (task: OnboardingTask) => {
+    setModalTask(task);
+  };
+
+  const closeModal = () => {
+    setModalTask(null);
+    void qc.invalidateQueries({ queryKey: ["onboarding-tasks", empId] });
+    void qc.invalidateQueries({ queryKey: ["employee-detail", empId] });
+  };
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-5">
@@ -164,7 +167,11 @@ export default function EmployeeTasksPage() {
                   {stageTasks.map(task => {
                     const isDone = task.status === "completed" || task.status === "skipped";
                     return (
-                      <div key={task.id} className="flex items-center gap-3 px-4 py-3">
+                      <div
+                        key={task.id}
+                        className={`flex items-center gap-3 px-4 py-3 ${isDone ? "" : "cursor-pointer hover:bg-blue-50/40 transition-colors"}`}
+                        onClick={() => { if (!isDone) openModal(task); }}
+                      >
                         {task.status === "completed" ? (
                           <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                         ) : task.status === "skipped" ? (
@@ -191,25 +198,24 @@ export default function EmployeeTasksPage() {
                           )}
                         </div>
                         {!isDone && (
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-2 shrink-0">
+                            {!task.isRequired && (
+                              <button
+                                className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5 px-1.5 py-1 rounded transition-colors"
+                                onClick={e => { e.stopPropagation(); void skipMutation.mutate(task.id); }}
+                              >
+                                <SkipForward className="h-3 w-3" /> Skip
+                              </button>
+                            )}
                             <Button
                               size="sm"
-                              disabled={isPending}
-                              onClick={() => completeMutation.mutate(task.id)}
+                              onClick={e => { e.stopPropagation(); openModal(task); }}
                               className="text-xs h-7 text-white"
                               style={{ background: NAVY }}
                             >
                               Complete
                             </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              disabled={isPending}
-                              onClick={() => skipMutation.mutate(task.id)}
-                              className="text-xs h-7 text-gray-400"
-                            >
-                              Skip
-                            </Button>
+                            <ChevronRight className="h-4 w-4 text-gray-300" />
                           </div>
                         )}
                       </div>
@@ -220,6 +226,18 @@ export default function EmployeeTasksPage() {
             );
           })}
         </div>
+      )}
+
+      {modalTask && emp && (
+        <TaskActionModal
+          employee={{ id: emp.id, companyId: emp.companyId, firstName: emp.firstName, lastName: emp.lastName }}
+          initialTask={modalTask}
+          onClose={closeModal}
+          onRefresh={() => {
+            void qc.invalidateQueries({ queryKey: ["onboarding-tasks", empId] });
+            void qc.invalidateQueries({ queryKey: ["employee-detail", empId] });
+          }}
+        />
       )}
     </div>
   );
