@@ -3,7 +3,7 @@ import * as jwt from "jsonwebtoken";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
-import { db, companies } from "@workspace/db";
+import { db, companies, userAccounts } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 declare module "express-session" {
@@ -290,6 +290,108 @@ router.post("/auth/create-manager", async (req, res) => {
 
   req.log.info({ userId: user.id, name, companyId }, "Owner account created by super_admin");
   res.status(201).json({ ...user, password, loginEmail: email });
+});
+
+// ── Owner: create sub-role accounts for their company ────────
+
+router.post("/auth/create-sub-role", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || (caller.role !== "owner" && caller.role !== "super_admin")) {
+    res.status(403).json({ error: "Only company owners can create sub-role accounts" });
+    return;
+  }
+
+  const { name, email, role, position, hourlyWage } = req.body as {
+    name?: string; email?: string;
+    role?: "owner" | "employee";
+    position?: string; hourlyWage?: number;
+  };
+
+  if (!name || !email || !role) {
+    res.status(400).json({ error: "name, email, and role are required" });
+    return;
+  }
+  if (!["owner", "employee"].includes(role)) {
+    res.status(400).json({ error: "role must be 'owner' or 'employee'" });
+    return;
+  }
+
+  // Owners can only create accounts for their own company
+  const companyId = caller.role === "super_admin"
+    ? (req.body as { companyId?: string }).companyId ?? caller.companyId ?? ""
+    : caller.companyId ?? "";
+
+  if (!companyId) { res.status(400).json({ error: "No company associated with this account" }); return; }
+
+  const existing = store.getUserByEmail(email);
+  if (existing) { res.status(409).json({ error: "A user with that email already exists" }); return; }
+
+  let newUser: Omit<ReturnType<typeof store.createManagerUser>["user"], never>;
+  let password: string;
+
+  if (role === "owner") {
+    const result = store.createManagerUser({
+      name, email,
+      position: position ?? "Company Manager",
+      companyId,
+    });
+    newUser = result.user;
+    password = result.password;
+  } else {
+    const staffUser = store.createStaffUser({
+      name, email,
+      position: position ?? "Staff",
+      hourlyWage: hourlyWage ?? 1500,
+      companyId,
+    });
+    newUser = staffUser;
+    password = "Staff123!";
+  }
+
+  const fullUser = store.getUserByEmail(email);
+  if (fullUser) {
+    await persistUserAccount(fullUser).catch((err) => {
+      req.log.warn({ err }, "Failed to persist sub-role user account to DB");
+    });
+  }
+
+  req.log.info({ userId: newUser.id, name, role, companyId }, "Sub-role account created by owner");
+  res.status(201).json({ ...newUser, password, loginEmail: email });
+});
+
+// ── Owner: list company accounts ──────────────────────────────
+
+router.get("/auth/company-accounts", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || (caller.role !== "owner" && caller.role !== "super_admin")) {
+    res.status(403).json({ error: "Not authorized" });
+    return;
+  }
+
+  const companyId = caller.companyId ?? "";
+  const storeUsers = store.getAllStaffUsers()
+    .filter((u) => u.companyId === companyId && u.role !== "super_admin");
+
+  // Also fetch from DB for wizard-created accounts not yet in-memory
+  const dbRows = await db.select({
+    id: userAccounts.id,
+    name: userAccounts.name,
+    email: userAccounts.email,
+    role: userAccounts.role,
+    companyId: userAccounts.companyId,
+    position: userAccounts.position,
+    employeeId: userAccounts.employeeId,
+  }).from(userAccounts).where(eq(userAccounts.companyId, companyId));
+
+  const storeIds = new Set(storeUsers.map((u) => u.id));
+  const combined = [
+    ...storeUsers,
+    ...dbRows.filter((r) => !storeIds.has(r.id) && r.role !== "super_admin"),
+  ];
+
+  res.json({ accounts: combined });
 });
 
 // ── Children check-in (parent feature) ──────────────────────

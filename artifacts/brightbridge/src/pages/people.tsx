@@ -355,17 +355,23 @@ const PAGE_SIZE = 20;
 const SUB_TABS = ["Employee Directory", "New Hires", "Onboarding"] as const;
 type SubTab = typeof SUB_TABS[number];
 
+function pathToSubTab(path: string): SubTab {
+  if (path.includes("/new-hires")) return "New Hires";
+  if (path.includes("/onboarding") && !path.match(/\/people\/[^/]+\/onboarding/)) return "Onboarding";
+  return "Employee Directory";
+}
+
 export default function PeoplePage() {
   const { user, isLoading: authLoading } = useAuth();
   const qc = useQueryClient();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
 
   // Company selection: super_admin gets a picker; managers are auto-scoped
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>("");
   const companyId = user?.role === "super_admin" ? selectedCompanyId : (user?.companyId ?? "");
 
-  // Sub-nav
-  const [subTab, setSubTab] = useState<SubTab>("Employee Directory");
+  // Sub-nav: initialise from URL path so KPI card links land on the right tab
+  const [subTab, setSubTab] = useState<SubTab>(() => pathToSubTab(location));
 
   // Filters
   const [search, setSearch]       = useState("");

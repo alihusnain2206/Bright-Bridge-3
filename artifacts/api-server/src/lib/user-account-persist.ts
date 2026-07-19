@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { userAccounts, employees } from "@workspace/db/schema";
 import { store, type TestUser } from "../store.js";
@@ -36,6 +36,24 @@ export async function persistUserAccount(user: TestUser): Promise<void> {
         hourlyWage: user.hourlyWage ?? null,
       },
     });
+}
+
+/**
+ * Boot migration: upgrade any remaining "manager" role accounts to "owner".
+ * Safe to run on every boot — no-op when no manager accounts exist.
+ */
+export async function migrateManagerAccountsToOwner(): Promise<{ upgraded: number }> {
+  const result = await db
+    .update(userAccounts)
+    .set({ role: "owner" })
+    .where(eq(userAccounts.role, "manager"))
+    .returning({ id: userAccounts.id });
+  // Sync in-memory store for any already-loaded accounts
+  for (const row of result) {
+    const u = store.getAllStaffUsers().find((u) => u.id === row.id);
+    if (u) (u as { role: string }).role = "owner";
+  }
+  return { upgraded: result.length };
 }
 
 export async function loadUserAccountsFromDb(): Promise<{ count: number }> {

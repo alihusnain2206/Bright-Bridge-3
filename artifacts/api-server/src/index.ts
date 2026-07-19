@@ -3,7 +3,7 @@ import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
-import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts } from "./lib/user-account-persist.js";
+import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts, migrateManagerAccountsToOwner } from "./lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
@@ -190,9 +190,12 @@ Promise.all([
   }),
   loadUserAccountsFromDb().then(({ count }) => {
     logger.info({ count }, "User accounts restored from DB");
-    // Reconcile: create missing logins for any DB employee that has no user_accounts row
-    return reconcileEmployeeLoginAccounts().then(({ created }) => {
-      if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
+    return migrateManagerAccountsToOwner().then(({ upgraded }) => {
+      if (upgraded > 0) logger.info({ upgraded }, "Boot migration: manager accounts upgraded to owner");
+      // Reconcile: create missing logins for any DB employee that has no user_accounts row
+      return reconcileEmployeeLoginAccounts().then(({ created }) => {
+        if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
+      });
     });
   }),
 ])
