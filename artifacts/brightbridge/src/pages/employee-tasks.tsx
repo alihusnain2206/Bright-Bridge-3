@@ -22,11 +22,14 @@ function fmtDate(iso?: string|null) {
 }
 
 const STAGE_LABELS: Record<string, string> = {
-  pre_hire: "Pre-Hire",
-  day_one: "Day One",
-  week_one: "Week One",
-  month_one: "Month One",
-  ongoing: "Ongoing",
+  preboarding:        "Preboarding",
+  documents:          "Documents",
+  training:           "Training",
+  equipment:          "Equipment",
+  manager_tasks:      "Manager Tasks",
+  compliance:         "Compliance",
+  daycare_compliance: "Daycare Compliance",
+  ready_to_start:     "Ready to Start",
 };
 
 export default function EmployeeTasksPage() {
@@ -82,7 +85,7 @@ export default function EmployeeTasksPage() {
     return acc;
   }, {});
 
-  const stageOrder = ["pre_hire", "day_one", "week_one", "month_one", "ongoing"];
+  const stageOrder = ["preboarding", "documents", "training", "equipment", "manager_tasks", "compliance", "daycare_compliance", "ready_to_start"];
   const sortedStages = stageOrder.filter(s => groups[s]);
 
   const isPending = completeMutation.isPending || skipMutation.isPending;

@@ -6,7 +6,7 @@ import { eq, and } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
-import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity } from "./people.js";
+import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity, calculateComplianceScore, calculateReadinessFlags } from "./people.js";
 
 const router: IRouter = Router();
 
@@ -633,31 +633,60 @@ router.post("/employees", async (req: Request, res: Response) => {
       // 4c. Seed onboarding tasks in DB
       await createOnboardingTasksInDb(employeeId, body.companyId, body.startDate, isDaycareEmployee, undefined, req.session.userId);
 
-      // 4c-post. Auto-complete dept/manager tasks if assigned during wizard (idempotent)
-      if (body.department || body.managerId) {
+      // 4c-post. Auto-complete tasks whose data was collected during the wizard
+      {
         const seedNow = new Date().toISOString();
         const newTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
-        const deptTask = body.department ? newTasks.find(t => t.taskName === "Assign Department" && t.status !== "completed") : undefined;
-        const mgrTask  = body.managerId  ? newTasks.find(t => t.taskName === "Assign Manager"     && t.status !== "completed") : undefined;
-        if (deptTask) await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, deptTask.id));
-        if (mgrTask)  await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, mgrTask.id));
+        const complete = async (name: string) => {
+          const task = newTasks.find(t => t.taskName === name && t.status !== "completed");
+          if (task) await db.update(onboardingTasksTable).set({ status: "completed", completedAt: seedNow, completedBy: req.session.userId, updatedAt: seedNow }).where(eq(onboardingTasksTable.id, task.id));
+        };
+
+        // Always: display ID was just auto-generated, position is always provided
+        await complete("Issue Employee ID");
+        await complete("Assign Job Title");
+
+        // Conditionally from wizard data
+        if (body.department) await complete("Assign Department");
+        if (body.managerId)  await complete("Assign Manager");
+        if (body.w4FilingStatus) await complete("Federal W-4");
+        if (body.stateW4Fields && Object.keys(body.stateW4Fields).length > 0) await complete("State Tax Form");
+        if (body.bankSetupMethod === "manual") await complete("Direct Deposit Setup");
+
+        // Re-calculate onboarding progress from tasks and write back
+        const allTaskRows = await db.select({ status: onboardingTasksTable.status }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
+        const taskProgress = allTaskRows.length > 0
+          ? Math.round(allTaskRows.filter(t => t.status === "completed" || t.status === "skipped").length / allTaskRows.length * 100)
+          : 0;
+        await db.update(employees).set({ onboardingProgress: taskProgress, updatedAt: new Date().toISOString() }).where(eq(employees.id, employeeId));
+
         const parts: string[] = [];
         if (body.department) parts.push(`assigned to ${body.department}`);
         if (body.managerName) parts.push(`reporting to ${body.managerName}`);
         if (parts.length > 0) void logPeopleActivity({ companyId: body.companyId, employeeId, action: "employee.assignment", description: `${body.firstName} ${body.lastName} — ${parts.join(", ")}`, category: "onboarding", performedBy: req.session.userId ?? "system" });
       }
 
-      // 4d. Seed compliance items in DB
+      // 4d. Seed compliance items in DB, then write compliance score + readiness flags back to employee
       await createComplianceItemsInDb(employeeId, body.companyId, isDaycareEmployee, {
         w4Submitted: !!(body.w4FilingStatus),
         bankAccountAdded: body.bankSetupMethod === "manual",
         kycStatus: null,
       });
+      const compScore = await calculateComplianceScore(employeeId);
+      const readiness = await calculateReadinessFlags(employeeId);
+      await db.update(employees).set({
+        complianceScore: compScore,
+        payrollReady:     readiness.payrollReady,
+        hrReady:          readiness.hrReady,
+        complianceReady:  readiness.complianceReady,
+        firstPayrollReady: readiness.firstPayrollReady,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(employees.id, employeeId));
 
       // 4e. Log activity
       void logPeopleActivity({ companyId: body.companyId, employeeId, action: "employee.created", description: `${body.firstName} ${body.lastName} added (${displayId})`, category: "onboarding", performedBy: req.session.userId ?? "system" });
 
-      req.log.info({ employeeId, displayId, isDaycareEmployee }, "People Module seeded for new employee");
+      req.log.info({ employeeId, displayId, isDaycareEmployee, compScore }, "People Module seeded for new employee");
     } catch (pmErr) {
       req.log.warn({ pmErr, employeeId }, "People Module seed failed — employee still created (non-fatal)");
     }

@@ -265,7 +265,7 @@ export async function createComplianceItemsInDb(
 
 // ─── HELPER: COMPLIANCE SCORE ─────────────────────────────────
 
-async function calculateComplianceScore(employeeId: string): Promise<number> {
+export async function calculateComplianceScore(employeeId: string): Promise<number> {
   const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
   const required = items.filter((i) => i.isRequired);
   if (required.length === 0) return 100;
@@ -273,7 +273,7 @@ async function calculateComplianceScore(employeeId: string): Promise<number> {
   return Math.round((completed.length / required.length) * 100);
 }
 
-async function calculateReadinessFlags(employeeId: string) {
+export async function calculateReadinessFlags(employeeId: string) {
   const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
   const done = (type: string) => items.some((i) => i.type === type && i.status === "completed");
   const payrollReady   = done("w4") && done("direct_deposit");
@@ -322,6 +322,53 @@ export function seedDepartmentsForCompany(companyId: string, isDaycare: boolean)
 }
 
 // ─── STARTUP BACKFILL ─────────────────────────────────────────
+
+export async function backfillEmployeeScores(): Promise<void> {
+  const allEmployees = await db.select({
+    id: employees.id,
+    complianceScore: employees.complianceScore,
+    onboardingProgress: employees.onboardingProgress,
+  }).from(employees);
+
+  let updated = 0;
+  for (const emp of allEmployees) {
+    // Only recalculate if either score looks stale (0)
+    if ((emp.complianceScore ?? 0) > 0 && (emp.onboardingProgress ?? 0) > 0) continue;
+
+    const [taskRows, complianceRows] = await Promise.all([
+      db.select({ status: onboardingTasksTable.status }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, emp.id)),
+      db.select({ id: complianceItemsTable.id }).from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, emp.id)),
+    ]);
+
+    // Skip employees with no tasks and no compliance items (not yet onboarded)
+    if (taskRows.length === 0 && complianceRows.length === 0) continue;
+
+    const updates: Record<string, unknown> = { updatedAt: nowIso() };
+
+    if (taskRows.length > 0 && (emp.onboardingProgress ?? 0) === 0) {
+      const prog = Math.round(taskRows.filter(t => t.status === "completed" || t.status === "skipped").length / taskRows.length * 100);
+      updates.onboardingProgress = prog;
+    }
+
+    if (complianceRows.length > 0 && (emp.complianceScore ?? 0) === 0) {
+      const score = await calculateComplianceScore(emp.id);
+      const flags = await calculateReadinessFlags(emp.id);
+      updates.complianceScore = score;
+      updates.payrollReady = flags.payrollReady;
+      updates.hrReady = flags.hrReady;
+      updates.complianceReady = flags.complianceReady;
+      updates.firstPayrollReady = flags.firstPayrollReady;
+    }
+
+    await db.update(employees).set(updates as Record<string, unknown>).where(eq(employees.id, emp.id)).catch(() => {});
+    updated++;
+  }
+
+  if (updated > 0) {
+    // logger is not available here, but the caller will log
+    console.info(`backfillEmployeeScores: updated ${updated} employees`);
+  }
+}
 
 export async function backfillPeopleModule(): Promise<void> {
   const allCompanies = await db.select().from(companies);

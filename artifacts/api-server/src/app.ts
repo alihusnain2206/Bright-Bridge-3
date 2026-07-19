@@ -6,7 +6,7 @@ import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
-import { backfillPeopleModule } from "./routes/people.js";
+import { backfillPeopleModule, backfillEmployeeScores } from "./routes/people.js";
 
 const PgStore = connectPgSimple(session);
 const isProd = process.env.NODE_ENV === "production";
@@ -57,6 +57,13 @@ void backfillPeopleModule().then(() => {
   logger.info("People Module backfill complete");
 }).catch((err: unknown) => {
   logger.warn({ err }, "People Module backfill had errors (non-fatal)");
+});
+
+// Recalculate compliance + onboarding scores for employees that have tasks/items but score = 0
+void backfillEmployeeScores().then(() => {
+  logger.info("Employee score backfill complete");
+}).catch((err: unknown) => {
+  logger.warn({ err }, "Employee score backfill had errors (non-fatal)");
 });
 
 export default app;
