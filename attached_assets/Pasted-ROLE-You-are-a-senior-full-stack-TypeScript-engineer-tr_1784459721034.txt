@@ -1,0 +1,396 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer transforming the 
+People section into the "Employee 
+Operations Hub" matching the client's 
+approved design mockup.
+
+SCOPE BOUNDARY:
+This task builds: (1) People sub-
+navigation sidebar, (2) six KPI cards 
++ AI Workforce Score card, (3) bottom 
+widgets, (4) Quick Actions bar. The 
+existing Employee Directory table 
+stays as the main content — do NOT 
+rebuild it. Do NOT touch Payroll, 
+Rollfi sync, EasyTeam, Time Clock, 
+or the client onboarding wizard. Use 
+ONLY existing API endpoints — the 
+data layer is complete. No new 
+database tables.
+
+EXISTING ENDPOINTS TO USE:
+→ GET /api/employees (company-scoped)
+→ GET /api/departments?companyId=xxx
+→ GET /api/onboarding-tasks
+  ?companyId=xxx&status=pending
+→ GET /api/onboarding-tasks/pipeline
+  ?companyId=xxx
+→ GET /api/compliance/company-overview
+  ?companyId=xxx
+→ GET /api/compliance?employeeId=xxx
+→ GET /api/activity-log?companyId=xxx
+→ GET /rollfi/payperiod/history
+  ?companyId=xxx (for avg payroll cost)
+
+---
+
+PART 1 — PEOPLE SUB-NAVIGATION 
+(left sidebar)
+
+When the People section is active, 
+expand a sub-menu under "People" in 
+the sidebar (matching the mockup's 
+left column):
+
+BUILT — link to working pages:
+→ Employee Directory → /people 
+  (the existing directory)
+→ New Hires → /people/new-hires 
+  (existing filtered view)
+→ Onboarding → /people/onboarding 
+  (NEW simple page: company-wide 
+  task view — see Part 5)
+→ Compliance → /people/compliance 
+  (NEW simple page: company 
+  compliance overview — see Part 5)
+→ Emergency Contacts → opens via 
+  directory (link to /people with 
+  a toast "Select an employee to 
+  manage contacts") OR simple 
+  employee-picker page
+→ Documents → /people/documents 
+  (NEW simple page — see Part 5)
+
+NOT BUILT — show item with subtle 
+"Soon" pill, non-clickable, muted:
+→ Employee Profiles, Job & 
+  Compensation, Benefits, Training, 
+  Performance, Assets, 
+  Certifications, Employment 
+  History, Offboarding
+
+Collapse/expand the sub-menu when 
+navigating away/into People. Active 
+item highlighted with the existing 
+orange/brand style. Time & 
+Attendance in the sub-menu links 
+to the EXISTING Timesheets page.
+
+---
+
+PART 2 — KPI CARDS ROW (top of 
+/people)
+
+Six cards + one score card, matching 
+the mockup layout (responsive: 
+3+score on desktop rows, stack on 
+mobile). Each card: icon in tinted 
+square, label, big number, sub-line, 
+and a "View →" link.
+
+CARD 1 — ACTIVE EMPLOYEES
+Number: count status==="active"
+Sub: "+X this month" (hire dates in 
+current month), green up-arrow if >0
+Link "View all employees" → clears 
+directory filters
+
+CARD 2 — NEW HIRES THIS MONTH
+Number: hired in last 30 days
+Sub: "X still onboarding" (of those, 
+status==="onboarding")
+Link → New Hires tab
+
+CARD 3 — OPEN ONBOARDING TASKS
+Number: company-wide pending tasks
+Sub: "X overdue" in RED (dueDate < 
+today && status pending)
+Link "View onboarding" → 
+/people/onboarding
+
+CARD 4 — COMPLIANCE ALERTS
+Number: count of (expired items) + 
+(expiring within 30 days) + 
+(required items not_started for 
+ACTIVE employees only)
+Sub: "X critical" in RED (critical 
+= expired)
+Link "View alerts" → 
+/people/compliance
+
+CARD 5 — AVERAGE PAYROLL COST
+Number: from most recent processed 
+Rollfi period: total ÷ number of 
+payrollLineItems, formatted $X,XXX
+Sub: "vs last period +X.X%" (compare 
+two most recent periods; hide sub 
+if <2 periods)
+If no processed payroll yet: show 
+"—" with sub "After first payroll"
+Link "View analytics" → Payroll page
+
+CARD 6 — TURNOVER RATE (YTD)
+Number: (terminated this calendar 
+year ÷ average headcount) × 100, 
+one decimal
+Sub: "X departures this year"
+If zero terminations: "0%" with 
+sub "No departures 🎉"
+
+AI WORKFORCE SCORE CARD (right side, 
+like mockup):
+Ring chart (reuse the compliance 
+ring component style: 8px stroke, 
+rounded caps, animated, score-tier 
+colors 90+ green / 70-89 teal / 
+50-69 amber / <50 red).
+Score formula (simple weighted avg — 
+label it "Workforce Score", no AI 
+claims):
+= 50% company compliance score 
++ 30% avg onboarding progress of 
+  non-terminated employees 
++ 20% payroll readiness (% of 
+  active employees with payrollReady 
+  === true)
+Tier label under number (Excellent/
+Good/Needs Attention/At Risk) and 
+caption "Your workforce is healthy" 
+(Excellent/Good) or "Needs 
+attention" otherwise.
+"View full report →" link → 
+/people/compliance for now.
+
+KPI CLICK-TO-FILTER: Cards 1-2 
+also apply the matching filter to 
+the directory table below when the 
+number itself is clicked (Active → 
+status filter Active; New Hires → 
+New Hires view).
+
+---
+
+PART 3 — BOTTOM WIDGETS (below the 
+directory table, grid like mockup)
+
+WIDGET A — ONBOARDING PIPELINE:
+Data: GET /api/onboarding-tasks/
+pipeline?companyId=xxx
+Rows per stage (Preboarding, 
+Documents, Training, Equipment, 
+Manager Tasks, Compliance, Ready 
+to Start): stage icon, name, 
+horizontal progress bar (completed/
+total tasks in that stage across 
+all onboarding employees), count 
+badge on the right.
+"View pipeline →" → /people/onboarding
+
+WIDGET B — COMPLIANCE OVERVIEW:
+Data: GET /api/compliance/
+company-overview
+Center: donut ring with overall 
+company score (%, tier color, 
+"Excellent" style label like the 
+mockup's 96%).
+Right: per-category list with 
+colored dot + name + percentage 
+(I-9 Verification 100%, W-4 Forms 
+97%, Direct Deposit, Policy 
+Acknowledgement, Training, 
+Certifications, Background Checks).
+"View compliance →" → 
+/people/compliance
+
+WIDGET C — DEPARTMENT HEADCOUNT:
+Horizontal bars per department 
+(count of non-terminated employees), 
+sorted descending, count label at 
+bar end. Departments with 0 
+employees omitted.
+
+WIDGET D — UPCOMING IMPORTANT DATES:
+Next 30 days, sorted ascending, 
+max 6 entries, each with date pill 
++ description:
+→ Certification/compliance expiry 
+  dates ("2 Certifications Expire")
+→ Task due dates for required 
+  pending tasks (grouped per day: 
+  "5 onboarding tasks due")
+→ Work anniversaries (hire date 
+  month/day matches upcoming dates: 
+  "X Employee Anniversaries")
+→ Payroll deadline from current 
+  Rollfi period 
+  (deadLineToRunPayroll): 
+  "Payroll Cutoff"
+Color dots: red (expiry), amber 
+(tasks due), teal (anniversaries), 
+green (payroll).
+"View calendar →" disabled with 
+"Soon" tooltip.
+
+WIDGET E — RECENT EMPLOYEE ACTIVITY:
+Data: GET /api/activity-log
+?companyId=xxx&limit=8
+Feed rows: colored dot by category, 
+description, relative time ("2 hours 
+ago"). 
+"View all activity →" disabled 
+"Soon".
+
+DO NOT BUILD: Employee Spotlight, 
+AI Workforce Advisor panel. Where 
+the Advisor sits in the mockup, 
+show a slim card: "Workforce 
+Advisor" + "Coming Soon" pill + 
+one line "Smart recommendations 
+are on the roadmap." (keeps the 
+layout balanced without fake AI).
+
+---
+
+PART 4 — QUICK ACTIONS BAR (bottom, 
+like mockup)
+
+Icon buttons in a row, filtered by 
+the logged-in user's role:
+
+super_admin / owner (and current 
+"admin"): Add Employee, Start 
+Onboarding, Upload Document, Run 
+Report*, Org Chart*, Time Off 
+Calendar, Open Task Center, Send 
+Announcement*, Create Workflow*
+manager: Approve PTO (→ Timesheets), 
+Team Directory (→ /people), Open 
+Task Center, Time Off Calendar
+
+Mappings:
+→ Add Employee → existing wizard 
+  for selected company
+→ Start Onboarding → /people/
+  new-hires
+→ Upload Document → /people/documents
+→ Time Off Calendar → existing 
+  Timesheets/Schedule page
+→ Open Task Center → /people/
+  onboarding
+→ Items marked * → visible but 
+  disabled, "Coming Soon" tooltip 
+  on hover, 50% opacity
+
+---
+
+PART 5 — THREE NEW SIMPLE PAGES 
+(keep them thin!)
+
+/people/onboarding (Task Center):
+Company-wide view: summary chips 
+(Total pending / Overdue / Completed 
+this week), then a list of ALL 
+pending tasks across employees — 
+columns: Task, Employee (name + 
+display ID, links to their tasks 
+page), Stage, Assigned Role, Due 
+Date (red if overdue). Filter by 
+stage and assigned role. Clicking 
+a row → navigates to that 
+employee's /people/:id/tasks page 
+(reuse everything there — do NOT 
+duplicate the TaskActionModal here).
+
+/people/compliance (Company 
+Compliance):
+Top: same donut + category list as 
+Widget B (reuse component!). Below: 
+"Attention needed" table — every 
+expired / expiring-30-days / 
+required-not-started item across 
+active employees: Item, Employee 
+(link to their compliance page), 
+Category, Status chip, Expiry date. 
+Sorted: expired first.
+
+/people/documents (Documents Hub):
+Employee picker (searchable dropdown 
+of active employees) → renders the 
+existing EmployeeDocuments component 
+for the selected employee. Plus a 
+recent-uploads list across the 
+company (last 10 documents: name, 
+employee, type, date, download).
+
+---
+
+PART 6 — RULES
+
+1. All data scoped to selected 
+   company; single fetch per widget; 
+   no duplicate calls; reuse 
+   directory's employee query where 
+   possible (KPI cards 1-2 and 
+   Widget C can derive from the 
+   same employees payload — do NOT 
+   refetch employees 4 times!)
+2. Every card/widget: skeleton 
+   loading state + graceful empty 
+   state (new companies with no 
+   data must look intentional, 
+   not broken)
+3. All amounts $X,XXX.XX; all 
+   percentages one decimal max
+4. Colors: brand #1B3A6B / #0EA5C9; 
+   score tiers green/teal/amber/red 
+   as established; icons consistent 
+   with existing pages
+5. Responsive: cards wrap 3-2-1 
+   columns; widgets stack on mobile
+6. TypeScript throughout; no new 
+   backend endpoints unless a 
+   listed aggregation genuinely 
+   cannot be derived client-side 
+   from existing endpoints — if 
+   you must add one, it is 
+   read-only aggregation and you 
+   report it
+
+TESTING CHECKLIST:
+✅ People sub-menu renders; built 
+   items navigate; unbuilt show 
+   Soon pills
+✅ All 6 KPI cards show real 
+   numbers for Tiny Tots (Sophia's 
+   pending tasks/overdue reflected)
+✅ Workforce Score ring animates 
+   with correct tier color
+✅ Avg Payroll Cost pulls from 
+   Rollfi history (or shows em-dash 
+   cleanly)
+✅ Pipeline widget reflects 
+   Sophia's stage counts
+✅ Compliance donut matches 
+   company-overview endpoint
+✅ Department headcount matches 
+   directory data
+✅ Upcoming dates shows cert 
+   expiries + task due dates + 
+   payroll cutoff
+✅ Activity feed shows recent 
+   task completions/uploads
+✅ Quick actions role-filtered; 
+   Coming Soon items disabled
+✅ /people/onboarding, /people/
+   compliance, /people/documents 
+   all work and link back to 
+   per-employee pages
+✅ No duplicate/cross-company 
+   requests; directory + all 
+   existing features unaffected
+
+DELIVERABLE SUMMARY: files changed, 
+any new read-only aggregation 
+endpoints added, how the Workforce 
+Score is computed, widget → 
+endpoint mapping table.

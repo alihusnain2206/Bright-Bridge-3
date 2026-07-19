@@ -8,3 +8,4 @@
 - [Rollfi state registration fields](rollfi-state-fields.md) — field names in companyStateRegistration are state-specific; Rollfi returns 200+error-body on failure (not HTTP 4xx); mapping in lib/rollfi-state-fields.ts
 - [Rollfi state W-4 field names](rollfi-state-w4-fields.md) — allowances field name differs by state; NJ="Total Allowances", NY="Withholding Allowance"; use getStateW4FormFields at /reports not /userOnboarding
 - [Rollfi onboarding order](rollfi-onboarding-order.md) — addUserWage must run BEFORE runEmployeeKycOnboarding; initiateUserKyc fails with "wage required" if wage is added after KYC
+- [People Hub API shapes](people-hub-api-shapes.md) — /api/employees returns `{ employees: [] }` (wrapped); /api/companies returns `{ companies: [] }` (wrapped); /api/documents uses `?employeeId=` not nested `/employees/:id/documents`

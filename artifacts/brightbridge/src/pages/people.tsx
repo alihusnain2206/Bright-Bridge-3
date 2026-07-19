@@ -9,6 +9,9 @@ import {
 import EmergencyContactForm from "@/components/EmergencyContactForm";
 import EmployeeDocuments from "@/components/EmployeeDocuments";
 import TaskActionModal from "@/components/TaskActionModal";
+import PeopleKpiCards from "@/components/people/PeopleKpiCards";
+import PeopleWidgets from "@/components/people/PeopleWidgets";
+import QuickActions from "@/components/people/QuickActions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -590,6 +593,9 @@ export default function PeoplePage() {
 
       {companyId && (
         <>
+          {/* ── KPI Cards + Workforce Score ─────────────────── */}
+          <PeopleKpiCards companyId={companyId} employees={allEmployees} />
+
           {/* Sub-nav */}
           <div className="flex items-center gap-1 border-b border-gray-200">
             {SUB_TABS.map(tab => (
@@ -879,6 +885,11 @@ export default function PeoplePage() {
               </div>
             </>
           )}
+          {/* ── Bottom Widgets ────────────────────────────── */}
+          <PeopleWidgets companyId={companyId} employees={allEmployees} />
+
+          {/* ── Quick Actions ─────────────────────────────── */}
+          <QuickActions role={user?.role} />
         </>
       )}
 

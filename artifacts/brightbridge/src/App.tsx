@@ -30,6 +30,9 @@ import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
 import Paystub from "@/pages/paystub";
 import PeoplePage from "@/pages/people";
+import PeopleOnboardingPage from "@/pages/people-onboarding";
+import PeopleComplianceHubPage from "@/pages/people-compliance-hub";
+import PeopleDocumentsHubPage from "@/pages/people-documents-hub";
 import EmployeeProfilePage from "@/pages/employee-profile";
 import EmployeeEditPage from "@/pages/employee-edit";
 import EmployeeCompliancePage from "@/pages/employee-compliance";
@@ -108,6 +111,22 @@ function Router() {
             {/* /my-team kept as backward-compat alias for managers */}
             <Route path="/my-team">
               <ProtectedRoute component={PeoplePage} roles={["manager"]} />
+            </Route>
+            {/* People hub pages — must be before /people/:id to avoid param collision */}
+            <Route path="/people/onboarding">
+              <ProtectedRoute component={PeopleOnboardingPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/compliance">
+              <ProtectedRoute component={PeopleComplianceHubPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/documents">
+              <ProtectedRoute component={PeopleDocumentsHubPage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/new-hires">
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
+            </Route>
+            <Route path="/people/contacts">
+              <ProtectedRoute component={PeoplePage} roles={["super_admin", "manager"]} />
             </Route>
             {/* People pages — order matters: most-specific routes first */}
             <Route path="/people/:id/edit">

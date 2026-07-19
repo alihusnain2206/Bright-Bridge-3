@@ -4,6 +4,7 @@ import {
   FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
   Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
+  UserPlus, ClipboardList, FolderOpen, Phone, FileText,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,7 @@ import { Button } from "@/components/ui/button";
 interface NavSubItem {
   href: string;
   label: string;
+  soon?: boolean;
 }
 
 interface NavItem {
@@ -20,12 +22,32 @@ interface NavItem {
   children?: NavSubItem[];
 }
 
+const PEOPLE_SUBNAV: NavSubItem[] = [
+  { href: "/people",              label: "Employee Directory" },
+  { href: "/people",              label: "Employee Profiles",    soon: true },
+  { href: "/people/new-hires",    label: "New Hires" },
+  { href: "/people/onboarding",   label: "Onboarding" },
+  { href: "/people",              label: "Job & Compensation",   soon: true },
+  { href: "/people/documents",    label: "Documents" },
+  { href: "/people",              label: "Benefits",             soon: true },
+  { href: "/timesheets",          label: "Time & Attendance" },
+  { href: "/people",              label: "Training",             soon: true },
+  { href: "/people",              label: "Performance",          soon: true },
+  { href: "/people",              label: "Assets",               soon: true },
+  { href: "/people/contacts",     label: "Emergency Contacts" },
+  { href: "/people",              label: "Certifications",       soon: true },
+  { href: "/people/compliance",   label: "Compliance" },
+  { href: "/people",              label: "Employment History",   soon: true },
+  { href: "/people",              label: "Offboarding",         soon: true },
+];
+
 function getNavItems(role: string | undefined): NavItem[] {
   switch (role) {
     case "super_admin":
       return [
         { href: "/dashboard/super-admin", label: "Dashboard", icon: LayoutDashboard },
         { href: "/clients",               label: "Clients",    icon: Building2 },
+        { href: "/people",               label: "People",     icon: Users, children: PEOPLE_SUBNAV },
         { href: "/timeclock",             label: "Time Clock", icon: Clock },
         { href: "/timesheets",            label: "Timesheets", icon: CalendarDays },
         { href: "/schedule",             label: "Schedule",   icon: Calendar },
@@ -38,7 +60,7 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: dashboardPath("manager"), label: "Dashboard",       icon: LayoutDashboard },
         { href: "/timesheets",            label: "Timesheets",      icon: CalendarDays },
-        { href: "/people",                label: "People",          icon: Users },
+        { href: "/people",                label: "People",          icon: Users, children: PEOPLE_SUBNAV },
         {
           href: "/manager-payroll",
           label: "Payroll",
@@ -80,7 +102,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const search = useSearch();
   const navItems = getNavItems(user?.role);
 
-  // Track manually-toggled groups (in addition to auto-expand)
   const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
 
   const handleLogout = async () => {
@@ -93,7 +114,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     return location.startsWith(href);
   };
 
-  // An item is expanded if we're on one of its child paths, OR user manually expanded it
   const isGroupExpanded = (item: NavItem) => {
     if (!item.children) return false;
     const onChildPath = location.startsWith(item.href);
@@ -108,19 +128,23 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  // Check if a child sub-item is the active one (match path + query param)
-  const isSubItemActive = (childHref: string) => {
+  const isSubItemActive = (childHref: string, label: string) => {
     const [childPath, childQuery] = childHref.split("?");
     if (location !== childPath) return false;
-    const childTab = new URLSearchParams(childQuery ?? "").get("tab") ?? "current";
-    const currentTab = new URLSearchParams(search).get("tab") ?? "current";
-    return childTab === currentTab;
+    if (childQuery) {
+      const childTab = new URLSearchParams(childQuery).get("tab") ?? "current";
+      const currentTab = new URLSearchParams(search).get("tab") ?? "current";
+      return childTab === currentTab;
+    }
+    // For People sub-items landing on /people, only highlight "Employee Directory"
+    if (childPath === "/people" && label !== "Employee Directory") return false;
+    return true;
   };
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
 
-      {/* Sandbox banner — full width */}
+      {/* Sandbox banner */}
       <div
         className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide shrink-0"
         style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}
@@ -131,7 +155,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <span className="opacity-70 font-normal">Testing environment — no real data or payments</span>
       </div>
 
-      {/* Body: sidebar + main */}
       <div className="flex flex-1 min-h-0">
 
         {/* ── Sidebar ── */}
@@ -157,7 +180,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
               if (!children) {
                 return (
-                  <Link key={href} href={href}>
+                  <Link key={href + label} href={href}>
                     <button
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
                         isActive(href)
@@ -172,13 +195,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 );
               }
 
-              // ── Group item with sub-menu ──
               const expanded = isGroupExpanded(item);
               const parentActive = isActive(href);
 
               return (
-                <div key={href}>
-                  {/* Parent row — navigate to href + toggle expand */}
+                <div key={href + label}>
                   <Link href={href}>
                     <button
                       onClick={() => { if (parentActive) toggleGroup(href); }}
@@ -196,21 +217,28 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     </button>
                   </Link>
 
-                  {/* Sub-items */}
                   {expanded && (
                     <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-white/10 pl-3">
                       {children.map(child => (
-                        <Link key={child.href} href={child.href}>
-                          <button
-                            className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                              isSubItemActive(child.href)
-                                ? "bg-[#E8622A] text-white shadow-sm"
-                                : "text-white/50 hover:text-white hover:bg-white/10"
-                            }`}
-                          >
-                            {child.label}
-                          </button>
-                        </Link>
+                        child.soon ? (
+                          <div key={child.label}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-white/25 cursor-not-allowed select-none">
+                            <span className="flex-1 truncate">{child.label}</span>
+                            <span className="text-[9px] font-semibold bg-white/10 text-white/30 px-1 py-0.5 rounded uppercase tracking-wide shrink-0">Soon</span>
+                          </div>
+                        ) : (
+                          <Link key={child.href + child.label} href={child.href}>
+                            <button
+                              className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                                isSubItemActive(child.href, child.label)
+                                  ? "bg-[#E8622A] text-white shadow-sm"
+                                  : "text-white/50 hover:text-white hover:bg-white/10"
+                              }`}
+                            >
+                              {child.label}
+                            </button>
+                          </Link>
+                        )
                       ))}
                     </div>
                   )}
