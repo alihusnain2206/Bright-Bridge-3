@@ -793,7 +793,8 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
       ...(ldIds !== null ? { linkedDocumentIds: ldIds } : {}),
     } as Record<string, unknown>).where(eq(onboardingTasksTable.id, id));
 
-    // Update linked compliance item if applicable
+    // Update linked compliance item if applicable.
+    // Pass 1: type-keyed map for tasks whose name doesn't match the compliance item name.
     const complianceMap: Record<string, string> = {
       "Federal W-4": "w4", "I-9 Section 1": "i9", "I-9 Section 2 Verification": "i9",
       "Direct Deposit Setup": "direct_deposit", "Background Check": "background_check",
@@ -806,6 +807,20 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
         .where(and(eq(complianceItemsTable.employeeId, task.employeeId), eq(complianceItemsTable.type, ciType)));
       if (ci && ci.status !== "completed") {
         await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, ci.id));
+      }
+    } else {
+      // Pass 2: name-match for certification/training/custom compliance items
+      // (e.g. "Physical Examination", "First Aid Certification", "CPR Certification", "TB Test", …)
+      const [ciByName] = await db.select().from(complianceItemsTable)
+        .where(and(
+          eq(complianceItemsTable.employeeId, task.employeeId),
+          eq(complianceItemsTable.name, task.taskName),
+        ));
+      if (ciByName && ciByName.status !== "completed") {
+        await db.update(complianceItemsTable)
+          .set({ status: "completed", completedAt: now, updatedAt: now } as Record<string, unknown>)
+          .where(eq(complianceItemsTable.id, ciByName.id));
+        req.log.info({ taskName: task.taskName, ciId: ciByName.id }, "Auto-completed linked compliance item by name");
       }
     }
 
