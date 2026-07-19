@@ -937,6 +937,22 @@ router.post("/onboarding-tasks/:id/notes", async (req: Request, res: Response) =
 
 // ─── COMPLIANCE ───────────────────────────────────────────────
 
+// Maps a compliance item type+name → the onboarding task names that link to it
+function getLinkedTaskNames(type: string, name: string): string[] {
+  if (type === "certification" || type === "training") return [name];
+  const MAP: Record<string, string[]> = {
+    i9:               ["I-9 Section 1", "I-9 Section 2 Verification"],
+    w4:               ["Federal W-4"],
+    direct_deposit:   ["Direct Deposit Setup"],
+    background_check: ["Background Check"],
+    handbook:         ["Employee Handbook Acknowledgment"],
+    policy:           ["Company Policy Acknowledgment"],
+    fingerprint:      ["Fingerprint Clearance"],
+    state_w4:         [],
+  };
+  return MAP[type] ?? [];
+}
+
 router.get("/compliance", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const employeeId = String(req.query.employeeId ?? "");
@@ -944,8 +960,21 @@ router.get("/compliance", async (req: Request, res: Response) => {
 
   try {
     const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
+    const allTasks = await db.select({
+      id: onboardingTasksTable.id,
+      taskName: onboardingTasksTable.taskName,
+      status: onboardingTasksTable.status,
+      isRequired: onboardingTasksTable.isRequired,
+    }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
+
+    const itemsWithTasks = items.map(item => {
+      const linkedNames = getLinkedTaskNames(item.type, item.name);
+      const linkedTasks = allTasks.filter(t => linkedNames.includes(t.taskName));
+      return { ...item, linkedTasks };
+    });
+
     const score = await calculateComplianceScore(employeeId);
-    res.json({ items, score });
+    res.json({ items: itemsWithTasks, score });
   } catch (err) {
     req.log.error({ err }, "Failed to get compliance");
     res.status(500).json({ error: "Failed to get compliance" });
@@ -982,8 +1011,35 @@ router.post("/compliance/:id/complete", async (req: Request, res: Response) => {
   try {
     const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
     if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+
+    // Guard: reject if any required pending linked tasks exist
+    const linkedNames = getLinkedTaskNames(item.type, item.name);
+    if (linkedNames.length > 0) {
+      const linked = await db.select({
+        id: onboardingTasksTable.id,
+        taskName: onboardingTasksTable.taskName,
+        status: onboardingTasksTable.status,
+        isRequired: onboardingTasksTable.isRequired,
+      }).from(onboardingTasksTable)
+        .where(and(eq(onboardingTasksTable.employeeId, item.employeeId), inArray(onboardingTasksTable.taskName, linkedNames)));
+      const pendingRequired = linked.filter(t => t.isRequired && t.status !== "completed" && t.status !== "skipped");
+      if (pendingRequired.length > 0) {
+        res.status(409).json({
+          error: "Complete the linked onboarding task(s) first",
+          blockedByTaskIds: pendingRequired.map(t => t.id),
+          blockedByTaskNames: pendingRequired.map(t => t.taskName),
+        });
+        return;
+      }
+    }
+
+    const { notes, linkedDocumentId } = req.body as { notes?: string; linkedDocumentId?: string };
     const now = nowIso();
-    await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, id));
+    await db.update(complianceItemsTable).set({
+      status: "completed", completedAt: now, updatedAt: now,
+      notes: notes ?? null,
+      linkedDocumentId: linkedDocumentId ?? null,
+    } as Record<string, unknown>).where(eq(complianceItemsTable.id, id));
 
     const i9Up   = item.type === "i9"               ? { i9Status: "verified" }               : {};
     const bgUp   = item.type === "background_check"  ? { backgroundCheckStatus: "completed" } : {};
@@ -998,6 +1054,33 @@ router.post("/compliance/:id/complete", async (req: Request, res: Response) => {
   } catch (err) {
     req.log.error({ err }, "Failed to complete compliance item");
     res.status(500).json({ error: "Failed to complete compliance item" });
+  }
+});
+
+router.post("/compliance/:id/reopen", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = req.params.id as string;
+  try {
+    const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
+    if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    if (item.status !== "completed") { res.status(400).json({ error: "Item is not completed" }); return; }
+
+    const now = nowIso();
+    await db.update(complianceItemsTable).set({
+      status: "not_started", completedAt: null, notes: null, linkedDocumentId: null, updatedAt: now,
+    } as Record<string, unknown>).where(eq(complianceItemsTable.id, id));
+
+    const flags = await calculateReadinessFlags(item.employeeId);
+    const score = await calculateComplianceScore(item.employeeId);
+    await db.update(employees).set({ complianceScore: score, updatedAt: now, ...flags } as Record<string, unknown>).where(eq(employees.id, item.employeeId));
+
+    void logPeopleActivity({ companyId: item.companyId, employeeId: item.employeeId, action: "compliance.reopened", description: `"${item.name}" reopened`, category: "compliance", performedBy: req.session.userId });
+
+    const [updated] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
+    res.json({ success: true, item: updated, score });
+  } catch (err) {
+    req.log.error({ err }, "Failed to reopen compliance item");
+    res.status(500).json({ error: "Failed to reopen compliance item" });
   }
 });
 
