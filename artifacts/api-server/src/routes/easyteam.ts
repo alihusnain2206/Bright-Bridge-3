@@ -6,7 +6,7 @@ import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
 import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
 import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { resolveCompanyLocationId } from "../lib/location.js";
 
 const router: IRouter = Router();
@@ -183,7 +183,7 @@ router.post("/easyteam/token", async (req, res) => {
     const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === employee_id);
     if (staffUser) {
       resolvedRoleName = staffUser.position ?? resolvedRoleName;
-      resolvedAccessRole = staffUser.role === "manager" ? "manager" : "employee";
+      resolvedAccessRole = (staffUser.role === "manager" || staffUser.role === "owner") ? "manager" : "employee";
       resolvedWage = (staffUser.hourlyWage ?? 1500) / 100;
       resolvedEtEmployeeId = staffUser.employeeId ?? employee_id;
     } else {
@@ -263,7 +263,7 @@ router.get("/easyteam/timesheets", (_req, res) => {
 // ── Trigger EasyTeam export programmatically (replicates "Email Report" button) ──────
 async function triggerEasyTeamExportForLocation(locationId: string): Promise<boolean> {
   if (!EASYTEAM_API_KEY) return false;
-  const managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+  const managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
   if (!managerUser?.employeeId) return false;
 
   try {
@@ -607,8 +607,8 @@ async function fetchEasyTeamShiftsForLocation(
 ): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
-  // 1. Try in-memory store — covers Sunshine/Rainbow and any managers loaded at boot
-  let managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+  // 1. Try in-memory store — covers Sunshine/Rainbow and any owners/managers loaded at boot
+  let managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
 
   // 2. For wizard-created companies (DB-only), look up manager from user_accounts
   if (!managerUser?.employeeId && companyId) {
@@ -616,13 +616,13 @@ async function fetchEasyTeamShiftsForLocation(
       const [dbManager] = await db
         .select()
         .from(userAccountsTable)
-        .where(and(eq(userAccountsTable.companyId, companyId), eq(userAccountsTable.role, "manager")));
+        .where(and(eq(userAccountsTable.companyId, companyId), inArray(userAccountsTable.role, ["manager", "owner"])));
       if (dbManager?.employeeId) {
         managerUser = {
           id: dbManager.id,
           name: dbManager.name ?? "Manager",
           email: dbManager.email,
-          role: "manager",
+          role: "owner",
           companyId,
           employeeId: dbManager.employeeId,
           locationId,
@@ -902,7 +902,7 @@ router.get("/easyteam/debug/shifts", async (req, res) => {
   let rawError: string | null = null;
 
   // Step 1: exchange — use the manager for this location (same JWT structure as auth.ts)
-  const mgr = store.getAllStaffUsers().find((u) => u.locationId === locationId && u.role === "manager");
+  const mgr = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
   if (!mgr?.employeeId) { res.json({ error: `No manager for ${locationId}` }); return; }
 
   try {
