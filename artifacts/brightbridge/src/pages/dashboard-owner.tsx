@@ -361,7 +361,6 @@ export default function OwnerDashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
         {[
           { icon: <Users className="h-5 w-5" />,       label: "People",     href: "/people" },
-          { icon: <Clock className="h-5 w-5" />,        label: "Time Clock", href: "/timeclock" },
           { icon: <CalendarDays className="h-5 w-5" />, label: "Timesheets", href: "/timesheets" },
           { icon: <Calendar className="h-5 w-5" />,     label: "Schedule",   href: "/schedule" },
           { icon: <DollarSign className="h-5 w-5" />,   label: "Payroll",    href: "/manager-payroll" },

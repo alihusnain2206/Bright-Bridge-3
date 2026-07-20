@@ -60,7 +60,6 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: "/dashboard/owner",  label: "Dashboard",  icon: LayoutDashboard },
         { href: "/people",           label: "People",     icon: Users, children: PEOPLE_SUBNAV },
-        { href: "/timeclock",        label: "Time Clock", icon: Clock },
         { href: "/timesheets",       label: "Timesheets", icon: CalendarDays },
         { href: "/schedule",         label: "Schedule",   icon: Calendar },
         {
@@ -186,12 +185,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           style={{ background: "#1b3250" }}
         >
           {/* Logo */}
-          <div className="px-5 py-5 border-b border-white/10 shrink-0">
+          <div className="px-5 py-4 border-b border-white/10 shrink-0 bg-white">
             <Link href={user ? dashboardPath(user.role) : "/"}>
               <img
                 src="/brightbridge-logo.png"
                 alt="BrightBridge"
-                className="h-7 object-contain cursor-pointer"
+                className="h-8 object-contain cursor-pointer"
               />
             </Link>
           </div>
