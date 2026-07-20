@@ -179,40 +179,41 @@ async function bootEasyTeamSync() {
   logger.info({ registered, skipped }, "Boot EasyTeam sync complete");
 }
 
-Promise.all([
-  bootSessionTable(),
-  bootSeedCompanies().then(() => bootSeedEmployees()),
-  loadRollfiStateFromDb().then(({ companies, employees }) => {
-    logger.info({ companies, employees }, "Rollfi state restored from DB");
-  }),
-  loadTimesheetEntriesFromDb().then((count) => {
-    logger.info({ count }, "EasyTeam timesheet entries restored from DB");
-  }),
-  loadUserAccountsFromDb().then(({ count }) => {
-    logger.info({ count }, "User accounts restored from DB");
-    return migrateManagerAccountsToOwner().then(({ upgraded }) => {
-      if (upgraded > 0) logger.info({ upgraded }, "Boot migration: manager accounts upgraded to owner");
-      // Reconcile: create missing logins for any DB employee that has no user_accounts row
-      return reconcileEmployeeLoginAccounts().then(({ created }) => {
-        if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
-      });
-    });
-  }),
-])
-  .catch((err) => {
-    logger.warn({ err }, "Could not fully load state from DB — starting with partial state");
-  })
-  .finally(() => {
-    app.listen(port, (err) => {
-      if (err) {
-        logger.error({ err }, "Error listening on port");
-        process.exit(1);
-      }
-      logger.info({ port }, "Server listening");
+// Start listening immediately so the healthcheck always responds during boot.
+// Boot tasks run in the background — the server is functional before they finish.
+app.listen(port, (err) => {
+  if (err) {
+    logger.error({ err }, "Error listening on port");
+    process.exit(1);
+  }
+  logger.info({ port }, "Server listening");
 
-      // Run EasyTeam registration for all active employees after server is up
+  // Run all boot tasks in the background after the server is up.
+  Promise.all([
+    bootSessionTable(),
+    bootSeedCompanies().then(() => bootSeedEmployees()),
+    loadRollfiStateFromDb().then(({ companies, employees }) => {
+      logger.info({ companies, employees }, "Rollfi state restored from DB");
+    }),
+    loadTimesheetEntriesFromDb().then((count) => {
+      logger.info({ count }, "EasyTeam timesheet entries restored from DB");
+    }),
+    loadUserAccountsFromDb().then(({ count }) => {
+      logger.info({ count }, "User accounts restored from DB");
+      return migrateManagerAccountsToOwner().then(({ upgraded }) => {
+        if (upgraded > 0) logger.info({ upgraded }, "Boot migration: manager accounts upgraded to owner");
+        return reconcileEmployeeLoginAccounts().then(({ created }) => {
+          if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
+        });
+      });
+    }),
+  ])
+    .catch((err) => {
+      logger.warn({ err }, "Could not fully load state from DB — starting with partial state");
+    })
+    .then(() => {
       bootEasyTeamSync().catch((e) => {
         logger.warn({ err: e }, "Boot EasyTeam sync failed — employees will register on first Time Clock use");
       });
     });
-  });
+});
