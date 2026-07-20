@@ -352,8 +352,7 @@ function exportCsv(employees: PeopleEmployee[]) {
 // ── Main Page ─────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
-const SUB_TABS = ["Employee Directory", "New Hires", "Onboarding"] as const;
-type SubTab = typeof SUB_TABS[number];
+type SubTab = "Employee Directory" | "New Hires" | "Onboarding";
 
 function pathToSubTab(path: string): SubTab {
   if (path.includes("/new-hires")) return "New Hires";
@@ -605,28 +604,6 @@ export default function PeoplePage() {
         <>
           {/* ── KPI Cards + Workforce Score ─────────────────── */}
           <PeopleKpiCards companyId={companyId} employees={allEmployees} />
-
-          {/* Sub-nav */}
-          <div className="flex items-center gap-1 border-b border-gray-200">
-            {SUB_TABS.map(tab => (
-              <button
-                key={tab}
-                onClick={() => { setSubTab(tab); setPage(1); }}
-                className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${
-                  subTab === tab
-                    ? "border-[#0EA5C9] text-[#0EA5C9]"
-                    : "border-transparent text-gray-500 hover:text-gray-900"
-                }`}
-              >
-                {tab}
-                {tab === "New Hires" && allEmployees.filter(isNewHire).length > 0 && (
-                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-[#0EA5C9]/10 text-[#0EA5C9]">
-                    {allEmployees.filter(isNewHire).length}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
 
           {/* Onboarding placeholder */}
           {subTab === "Onboarding" ? (
