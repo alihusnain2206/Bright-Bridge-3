@@ -513,6 +513,7 @@ export default function OwnerDashboard() {
               )}
             </div>
             <p className="text-white/50 text-sm mt-0.5">
+              <Clock className="h-3 w-3 inline mr-1 opacity-50" />
               <span className="text-white/70 font-medium">{company?.name}</span>
               {payFrequency && (
                 <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-white/10 text-white/60 border border-white/10">
