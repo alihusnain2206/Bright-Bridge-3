@@ -247,6 +247,21 @@ export default function Timesheets() {
         wageType: "hourly" as const,
       }));
 
+      // Always include the logged-in user in the employees list — EasyTeam SDK
+      // throws "not found in provided employees list" if the JWT subject is absent.
+      const selfEntry = user.employeeId ? {
+        id: user.employeeId,
+        name: user.name,
+        role: user.position ?? "Manager",
+        timeTrackingEnabled: false,
+        isVisible: false,
+        wage: user.hourlyWage ?? 2500,
+        wageType: "hourly" as const,
+      } : null;
+      const allEmployees = selfEntry && !apiEmployees.some(e => e.id === selfEntry.id)
+        ? [selfEntry, ...apiEmployees]
+        : apiEmployees;
+
       const isStaticCompany = !!(COMPANY_LOCATIONS[user.companyId ?? ""]);
       const locations = isStaticCompany
         ? ALL_STATIC_LOCATIONS
@@ -258,7 +273,7 @@ export default function Timesheets() {
 
       launch(tokenData.token, {
         page: Pages.TIMESHEET,
-        employees: apiEmployees,
+        employees: allEmployees,
         organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations,
         fromDate,
