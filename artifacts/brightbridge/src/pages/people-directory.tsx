@@ -5,7 +5,6 @@ import { Users, Search, ChevronUp, ChevronDown, ChevronsUpDown, ArrowLeft, UserP
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AppLayout } from "@/components/layout";
 import { useAuth } from "@/hooks/useAuth";
 
 const NAVY = "#1B3A6B";
@@ -122,8 +121,7 @@ export default function PeopleDirectoryPage() {
   const statuses = [...new Set(employees.map(e => e.status))];
 
   return (
-    <AppLayout>
-      <div className="p-6 max-w-screen-xl mx-auto space-y-5">
+    <div className="p-6 max-w-screen-xl mx-auto space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
@@ -278,7 +276,6 @@ export default function PeopleDirectoryPage() {
             </div>
           )}
         </div>
-      </div>
-    </AppLayout>
+    </div>
   );
 }

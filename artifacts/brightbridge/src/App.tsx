@@ -184,7 +184,7 @@ function Router() {
               <ProtectedRoute component={ClientsNew} roles={["super_admin"]} />
             </Route>
             <Route path="/clients/:companyId/employees/new">
-              <ProtectedRoute component={ClientEmployeesNew} roles={["super_admin", "manager"]} />
+              <ProtectedRoute component={ClientEmployeesNew} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/clients/:companyId">
               <ProtectedRoute component={ClientDetail} roles={["super_admin"]} />

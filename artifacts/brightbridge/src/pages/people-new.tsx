@@ -1,7 +1,6 @@
 import React, { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
-import { AppLayout } from "@/components/layout";
 import { Loader2 } from "lucide-react";
 
 export default function PeopleNewPage() {
@@ -19,10 +18,8 @@ export default function PeopleNewPage() {
   }, [user, isLoading, navigate]);
 
   return (
-    <AppLayout>
-      <div className="flex items-center justify-center min-h-[40vh]">
-        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
-      </div>
-    </AppLayout>
+    <div className="flex items-center justify-center min-h-[40vh]">
+      <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+    </div>
   );
 }
