@@ -23,7 +23,7 @@ interface NavItem {
 }
 
 const PEOPLE_SUBNAV: NavSubItem[] = [
-  { href: "/people",              label: "Employee Directory" },
+  { href: "/people/directory",    label: "Employee Directory" },
   { href: "/people",              label: "Employee Profiles",    soon: true },
   { href: "/people/new-hires",    label: "New Hires" },
   { href: "/people/onboarding",   label: "Onboarding" },
@@ -158,8 +158,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       const currentTab = new URLSearchParams(search).get("tab") ?? "current";
       return childTab === currentTab;
     }
-    // For People sub-items landing on /people, only highlight "Employee Directory"
-    if (childPath === "/people" && label !== "Employee Directory") return false;
     return true;
   };
 
