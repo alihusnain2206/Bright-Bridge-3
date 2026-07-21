@@ -61,10 +61,27 @@ interface Employee {
   onboardingProgress?: number | null;
 }
 
+function startOfCurrentWeek(): Date {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = (day === 0 ? -6 : 1 - day);
+  d.setDate(d.getDate() + diff);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function endOfCurrentWeek(): Date {
+  const start = startOfCurrentWeek();
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return end;
+}
+
 function isNewHire(emp: Employee): boolean {
-  if (emp.status === "onboarding" || emp.status === "pending") return true;
   if (!emp.startDate) return false;
-  return (Date.now() - new Date(emp.startDate).getTime()) < 30 * 86400000;
+  const start = new Date(emp.startDate);
+  return start >= startOfCurrentWeek() && start <= endOfCurrentWeek();
 }
 
 type SortKey = "name" | "position" | "department" | "status" | "startDate" | "onboarding";
@@ -164,7 +181,7 @@ export default function PeopleNewHiresPage() {
           <div>
             <h1 className="text-xl font-bold" style={{ color: NAVY }}>New Hires</h1>
             <p className="text-xs text-gray-500">
-              {isLoading ? "Loading…" : `${newHires.length} new hire${newHires.length !== 1 ? "s" : ""} — joined in last 30 days or currently onboarding`}
+              {isLoading ? "Loading…" : `${newHires.length} new hire${newHires.length !== 1 ? "s" : ""} — started this week (Mon ${startOfCurrentWeek().toLocaleDateString("en-US", { month: "short", day: "numeric" })} – Sun ${endOfCurrentWeek().toLocaleDateString("en-US", { month: "short", day: "numeric" })})`}
             </p>
           </div>
         </div>
@@ -238,7 +255,7 @@ export default function PeopleNewHiresPage() {
               {!isLoading && pageEmployees.length === 0 && (
                 <tr>
                   <td colSpan={7} className="px-4 py-12 text-center text-gray-400 text-sm">
-                    {anyFilter ? "No new hires match your filters." : "No new hires in the last 30 days."}
+                    {anyFilter ? "No new hires match your filters." : "No new hires started this week."}
                   </td>
                 </tr>
               )}
