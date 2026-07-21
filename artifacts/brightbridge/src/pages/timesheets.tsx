@@ -121,7 +121,7 @@ export default function Timesheets() {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
   }, []);
 
-  const { launch } = useEasyTeamLauncher(CONTAINER_ID, handleEvent, 780);
+  const { launch, navigateToDate } = useEasyTeamLauncher(CONTAINER_ID, handleEvent, 780);
 
   const employees = employeesData?.employees ?? [];
   const selectedClient = clientsData?.clients.find((c) => c.id === clientId);
@@ -148,12 +148,14 @@ export default function Timesheets() {
         const d = await r.json() as { from?: string; to?: string; frequency?: string };
         if (d.from && d.to) {
           setFromDate(d.from); setToDate(d.to);
-          if (etLaunchedRef.current) { /* navigate later */ }
+          if (etLaunchedRef.current) {
+            navigateToDate(d.from, d.to);
+          }
         }
         if (d.frequency) setPayFrequency(d.frequency);
       } catch { /* keep default week */ }
     })();
-  }, [isScoped, user?.companyId]);
+  }, [isScoped, user?.companyId, navigateToDate]);
 
   // ── Employee name lookup (owner/manager) ──────────────────────
   const fetchCompanyEmployees = useCallback(async () => {
