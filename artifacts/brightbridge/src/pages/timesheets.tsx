@@ -149,7 +149,12 @@ export default function Timesheets() {
         if (d.from && d.to) {
           setFromDate(d.from); setToDate(d.to);
           if (etLaunchedRef.current) {
+            // Fire immediately and retry after 1.5 s — the iframe may still be
+            // initializing when this runs, and EasyTeam silently drops navigate()
+            // calls that arrive before it is ready.
             navigateToDate(d.from, d.to);
+            const from = d.from; const to = d.to;
+            setTimeout(() => { navigateToDate(from, to); }, 1500);
           }
         }
         if (d.frequency) setPayFrequency(d.frequency);
@@ -283,9 +288,14 @@ export default function Timesheets() {
       });
       etLaunchedRef.current = true;
       setAccessToken(tokenData.token);
+      // After the iframe finishes initializing, navigate to the pay-period dates.
+      // This covers the race where the pay-period fetch completed before launch()
+      // ran, so etLaunchedRef was false when navigateToDate was first called.
+      const launchFrom = fromDate; const launchTo = toDate;
+      setTimeout(() => { navigateToDate(launchFrom, launchTo); }, 1500);
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
-  }, [user, launch, fromDate, toDate, authLocation]);
+  }, [user, launch, navigateToDate, fromDate, toDate, authLocation]);
 
   // ── Super-admin launch ────────────────────────────────────────
   const handleLaunch = useCallback(async (cId = clientId, eId = employeeId, empList = employees, mode = viewMode) => {
