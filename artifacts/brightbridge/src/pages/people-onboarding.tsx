@@ -1,11 +1,13 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ClipboardList, ChevronLeft, Users, Building2, CheckCircle2,
   Clock, AlertTriangle, ChevronDown, ChevronRight, Eye, RotateCcw,
+  Search, ChevronUp, ChevronsUpDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -240,6 +242,190 @@ function EmployeeOnboardingCard({ emp }: { emp: Employee }) {
   );
 }
 
+// ── Onboarding Table ───────────────────────────────────────────
+const OB_AVATAR_COLORS = ["#3B82F6","#8B5CF6","#EC4899","#EF4444","#F59E0B","#10B981","#14B8A6","#E8622A"];
+function obAvatarColor(name: string) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0x7fffffff;
+  return OB_AVATAR_COLORS[h % OB_AVATAR_COLORS.length]!;
+}
+
+const OB_STATUS_STYLES: Record<string, { label: string; bg: string; color: string }> = {
+  onboarding: { label: "Onboarding", bg: "#dbeafe", color: "#1e40af" },
+  pending:    { label: "Pending",    bg: "#fef3c7", color: "#92400e" },
+  active:     { label: "Active",     bg: "#d1fae5", color: "#065f46" },
+};
+
+function ObStatusBadge({ status }: { status: string }) {
+  const s = OB_STATUS_STYLES[status] ?? { label: status, bg: "#f3f4f6", color: "#374151" };
+  return (
+    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+      style={{ background: s.bg, color: s.color }}>{s.label}</span>
+  );
+}
+
+function ObProgressBar({ value }: { value: number }) {
+  const color = value >= 90 ? "#10b981" : value >= 70 ? "#0ea5c9" : value >= 40 ? "#f59e0b" : "#ef4444";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-20 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        <div className="h-full rounded-full" style={{ width: `${value}%`, background: color }} />
+      </div>
+      <span className="text-xs text-gray-500">{value}%</span>
+    </div>
+  );
+}
+
+type ObSortKey = "name" | "department" | "status" | "startDate" | "progress";
+
+function ObSortIcon({ col, sortCol, sortDir }: { col: ObSortKey; sortCol: ObSortKey; sortDir: "asc" | "desc" }) {
+  if (col !== sortCol) return <ChevronsUpDown className="h-3 w-3 text-gray-300 ml-1 inline" />;
+  return sortDir === "asc"
+    ? <ChevronUp className="h-3 w-3 text-[#0EA5C9] ml-1 inline" />
+    : <ChevronDown className="h-3 w-3 text-[#0EA5C9] ml-1 inline" />;
+}
+
+function OnboardingTable({ employees, loading }: { employees: Employee[]; loading: boolean }) {
+  const [search, setSearch] = useState("");
+  const [sortCol, setSortCol] = useState<ObSortKey>("progress");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const onboardingEmps = useMemo(
+    () => employees.filter(e => e.status === "onboarding" || e.status === "pending"),
+    [employees]
+  );
+
+  const filtered = useMemo(() => {
+    let list = onboardingEmps;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(e =>
+        `${e.firstName} ${e.lastName}`.toLowerCase().includes(q) ||
+        (e.department ?? "").toLowerCase().includes(q)
+      );
+    }
+    return [...list].sort((a, b) => {
+      let av: string | number = "", bv: string | number = "";
+      if (sortCol === "name")       { av = `${a.firstName} ${a.lastName}`; bv = `${b.firstName} ${b.lastName}`; }
+      else if (sortCol === "department") { av = a.department ?? ""; bv = b.department ?? ""; }
+      else if (sortCol === "status")     { av = a.status;            bv = b.status; }
+      else if (sortCol === "startDate")  { av = a.startDate ?? "";   bv = b.startDate ?? ""; }
+      else if (sortCol === "progress")   { av = a.onboardingProgress ?? 0; bv = b.onboardingProgress ?? 0; }
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [onboardingEmps, search, sortCol, sortDir]);
+
+  function toggleSort(col: ObSortKey) {
+    if (sortCol === col) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortCol(col); setSortDir("asc"); }
+  }
+
+  const COLS: { key: ObSortKey; label: string }[] = [
+    { key: "name",       label: "Name" },
+    { key: "department", label: "Department" },
+    { key: "status",     label: "Status" },
+    { key: "startDate",  label: "Start Date" },
+    { key: "progress",   label: "Progress" },
+  ];
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3 gap-3">
+        <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+          <Users className="h-4 w-4 text-gray-400" />
+          Onboarding Roster
+          {!loading && (
+            <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold">
+              {onboardingEmps.length}
+            </span>
+          )}
+        </h2>
+        <div className="relative w-56">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+          <Input
+            className="pl-8 h-8 text-sm"
+            placeholder="Search…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100" style={{ background: "#F8FAFC" }}>
+                {COLS.map(({ key, label }) => (
+                  <th key={key}
+                    className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 cursor-pointer select-none whitespace-nowrap hover:text-gray-800 transition-colors"
+                    onClick={() => toggleSort(key)}>
+                    {label}
+                    <ObSortIcon col={key} sortCol={sortCol} sortDir={sortDir} />
+                  </th>
+                ))}
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {loading && Array.from({ length: 4 }).map((_, i) => (
+                <tr key={i}>
+                  {Array.from({ length: 6 }).map((__, j) => (
+                    <td key={j} className="px-4 py-3"><Skeleton className="h-4 w-full" /></td>
+                  ))}
+                </tr>
+              ))}
+              {!loading && filtered.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400 text-sm">
+                    {search ? "No results match your search." : "No employees currently in onboarding."}
+                  </td>
+                </tr>
+              )}
+              {!loading && filtered.map(emp => {
+                const fullName = `${emp.firstName} ${emp.lastName}`;
+                const color = obAvatarColor(fullName);
+                const startFmt = emp.startDate
+                  ? new Date(emp.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                  : "—";
+                const progress = emp.onboardingProgress ?? 0;
+                return (
+                  <tr key={emp.id} className="hover:bg-gray-50/60 transition-colors group">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
+                          style={{ background: color }}>
+                          {`${emp.firstName[0] ?? ""}${emp.lastName[0] ?? ""}`.toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-medium text-gray-900 truncate">{fullName}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-sm">{emp.department || "—"}</td>
+                    <td className="px-4 py-3"><ObStatusBadge status={emp.status} /></td>
+                    <td className="px-4 py-3 text-gray-500 text-sm whitespace-nowrap">{startFmt}</td>
+                    <td className="px-4 py-3"><ObProgressBar value={progress} /></td>
+                    <td className="px-4 py-3 text-right">
+                      <Link href={`/people/${emp.id}`}>
+                        <span className="text-xs text-[#0EA5C9] hover:underline opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">
+                          View →
+                        </span>
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ──────────────────────────────────────────────────
 export default function PeopleOnboardingPage() {
   const { user } = useAuth();
@@ -339,6 +525,8 @@ export default function PeopleOnboardingPage() {
               </div>
             )}
           </div>
+
+          <OnboardingTable employees={allEmps} loading={empLoading} />
         </>
       )}
     </div>

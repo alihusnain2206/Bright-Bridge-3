@@ -33,6 +33,7 @@ import Paystub from "@/pages/paystub";
 import PeoplePage from "@/pages/people";
 import PeopleDirectoryPage from "@/pages/people-directory";
 import PeopleNewPage from "@/pages/people-new";
+import PeopleNewHiresPage from "@/pages/people-new-hires";
 import PeopleOnboardingPage from "@/pages/people-onboarding";
 import PeopleComplianceHubPage from "@/pages/people-compliance-hub";
 import PeopleDocumentsHubPage from "@/pages/people-documents-hub";
@@ -130,7 +131,7 @@ function Router() {
               <ProtectedRoute component={PeopleDocumentsHubPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/new-hires">
-              <ProtectedRoute component={PeoplePage} roles={["super_admin", "owner", "manager"]} />
+              <ProtectedRoute component={PeopleNewHiresPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/directory">
               <ProtectedRoute component={PeopleDirectoryPage} roles={["super_admin", "owner", "manager"]} />
