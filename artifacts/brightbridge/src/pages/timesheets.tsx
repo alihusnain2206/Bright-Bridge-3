@@ -185,7 +185,6 @@ export default function Timesheets() {
     } finally { setHoursLoading(false); }
   }, [user?.companyId, fromDate, toDate]);
 
-  useEffect(() => { if (isScoped) void fetchHours(); }, [isScoped, fetchHours]);
 
   // ── handlePullHours ───────────────────────────────────────────
   const handlePullHours = useCallback(async () => {
@@ -238,25 +237,26 @@ export default function Timesheets() {
       const tokenData = await tokenRes.json() as { token?: string; error?: string };
       if (!tokenRes.ok || !tokenData.token) { setTokenError(tokenData.error ?? "Token generation failed"); return; }
 
-      const empRes = await fetch(`/api/employees?companyId=${encodeURIComponent(user.companyId ?? "")}`, { credentials: "include" });
-      const empData = await empRes.json() as { employees?: ApiEmployee[] };
+      const empRes = await fetch(`/api/easyteam/employees?companyId=${encodeURIComponent(user.companyId ?? "")}`, { credentials: "include" });
+      const empData = await empRes.json() as { employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string }> };
       const apiEmployees = (empData.employees ?? []).map(e => ({
-        id: e.employeeId,
-        name: [e.firstName, e.lastName].join(" ").trim(),
-        role: e.position ?? "Staff",
+        id: e.id,
+        name: e.name,
+        role: e.role ?? "Staff",
         timeTrackingEnabled: true,
-        wage: e.hourlyWage ?? 1500,
+        wage: e.wage ?? 1500,
         wageType: "hourly" as const,
       }));
 
-      // Always include the logged-in user in the employees list — EasyTeam SDK
-      // throws "not found in provided employees list" if the JWT subject is absent.
+      // EasyTeam SDK requires the JWT's employeeId to be present in the employees array.
+      // timeTrackingEnabled: false + isVisible: false tells EasyTeam this person is a
+      // reviewer, so they don't appear as a row in the timesheet view.
       const selfEntry = user.employeeId ? {
         id: user.employeeId,
         name: user.name,
         role: user.position ?? "Manager",
         timeTrackingEnabled: false,
-        isVisible: true,
+        isVisible: false,
         wage: user.hourlyWage ?? 2500,
         wageType: "hourly" as const,
       } : null;
