@@ -56,8 +56,8 @@ function ActionButton({ action }: { action: Action }) {
 const ICON_CLS = "h-4 w-4 text-[#1B3A6B]";
 
 const ADMIN_ACTIONS: Action[] = [
-  { icon: <UserPlus className={ICON_CLS} />,    label: "Add Employee",       href: "/people" },
-  { icon: <PlayCircle className={ICON_CLS} />,  label: "Start Onboarding",   href: "/people/new-hires" },
+  { icon: <UserPlus className={ICON_CLS} />,    label: "Add Employee",       href: "/people/new" },
+  { icon: <PlayCircle className={ICON_CLS} />,  label: "Start Onboarding",   href: "/people/onboarding" },
   { icon: <FolderOpen className={ICON_CLS} />,  label: "Upload Document",    href: "/people/documents" },
   { icon: <BarChart2 className={ICON_CLS} />,   label: "Run Report",         soon: true },
   { icon: <GitFork className={ICON_CLS} />,     label: "Org Chart",          soon: true },

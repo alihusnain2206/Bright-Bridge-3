@@ -31,6 +31,8 @@ import ParentDashboard from "@/pages/dashboard-parent";
 import NotFound from "@/pages/not-found";
 import Paystub from "@/pages/paystub";
 import PeoplePage from "@/pages/people";
+import PeopleDirectoryPage from "@/pages/people-directory";
+import PeopleNewPage from "@/pages/people-new";
 import PeopleOnboardingPage from "@/pages/people-onboarding";
 import PeopleComplianceHubPage from "@/pages/people-compliance-hub";
 import PeopleDocumentsHubPage from "@/pages/people-documents-hub";
@@ -129,6 +131,12 @@ function Router() {
             </Route>
             <Route path="/people/new-hires">
               <ProtectedRoute component={PeoplePage} roles={["super_admin", "owner", "manager"]} />
+            </Route>
+            <Route path="/people/directory">
+              <ProtectedRoute component={PeopleDirectoryPage} roles={["super_admin", "owner", "manager"]} />
+            </Route>
+            <Route path="/people/new">
+              <ProtectedRoute component={PeopleNewPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
             <Route path="/people/contacts">
               <ProtectedRoute component={EmergencyContactsListPage} roles={["super_admin", "owner", "manager"]} />

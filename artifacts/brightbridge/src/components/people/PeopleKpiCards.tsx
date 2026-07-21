@@ -164,7 +164,7 @@ export default function PeopleKpiCards({
           value={loading ? "—" : activeEmps.length}
           sub={thisMonthActive.length > 0 ? `+${thisMonthActive.length} this month` : "No new hires this month"}
           subColor={thisMonthActive.length > 0 ? "#10b981" : undefined}
-          link="/people"
+          link="/people/directory"
           linkLabel="View all employees"
           onValueClick={onFilterActive}
           loading={loading}
