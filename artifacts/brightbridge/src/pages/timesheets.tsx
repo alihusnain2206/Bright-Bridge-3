@@ -144,7 +144,7 @@ export default function Timesheets() {
     if (!isScoped || !user?.companyId) return;
     void (async () => {
       try {
-        const r = await fetch(`/api/rollfi/pay-period?companyId=${encodeURIComponent(user.companyId ?? "")}`, { credentials: "include" });
+        const r = await fetch(`/api/companies/${encodeURIComponent(user.companyId ?? "")}/pay-period`, { credentials: "include" });
         const d = await r.json() as { from?: string; to?: string; frequency?: string };
         if (d.from && d.to) {
           setFromDate(d.from); setToDate(d.to);
@@ -254,7 +254,7 @@ export default function Timesheets() {
         name: user.name,
         role: user.position ?? "Manager",
         timeTrackingEnabled: false,
-        isVisible: false,
+        isVisible: true,
         wage: user.hourlyWage ?? 2500,
         wageType: "hourly" as const,
       } : null;
