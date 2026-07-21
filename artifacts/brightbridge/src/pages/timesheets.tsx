@@ -68,7 +68,8 @@ const ALL_STATIC_LOCATIONS = [
 ];
 
 interface ApiEmployee {
-  employeeId: string; firstName: string; lastName: string;
+  id?: string; employeeId?: string; employeeDisplayId?: string;
+  firstName?: string; lastName?: string; name?: string;
   position?: string; hourlyWage?: number;
 }
 
@@ -156,10 +157,23 @@ export default function Timesheets() {
   const fetchCompanyEmployees = useCallback(async () => {
     if (!user?.companyId) return;
     try {
-      const r = await fetch(`/api/employees?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" });
-      const d = await r.json() as { employees?: ApiEmployee[] };
+      // Primary: store-based employee names (covers both seeded and wizard-created staff).
+      // This uses the in-memory store which always has the canonical employeeId → name mapping.
+      const r = await fetch(`/api/easyteam/company-members?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" });
+      const d = await r.json() as { names?: Record<string, string> };
+      if (d.names && Object.keys(d.names).length > 0) {
+        setEmployeeNames(d.names);
+        return;
+      }
+      // Fallback: DB employees (wizard-created companies without store staff users)
+      const r2 = await fetch(`/api/employees?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" });
+      const d2 = await r2.json() as { employees?: ApiEmployee[] };
       const names: Record<string, string> = {};
-      (d.employees ?? []).forEach(e => { names[e.employeeId] = [e.firstName, e.lastName].join(" ").trim(); });
+      (d2.employees ?? []).forEach(e => {
+        const fullName = e.name ?? [e.firstName, e.lastName].filter(Boolean).join(" ").trim();
+        if (e.id) names[e.id] = fullName;
+        if (e.employeeDisplayId) names[e.employeeDisplayId] = fullName;
+      });
       setEmployeeNames(names);
     } catch { /* silent */ }
   }, [user?.companyId]);

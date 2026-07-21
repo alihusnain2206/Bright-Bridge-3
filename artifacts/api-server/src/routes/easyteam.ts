@@ -529,6 +529,20 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   res.json({ success: true, source: "seeded", periodKey, synced: seeded.length, note: "No EasyTeam data — seeded demo hours" });
 });
 
+// ── GET /easyteam/company-members — employee names for timesheet approval panel ──
+// Returns { [employeeId]: fullName } from store staff users (covers both seeded and
+// wizard-created employees). Used by the timesheets page to show names in the approval table.
+router.get("/easyteam/company-members", (req, res) => {
+  const { companyId } = req.query as { companyId?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  const staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
+  const names: Record<string, string> = {};
+  for (const u of staff) {
+    if (u.employeeId) names[u.employeeId] = u.name;
+  }
+  res.json({ names });
+});
+
 router.get("/easyteam/hours", (req, res) => {
   const { from, to, companyId } = req.query as { from?: string; to?: string; companyId?: string };
   const toDate   = to   ? new Date(to)   : new Date();
@@ -706,10 +720,14 @@ router.post("/easyteam/hours/approve", async (req, res) => {
   const userId = req.session?.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
 
-  const { from, to, companyId, entries: managerEntries } = req.body as {
+  const body = req.body as {
     from?: string; to?: string; companyId?: string;
+    overrides?: { employeeId: string; approvedHours: number; note?: string; managerEditNote?: string }[];
     entries?: { employeeId: string; approvedHours: number; managerEditNote?: string }[];
   };
+  const { from, to, companyId } = body;
+  // Accept both "overrides" (sent by timesheets page) and legacy "entries"
+  const managerEntries = body.overrides ?? body.entries ?? [];
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
   // Build a quick lookup map for manager-supplied overrides keyed by employeeId
   const managerOverrides = new Map(
@@ -828,27 +846,29 @@ router.post("/easyteam/hours/approve", async (req, res) => {
     }
   }
 
-  // ── Step 3: Write explicit 0-hour entries when EasyTeam has no shifts this period ──
-  // Never seed demo data — real 0s ensure the Rollfi import correctly sends 0 instead of
-  // picking up stale approvals from a previous period via the latest-per-employee fallback.
+  // ── Step 3: Ensure every company employee has an entry for this period ──
+  // If any employee has no entry (0 hours from EasyTeam), write an explicit 0-hour record.
+  // This prevents the payroll fallback from picking up stale approvals from a prior period.
   const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
-  if (existing.length === 0) {
-    const companyStaff = store.getAllStaffUsers()
-      .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
-    const zeroNow = new Date().toISOString();
-    for (const u of companyStaff) {
-      await upsertTimesheetEntry({
-        employeeId: u.employeeId!,
-        companyId,
-        periodKey,
-        hoursWorked: 0,
-        breakDeduction: 0,
-        approvedHours: 0,
-        source: "easyteam",
-        syncedAt: zeroNow,
-      });
-    }
-    req.log.info({ count: companyStaff.length, periodKey }, "No EasyTeam shifts this period — wrote 0-hour entries for all company employees");
+  const existingEmpIds = new Set(existing.map((e) => e.employeeId));
+  const companyStaff = store.getAllStaffUsers()
+    .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
+  const zeroNow = new Date().toISOString();
+  const missingStaff = companyStaff.filter((u) => !existingEmpIds.has(u.employeeId!));
+  for (const u of missingStaff) {
+    await upsertTimesheetEntry({
+      employeeId: u.employeeId!,
+      companyId,
+      periodKey,
+      hoursWorked: 0,
+      breakDeduction: 0,
+      approvedHours: 0,
+      source: "easyteam",
+      syncedAt: zeroNow,
+    });
+  }
+  if (missingStaff.length > 0) {
+    req.log.info({ count: missingStaff.length, periodKey, missing: missingStaff.map((u) => u.employeeId) }, "Wrote 0-hour entries for employees with no EasyTeam shifts this period");
   }
 
   const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
