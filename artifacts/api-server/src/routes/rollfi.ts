@@ -2328,33 +2328,86 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     const importRaw = importResp.data as Record<string, unknown>;
     assertNoRollfiError(importRaw, "importRegularPayrollData");
 
-    // ── Fetch real totals from Rollfi after import ────────────
+    // ── Fetch real totals + reconcile orphaned Rollfi employees ────────────
+    // "Orphaned" = enrolled in this Rollfi pay period but never touched by our import.
+    // Stale hours from a previous run persist for these employees until explicitly cleared.
+    // Per Rollfi support: importRegularPayrollData with payHours: 0 does reset stale hours.
     let realTotals: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null = null;
+    const importedIds = new Set(
+      filteredPayrollData.map((e) => (e.userId as string).toUpperCase())
+    );
+    const handledIds = new Set([...importedIds, ...zeroHoursIds]);
     try {
-      const detailsResp = await axios.post(
+      const getDetails = async () => axios.post(
         `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
         { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
         { headers: rollfiHeaders() }
       );
+      let detailsResp = await getDetails();
       const dr = detailsResp.data as Record<string, unknown>;
       req.log.info({ detailsRaw: dr }, "getPayPeriodDetails after import");
-      // Rollfi getPayPeriodDetails response shape:
-      //   { payPeriod: [{ total, employeeTaxSum, employerTaxSum, payrollLineItems: [{ grossTotal, netTotal, userId }] }] }
-      // `total` = gross-only (not the bank debit); totalDebit = total + employerTaxSum
       const periodArr = (dr.payPeriod ?? []) as Array<Record<string, unknown>>;
-      const pd = periodArr[0] as Record<string, unknown> | undefined;
+      const pd0 = periodArr[0] as Record<string, unknown> | undefined;
+      const lineItems0 = pd0 ? (pd0.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
+
+      // Find enrolled employees we never touched — their stale hours persist
+      const orphanedIds = lineItems0
+        .map((e) => (e.userId as string | undefined)?.toUpperCase() ?? "")
+        .filter((uid) => uid && !handledIds.has(uid));
+
+      if (orphanedIds.length > 0) {
+        req.log.warn({ count: orphanedIds.length, orphanedIds }, "Payroll import: Rollfi has enrolled employees not in our payload — clearing stale hours");
+        // Step A: import with payHours: 0 to explicitly reset any stale hours
+        try {
+          await axios.post(
+            `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+            {
+              method: "importRegularPayrollData",
+              companyId: rollfiCompany.rollfiCompanyId,
+              payPeriodId,
+              payrollData: orphanedIds.map((uid) => ({ userId: uid, basicPay: { payHours: 0 } })),
+            },
+            { headers: rollfiHeaders() }
+          );
+          req.log.info({ count: orphanedIds.length }, "Orphaned employee stale hours cleared via importRegularPayrollData");
+        } catch (cleanImportErr) {
+          req.log.warn({ cleanImportErr }, "Orphaned employee cleanup import failed (non-fatal)");
+        }
+        // Step B: remove them from the pay period (no hours, no bonus)
+        try {
+          await axios.post(
+            `${ROLLFI_BASE_URL}/payroll#removeUsersFromRegularPayPeriod`,
+            {
+              method: "removeUsersFromRegularPayPeriod",
+              companyId: rollfiCompany.rollfiCompanyId,
+              payPeriodId,
+              userIds: orphanedIds,
+            },
+            { headers: rollfiHeaders() }
+          );
+          req.log.info({ count: orphanedIds.length }, "Orphaned employees removed from pay period");
+        } catch (removeOrphanErr) {
+          req.log.warn({ removeOrphanErr }, "Orphaned employee removal failed (non-fatal)");
+        }
+        // Refetch totals now that orphaned stale hours are cleared
+        try {
+          detailsResp = await getDetails();
+        } catch { /* keep previous totals if refetch fails */ }
+      }
+
+      // Compute realTotals from the (possibly-refreshed) pay period details
+      const dr2 = detailsResp.data as Record<string, unknown>;
+      const periodArr2 = (dr2.payPeriod ?? []) as Array<Record<string, unknown>>;
+      const pd = periodArr2[0] as Record<string, unknown> | undefined;
       if (pd) {
         const lineItems = (pd.payrollLineItems ?? []) as Array<Record<string, unknown>>;
-        const grossPay   = Math.round(lineItems.reduce((s, e) => s + Number(e.grossTotal ?? 0), 0) * 100) / 100;
-        const netPay     = Math.round(lineItems.reduce((s, e) => s + Number(e.netTotal   ?? 0), 0) * 100) / 100;
+        const grossPay    = Math.round(lineItems.reduce((s, e) => s + Number(e.grossTotal ?? 0), 0) * 100) / 100;
+        const netPay      = Math.round(lineItems.reduce((s, e) => s + Number(e.netTotal   ?? 0), 0) * 100) / 100;
         const employeeTax = Math.round(Number(pd.employeeTaxSum ?? 0) * 100) / 100;
         const employerTax = Math.round(Number(pd.employerTaxSum ?? 0) * 100) / 100;
-        const rollfiTotal = Number(pd.total ?? 0); // Rollfi `total` = gross only
+        const rollfiTotal = Number(pd.total ?? 0);
         realTotals = {
-          grossPay,
-          netPay,
-          employeeTax,
-          employerTax,
+          grossPay, netPay, employeeTax, employerTax,
           totalDebit: Math.round((rollfiTotal + employerTax) * 100) / 100,
         };
       }

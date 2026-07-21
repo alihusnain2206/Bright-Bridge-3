@@ -1,0 +1,86 @@
+Ali husnain  [6:02 PM]
+Hi @James Gaskell
+We've identified the root cause of the stale hours issue and implemented a fix, but wanted to share our findings and confirm we're using the API correctly.
+What we found:
+When importRegularPayrollData is called with payHours: 0 for an employee, Rollfi does not reset their hours — the previous non-zero value persists. We initially worked around this by:
+
+Excluding 0-hour employees fromaddUsersToRegularPayPeriod(not enrolling them)
+CallingremoveUsersFromRegularPayPeriodfor those employees (fire-and-forget)
+This turned out to be unreliable — the remove call raced with the import, and stale values were persisting.
+What we changed:
+We now enroll all employees (including 0-hour ones) via addUsersToRegularPayPeriod, and include them all in importRegularPayrollData with an explicit payHours: 0. This appears to correctly reset stale hours in Rollfi.
+Our questions:
+
+Is this the recommended approach — enrolling an employee and importingpayHours: 0to reset their hours?
+IsaddUsersToRegularPayPeriodfully idempotent for already-enrolled employees? (We're assuming re-enrolling is safe.)
+Is there any risk to sendingpayHours: 0for employees who genuinely have no hours this period — for example, does it affect tax calculations or trigger anything unexpected?
+Thanks for your continued support.
+4 repliesJames Gaskell  [7:25 PM]
+
+You're not actually required to use addUsersToRegularPayPeriod. If an employee is eligible for payroll (i.e. their startDate is before or during the payPeriod and they are Active) they will be added automatically and can be seen in both the payPeriod insert webhook and getPayPeriodDetails as soon as the pay period is added. I see a few calls where we returned the following error:
+{
+  "error": {
+    "code": 400,
+    "message": "Employee B7B17DF6-9575-4FF8-B4E5-3B89F01C5B36 already has a payroll line item for this pay period"
+  }
+}addUsersToRegularPayPeriod should only really be used if the employee has been previously removed from the payPeriod, or if they do not appear in getPayPeriodDetails after the new pay period is nserted.
+
+
+
+2. Calling removeUsersFromRegularPayPeriod is a good design choice if the employee has no payroll at all for the given payPeriod. However. importing with payHours: 0 does clear the hours for an employee - I looked through the API logs and it looks like Mary Johnson was still sent through with 0.1667 hours in the last import for Sunshine Daycare, so there may still be a rounding issue. This request:
+{
+  "method": "importRegularPayrollData",
+  "companyId": "43A90BF7-B2BB-4BB5-A6F5-090306556DC4",
+  "payPeriodId": "F0E873F7-1965-4224-B8A8-871EC76CBDF3",
+  "payrollData": [
+    {
+      "userId": "B7B17DF6-9575-4FF8-B4E5-3B89F01C5B36",
+      "basicPay": {
+        "payHours": 0
+      }
+    },
+    {
+      "userId": "BCFD3E3B-9AC6-432C-A0AE-49D4E5756000",
+      "basicPay": {
+        "payHours": 0.0
+      }
+    },
+    {
+      "userId": "B040CD34-6DC7-4751-ADF3-E3186B28FF95",
+      "basicPay": {
+        "payHours": 0
+      }
+    }
+  ]
+}Succeeded in setting the hours to 0. The advantage of keeping employees in the payPeriod is we can still generate stubs for them, and you can still add additional compensation, retro, etc. even if they do not have any regular hours.
+
+
+
+3. The recommended approach depends on the above. If the employee has other pay items in the pay period, e.g. additionalCompensation, you will need to keep them with payHours: 0 to add their payroll data.
+
+
+
+4. addUsersToRegularPayPeriod will return an error if you attempt to add them more than once. An employee can only exist once in the payPeriod, but as mentioned earlier you may not need to use this endpoint if you're going with the 0 payHours for employees.
+
+
+
+5. No, it is safe to have employees with 0 payHours, but we'd recommend removing them if they have no other payroll data for the pay period.
+
+
+
+Please let us know if you have any questions or need clarification. Also happy to do a live test of the payroll import to make sure we're getting through the correct hours without rounding issues.
+Ali husnain  [10:28 PM]
+@James Gaskell
+Hi James,
+Thank you for the detailed explanation. We've updated our integration based on your guidance:
+Changes made:
+
+Removed all addUsersToRegularPayPeriod calls — we weren't aware employees were auto-enrolled when a pay period is created. That explains the "already has a payroll line item" errors we were seeing. We've removed this call entirely from both our initiate and import handlers.
+Properly awaiting removeUsersFromRegularPayPeriod — for employees with zero hours and zero bonus, we now await this call before proceeding to the import step (previously it was fire-and-forget, which caused a race condition).
+Import only employees with billable data — employees with no hours and no bonus are removed from the pay period. Employees with payHours: 0 but a bonus remain in the import payload so their bonus can be processed.
+Regarding the rounding note on Mary Johnson — we believe that was from an earlier import run before our precision fixes were deployed. We've had 4dp rounding in place since the previous update and haven't seen any rounding issues since. Happy to confirm with a live test if it would help.
+Please let us know if this approach looks correct from your end, and we're happy to take you up on the offer of a live test of the full import flow.
+Thanks again for your support.Ali husnain  [12:51 PM]
+@James Gaskell
+Can you please confirm about this one as well ? it will be appreciated, ThanksJames Gaskell  [5:28 PM]
+I'll take a look through this morning @Ali husnain and get back to you with feedback
