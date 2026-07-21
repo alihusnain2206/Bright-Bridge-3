@@ -146,21 +146,11 @@ export default function Timesheets() {
       try {
         const r = await fetch(`/api/companies/${encodeURIComponent(user.companyId ?? "")}/pay-period`, { credentials: "include" });
         const d = await r.json() as { from?: string; to?: string; frequency?: string };
-        if (d.from && d.to) {
-          setFromDate(d.from); setToDate(d.to);
-          if (etLaunchedRef.current) {
-            // Fire immediately and retry after 1.5 s — the iframe may still be
-            // initializing when this runs, and EasyTeam silently drops navigate()
-            // calls that arrive before it is ready.
-            navigateToDate(d.from, d.to);
-            const from = d.from; const to = d.to;
-            setTimeout(() => { navigateToDate(from, to); }, 1500);
-          }
-        }
+        if (d.from && d.to) { setFromDate(d.from); setToDate(d.to); }
         if (d.frequency) setPayFrequency(d.frequency);
       } catch { /* keep default week */ }
     })();
-  }, [isScoped, user?.companyId, navigateToDate]);
+  }, [isScoped, user?.companyId]);
 
   // ── Employee name lookup (owner/manager) ──────────────────────
   const fetchCompanyEmployees = useCallback(async () => {
@@ -234,15 +224,22 @@ export default function Timesheets() {
     if (!user) return;
     setTokenLoading(true); setTokenError(""); etLaunchedRef.current = false;
     try {
-      const tokenRes = await fetch("/api/auth/token-by-role", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
-      });
+      // Fetch token, employees, and pay period in parallel so launch() always
+      // receives the authoritative date range — never stale React state.
+      const companyId = encodeURIComponent(user.companyId ?? "");
+      const [tokenRes, empRes, ppRes] = await Promise.all([
+        fetch("/api/auth/token-by-role", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id }),
+        }),
+        fetch(`/api/easyteam/employees?companyId=${companyId}`, { credentials: "include" }),
+        fetch(`/api/companies/${companyId}/pay-period`, { credentials: "include" }),
+      ]);
+
       const tokenData = await tokenRes.json() as { token?: string; error?: string };
       if (!tokenRes.ok || !tokenData.token) { setTokenError(tokenData.error ?? "Token generation failed"); return; }
 
-      const empRes = await fetch(`/api/easyteam/employees?companyId=${encodeURIComponent(user.companyId ?? "")}`, { credentials: "include" });
       const empData = await empRes.json() as { employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string }> };
       const apiEmployees = (empData.employees ?? []).map(e => ({
         id: e.id,
@@ -252,6 +249,21 @@ export default function Timesheets() {
         wage: e.wage ?? 1500,
         wageType: "hourly" as const,
       }));
+
+      // Use freshly-fetched pay period dates for the iframe URL.
+      // Fall back to current state only if the API fails.
+      let launchFrom = fromDate;
+      let launchTo = toDate;
+      try {
+        const ppData = await ppRes.json() as { from?: string; to?: string; frequency?: string };
+        if (ppData.from && ppData.to) {
+          launchFrom = ppData.from;
+          launchTo = ppData.to;
+          setFromDate(ppData.from);
+          setToDate(ppData.to);
+        }
+        if (ppData.frequency) setPayFrequency(ppData.frequency);
+      } catch { /* keep default week on error */ }
 
       // EasyTeam SDK requires the JWT's employeeId to be present in the employees array.
       // timeTrackingEnabled: false + isVisible: false tells EasyTeam this person is a
@@ -283,19 +295,14 @@ export default function Timesheets() {
         employees: allEmployees,
         organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
         locations,
-        fromDate,
-        toDate,
+        fromDate: launchFrom,
+        toDate: launchTo,
       });
       etLaunchedRef.current = true;
       setAccessToken(tokenData.token);
-      // After the iframe finishes initializing, navigate to the pay-period dates.
-      // This covers the race where the pay-period fetch completed before launch()
-      // ran, so etLaunchedRef was false when navigateToDate was first called.
-      const launchFrom = fromDate; const launchTo = toDate;
-      setTimeout(() => { navigateToDate(launchFrom, launchTo); }, 1500);
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
-  }, [user, launch, navigateToDate, fromDate, toDate, authLocation]);
+  }, [user, launch, fromDate, toDate, authLocation]);
 
   // ── Super-admin launch ────────────────────────────────────────
   const handleLaunch = useCallback(async (cId = clientId, eId = employeeId, empList = employees, mode = viewMode) => {
