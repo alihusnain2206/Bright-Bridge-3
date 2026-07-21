@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   User, DollarSign, Lock, CreditCard, CheckCircle2, AlertTriangle,
-  ChevronLeft, ChevronRight, Loader2, Eye, EyeOff,
+  ChevronLeft, ChevronRight, Loader2, Eye, EyeOff, Camera,
 } from "lucide-react";
+import Avatar from "@/components/Avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -185,6 +186,29 @@ export default function ClientEmployeesNew() {
   const company = companyData;
   const queryClient = useQueryClient();
 
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
+
+  const pickPhoto = (f: File) => {
+    if (!["image/jpeg","image/jpg","image/png","image/webp"].includes(f.type)) return;
+    if (f.size > 5 * 1024 * 1024) return;
+    const url = URL.createObjectURL(f);
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512; canvas.height = 512;
+      const ctx = canvas.getContext("2d")!;
+      const side = Math.min(img.width, img.height);
+      ctx.drawImage(img, (img.width - side) / 2, (img.height - side) / 2, side, side, 0, 0, 512, 512);
+      canvas.toBlob(blob => {
+        if (blob) { setPhotoFile(new File([blob], f.name, { type: f.type })); setPhotoPreview(canvas.toDataURL(f.type)); }
+      }, f.type, 0.9);
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  };
+
   const [form, setForm] = useState<FormData>({
     firstName: "", lastName: "", email: "", phone: "",
     position: "", employmentType: "Full Time (30+ Hours per week)", workerType: "W2", startDate: today(),
@@ -293,6 +317,13 @@ export default function ClientEmployeesNew() {
     setSubmitError("");
     try {
       const data = await runWithProgress();
+      // Best-effort photo upload after employee is created
+      if (photoFile && data?.id) {
+        const fd = new FormData();
+        fd.append("photo", photoFile);
+        fetch(`/api/employees/${data.id}/photo`, { method: "POST", credentials: "include", body: fd })
+          .catch(() => {});
+      }
       setCreated(data);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "An error occurred");
@@ -397,6 +428,34 @@ export default function ClientEmployeesNew() {
         {step === 1 && (
           <div className="px-8 py-6 space-y-4">
             <h2 className="text-lg font-bold text-gray-900">Basic Information</h2>
+
+            {/* Optional Photo */}
+            <div className="flex items-center gap-4 pb-2">
+              <div className="relative group cursor-pointer shrink-0" onClick={() => photoInputRef.current?.click()}>
+                {photoPreview ? (
+                  <img src={photoPreview} className="w-16 h-16 rounded-full object-cover" alt="preview" />
+                ) : (
+                  <Avatar firstName={form.firstName || "?"} lastName={form.lastName || ""} size="lg" />
+                )}
+                <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Camera className="h-5 w-5 text-white" />
+                </div>
+              </div>
+              <div>
+                <button type="button" onClick={() => photoInputRef.current?.click()}
+                  className="text-sm text-[#0EA5C9] hover:underline font-medium">
+                  {photoPreview ? "Change photo" : "Add profile photo"}
+                </button>
+                <p className="text-xs text-gray-400 mt-0.5">Optional · JPG, PNG, or WebP · max 5 MB</p>
+                {photoPreview && (
+                  <button type="button" onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
+                    className="text-xs text-red-400 hover:text-red-600 mt-0.5">Remove</button>
+                )}
+              </div>
+              <input ref={photoInputRef} type="file" accept="image/jpeg,image/png,image/webp" className="sr-only"
+                onChange={e => { const f = e.target.files?.[0]; if (f) pickPhoto(f); }} />
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5"><Label>First Name *</Label><Input value={form.firstName} onChange={(e) => set("firstName", e.target.value)} placeholder="Jane" /></div>
               <div className="space-y-1.5"><Label>Last Name *</Label><Input value={form.lastName} onChange={(e) => set("lastName", e.target.value)} placeholder="Smith" /></div>

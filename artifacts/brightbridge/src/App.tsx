@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, useRoute } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -46,6 +46,16 @@ import EmployeeDocumentsPage from "@/pages/employee-documents";
 import EmergencyContactsListPage from "@/pages/emergency-contacts-list";
 
 const queryClient = new QueryClient();
+
+// Redirect old sub-page routes to the new tab-based profile URL
+function TabRedirect({ tab }: { tab: string }) {
+  const [, params] = useRoute("/people/:id/:sub");
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    if (params?.id) navigate(`/people/${params.id}?tab=${tab}`, { replace: true });
+  }, [params?.id, navigate, tab]);
+  return null;
+}
 
 function LoadingScreen() {
   return (
@@ -146,18 +156,10 @@ function Router() {
             <Route path="/people/:id/edit">
               <ProtectedRoute component={EmployeeEditPage} roles={["super_admin", "owner", "manager"]} />
             </Route>
-            <Route path="/people/:id/compliance">
-              <ProtectedRoute component={EmployeeCompliancePage} roles={["super_admin", "owner", "manager"]} />
-            </Route>
-            <Route path="/people/:id/tasks">
-              <ProtectedRoute component={EmployeeTasksPage} roles={["super_admin", "owner", "manager"]} />
-            </Route>
-            <Route path="/people/:id/contacts">
-              <ProtectedRoute component={EmployeeContactsPage} roles={["super_admin", "owner", "manager"]} />
-            </Route>
-            <Route path="/people/:id/documents">
-              <ProtectedRoute component={EmployeeDocumentsPage} roles={["super_admin", "owner", "manager"]} />
-            </Route>
+            <Route path="/people/:id/compliance"><TabRedirect tab="compliance" /></Route>
+            <Route path="/people/:id/tasks"><TabRedirect tab="onboarding" /></Route>
+            <Route path="/people/:id/contacts"><TabRedirect tab="contacts" /></Route>
+            <Route path="/people/:id/documents"><TabRedirect tab="documents" /></Route>
             <Route path="/people/:id">
               <ProtectedRoute component={EmployeeProfilePage} roles={["super_admin", "owner", "manager"]} />
             </Route>

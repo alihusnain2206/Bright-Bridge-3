@@ -6,22 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/useAuth";
+import Avatar from "@/components/Avatar";
 
 const NAVY = "#1B3A6B";
-const AVATAR_COLORS = ["#3B82F6","#8B5CF6","#EC4899","#EF4444","#F59E0B","#10B981","#14B8A6","#E8622A"];
-
-function avatarColor(name: string) {
-  let h = 0;
-  for (const c of name) h = (h * 31 + c.charCodeAt(0)) & 0x7fffffff;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
-}
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/);
-  return parts.length >= 2
-    ? (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase()
-    : name.slice(0, 2).toUpperCase();
-}
 
 const STATUS_STYLES: Record<string, { label: string; bg: string; color: string }> = {
   active:     { label: "Active",      bg: "#d1fae5", color: "#065f46" },
@@ -56,6 +43,7 @@ interface Employee {
   employmentType: string; status: string;
   startDate?: string | null;
   complianceScore?: number | null;
+  photoUrl?: string | null;
 }
 
 interface Department { id: string; name: string; }
@@ -283,7 +271,6 @@ export default function PeopleDirectoryPage() {
               )}
               {!isLoading && pageEmployees.map(emp => {
                 const fullName = `${emp.firstName} ${emp.lastName}`;
-                const color = avatarColor(fullName);
                 const startFmt = emp.startDate
                   ? new Date(emp.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
                   : "—";
@@ -292,10 +279,7 @@ export default function PeopleDirectoryPage() {
                   <tr key={emp.id} className="hover:bg-gray-50/60 transition-colors group">
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0"
-                          style={{ background: color }}>
-                          {initials(fullName)}
-                        </div>
+                        <Avatar firstName={emp.firstName} lastName={emp.lastName} photoUrl={emp.photoUrl} size="sm" />
                         <div className="min-w-0">
                           <p className="font-medium text-gray-900 truncate">{fullName}</p>
                           <p className="text-[11px] text-gray-400 truncate">{emp.email}</p>

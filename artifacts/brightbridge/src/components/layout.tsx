@@ -24,7 +24,7 @@ interface NavItem {
 
 const PEOPLE_SUBNAV: NavSubItem[] = [
   { href: "/people/directory",    label: "Employee Directory" },
-  { href: "/people",              label: "Employee Profiles",    soon: true },
+  { href: "/people/directory",    label: "Employee Profiles" },
   { href: "/people/new-hires",    label: "New Hires" },
   { href: "/people/onboarding",   label: "Onboarding" },
   { href: "/people",              label: "Job & Compensation",   soon: true },

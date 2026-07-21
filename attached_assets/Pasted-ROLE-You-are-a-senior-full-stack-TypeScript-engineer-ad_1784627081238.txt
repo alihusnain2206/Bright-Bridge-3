@@ -1,0 +1,163 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer adding employee 
+photo support across BrightBridge 
+Assist.
+
+SCOPE BOUNDARY:
+This task adds photo upload + display 
+only. Do NOT touch Rollfi sync, 
+payroll, EasyTeam, tasks, or 
+compliance logic. The employees 
+table already has a photoUrl column 
+— no schema changes. Reuse the 
+existing document/file upload 
+infrastructure pattern for storage.
+
+---
+
+PART 1 — UPLOAD IN THE WIZARD 
+(Step 1)
+
+In the add-employee wizard Step 1 
+(Basic Info), add an OPTIONAL 
+"Profile Photo" field at the top:
+
+→ Circular preview (96px) showing 
+  either the chosen image or an 
+  initials placeholder generated 
+  from the entered first/last name
+→ "Upload Photo" button + drag/drop 
+  onto the circle
+→ Accept JPG/PNG/WebP, max 5MB
+→ Client-side: preview immediately; 
+  center-crop to square before 
+  upload (canvas resize to max 
+  512x512 to keep files small)
+→ Remove ("x") option to clear 
+  before submit
+→ NEVER required — employee 
+  creation must succeed without 
+  a photo
+
+On submit: upload the file, save 
+the URL to employee.photoUrl. If 
+upload fails, create the employee 
+anyway and show a non-blocking 
+toast "Photo upload failed — you 
+can add it from the profile."
+
+---
+
+PART 2 — UPLOAD/CHANGE FROM THE 
+PROFILE
+
+On /people/:employeeId header 
+avatar:
+→ Hover overlay (camera icon + 
+  "Change photo") for roles that 
+  can edit (owner, super_admin, 
+  hr-equivalent; managers/employees 
+  read-only for now)
+→ Click → small modal: current 
+  photo/placeholder preview, 
+  Upload (same validation/crop as 
+  wizard), Remove Photo (clears 
+  photoUrl, reverts to initials)
+→ Log activity: "Profile photo 
+  updated for [name]"
+
+---
+
+PART 3 — STORAGE & SERVING
+
+→ Store files with the same 
+  persistent storage approach as 
+  employee documents (uploads 
+  directory), path pattern 
+  /uploads/photos/{employeeId}.{ext}
+→ Overwrite on re-upload (single 
+  current photo per employee; no 
+  version history needed)
+→ Serve via a static/streaming 
+  route with basic auth check 
+  (same protection level as 
+  document downloads)
+→ Server-side validation: type + 
+  size again (never trust client)
+
+---
+
+PART 4 — DISPLAY EVERYWHERE 
+(single Avatar component!)
+
+Create/normalize ONE shared Avatar 
+component: 
+Avatar({ employee, size }) →
+→ photoUrl exists: render image 
+  (rounded-full, object-cover)
+→ else: initials on the existing 
+  deterministic color (hash of 
+  name — keep current behavior)
+→ Broken image URL: fall back to 
+  initials automatically (onError)
+
+Replace all current ad-hoc avatar 
+renderings with this component in:
+→ Employee Directory rows
+→ Profile header (large size)
+→ New Hires tab
+→ Manager column / manager link 
+  chips where an avatar shows
+→ Company task center rows 
+  (/people/onboarding) if avatars 
+  shown
+→ Any KPI/widget showing employee 
+  avatars (activity feed etc.)
+
+Sizes: sm 28px, md 40px, lg 96px.
+
+---
+
+RULES:
+1. TypeScript; no new tables; no 
+   new heavy dependencies (native 
+   canvas crop, no image libraries)
+2. Photos are company-scoped 
+   private assets — no public 
+   unauthenticated access
+3. All existing pages keep working 
+   when photoUrl is null (initials 
+   everywhere — current behavior 
+   preserved)
+4. Idempotent re-upload; removing 
+   photo never errors if already 
+   empty
+
+TESTING CHECKLIST:
+✅ Create employee WITH photo → 
+   shows in directory + profile
+✅ Create employee WITHOUT photo → 
+   initials placeholder everywhere 
+   (unchanged behavior)
+✅ Add photo later from profile 
+   header → appears in directory 
+   immediately
+✅ Remove photo → clean revert to 
+   initials
+✅ >5MB or wrong type rejected 
+   with clear message (client AND 
+   server)
+✅ Broken/missing file URL falls 
+   back to initials (no broken 
+   image icons)
+✅ Manager/employee roles don't 
+   see the change-photo overlay
+✅ Activity log entry on 
+   photo change
+✅ No regressions in wizard 
+   submission or Rollfi chain
+
+DELIVERABLE SUMMARY: files changed, 
+storage path used, where the shared 
+Avatar component replaced old 
+renderings.

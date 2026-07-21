@@ -1,0 +1,275 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer building the 
+Employee Profile 360° page for 
+BrightBridge Assist — the single 
+page that shows everything about 
+one employee.
+
+SCOPE BOUNDARY:
+This task builds /people/:employeeId 
+(Profile page) by ASSEMBLING existing 
+components plus three new tabs. Do 
+NOT rebuild TaskActionModal, 
+EmployeeDocuments, 
+EmergencyContactForm, 
+EmployeeStatusModals, the compliance 
+list, or the task list — REUSE them. 
+Do NOT touch Payroll processing, 
+Rollfi sync chain, EasyTeam, or the 
+wizard. No new database tables. New 
+endpoints only where listed (read-
+only).
+
+CORE PRINCIPLE: One component per 
+feature, many doors to it. The 
+existing per-employee pages become 
+redirects into profile tabs. No 
+duplicated feature code anywhere.
+
+---
+
+PART 1 — ROUTE & REDIRECTS
+
+New route: /people/:employeeId 
+with tab query param (?tab=overview 
+| job | onboarding | compliance | 
+documents | contacts | payroll | 
+activity). Default: overview.
+
+REDIRECTS (301-style client 
+redirects, keep old links working):
+→ /people/:id/tasks → 
+  /people/:id?tab=onboarding
+→ /people/:id/compliance → 
+  /people/:id?tab=compliance
+
+DIRECTORY WIRING:
+→ The "View" action and clicking 
+  the employee name/row in the 
+  directory → /people/:id
+→ Directory row actions "Onboarding 
+  Tasks", "View Compliance", 
+  "Documents", "Emergency Contacts" 
+  → deep-link to the matching tab
+→ Remove the "Employee Profiles" 
+  SOON pill from the People sub-nav; 
+  the item links to /people 
+  (directory) with hint text 
+  "Select an employee"
+
+---
+
+PART 2 — PROFILE HEADER (hero, 
+always visible above tabs)
+
+LEFT: large avatar (photoUrl or 
+initials), name (22px semibold), 
+employeeDisplayId + job title + 
+department in muted line, status 
+badge (existing styles: Active 
+green / Onboarding blue / On Leave 
+amber / Terminated red).
+
+MIDDLE: readiness chips row:
+→ Payroll Ready ✓/⏳ (payrollReady)
+→ HR Ready ✓/⏳ (hrReady)
+→ Compliance: small score ring 
+  (reuse ring component, 40px, 
+  tier colors) with % 
+→ Onboarding: "X% complete" chip 
+  (hide if 100%)
+
+RIGHT: actions:
+→ [Edit] → existing employee edit 
+  surface if present, else hidden
+→ Three-dot menu: Put On Leave / 
+  Terminate / Reactivate — REUSE 
+  EmployeeStatusModals with the 
+  existing status-dependent 
+  visibility rules
+→ Manager line: "Reports to 
+  [managerName]" — clickable → 
+  that manager's profile; "—" if 
+  none
+
+Terminated employees: header shows 
+red banner "Terminated on [date] — 
+[reason]"; tabs remain viewable 
+(read-only where applicable).
+
+---
+
+PART 3 — THE TABS
+
+TAB 1 — OVERVIEW (new, default):
+Two-column snapshot grid:
+→ Key Info card: email, phone, 
+  start date + tenure, employment 
+  type, worker type, work location, 
+  department, manager
+→ Compliance summary card: score 
+  ring + "X of Y required complete" 
+  + top 3 outstanding items, 
+  "View all →" switches to 
+  compliance tab
+→ Onboarding summary card (hide 
+  when 100%): progress bar + next 
+  3 pending required tasks with 
+  due dates, "View all →" → 
+  onboarding tab
+→ Recent Activity card: last 5 
+  entries for this employee, 
+  "View all →" → activity tab
+
+TAB 2 — JOB & PAY (new):
+→ Position card: job title, 
+  department, manager, employment 
+  type, worker type, start date, 
+  work location
+→ Compensation card: pay type, 
+  wage (from employee record; 
+  format $X.XX/hr or salary), 
+  overtime eligible, payment 
+  method. Data note chip "Synced 
+  with Rollfi" when rollfiWageId 
+  exists
+→ System card: employee display 
+  ID, internal ID, Rollfi status 
+  (kycStatus, rollfiUserId 
+  present?), EasyTeam sync status 
+  — read-only diagnostics
+
+TAB 3 — ONBOARDING:
+Render the EXISTING task list 
+content (summary cards + staged 
+task list + TaskActionModal) as a 
+component embedded in the tab. 
+Extract the current tasks page 
+body into a shared component 
+(EmployeeTasksPanel) if not 
+already one, and use it in BOTH 
+the old route (until redirect) 
+and this tab. All behavior 
+identical (complete, reopen, 
+notes, review mode).
+
+TAB 4 — COMPLIANCE:
+Same approach: extract compliance 
+page body into 
+EmployeeCompliancePanel and embed. 
+Smart routing (Complete via Task / 
+Mark Done evidence modal / View) 
+works identically inside the tab.
+
+TAB 5 — DOCUMENTS:
+Embed existing EmployeeDocuments 
+component.
+
+TAB 6 — EMERGENCY CONTACTS:
+Embed existing contacts list + 
+EmergencyContactForm (add/edit/
+delete).
+
+TAB 7 — PAYROLL (new, read-only):
+→ If no rollfiUserId: empty state 
+  "Payroll setup incomplete"
+→ Else: paystub list for this 
+  employee across processed 
+  periods — reuse the existing 
+  paystubs endpoint 
+  (/rollfi/paystubs) filtered to 
+  this employee: period, gross, 
+  taxes, net, with expandable 
+  breakdown reusing existing 
+  paystub rendering. If per-
+  employee filtering needs a 
+  helper, add read-only endpoint 
+  GET /api/employees/:id/paystubs 
+  that aggregates from existing 
+  Rollfi history calls (company-
+  scoped, cached per request)
+→ YTD summary line if derivable 
+  from available periods
+
+TAB 8 — ACTIVITY:
+Full activity timeline for this 
+employee: GET /api/activity-log
+?employeeId=xxx (add employeeId 
+filter support to the endpoint if 
+missing — read-only change). 
+Category dots, relative + absolute 
+timestamps, load-more pagination 
+(20/page).
+
+---
+
+PART 4 — PERFORMANCE RULES
+
+1. LAZY LOADING: fetch per-tab data 
+   only when the tab first opens 
+   (header + overview data on page 
+   load; other tabs on demand; 
+   cache per visit — switching back 
+   doesn't refetch)
+2. Single header fetch: one 
+   employee-detail request powers 
+   header + overview key info
+3. No cross-company access: 404/403 
+   if employee not in user's scope 
+   (owner scoped to own company; 
+   manager read-only view allowed 
+   for their company; employees 
+   cannot open other profiles)
+4. All existing behavior 
+   (completions, sync, score 
+   recalc, activation) unchanged — 
+   these are the same components
+5. Responsive: tabs scroll 
+   horizontally on mobile; header 
+   stacks
+6. TypeScript; existing styling 
+   patterns; brand colors; skeleton 
+   loaders per tab
+
+TESTING CHECKLIST:
+✅ Directory View/name click opens 
+   profile at Overview
+✅ Old /tasks and /compliance URLs 
+   redirect to the right tabs
+✅ Header shows Sophia: E1004, 
+   Preschool→(dept), status, 
+   readiness chips, compliance ring
+✅ On Leave/Terminate/Reactivate 
+   work from header (existing 
+   modals)
+✅ Onboarding tab: complete + 
+   reopen + notes all work; 
+   progress syncs with header chip
+✅ Compliance tab: smart routing 
+   intact; score ring updates 
+   after completion
+✅ Documents/Contacts tabs fully 
+   functional (upload completes 
+   tasks, first contact completes 
+   task)
+✅ Payroll tab shows paystubs for 
+   employees in processed periods; 
+   clean empty state otherwise
+✅ Activity tab paginates
+✅ Manager link navigates to 
+   manager's profile
+✅ Tab data loads lazily (verify 
+   network: no 8-call burst on 
+   open)
+✅ Manager-role user can VIEW 
+   profiles in their company; 
+   cannot see other companies
+✅ No regressions: directory, 
+   payroll pages, wizard, 
+   timesheets
+
+DELIVERABLE SUMMARY: files changed, 
+which panels were extracted to 
+shared components, any new read-
+only endpoints, redirect mappings, 
+per-tab data loading map.

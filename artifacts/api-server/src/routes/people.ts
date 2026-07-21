@@ -645,6 +645,85 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
   }
 });
 
+// ─── EMPLOYEE PHOTO ───────────────────────────────────────────
+
+const PHOTOS_DIR = path.join(process.cwd(), "uploads", "photos");
+fs.mkdirSync(PHOTOS_DIR, { recursive: true });
+
+const photoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (["image/jpeg","image/jpg","image/png","image/webp"].includes(file.mimetype)) cb(null, true);
+    else cb(new Error("Invalid file type. JPG, PNG, or WebP only."));
+  },
+});
+
+router.post("/employees/:id/photo", photoUpload.single("photo"), async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
+  const empId = String(req.params.id);
+  try {
+    const [emp] = await db.select().from(employees).where(eq(employees.id, empId));
+    if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    const ext = req.file.mimetype === "image/png" ? "png" : req.file.mimetype === "image/webp" ? "webp" : "jpg";
+    const filename = `${empId}.${ext}`;
+    const filepath = path.join(PHOTOS_DIR, filename);
+    // Remove old files for this employee (any extension)
+    for (const f of fs.readdirSync(PHOTOS_DIR)) {
+      if (f.startsWith(`${empId}.`)) fs.unlinkSync(path.join(PHOTOS_DIR, f));
+    }
+    fs.writeFileSync(filepath, req.file.buffer);
+    const photoUrl = `/api/employees/${empId}/photo`;
+    await db.update(employees).set({ photoUrl, updatedAt: new Date().toISOString() }).where(eq(employees.id, empId));
+    void logPeopleActivity({ companyId: emp.companyId, employeeId: empId, action: "employee.photo_updated", description: `Profile photo updated for ${emp.firstName} ${emp.lastName}`, category: "profile", performedBy: req.session.userId });
+    const [updated] = await db.select().from(employees).where(eq(employees.id, empId));
+    res.json({ employee: updated, photoUrl });
+  } catch (err) {
+    req.log.error({ err }, "Failed to upload photo");
+    res.status(500).json({ error: "Failed to upload photo" });
+  }
+});
+
+router.get("/employees/:id/photo", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const empId = String(req.params.id);
+  // Find file (any extension)
+  let found: string | null = null;
+  try {
+    for (const f of fs.readdirSync(PHOTOS_DIR)) {
+      if (f.startsWith(`${empId}.`)) { found = path.join(PHOTOS_DIR, f); break; }
+    }
+  } catch { /* no photos dir yet */ }
+  if (!found) { res.status(404).json({ error: "No photo" }); return; }
+  const ext = path.extname(found).slice(1);
+  const mime = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  res.setHeader("Content-Type", mime);
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  fs.createReadStream(found).pipe(res);
+});
+
+router.delete("/employees/:id/photo", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const empId = String(req.params.id);
+  try {
+    const [emp] = await db.select().from(employees).where(eq(employees.id, empId));
+    if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    // Delete file(s)
+    try {
+      for (const f of fs.readdirSync(PHOTOS_DIR)) {
+        if (f.startsWith(`${empId}.`)) fs.unlinkSync(path.join(PHOTOS_DIR, f));
+      }
+    } catch { /* ok */ }
+    await db.update(employees).set({ photoUrl: null, updatedAt: new Date().toISOString() }).where(eq(employees.id, empId));
+    void logPeopleActivity({ companyId: emp.companyId, employeeId: empId, action: "employee.photo_removed", description: `Profile photo removed for ${emp.firstName} ${emp.lastName}`, category: "profile", performedBy: req.session.userId });
+    res.json({ ok: true });
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete photo");
+    res.status(500).json({ error: "Failed to delete photo" });
+  }
+});
+
 // ─── DEPARTMENTS ──────────────────────────────────────────────
 
 router.get("/departments", async (req: Request, res: Response) => {
