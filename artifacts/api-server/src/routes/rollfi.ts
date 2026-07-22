@@ -2098,20 +2098,25 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       payrollData: JSON.stringify(payrollData),
     }, "Rollfi importRegularPayrollData request (initiate)");
 
+    const initiateImportBody = {
+      // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
+      // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
+      // clear them. This flag erases all existing line items for every employee included in this
+      // import and replaces them with exactly what we send, making each import a complete,
+      // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
+      method: "importRegularPayrollData",
+      companyId: rollfiCompany.rollfiCompanyId,
+      payPeriodId,
+      overwriteExistingLineItems: true,
+      payrollData,
+    };
+    req.log.info({ fullRollfiRequestBody: JSON.stringify(initiateImportBody) }, "outgoing importRegularPayrollData (initiate)");
+    if (initiateImportBody.overwriteExistingLineItems !== true) {
+      req.log.error({ overwriteExistingLineItems: initiateImportBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
+    }
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
-      {
-        // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
-        // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
-        // clear them. This flag erases all existing line items for every employee included in this
-        // import and replaces them with exactly what we send, making each import a complete,
-        // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
-        method: "importRegularPayrollData",
-        companyId: rollfiCompany.rollfiCompanyId,
-        payPeriodId,
-        overwriteExistingLineItems: true,
-        payrollData,
-      },
+      initiateImportBody,
       { headers: rollfiHeaders() }
     );
 
@@ -2259,20 +2264,25 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       payrollData: JSON.stringify(payrollData),
     }, "Rollfi importRegularPayrollData request (import)");
 
+    const importBody = {
+      // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
+      // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
+      // clear them. This flag erases all existing line items for every employee included in this
+      // import and replaces them with exactly what we send, making each import a complete,
+      // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
+      method: "importRegularPayrollData",
+      companyId: rollfiCompany.rollfiCompanyId,
+      payPeriodId,
+      overwriteExistingLineItems: true,
+      payrollData,
+    };
+    req.log.info({ fullRollfiRequestBody: JSON.stringify(importBody) }, "outgoing importRegularPayrollData (import)");
+    if (importBody.overwriteExistingLineItems !== true) {
+      req.log.error({ overwriteExistingLineItems: importBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
+    }
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
-      {
-        // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
-        // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
-        // clear them. This flag erases all existing line items for every employee included in this
-        // import and replaces them with exactly what we send, making each import a complete,
-        // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
-        method: "importRegularPayrollData",
-        companyId: rollfiCompany.rollfiCompanyId,
-        payPeriodId,
-        overwriteExistingLineItems: true,
-        payrollData,
-      },
+      importBody,
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: importResp.data }, "Rollfi importRegularPayrollData response (import)");
@@ -2600,25 +2610,30 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
         if (emp?.rollfiUserId) runAllRollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
       }
 
+      const runAllImportBody = {
+        // overwriteExistingLineItems: true — same as the per-company import endpoints;
+        // erases all existing line items per employee and replaces with this snapshot.
+        // Decision confirmed with Rollfi 2026-07-22.
+        method: "importRegularPayrollData",
+        companyId: rollfiCompany.rollfiCompanyId,
+        payPeriodId,
+        overwriteExistingLineItems: true,
+        payrollData: enrolledForRunAll.map((item) => {
+          const uid = ((item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined) ?? "";
+          const storeUser = runAllRollfiIdToUser.get(uid.toUpperCase());
+          const synced = storeUser?.employeeId ? store.getTimesheetEntry(storeUser.employeeId, runAllPeriodKey) : null;
+          const payHours = Math.round((synced?.approvedHours ?? 0) * 10000) / 10000;
+          // Explicit empty arrays — run-all carries no adjustments; omitting them preserves stale comp
+          return { userId: uid, basicPay: { payHours }, additionalCompensation: [], overTime: [] };
+        }),
+      };
+      req.log.info({ fullRollfiRequestBody: JSON.stringify(runAllImportBody) }, "outgoing importRegularPayrollData (run-all)");
+      if (runAllImportBody.overwriteExistingLineItems !== true) {
+        req.log.error({ overwriteExistingLineItems: runAllImportBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
+      }
       const importResp = await axios.post(
         `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
-        {
-          // overwriteExistingLineItems: true — same as the per-company import endpoints;
-          // erases all existing line items per employee and replaces with this snapshot.
-          // Decision confirmed with Rollfi 2026-07-22.
-          method: "importRegularPayrollData",
-          companyId: rollfiCompany.rollfiCompanyId,
-          payPeriodId,
-          overwriteExistingLineItems: true,
-          payrollData: enrolledForRunAll.map((item) => {
-            const uid = ((item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined) ?? "";
-            const storeUser = runAllRollfiIdToUser.get(uid.toUpperCase());
-            const synced = storeUser?.employeeId ? store.getTimesheetEntry(storeUser.employeeId, runAllPeriodKey) : null;
-            const payHours = Math.round((synced?.approvedHours ?? 0) * 10000) / 10000;
-            // Explicit empty arrays — run-all carries no adjustments; omitting them preserves stale comp
-            return { userId: uid, basicPay: { payHours }, additionalCompensation: [], overTime: [] };
-          }),
-        },
+        runAllImportBody,
         { headers: rollfiHeaders() }
       );
       assertNoRollfiError(importResp.data as Record<string, unknown>, "importRegularPayrollData");
