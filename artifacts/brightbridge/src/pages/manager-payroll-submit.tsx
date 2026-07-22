@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
@@ -232,6 +232,16 @@ export default function ManagerPayrollSubmit() {
       retry: false,
     });
 
+  // Adjustments are per-period overrides only — clear them whenever the active pay period rolls
+  // over so they never bleed into a different period (stale-comp guard, mirrors STEP 5).
+  useEffect(() => {
+    if (payPeriod?.payPeriodId) {
+      setAdjustments({});
+      setExpandedImportEmp(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payPeriod?.payPeriodId]);
+
   const { data: preview, isLoading: previewLoading, refetch: refetchPreview } =
     useQuery<PayrollPreview>({
       queryKey: ["submit-preview", companyId],
@@ -286,7 +296,7 @@ export default function ManagerPayrollSubmit() {
         adjustments: adjs, employeeHours,
       });
     },
-    onSuccess: (r) => { setImportResult(r); setPayrollResult(null); },
+    onSuccess: (r) => { setImportResult(r); setPayrollResult(null); setAdjustments({}); },
     onError:   (e) => { setImportResult({ success: false, payPeriodId: "", error: (e as Error).message }); },
   });
 

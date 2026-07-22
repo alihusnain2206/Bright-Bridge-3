@@ -2085,12 +2085,18 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
       const payHoursRounded = Math.round(payHours * 10000) / 10000;
       const entry: Record<string, unknown> = { userId: rollfiUid, basicPay: { payHours: payHoursRounded } };
-      if (adj?.additionalCompensation?.length) entry.additionalCompensation = adj.additionalCompensation;
-      if (adj?.overTime?.length) entry.overTime = adj.overTime;
+      // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
+      entry.additionalCompensation = adj?.additionalCompensation ?? [];
+      entry.overTime = adj?.overTime ?? [];
       payrollData.push(entry);
     }
 
-    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: payrollData.length }, "Rollfi importRegularPayrollData request (initiate)");
+    req.log.info({
+      rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId,
+      employeeCount: payrollData.length,
+      adjustmentsReceived: JSON.stringify(adjustments),
+      payrollData: JSON.stringify(payrollData),
+    }, "Rollfi importRegularPayrollData request (initiate)");
 
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
@@ -2229,12 +2235,18 @@ router.post("/rollfi/payroll/import", async (req, res) => {
 
       const payHoursRounded = Math.round(payHours * 10000) / 10000;
       const entry: Record<string, unknown> = { userId: rollfiUid, basicPay: { payHours: payHoursRounded } };
-      if (adj?.additionalCompensation?.length) entry.additionalCompensation = adj.additionalCompensation;
-      if (adj?.overTime?.length) entry.overTime = adj.overTime;
+      // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
+      entry.additionalCompensation = adj?.additionalCompensation ?? [];
+      entry.overTime = adj?.overTime ?? [];
       payrollData.push(entry);
     }
 
-    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId, employeeCount: payrollData.length }, "Rollfi importRegularPayrollData request (import)");
+    req.log.info({
+      rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId,
+      employeeCount: payrollData.length,
+      adjustmentsReceived: JSON.stringify(adjustments),
+      payrollData: JSON.stringify(payrollData),
+    }, "Rollfi importRegularPayrollData request (import)");
 
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
@@ -2260,6 +2272,10 @@ router.post("/rollfi/payroll/import", async (req, res) => {
           (e.userId as string).toUpperCase(),
           Math.round(((e.basicPay as { payHours: number }).payHours ?? 0) * 10000) / 10000,
         ])
+      );
+      // Track sent compensation so we can detect if Rollfi ignores an explicit empty array (STEP 4)
+      const sentCompMap = new Map<string, Array<unknown>>(
+        payrollData.map((e) => [(e.userId as string).toUpperCase(), (e.additionalCompensation as Array<unknown>) ?? []])
       );
       let verifyData: Record<string, unknown> | null = null;
       for (let attempt = 1; attempt <= 3; attempt++) {
@@ -2292,6 +2308,12 @@ router.post("/rollfi/payroll/import", async (req, res) => {
             if (Math.abs(sent - received) > 0.0001) {
               req.log.warn({ rollfiUserId: uid, sent, received }, "Post-import mismatch: Rollfi hours differ from what we sent");
               verifyMismatches.push({ rollfiUserId: uid, sent, received });
+            }
+            // STEP 4: check if Rollfi retained comp despite us sending an explicit empty array
+            const sentComp = sentCompMap.get(uid.toUpperCase()) ?? [];
+            const receivedComp = (vItem.additionalCompensations ?? vItem.additionalCompensation ?? []) as Array<unknown>;
+            if (sentComp.length === 0 && Array.isArray(receivedComp) && receivedComp.length > 0) {
+              req.log.warn({ rollfiUserId: uid, receivedComp: JSON.stringify(receivedComp) }, `ROLLFI RETAINED COMP DESPITE EMPTY ARRAY: ${uid}`);
             }
           }
           const grossPay    = Math.round(vItems.reduce((s, e) => s + Number(e.grossTotal ?? 0), 0) * 100) / 100;
@@ -2534,7 +2556,8 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
             const storeUser = runAllRollfiIdToUser.get(uid.toUpperCase());
             const synced = storeUser?.employeeId ? store.getTimesheetEntry(storeUser.employeeId, runAllPeriodKey) : null;
             const payHours = Math.round((synced?.approvedHours ?? 0) * 10000) / 10000;
-            return { userId: uid, basicPay: { payHours } };
+            // Explicit empty arrays — run-all carries no adjustments; omitting them preserves stale comp
+            return { userId: uid, basicPay: { payHours }, additionalCompensation: [], overTime: [] };
           }),
         },
         { headers: rollfiHeaders() }
