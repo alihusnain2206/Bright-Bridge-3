@@ -1870,11 +1870,15 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Use only period-specific approvals — never fall back to latest-per-employee.
-  // Carrying over approvals from a previous period sends stale hours to Rollfi.
-  const dbApprovals = companyId
+  // Preview is display-only: show period-specific approvals if they exist,
+  // otherwise fall back to the latest approval so the submit page shows meaningful hours.
+  // (The fallback does NOT apply to the actual import/initiate endpoints.)
+  const dbApprovalsByPeriod = companyId
     ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
     : [];
+  const dbApprovals = dbApprovalsByPeriod.length > 0
+    ? dbApprovalsByPeriod
+    : companyId ? await getLatestTimesheetApprovalsByCompany(companyId) : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
   const entries = allStaff.map((u) => {
