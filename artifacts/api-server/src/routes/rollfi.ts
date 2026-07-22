@@ -2284,7 +2284,16 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     }
 
     // ── Post-import verification ─────────────────────────────────────────────
-    // Rollfi processes imports asynchronously — retry up to 3× with 2s delay before comparing.
+    // overwriteExistingLineItems:true makes Rollfi process asynchronously
+    // ("Pending" status) instead of synchronously ("Ready"). For async imports
+    // we poll getUnProcessedPayPeriod until the period leaves "importInProgress",
+    // then fetch getPayPeriodDetails once. Fast path ("Ready") keeps the
+    // original 3 × 2 s loop unchanged.
+    const importStatus = ((importRaw?.importRegularPayrollLData as Record<string, unknown>)?.status as string) ?? "Ready";
+    const isAsync = importStatus === "Pending";
+    const maxAttempts = isAsync ? 15 : 3;
+    const pollDelayMs = isAsync ? 3000 : 2000;
+    req.log.info({ importStatus, isAsync, maxAttempts, pollDelayMs }, "Post-import verification: starting poll");
     let realTotals: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null = null;
     const verifyMismatches: Array<{ rollfiUserId: string; sent: number; received: number }> = [];
     let lineItems: Array<Record<string, unknown>> = [];
@@ -2300,8 +2309,27 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         payrollData.map((e) => [(e.userId as string).toUpperCase(), (e.additionalCompensation as Array<unknown>) ?? []])
       );
       let verifyData: Record<string, unknown> | null = null;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        await new Promise<void>((r) => setTimeout(r, 2000));
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        await new Promise<void>((r) => setTimeout(r, pollDelayMs));
+        if (isAsync) {
+          // For async imports, check whether the period has left "importInProgress" before
+          // fetching details — calling getPayPeriodDetails mid-import returns stale data.
+          try {
+            const statusResp = await axios.post(
+              `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+              { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId },
+              { headers: rollfiHeaders() }
+            );
+            const periods = ((statusResp.data as Record<string, unknown>)?.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+            const thisPeriod = periods.find((p) => p.payPeriodId === payPeriodId);
+            const periodStatus = (thisPeriod?.payPeriodStatus ?? "unknown") as string;
+            req.log.info({ attempt, maxAttempts, periodStatus }, "Post-import poll: period status");
+            if (periodStatus === "importInProgress") continue;
+          } catch (statusErr) {
+            req.log.warn({ attempt, statusErr }, "Post-import poll: status check failed — retrying");
+            continue;
+          }
+        }
         try {
           const vr = await axios.post(
             `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
@@ -2313,6 +2341,9 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         } catch (ve) {
           req.log.warn({ attempt, ve }, "Post-import getPayPeriodDetails attempt failed");
         }
+      }
+      if (!verifyData) {
+        req.log.warn({ maxAttempts, pollDelayMs }, "Post-import verification: timed out waiting for Rollfi async import — realTotals unavailable");
       }
       if (verifyData) {
         const vArr = (verifyData.payPeriod ?? []) as Array<Record<string, unknown>>;
