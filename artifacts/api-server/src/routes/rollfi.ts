@@ -1870,14 +1870,11 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  // Period-first lookup: try the exact pay period first, fall back to latest per employee
-  // only when no period-matched approvals exist (e.g. first run before any hours are approved).
-  const dbApprovalsByPeriod = companyId
+  // Use only period-specific approvals — never fall back to latest-per-employee.
+  // Carrying over approvals from a previous period sends stale hours to Rollfi.
+  const dbApprovals = companyId
     ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey)
     : [];
-  const dbApprovals = dbApprovalsByPeriod.length > 0
-    ? dbApprovalsByPeriod
-    : companyId ? await getLatestTimesheetApprovalsByCompany(companyId) : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
   const entries = allStaff.map((u) => {
@@ -2052,28 +2049,25 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
 
-    // Period-first lookup: exact pay period first, fall back to latest only if nothing found.
-    const dbApprovalsByPeriod1 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
-    const dbApprovals = dbApprovalsByPeriod1.length > 0
-      ? dbApprovalsByPeriod1
-      : await getLatestTimesheetApprovalsByCompany(companyId);
-    const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
+    // Use only period-specific approvals — never fall back to latest-per-employee.
+    // Carrying over approvals from a previous period sends stale hours to Rollfi.
+    const dbApprovals1 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
+    const approvalsByEmpId = new Map(dbApprovals1.map((a) => [a.employeeId, a]));
 
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
-      // Priority: frontend-supplied hours (what the manager reviewed on screen) > DB approval > store > 0
-      // frontendH takes highest priority because the submit page sends the exact hours the manager confirmed.
-      // DB approval / store are fallbacks for employees not represented in the frontend payload.
+      // Priority: frontend hours (manager-reviewed) > current-period DB approval > current-period store entry > 0
+      // Never use latest-approval fallback — stale approvals from prior periods must not bleed into this run.
       const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
       const approval = frontendH === undefined && u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
-      const synced = frontendH === undefined && !approval && u.employeeId
-        ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
+      const synced = frontendH === undefined && !approval && u.employeeId && periodKey
+        ? store.getTimesheetEntry(u.employeeId, periodKey)
         : null;
       const payHours = frontendH !== undefined ? frontendH : (approval ? approval.approvedHours : (synced ? synced.approvedHours : 0));
       if (frontendH !== undefined) req.log.info({ employeeId: u.employeeId, name: u.name, hours: frontendH }, "Using frontend-supplied hours (manager-reviewed)");
-      else if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours");
-      else if (!synced) req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours found — defaulting to 0h");
+      else if (approval) req.log.info({ employeeId: u.employeeId, name: u.name, hours: payHours, source: approval.source }, "Using DB-approved hours for period");
+      else req.log.warn({ employeeId: u.employeeId, name: u.name }, "No approved hours for this period — defaulting to 0h");
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
       if (adj?.additionalCompensation?.length) entry.additionalCompensation = adj.additionalCompensation;
       if (adj?.overTime?.length) entry.overTime = adj.overTime;
@@ -2246,20 +2240,18 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     if (onboardedStaff.length === 0) { res.status(400).json({ error: "No onboarded employees found" }); return; }
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
-    // Period-first lookup: exact pay period first, fall back to latest only if nothing found.
-    const dbApprovalsByPeriod2 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
-    const dbApprovals = dbApprovalsByPeriod2.length > 0
-      ? dbApprovalsByPeriod2
-      : await getLatestTimesheetApprovalsByCompany(companyId);
-    const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
+    // Use only period-specific approvals — never fall back to latest-per-employee.
+    // Carrying over approvals from a previous period sends stale hours to Rollfi.
+    const dbApprovals2 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
+    const approvalsByEmpId2 = new Map(dbApprovals2.map((a) => [a.employeeId, a]));
 
     const payrollData = onboardedStaff.map((u) => {
       const rollfiUserId = store.getRollfiEmployee(u.employeeId!)!.rollfiUserId;
       const adj = adjustments.find((a) => a.rollfiUserId === rollfiUserId);
       const frontendH = frontendHours.get(rollfiUserId.toUpperCase());
-      const approval = frontendH === undefined && u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
-      const synced = frontendH === undefined && !approval && u.employeeId
-        ? ((periodKey ? store.getTimesheetEntry(u.employeeId, periodKey) : undefined) ?? store.getLatestTimesheetEntry(u.employeeId, u.companyId))
+      const approval = frontendH === undefined && u.employeeId ? approvalsByEmpId2.get(u.employeeId) : undefined;
+      const synced = frontendH === undefined && !approval && u.employeeId && periodKey
+        ? store.getTimesheetEntry(u.employeeId, periodKey)
         : null;
       const payHours = frontendH !== undefined ? frontendH : (approval ? approval.approvedHours : (synced ? synced.approvedHours : 0));
       const entry: Record<string, unknown> = { userId: rollfiUserId, basicPay: { payHours } };
