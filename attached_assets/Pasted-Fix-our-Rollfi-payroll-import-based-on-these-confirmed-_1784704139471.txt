@@ -1,0 +1,58 @@
+Fix our Rollfi payroll import based on these confirmed findings. Make the
+changes in this order:
+
+STEP 1 — Discover the real field name (do this first):
+In the reconciliation block (~line 2347), the orphan detection fails because
+e.userId is undefined for items in payrollLineItems from getPayPeriodDetails.
+Add a log of JSON.stringify(lineItems0[0]) (or the full array) so we can see
+the actual field names Rollfi uses. Then update the orphan-detection code to
+read the correct identifier field. Handle both camelCase and other casings
+defensively, e.g.:
+  const uid = (e.userId ?? e.userID ?? e.employeeId ?? e.id) as string | undefined;
+Keep the log until we confirm the field.
+
+STEP 2 — Make Rollfi the source of truth for the import roster:
+In BOTH the initiate (~2143) and import (~2252) endpoints:
+1. FIRST call getPayPeriodDetails for the payPeriodId.
+2. Build the payrollData array from Rollfi's payrollLineItems list (using
+   the identifier field discovered in Step 1) — NOT from our in-memory
+   onboardedStaff list.
+3. For each Rollfi-enrolled employee, look up hours in our store by matching
+   rollfiUserId (case-insensitive). Merge in frontendHours, approvals, and
+   synced timesheet hours exactly as the current logic does.
+4. If we have NO record of that employee (e.g. store lost after restart),
+   include them anyway with basicPay: { payHours: 0 } and log a warning
+   "unknown Rollfi employee defaulted to 0 hours: <id>".
+5. DELETE the zeroHoursIds filtering — never exclude anyone from payrollData.
+   Every enrolled employee gets an explicit entry, with payHours: 0 if they
+   have no hours. Keep additionalCompensation/overTime merging as-is.
+
+STEP 3 — Remove the remove calls:
+Delete the removeUsersFromRegularPayPeriod calls from both initiate and
+import endpoints. They are no longer needed since everyone is imported with
+explicit hours.
+
+STEP 4 — Fix the run-all endpoint (~2613):
+1. Delete the addUsersToRegularPayPeriod call entirely (Rollfi auto-enrolls;
+   this call only produces "already has a payroll line item" errors).
+2. Change the default `payHours = synced ? synced.approvedHours : 75` to
+   default to 0, never 75.
+3. Build its roster from getPayPeriodDetails the same way as Step 2.
+
+STEP 5 — Handle partial success:
+After every importRegularPayrollData call, in addition to assertNoRollfiError:
+- Check for a validationWarning field anywhere in the response (top level or
+  nested). If present, log it at warn level with the userIds array, and
+  include it in our endpoint's JSON response as
+  { warning: { message, userIds } } so the frontend can show
+  "these employees were not updated".
+
+STEP 6 — Post-import verification:
+After import, re-fetch getPayPeriodDetails and compare each employee's hours
+in payrollLineItems against what we sent (4dp tolerance). Log any mismatch
+at warn level with both values. Note: import is async on Rollfi's side, so
+wait ~3 seconds (or retry the fetch up to 3 times with 2s delay) before
+comparing.
+
+Round all payHours to 4 decimal places before sending. Do not change the
+webhook endpoint.
