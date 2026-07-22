@@ -2372,12 +2372,15 @@ router.post("/rollfi/payroll/import", async (req, res) => {
               req.log.warn({ rollfiUserId: uid, sent, received }, "Post-import mismatch: Rollfi hours differ from what we sent");
               verifyMismatches.push({ rollfiUserId: uid, sent, received });
             }
-            // STEP 4: check if Rollfi retained comp despite us sending an explicit empty array
+            // STEP 4: always log comp state for every employee; ESCALATE on mismatch
             const sentComp = sentCompMap.get(uid.toUpperCase()) ?? [];
             const receivedComp = (vItem.additionalCompensations ?? vItem.additionalCompensation ?? []) as Array<unknown>;
+            req.log.info(
+              { rollfiUserId: uid, sentComp: JSON.stringify(sentComp), receivedComp: JSON.stringify(receivedComp) },
+              "Post-import comp: sent vs received"
+            );
             if (sentComp.length === 0 && Array.isArray(receivedComp) && receivedComp.length > 0) {
-              // This should no longer fire now that overwriteExistingLineItems: true is set.
-              // If it fires, the flag is not being honoured — escalate to Rollfi.
+              // If this fires, overwriteExistingLineItems:true is not being honoured — escalate to Rollfi.
               req.log.warn({ rollfiUserId: uid, receivedComp: JSON.stringify(receivedComp) }, `ROLLFI RETAINED COMP DESPITE EMPTY ARRAY + overwriteExistingLineItems:true — ESCALATE: ${uid}`);
             }
           }
