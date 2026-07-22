@@ -197,6 +197,53 @@ function extractValidationWarning(raw: Record<string, unknown>): { message?: str
   return null;
 }
 
+interface WipeResult {
+  wiped: string[];
+  warnings: { userId: string; message: string }[];
+}
+
+async function wipeAdditionalCompensations(
+  companyId: string,
+  payPeriodId: string,
+  userIds: string[],
+  log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }
+): Promise<WipeResult> {
+  const wiped: string[] = [];
+  const warnings: { userId: string; message: string }[] = [];
+  const BATCH = 3;
+  for (let i = 0; i < userIds.length; i += BATCH) {
+    const batch = userIds.slice(i, i + BATCH);
+    await Promise.all(
+      batch.map(async (userId) => {
+        try {
+          const r = await axios.post(
+            `${ROLLFI_BASE_URL}/payroll#removeAdditionalCompensations`,
+            { method: "removeAdditionalCompensations", companyId, payPeriodId, userId },
+            { headers: rollfiHeaders() }
+          );
+          const raw = r.data as Record<string, unknown>;
+          const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string | undefined) ?? "";
+          const isNothingToRemove = /no additional comp|nothing to remove|not found|no comp|does not exist/i.test(errMsg);
+          if (raw.error && isNothingToRemove) {
+            log.info({ userId, response: raw }, "comp wipe: nothing to remove (normal)");
+          } else if (raw.error) {
+            log.warn({ userId, response: raw }, "comp wipe: Rollfi error (continuing)");
+            warnings.push({ userId, message: errMsg || JSON.stringify(raw.error) });
+          } else {
+            log.info({ userId, response: raw }, "comp wipe");
+            wiped.push(userId);
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log.warn({ userId, err }, "comp wipe: HTTP error (continuing)");
+          warnings.push({ userId, message: msg });
+        }
+      })
+    );
+  }
+  return { wiped, warnings };
+}
+
 // ── Status ───────────────────────────────────────────────────
 
 router.get("/rollfi/status", (_req, res) => {
@@ -2114,6 +2161,12 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     if (initiateImportBody.overwriteExistingLineItems !== true) {
       req.log.error({ overwriteExistingLineItems: initiateImportBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
     }
+    const { warnings: compWipeWarnings } = await wipeAdditionalCompensations(
+      rollfiCompany.rollfiCompanyId,
+      payPeriodId,
+      payrollData.map((e) => e.userId as string),
+      req.log
+    );
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
       initiateImportBody,
@@ -2153,7 +2206,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       actorName: actor2?.name,
       actorRole: actor2?.role,
     });
-    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(validationWarning ? { warning: validationWarning } : {}), ...raw });
+    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(validationWarning ? { warning: validationWarning } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
@@ -2280,6 +2333,12 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     if (importBody.overwriteExistingLineItems !== true) {
       req.log.error({ overwriteExistingLineItems: importBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
     }
+    const { warnings: compWipeWarnings } = await wipeAdditionalCompensations(
+      rollfiCompany.rollfiCompanyId,
+      payPeriodId,
+      payrollData.map((e) => e.userId as string),
+      req.log
+    );
     const importResp = await axios.post(
       `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
       importBody,
@@ -2396,7 +2455,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log.warn({ verifyErr }, "Post-import verification failed — realTotals unavailable");
     }
 
-    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}) });
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");
@@ -2634,6 +2693,12 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       if (runAllImportBody.overwriteExistingLineItems !== true) {
         req.log.error({ overwriteExistingLineItems: runAllImportBody.overwriteExistingLineItems }, "FLAG MISSING FROM OUTGOING BODY");
       }
+      const { warnings: compWipeWarnings } = await wipeAdditionalCompensations(
+        rollfiCompany.rollfiCompanyId,
+        payPeriodId,
+        runAllImportBody.payrollData.map((e) => e.userId as string),
+        req.log
+      );
       const importResp = await axios.post(
         `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
         runAllImportBody,
@@ -2649,7 +2714,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       );
       assertNoRollfiError(initiateResp.data as Record<string, unknown>, "initiatePayroll");
 
-      results.push({ companyId: company.id, companyName: company.name, success: true, payPeriodId, payPeriod: period });
+      results.push({ companyId: company.id, companyName: company.name, success: true, payPeriodId, payPeriod: period, ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
     } catch (err) {
       results.push({ companyId: company.id, companyName: company.name, success: false, error: err instanceof Error ? err.message : String(err) });
     }

@@ -1,0 +1,77 @@
+ROLE: You are a senior full-stack TypeScript engineer working on BrightBridge
+Assist's Rollfi payroll integration in rollfi.ts.
+
+CONTEXT: Rollfi's importRegularPayrollData ACCUMULATES additionalCompensation
+across imports — it never replaces or clears entries. The undocumented
+overwriteExistingLineItems flag we were told to use has no effect (proven via
+wire-level logging; escalated to Rollfi). We are implementing the documented
+workaround: explicitly remove each employee's compensation before importing.
+
+SCOPE BOUNDARY — DO NOT TOUCH:
+- The payrollData construction logic (roster from getPayPeriodDetails,
+  explicit payHours: 0, explicit comp/overTime arrays) — it is correct
+- The fullRollfiRequestBody logging, FLAG MISSING assertion, and
+  "Post-import comp: sent vs received" verification — keep all of it
+- EasyTeam integration, wizard Rollfi chain, webhooks, any other page/route
+- Keep overwriteExistingLineItems: true in the import bodies (harmless;
+  will silently start working if Rollfi ever fixes it)
+
+THE CHANGE — add a pre-import comp wipe in ALL THREE import call sites
+(initiate, import, run-all):
+
+1. Immediately BEFORE each importRegularPayrollData call, loop over the
+   employees in the already-built payrollData array. For each employee,
+   call Rollfi's removeAdditionalCompensations endpoint:
+   POST ${ROLLFI_BASE_URL}/payroll#removeAdditionalCompensations
+   {
+     "method": "removeAdditionalCompensations",
+     "companyId": <rollfiCompanyId>,
+     "payPeriodId": <payPeriodId>,
+     "userId": <employee userId>
+     // NO compensationDescription — per Rollfi docs, omitting it removes
+     // ALL additionalCompensations for that user in the pay period
+   }
+   with rollfiHeaders().
+
+2. These calls MUST be awaited and error-checked — never fire-and-forget:
+   - Run them sequentially or with limited concurrency (max 3 parallel)
+   - Log each response: req.log.info({ userId, response }, "comp wipe")
+   - Treat a Rollfi { error } body OR HTTP error as follows: if the message
+     indicates there was simply nothing to remove / user has no comp,
+     log at info and continue (that is a normal case). For any other error,
+     log at warn with the full response and STILL continue to the import —
+     but include the affected userIds in a compWipeWarnings array.
+   - Only after ALL wipe calls have settled does the import fire.
+
+3. Extract this as ONE shared helper function, e.g.
+   wipeAdditionalCompensations(companyId, payPeriodId, userIds, log),
+   returning { wiped: string[], warnings: {userId, message}[] } — and call
+   it from all three sites. One implementation, three doors. Do not
+   duplicate the loop three times.
+
+4. Include compWipeWarnings (if non-empty) in the endpoint's JSON response
+   so the frontend can surface "comp may not have been reset for: X, Y".
+
+5. The existing post-import verification ("Post-import comp: sent vs
+   received") stays exactly as is — it is now our proof the wipe worked.
+   Expected behavior after this change: received comp should EXACTLY match
+   sent comp for every employee, every import. The RETAINED COMP ESCALATE
+   warning should never fire again; if it does, that's a real alert.
+
+TESTING CHECKLIST (run after implementing):
+- tsc --noEmit clean
+- Trigger import with Bonus $100 for John Smith (B7B17DF6...) → logs show
+  6 comp-wipe calls, then import; verification shows sent=[Bonus 100],
+  received=[Bonus 100]
+- Trigger import with comp — none — for John → verification shows sent=[],
+  received=[] and NO ESCALATE warning
+- Trigger import switching John to Commission $50 → received shows ONLY
+  Commission $50, no Bonus
+- Confirm hours still import correctly for all employees (no regression)
+
+DELIVERABLE SUMMARY: files changed, the helper function signature, where it
+is called from, and confirmation of each testing checklist item.
+
+REMINDER: This is the dev workspace — after implementation and workspace
+testing, the user must click Publish for bright-bridge-3.replit.app to
+receive the change. State this at the end of your summary.
