@@ -2253,6 +2253,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     // Rollfi processes imports asynchronously — retry up to 3× with 2s delay before comparing.
     let realTotals: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null = null;
     const verifyMismatches: Array<{ rollfiUserId: string; sent: number; received: number }> = [];
+    let lineItems: Array<Record<string, unknown>> = [];
     try {
       const sentMap = new Map<string, number>(
         payrollData.map((e) => [
@@ -2280,6 +2281,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         const vPd = vArr[0] as Record<string, unknown> | undefined;
         if (vPd) {
           const vItems = (vPd.payrollLineItems ?? []) as Array<Record<string, unknown>>;
+          lineItems = vItems;
           req.log.info({ verifyItemCount: vItems.length, sampleItem: JSON.stringify(vItems[0]) }, "Post-import verification: payrollLineItems sample");
           for (const vItem of vItems) {
             const uid = (vItem.userId ?? vItem.userID ?? vItem.employeeId ?? vItem.id) as string | undefined;
@@ -2304,7 +2306,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log.warn({ verifyErr }, "Post-import verification failed — realTotals unavailable");
     }
 
-    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}) });
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}) });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");
