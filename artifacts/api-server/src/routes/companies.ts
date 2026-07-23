@@ -432,7 +432,7 @@ router.get("/companies/:companyId/users/:userId", async (req: Request, res: Resp
 
 // ── PUT /api/companies/:companyId/users/:userId (update creds) ─
 
-router.put("/companies/:companyId/users/:userId", async (req: Request, res: Response) => {
+async function handleUpdateCompanyUser(req: Request, res: Response) {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const caller = store.getUserById(req.session.userId);
   if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
@@ -448,10 +448,8 @@ router.put("/companies/:companyId/users/:userId", async (req: Request, res: Resp
   if (Object.keys(updates).length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
 
   try {
-    // Update in-memory store
     store.updateTestUser(userId, updates as Parameters<typeof store.updateTestUser>[1]);
 
-    // Persist to DB — upsert so it works whether the record is in DB or not
     await db.insert(userAccounts).values({
       id: userId, name: name ?? "", email: email ?? "", password: password ?? "",
       role: "manager", companyId: String(req.params.companyId), createdAt: new Date().toISOString(),
@@ -461,7 +459,6 @@ router.put("/companies/:companyId/users/:userId", async (req: Request, res: Resp
       set: { ...updates },
     });
 
-    // Re-fetch updated user from store to return
     const updated = store.getTestUserById(userId);
     if (updated) {
       const { password: _p, ...safe } = updated;
@@ -474,7 +471,10 @@ router.put("/companies/:companyId/users/:userId", async (req: Request, res: Resp
     req.log.error({ err }, "Failed to update user credentials");
     res.status(500).json({ error: "Failed to update user" });
   }
-});
+}
+
+router.put("/companies/:companyId/users/:userId", (req, res) => { void handleUpdateCompanyUser(req, res); });
+router.patch("/companies/:companyId/users/:userId", (req, res) => { void handleUpdateCompanyUser(req, res); });
 
 // ── GET /api/employees ───────────────────────────────────────
 
