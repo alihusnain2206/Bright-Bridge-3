@@ -161,6 +161,7 @@ export const employees = pgTable("employees", {
   rollfiWageId:      text("rollfi_wage_id"),
   rollfiOnboardedAt: text("rollfi_onboarded_at"),
   kycStatus:         text("kyc_status").default("not_started"),
+  rollfiAccountStatus: text("rollfi_account_status"),
   bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
   w4Submitted:       boolean("w4_submitted").notNull().default(false),
   // EasyTeam

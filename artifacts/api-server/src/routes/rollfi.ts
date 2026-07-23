@@ -3200,11 +3200,17 @@ function resolveCompanyId(rollfiCompanyId: string | null): string | null {
 // POST /rollfi/webhook — public, called directly by Rollfi
 router.post("/rollfi/webhook", async (req, res) => {
   const body = req.body as Record<string, unknown>;
+
+  // Rollfi nests the event type at body.trigger.eventType — check that first,
+  // then fall back to legacy flat fields for other event shapes.
+  const trigger = body.trigger as Record<string, unknown> | undefined;
   const eventType =
+    (trigger?.eventType as string) ||
     (body.event as string) ||
     (body.type as string) ||
     (body.eventType as string) ||
     "unknown";
+
   const rollfiCompanyId =
     (body.companyId as string) || (body.company_id as string) || null;
   const payPeriodId =
@@ -3236,8 +3242,117 @@ router.post("/rollfi/webhook", async (req, res) => {
     req.log.warn({ err }, "Failed to persist Rollfi webhook event");
   }
 
+  // Write-back: on employee status events, update kyc_status + rollfi_account_status in DB.
+  // Any write failure returns 200 anyway — never crash the webhook endpoint.
+  if (eventType === "employee.employeestatus.update") {
+    try {
+      type WebhookUser = {
+        userId?: string;
+        kycStatus?: string;
+        status?: { userStatus?: string };
+        bankAccounts?: Array<{ status?: string }>;
+      };
+      type WebhookPayloadEntry = { user?: WebhookUser[] };
+      const payloadArr = (body.payload as WebhookPayloadEntry[] | undefined) ?? [];
+      const users: WebhookUser[] = payloadArr.flatMap((p) => p.user ?? []);
+
+      for (const u of users) {
+        if (!u.userId) continue;
+        const [emp] = await db
+          .select({ id: employeesTable.id, firstName: employeesTable.firstName, lastName: employeesTable.lastName })
+          .from(employeesTable)
+          .where(eq(employeesTable.rollfiUserId, u.userId));
+        if (!emp) {
+          req.log.warn({ rollfiUserId: u.userId }, "Rollfi webhook: no employee found for userId — skipping write-back");
+          continue;
+        }
+        const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+        if (u.kycStatus !== undefined) updates.kycStatus = u.kycStatus;
+        if (u.status?.userStatus !== undefined) updates.rollfiAccountStatus = u.status.userStatus;
+        await db.update(employeesTable).set(updates).where(eq(employeesTable.id, emp.id));
+        req.log.info(
+          { employeeId: emp.id, name: `${emp.firstName} ${emp.lastName}`, kycStatus: u.kycStatus, userStatus: u.status?.userStatus },
+          "Rollfi webhook: wrote back employee status"
+        );
+      }
+    } catch (writeErr) {
+      req.log.warn({ writeErr }, "Rollfi webhook write-back failed — returning 200 anyway");
+    }
+  }
+
   req.log.info({ eventType, rollfiCompanyId, payPeriodId }, "Rollfi webhook received");
   res.json({ received: true });
+});
+
+// POST /rollfi/admin/seed-statuses — one-time sync: fetch live Rollfi status for all
+// employees across all Rollfi-onboarded companies and write kycStatus + userStatus back.
+// ADDITIVE only: never changes employee status, payroll_ready, or lifecycle fields.
+router.post("/rollfi/admin/seed-statuses", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin required" }); return; }
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+
+  type RollfiUser = { userId: string; kycStatus?: string; status?: { userStatus?: string } };
+
+  const allCompanies = await db.select().from(companiesTable);
+  const rollfiCompanies = allCompanies.filter((c) => c.rollfiCompanyId);
+
+  const report: Array<{
+    company: string;
+    companyId: string;
+    employees: Array<{ name: string; rollfiUserId: string; kycBefore: string | null; kycAfter: string | null; statusBefore: string | null; statusAfter: string | null; result: string }>;
+    error?: string;
+  }> = [];
+
+  for (const company of rollfiCompanies) {
+    const companyReport: (typeof report)[0] = { company: company.name, companyId: company.id, employees: [] };
+    try {
+      const r = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getUsers`,
+        { method: "getUsers", companyId: company.rollfiCompanyId },
+        { headers: rollfiHeaders() }
+      );
+      const rollfiUsers: RollfiUser[] = ((r.data as { users?: RollfiUser[] }).users ?? []);
+      req.log.info({ companyId: company.id, count: rollfiUsers.length }, "Seed: fetched Rollfi users");
+
+      const localEmps = await db.select().from(employeesTable).where(eq(employeesTable.companyId, company.id));
+
+      for (const emp of localEmps) {
+        if (!emp.rollfiUserId) continue;
+        const ru = rollfiUsers.find((u) => u.userId === emp.rollfiUserId);
+        if (!ru) {
+          companyReport.employees.push({ name: `${emp.firstName} ${emp.lastName}`, rollfiUserId: emp.rollfiUserId, kycBefore: emp.kycStatus, kycAfter: null, statusBefore: emp.rollfiAccountStatus ?? null, statusAfter: null, result: "not_found_in_rollfi" });
+          continue;
+        }
+        const newKyc = ru.kycStatus ?? emp.kycStatus;
+        const newUserStatus = ru.status?.userStatus ?? emp.rollfiAccountStatus;
+        await db.update(employeesTable).set({
+          kycStatus: newKyc ?? undefined,
+          rollfiAccountStatus: newUserStatus ?? undefined,
+          updatedAt: new Date().toISOString(),
+        }).where(eq(employeesTable.id, emp.id));
+        companyReport.employees.push({
+          name: `${emp.firstName} ${emp.lastName}`,
+          rollfiUserId: emp.rollfiUserId,
+          kycBefore: emp.kycStatus,
+          kycAfter: newKyc ?? null,
+          statusBefore: emp.rollfiAccountStatus ?? null,
+          statusAfter: newUserStatus ?? null,
+          result: "updated",
+        });
+      }
+    } catch (err) {
+      const e = err as { response?: { data: unknown } };
+      companyReport.error = String(e.response?.data ?? err);
+      req.log.error({ err, companyId: company.id }, "Seed: getUsers failed for company");
+    }
+    report.push(companyReport);
+  }
+
+  res.json({ seeded: true, companiesProcessed: rollfiCompanies.length, report });
 });
 
 // ── Activity feed helpers ─────────────────────────────────────

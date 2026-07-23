@@ -1,0 +1,42 @@
+APPROVED — final scope after production verification. Implement Steps 1–6
+plus the two additions below, then STOP for review before UI (Steps 7–10).
+
+DROPPED (production data verified healthy): rollfi_user_id backfill;
+93-event replay (dev-only data); any historical status/lifecycle repair.
+
+Steps 1–6 as planned: webhook trigger.eventType fix; rollfi_account_status
+migration; webhook write-back (unknown userId → log warning, return 200,
+never crash); [].every() guard; remove line 637 hardcoded active; I-9
+added to payrollReady gate.
+
+ADDITION A — WEBHOOK DESTINATION CHECK (critical): dev received 93 real
+Rollfi events; production received ~none. Determine what webhook URL is
+registered with Rollfi (check Rollfi config/API if available, else report
+what URL our /api/rollfi/webhook is reachable at in each environment and
+what the sandbox has configured). If it points at the dev workspace,
+report exactly what must change so PRODUCTION
+(bright-bridge-3.replit.app/api/rollfi/webhook) receives events. Do not
+change the registration without telling me first — Rollfi may need to do
+it on their side.
+
+ADDITION B — ONE-TIME STATUS SEED (replaces the dead replay): after the
+migration + write-back exist, run a guarded one-time sync: for each
+company with a rollfiCompanyId, call getUsers and write current kycStatus
++ userStatus into kyc_status + rollfi_account_status for matched
+employees (match by rollfi_user_id). ADDITIVE only — no status/
+payroll_ready/lifecycle changes. Report per-company results (e.g. Hannah:
+not_started → passed / Active).
+
+Confirmed decisions: no historical repair (line 637 fix = new employees
+only; just report the active-with-pending-tasks list); employees with
+null rollfi_user_id show the Rollfi gate as "Not set up / N/A", never
+blocking; I-9 flipping existing employees to not-ready is expected.
+
+TESTING (before UI phase): fresh employee stays "onboarding"; seed sync
+shows Hannah passed/Active in DB; zero-required-tasks employee doesn't
+auto-activate; payrollReady=false where I-9 incomplete; webhook with
+unknown userId returns 200 + warning; tsc clean.
+
+DELIVERABLE: files changed, migration, seed sync report, webhook
+destination findings, active-with-pending-tasks report.
+REMINDER: Publish required for production.

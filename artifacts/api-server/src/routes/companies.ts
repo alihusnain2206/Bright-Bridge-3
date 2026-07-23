@@ -634,7 +634,6 @@ router.post("/employees", async (req: Request, res: Response) => {
       rollfiOnboardedAt: rollfiSynced ? now : undefined,
       syncStatus,
       lastSyncError: syncError,
-      status: "active",
       updatedAt: new Date().toISOString(),
     }).where(eq(employees.id, employeeId));
 

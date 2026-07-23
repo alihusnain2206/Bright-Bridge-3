@@ -277,7 +277,7 @@ export async function calculateComplianceScore(employeeId: string): Promise<numb
 export async function calculateReadinessFlags(employeeId: string) {
   const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
   const done = (type: string) => items.some((i) => i.type === type && i.status === "completed");
-  const payrollReady   = done("w4") && done("direct_deposit");
+  const payrollReady   = done("w4") && done("direct_deposit") && done("i9");
   const hrReady        = done("i9") && done("handbook") && done("policy");
   const complianceReady = done("background_check");
   const firstPayrollReady = payrollReady && hrReady;
@@ -910,7 +910,8 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
     // Check completion, update readiness + progress
     const allTasks = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, task.employeeId));
     const progress = Math.round((allTasks.filter((t) => t.status === "completed" || t.status === "skipped").length / allTasks.length) * 100);
-    const allRequiredDone = allTasks.filter((t) => t.isRequired).every((t) => t.status === "completed" || t.status === "skipped");
+    const requiredTasks = allTasks.filter((t) => t.isRequired);
+    const allRequiredDone = requiredTasks.length > 0 && requiredTasks.every((t) => t.status === "completed" || t.status === "skipped");
     const flags = await calculateReadinessFlags(task.employeeId);
     const score = await calculateComplianceScore(task.employeeId);
 
