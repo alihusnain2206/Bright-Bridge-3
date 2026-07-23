@@ -548,16 +548,20 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
     try {
       const [companyRec] = await db.select().from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, emp.companyId));
       const [empRec]     = await db.select().from(rollfiEmployeeRecords).where(eq(rollfiEmployeeRecords.employeeId, emp.id));
-      if (companyRec && empRec) {
+      const storeRollfiEmp = !empRec  ? store.getRollfiEmployee(emp.id)       : null;
+      const storeRollfiCo  = !companyRec ? store.getRollfiCompany(emp.companyId) : null;
+      const rollfiCompanyId = companyRec?.rollfiCompanyId ?? storeRollfiCo?.rollfiCompanyId;
+      const rollfiWageId    = empRec?.rollfiWageId        ?? storeRollfiEmp?.rollfiWageId ?? "";
+      if (rollfiCompanyId) {
         const wageInDollars = (emp.hourlyWage ?? 0) / 100;
         const r = await axios.post(
           `${ROLLFI_BASE_URL}/adminPortal#updateUserWage`,
           {
             method: "updateUserWage",
             userWage: {
-              companyId: companyRec.rollfiCompanyId,
+              companyId: rollfiCompanyId,
               userId: rollfiUserId,
-              userWageId: empRec.rollfiWageId ?? "",
+              userWageId: rollfiWageId,
               wageRate: wageInDollars,
               paymentType: "Regular",
               wageBasis: "Per Hour",

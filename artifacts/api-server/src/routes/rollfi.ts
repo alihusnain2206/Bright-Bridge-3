@@ -1686,6 +1686,80 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
   });
 });
 
+// ── Repair wages for all store-based employees with Rollfi records ──
+// One-shot repair: pushes correct hourlyWage (in dollars) from our store to Rollfi
+// for every store employee that has been onboarded. Safe to call repeatedly.
+
+router.post("/rollfi/repair-store-wages", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+  const headers = rollfiHeaders();
+  const allUsers = store.getAllStaffUsers().filter(u => u.employeeId && u.role === "employee");
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const u of allUsers) {
+    const rollfiRec = store.getRollfiEmployee(u.employeeId!);
+    if (!rollfiRec?.rollfiUserId) continue;
+
+    const rollfiUserId  = rollfiRec.rollfiUserId;
+    const wageRateDollars = (u.hourlyWage ?? 1500) / 100;
+    const rollfiCompany = store.getRollfiCompany(u.companyId);
+    if (!rollfiCompany) continue;
+
+    let resolvedWageId = rollfiRec.rollfiWageId;
+    if (!resolvedWageId) {
+      try {
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
+          { method: "getUserWage", userId: rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
+          { headers }
+        );
+        req.log.info({ rollfiResponse: r.data }, "repair-store-wages: getUserWage response");
+        const raw = r.data as Record<string, unknown>;
+        const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
+          : raw.userWageId ? [raw] : [];
+        const active = wages.find(w => (w.status as string)?.toLowerCase() !== "inactive") ?? wages[0];
+        resolvedWageId = (active?.userWageId ?? active?.id) as string | undefined;
+      } catch (e) {
+        req.log.warn({ e, rollfiUserId }, "repair-store-wages: getUserWage failed");
+      }
+    }
+
+    const requestBody = {
+      method: "updateUserWage",
+      userWage: {
+        companyId: rollfiCompany.rollfiCompanyId,
+        userId: rollfiUserId,
+        userWageId: resolvedWageId ?? "",
+        wageRate: wageRateDollars,
+        wageBasis: "Per Hour",
+        workerType: "W2",
+        differentialPay: "No",
+        userType: "Paid by the hour",
+        employmentStatus: "Full Time (30+ Hours per week)",
+        userRefTaxExempt: "No, this employee is not tax exempt",
+        paymentMethod: "Direct Deposit",
+      },
+    };
+    req.log.info({ rollfiUserId, name: u.name, requestBody: JSON.stringify(requestBody) }, "repair-store-wages: updateUserWage request");
+
+    try {
+      const r = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#updateUserWage`, requestBody, { headers });
+      req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r.data }, "repair-store-wages: updateUserWage response");
+      const raw = r.data as Record<string, unknown>;
+      const errMsg = (raw.error as Record<string, unknown> | undefined)?.message as string | undefined;
+      results.push({ name: u.name, rollfiUserId, wageRateDollars, success: !errMsg, error: errMsg ?? null, rollfiResponse: raw });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      req.log.warn({ rollfiUserId, name: u.name, err: e }, "repair-store-wages: updateUserWage HTTP error");
+      results.push({ name: u.name, rollfiUserId, wageRateDollars, success: false, error: msg });
+    }
+  }
+
+  res.json({ repaired: results.filter(r => r.success).length, total: results.length, results });
+});
+
 router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
   if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
