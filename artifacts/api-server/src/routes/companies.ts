@@ -67,7 +67,7 @@ async function ensureFullOnboarding(
     const workerType = payScheduleParams?.workerType === "1099-NEC" ? "1099" : "W2";
     await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
       method: "addPaySchedule",
-      paySchedule: { companyId: rollfiCompanyId, workerType, standardWorkingHours: 8, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated" },
+      paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated" },
     }, { headers: rollfiHeaders() });
     log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType }, "Pay schedule added to Rollfi");
   } catch (e) { log.warn({ e }, "addPaySchedule failed"); }
@@ -497,8 +497,12 @@ router.get("/employees/:employeeId", async (req: Request, res: Response) => {
 router.post("/employees", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const caller = store.getUserById(req.session.userId);
-  if (!caller || (caller.role !== "super_admin" && caller.role !== "manager")) {
-    res.status(403).json({ error: "Super admin or manager access required" }); return;
+  if (!caller || (caller.role !== "super_admin" && caller.role !== "manager" && caller.role !== "owner")) {
+    res.status(403).json({ error: "Super admin, manager, or owner access required" }); return;
+  }
+  // Owners can only add employees to their own company
+  if (caller.role === "owner" && req.body?.companyId && req.body.companyId !== caller.companyId) {
+    res.status(403).json({ error: "Owners can only add employees to their own company" }); return;
   }
 
   const body = req.body as {

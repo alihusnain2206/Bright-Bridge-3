@@ -123,7 +123,7 @@ export default function ClientsNew() {
       const res = await fetch("/api/auth/create-manager", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: loginForm.name, email: loginForm.email, companyId, position: "Daycare Manager" }),
+        body: JSON.stringify({ name: loginForm.name, email: loginForm.email, companyId, position: "Daycare Manager", password: loginForm.password }),
       });
       const data = await res.json() as { name?: string; email?: string; password?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Failed to create login");
@@ -222,6 +222,7 @@ export default function ClientsNew() {
     try {
       const data = await runWithProgress();
       setCreated(data);
+      setShowLoginForm(true);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "An error occurred";
       // Keep the overlay open so the error is visible — the Retry button handles dismissal
@@ -268,28 +269,19 @@ export default function ClientsNew() {
             </div>
           </div>
 
-          {/* Manager login creation */}
-          <div className="px-8 py-5 border-t space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <KeyRound className="h-4 w-4 text-[#284362]" />
-                <p className="text-sm font-semibold text-gray-800">Create Manager Login</p>
-                <span className="text-xs text-gray-400">(optional)</span>
-              </div>
-              {!loginCreated && !showLoginForm && (
-                <Button size="sm" variant="outline" onClick={() => {
-                  setShowLoginForm(true);
-                  setLoginForm({ name: `${form.ownerFirstName} ${form.ownerLastName}`.trim(), email: form.ownerEmail, password: "" });
-                }} className="gap-1.5 text-xs">
-                  <UserPlus className="h-3.5 w-3.5" />Set up login
-                </Button>
-              )}
+          {/* Owner login creation — required next step */}
+          <div className="px-8 py-5 border-t space-y-4 bg-[#284362]/5 border-l-4 border-l-[#284362]">
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 text-[#284362]" />
+              <p className="text-sm font-bold text-[#284362]">Next Step: Create Owner Login</p>
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[#284362] text-white uppercase tracking-wide">Required</span>
             </div>
+            <p className="text-xs text-gray-600">The owner needs a login to access the company dashboard, add employees, and manage payroll.</p>
 
             {loginCreated ? (
               <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
                 <div className="flex items-center gap-2 text-emerald-700 font-semibold text-sm">
-                  <CheckCircle2 className="h-4 w-4" />Manager login created successfully
+                  <CheckCircle2 className="h-4 w-4" />Owner login created successfully
                 </div>
                 {[
                   { label: "Name", val: loginCreated.name, field: "name" },
@@ -351,7 +343,7 @@ export default function ClientsNew() {
             ) : null}
           </div>
 
-          <div className="px-8 py-5 border-t flex gap-3">
+          <div className="px-8 py-4 border-t flex gap-3">
             <Button onClick={() => navigate(`/clients/${created.id}/employees/new`)} className="flex-1 text-white border-0" style={{ background: ORANGE }}>
               Add First Employee →
             </Button>

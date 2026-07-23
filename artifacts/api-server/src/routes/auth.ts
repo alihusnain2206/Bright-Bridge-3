@@ -256,8 +256,8 @@ router.post("/auth/create-manager", async (req, res) => {
     return;
   }
 
-  const { name, email, companyId, position } = req.body as {
-    name?: string; email?: string; companyId?: string; position?: string;
+  const { name, email, companyId, position, password } = req.body as {
+    name?: string; email?: string; companyId?: string; position?: string; password?: string;
   };
 
   if (!name || !email || !companyId) {
@@ -274,12 +274,14 @@ router.post("/auth/create-manager", async (req, res) => {
   const existing = store.getUserByEmail(email);
   if (existing) { res.status(409).json({ error: "A user with that email already exists" }); return; }
 
-  const { user, password } = store.createManagerUser({
+  const { user, password: generatedPassword } = store.createManagerUser({
     name,
     email,
     position: position ?? "Daycare Manager",
     companyId,
+    password,
   });
+  const finalPassword = password ?? generatedPassword;
 
   const fullUser = store.getUserByEmail(email);
   if (fullUser) {
@@ -289,7 +291,7 @@ router.post("/auth/create-manager", async (req, res) => {
   }
 
   req.log.info({ userId: user.id, name, companyId }, "Owner account created by super_admin");
-  res.status(201).json({ ...user, password, loginEmail: email });
+  res.status(201).json({ ...user, password: finalPassword, loginEmail: email });
 });
 
 // ── Owner: create sub-role accounts for their company ────────
