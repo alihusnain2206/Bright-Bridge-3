@@ -65,16 +65,12 @@ async function ensureFullOnboarding(
     const gapDays = expectedGapDays[compensationFrequency] ?? 14;
     const fmtDate = (d: Date) => d.toISOString().split("T")[0];
     const today = new Date();
-    const payBeginDate = payScheduleParams?.payBeginDate ?? fmtDate(today);
-    // Validate/correct payDate: recompute if the date gap doesn't match the frequency
-    let payDate = payScheduleParams?.payDate ?? fmtDate(new Date(today.getTime() + gapDays * 86_400_000));
-    const receivedGap = (new Date(payDate).getTime() - new Date(payBeginDate).getTime()) / 86_400_000;
-    if (Math.abs(receivedGap - gapDays) > 2) {
-      // Gap doesn't match frequency — recompute from payBeginDate
-      payDate = fmtDate(new Date(new Date(payBeginDate).getTime() + gapDays * 86_400_000));
-      log.warn({ compensationFrequency, receivedGap, expectedGap: gapDays, correctedPayDate: payDate }, "payDate gap mismatch — corrected to match frequency");
-    }
+    // Always anchor to today: payBeginDate = today - gap, payDate = today
+    // Rollfi infers the period from the date gap and rejects future payDates
+    const payBeginDate = fmtDate(new Date(today.getTime() - gapDays * 86_400_000));
+    const payDate = fmtDate(today);
     const workerType = payScheduleParams?.workerType === "1099-NEC" ? "1099" : "W2";
+    log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType }, "ensureFullOnboarding: setting pay schedule");
     // Try update first (company may already have a schedule); fall back to add
     let scheduleSet = false;
     try {
@@ -83,14 +79,20 @@ async function ensureFullOnboarding(
         paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
       const updData = upd.data as Record<string, unknown>;
-      if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update" }, "Pay schedule set in Rollfi"); }
+      if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update", rollfiResponse: updData }, "Pay schedule set in Rollfi"); }
+      else { log.warn({ rollfiResponse: updData }, "updatePaySchedule returned error body, trying add"); }
     } catch (_) { /* fall through to add */ }
     if (!scheduleSet) {
-      await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
+      const add = await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
         method: "addPaySchedule",
         paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
-      log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "add" }, "Pay schedule set in Rollfi");
+      const addData = add.data as Record<string, unknown>;
+      if (addData.error) {
+        log.warn({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, rollfiResponse: addData }, "addPaySchedule returned error body — pay schedule NOT set");
+      } else {
+        log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "add", rollfiResponse: addData }, "Pay schedule set in Rollfi");
+      }
     }
   } catch (e) { log.warn({ e }, "addPaySchedule failed"); }
 }
