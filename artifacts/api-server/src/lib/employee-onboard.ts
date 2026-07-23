@@ -69,7 +69,7 @@ export async function syncEmployeeToIntegrations(
   if (rollfiCompany) {
     const r = await onboardEmployeeToRollfi(
       {
-        id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents,
+        id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents / 100,
         homeState: emp.homeState, w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
         w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
         stateW4Fields: emp.stateW4Fields,

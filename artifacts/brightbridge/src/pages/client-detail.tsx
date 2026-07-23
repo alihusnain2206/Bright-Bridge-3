@@ -114,8 +114,11 @@ function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalP
             </div>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-gray-500">Position</Label>
-            <Input value={position} onChange={(e) => setPosition(e.target.value)} className="h-8 text-sm" />
+            <Label className="text-xs text-gray-500">Role</Label>
+            <div className="flex items-center h-8 px-3 rounded-md border border-gray-200 bg-gray-50">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#284362]/10 text-[#284362] capitalize">{user.role}</span>
+              <span className="ml-2 text-xs text-gray-400">Read-only</span>
+            </div>
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-gray-500">New Password (leave blank to keep current)</Label>
