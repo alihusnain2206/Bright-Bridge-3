@@ -1032,6 +1032,74 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   });
 });
 
+// ── Fix pay schedule ─────────────────────────────────────────
+
+router.post("/rollfi/fix-pay-schedule", async (req, res) => {
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId, rollfiCompanyId: rawRollfiId, frequency: rawFrequency } = req.body as { companyId?: string; rollfiCompanyId?: string; frequency?: string };
+
+  // Allow passing rollfiCompanyId + frequency directly (useful for production repairs from dev)
+  let rollfiCompanyId: string | undefined = rawRollfiId;
+  let compensationFrequency = rawFrequency ?? "BiWeekly";
+
+  if (!rollfiCompanyId && companyId) {
+    const [dbCompany] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+    const rollfiRecord = store.getRollfiCompany(companyId);
+    rollfiCompanyId = dbCompany?.rollfiCompanyId || rollfiRecord?.rollfiCompanyId;
+    compensationFrequency = (dbCompany?.payFrequency as string | null) ?? compensationFrequency;
+  }
+
+  if (!rollfiCompanyId) {
+    res.status(400).json({ error: "Provide rollfiCompanyId directly, or a companyId with a known Rollfi mapping" });
+    return;
+  }
+  const gapDays: Record<string, number> = { Weekly: 7, BiWeekly: 14, SemiMonthly: 15, Monthly: 30 };
+  const gap = gapDays[compensationFrequency] ?? 14;
+  const fmtDate = (d: Date) => d.toISOString().split("T")[0];
+  const today = new Date();
+  const payBeginDate = fmtDate(new Date(today.getTime() - gap * 86_400_000));
+  const payDate = fmtDate(today);
+
+  req.log.info({ companyId, rollfiCompanyId, compensationFrequency, payBeginDate, payDate }, "fix-pay-schedule: attempting fix");
+  const headers = rollfiHeaders();
+  const results: Record<string, unknown> = {};
+
+  // Try update first (schedule may already exist)
+  try {
+    const upd = await axios.post(`${ROLLFI_BASE_URL}/payroll#updatePaySchedule`, {
+      method: "updatePaySchedule",
+      paySchedule: { companyId: rollfiCompanyId, workerType: "W2", compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
+    }, { headers });
+    results.updatePaySchedule = upd.data;
+    req.log.info({ rollfiResponse: upd.data }, "fix-pay-schedule: updatePaySchedule response");
+    if (!(upd.data as Record<string, unknown>).error) {
+      res.json({ ok: true, via: "update", compensationFrequency, payBeginDate, payDate, rollfiCompanyId, results });
+      return;
+    }
+  } catch (e) {
+    results.updateError = String(e);
+    req.log.warn({ e }, "fix-pay-schedule: updatePaySchedule failed, falling back to add");
+  }
+
+  // Fallback: addPaySchedule
+  try {
+    const add = await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
+      method: "addPaySchedule",
+      paySchedule: { companyId: rollfiCompanyId, workerType: "W2", compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
+    }, { headers });
+    results.addPaySchedule = add.data;
+    req.log.info({ rollfiResponse: add.data }, "fix-pay-schedule: addPaySchedule response");
+    res.json({ ok: true, via: "add", compensationFrequency, payBeginDate, payDate, rollfiCompanyId, results });
+  } catch (e) {
+    results.addError = String(e);
+    req.log.error({ e }, "fix-pay-schedule: both update and add failed");
+    res.status(500).json({ ok: false, error: "Both updatePaySchedule and addPaySchedule failed", results });
+  }
+});
+
 // ── Bank account linking ─────────────────────────────────────
 
 router.post("/rollfi/onboard/bank-account", async (req, res) => {

@@ -80,7 +80,7 @@ async function ensureFullOnboarding(
     try {
       const upd = await axios.post(`${ROLLFI_BASE_URL}/payroll#updatePaySchedule`, {
         method: "updatePaySchedule",
-        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated" },
+        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
       const updData = upd.data as Record<string, unknown>;
       if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update" }, "Pay schedule set in Rollfi"); }
@@ -88,7 +88,7 @@ async function ensureFullOnboarding(
     if (!scheduleSet) {
       await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
         method: "addPaySchedule",
-        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated" },
+        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
       log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "add" }, "Pay schedule set in Rollfi");
     }
