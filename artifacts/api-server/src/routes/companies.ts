@@ -32,7 +32,12 @@ function assertNoRollfiError(raw: Record<string, unknown>, label: string): void 
   }
 }
 
-async function ensureFullOnboarding(rollfiCompanyId: string, ein: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<void> {
+async function ensureFullOnboarding(
+  rollfiCompanyId: string,
+  ein: string,
+  log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void },
+  payScheduleParams?: { payFrequency: string; payBeginDate: string; payDate: string; workerType: string },
+): Promise<void> {
   try {
     await axios.post(`${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`, {
       method: "addKybInformation",
@@ -54,14 +59,17 @@ async function ensureFullOnboarding(rollfiCompanyId: string, ein: string, log: {
   } catch (e) { log.warn({ e }, "addCompanyBankAccount failed"); }
 
   try {
-    const today = new Date();
-    const payBeginDate = new Date(today.getTime() - 14 * 86400000);
-    const payDate = new Date(today.getTime() + 86400000);
-    const fmt = (d: Date) => d.toISOString().split("T")[0];
+    // Use user-selected pay schedule values if provided; fall back to reasonable defaults
+    const compensationFrequency = payScheduleParams?.payFrequency ?? "BiWeekly";
+    const payBeginDate = payScheduleParams?.payBeginDate ?? (() => { const d = new Date(); d.setDate(d.getDate() - 14); return d.toISOString().split("T")[0]; })();
+    const payDate = payScheduleParams?.payDate ?? (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.toISOString().split("T")[0]; })();
+    // Rollfi only accepts "W2" or "1099" — treat "Both" as "W2" for the primary schedule
+    const workerType = payScheduleParams?.workerType === "1099-NEC" ? "1099" : "W2";
     await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
       method: "addPaySchedule",
-      paySchedule: { companyId: rollfiCompanyId, workerType: "W2", standardWorkingHours: 8, compensationFrequency: "BiWeekly", payBeginDate: fmt(payBeginDate), payDate: fmt(payDate), paymentMode: "Self-Initiated" },
+      paySchedule: { companyId: rollfiCompanyId, workerType, standardWorkingHours: 8, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated" },
     }, { headers: rollfiHeaders() });
+    log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType }, "Pay schedule added to Rollfi");
   } catch (e) { log.warn({ e }, "addPaySchedule failed"); }
 }
 
@@ -289,7 +297,12 @@ router.post("/companies", async (req: Request, res: Response) => {
           rollfiResult = { ...rollfiResult, stateRegSuccessCount } as typeof rollfiResult & { stateRegSuccessCount: number };
 
           // Fire-and-forget full onboarding
-          void ensureFullOnboarding(rollfiCompanyId, useEin, req.log).then(async () => {
+          void ensureFullOnboarding(rollfiCompanyId, useEin, req.log, {
+            payFrequency: body.payFrequency,
+            payBeginDate: body.payBeginDate,
+            payDate: body.payDate,
+            workerType: body.workerType,
+          }).then(async () => {
             await db.update(companies).set({ bankAccountAdded: true, payScheduleAdded: true, status: "active", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
             req.log.info({ companyId }, "Rollfi full onboarding complete");
           }).catch((e: unknown) => req.log.warn({ e }, "ensureFullOnboarding had errors"));
