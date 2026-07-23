@@ -1,0 +1,45 @@
+INVESTIGATION ONLY — do not write, edit, or create any code. Report with
+file paths, line numbers, and real examples from the DB/logs.
+
+We're designing a fix for employee lifecycle (status/payrollReady) and
+need the current state of several things first.
+
+A. ROLLFI WEBHOOKS (for payroll-readiness sync):
+1. List the DISTINCT event types we have actually received in
+   rollfi_webhook_events (query the table). For each type, show one
+   example payload (trimmed to the relevant fields).
+2. Do we receive employee-level KYC/status events (e.g. employee KYC
+   updates, employee status changes)? Show a real payload if yes.
+3. Do we receive company-level KYB events? Show a real payload if yes.
+4. Show the webhook handler code: when an event arrives, do we ONLY
+   store it, or do we also update employees/companies records? Which
+   event types trigger which updates today?
+
+B. ROLLFI STATUS FIELDS (what we already store):
+5. Which columns on the employees table (or rollfi_employee_records)
+   currently hold any Rollfi-side status (KYC status, account status,
+   sync status)? Show current values for Hannah Price E1001 and Victor
+   Osei E1002 (Maple Grove).
+6. The super-admin "Check Rollfi Status" button — which Rollfi API does
+   it call, and what does it update locally? Show the endpoint code.
+7. Is there any existing API call that fetches an employee's
+   onboarding/KYC status from Rollfi (e.g. getUsers / user status)?
+   What fields does Rollfi return for Hannah right now if we call it?
+
+C. COMPANY KYB STATE:
+8. Where do we store company KYB status, if anywhere? What is Maple
+   Grove's current stored value vs what Rollfi's dashboard shows
+   (pending)?
+
+D. LIFECYCLE (context from previous investigation — just confirm):
+9. Confirm companies.ts:637 hardcoded status:"active" is still the only
+   place that flow sets status, and whether the People-wizard creation
+   path has an equivalent hardcode or correctly starts at "onboarding".
+
+E. SUMMARY TABLE: one row per "signal" (our paperwork items, Rollfi
+   employee KYC, Rollfi employee account status, company KYB) with:
+   where it's stored locally, how it gets updated (webhook/API/manual/
+   never), and whether the data is currently accurate for Maple Grove.
+
+Keep the report structured and evidence-based. No recommendations, no
+fixes — facts only.
