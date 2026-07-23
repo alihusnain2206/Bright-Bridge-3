@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import {
   Building2, MapPin, User, FileText, Calendar, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, RefreshCw,
-  Globe, Plus, Trash2,
+  Globe, Plus, Trash2, Landmark, KeyRound, UserPlus, Copy, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -65,6 +65,7 @@ const STEPS = [
   { label: "Owner Details",      icon: User },
   { label: "Verification",       icon: FileText },
   { label: "Pay Schedule",       icon: Calendar },
+  { label: "Bank Account",       icon: Landmark },
   { label: "State Taxes",        icon: Globe },
 ];
 
@@ -95,6 +96,45 @@ export default function ClientsNew() {
   const [submitError, setSubmitError] = useState("");
   const [created, setCreated] = useState<{ id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number } | null>(null);
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
+
+  // Manager login creation (shown on success screen)
+  const [showLoginForm, setShowLoginForm] = useState(false);
+  const [loginForm, setLoginForm] = useState({ name: "", email: "", password: "" });
+  const [loginCreating, setLoginCreating] = useState(false);
+  const [loginCreated, setLoginCreated] = useState<{ name: string; email: string; password: string } | null>(null);
+  const [loginError, setLoginError] = useState("");
+  const [showLoginPw, setShowLoginPw] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const copyField = (val: string, field: string) => {
+    void navigator.clipboard.writeText(val);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const handleCreateLogin = async (companyId: string) => {
+    if (!loginForm.name || !loginForm.email || !loginForm.password) {
+      setLoginError("Name, email, and password are all required");
+      return;
+    }
+    setLoginCreating(true);
+    setLoginError("");
+    try {
+      const res = await fetch("/api/auth/create-manager", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: loginForm.name, email: loginForm.email, companyId, position: "Daycare Manager" }),
+      });
+      const data = await res.json() as { name?: string; email?: string; password?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Failed to create login");
+      setLoginCreated({ name: data.name ?? loginForm.name, email: data.email ?? loginForm.email, password: data.password ?? loginForm.password });
+      setShowLoginForm(false);
+    } catch (e) {
+      setLoginError(e instanceof Error ? e.message : "Failed to create login");
+    } finally {
+      setLoginCreating(false);
+    }
+  };
 
   // Step 6 — state tax entries
   const [stateTaxEntries, setStateTaxEntries] = useState<StateTaxEntry[]>([]);
@@ -228,7 +268,90 @@ export default function ClientsNew() {
             </div>
           </div>
 
-          <div className="px-8 py-5 flex gap-3">
+          {/* Manager login creation */}
+          <div className="px-8 py-5 border-t space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4 text-[#284362]" />
+                <p className="text-sm font-semibold text-gray-800">Create Manager Login</p>
+                <span className="text-xs text-gray-400">(optional)</span>
+              </div>
+              {!loginCreated && !showLoginForm && (
+                <Button size="sm" variant="outline" onClick={() => {
+                  setShowLoginForm(true);
+                  setLoginForm({ name: `${form.ownerFirstName} ${form.ownerLastName}`.trim(), email: form.ownerEmail, password: "" });
+                }} className="gap-1.5 text-xs">
+                  <UserPlus className="h-3.5 w-3.5" />Set up login
+                </Button>
+              )}
+            </div>
+
+            {loginCreated ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-700 font-semibold text-sm">
+                  <CheckCircle2 className="h-4 w-4" />Manager login created successfully
+                </div>
+                {[
+                  { label: "Name", val: loginCreated.name, field: "name" },
+                  { label: "Email", val: loginCreated.email, field: "email" },
+                  { label: "Password", val: loginCreated.password, field: "pw" },
+                ].map(({ label, val, field }) => (
+                  <div key={field} className="flex items-center justify-between">
+                    <span className="text-xs text-gray-500">{label}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-gray-800">{field === "pw" ? (showLoginPw ? val : "••••••••") : val}</span>
+                      {field === "pw" && (
+                        <button onClick={() => setShowLoginPw((p) => !p)} className="text-gray-400 hover:text-gray-600">
+                          {showLoginPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                      )}
+                      <button onClick={() => copyField(val, field)} className="text-gray-400 hover:text-[#284362]">
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      {copiedField === field && <span className="text-[10px] text-emerald-600">Copied!</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : showLoginForm ? (
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                {loginError && (
+                  <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />{loginError}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-500">Full Name</Label>
+                    <Input value={loginForm.name} onChange={(e) => setLoginForm((f) => ({ ...f, name: e.target.value }))} className="h-8 text-sm" placeholder="Jane Smith" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs text-gray-500">Email (login)</Label>
+                    <Input value={loginForm.email} onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" />
+                  </div>
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-xs text-gray-500">Password</Label>
+                    <div className="relative">
+                      <Input type={showLoginPw ? "text" : "password"} value={loginForm.password} onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9" placeholder="Min 8 characters" />
+                      <button type="button" onClick={() => setShowLoginPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                        {showLoginPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" size="sm" onClick={() => { setShowLoginForm(false); setLoginError(""); }}>
+                    <X className="h-3.5 w-3.5 mr-1" />Cancel
+                  </Button>
+                  <Button size="sm" onClick={() => { void handleCreateLogin(created.id); }} disabled={loginCreating} className="gap-1.5 text-white border-0" style={{ background: NAVY }}>
+                    {loginCreating ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Creating…</> : <><KeyRound className="h-3.5 w-3.5" />Create Login</>}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="px-8 py-5 border-t flex gap-3">
             <Button onClick={() => navigate(`/clients/${created.id}/employees/new`)} className="flex-1 text-white border-0" style={{ background: ORANGE }}>
               Add First Employee →
             </Button>
@@ -291,7 +414,7 @@ export default function ClientsNew() {
           <ChevronLeft className="h-4 w-4" />{step > 1 ? "Back" : "Back to Clients"}
         </button>
         <h1 className="text-2xl font-bold" style={{ color: NAVY }}>Add New Client</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Step {step} of 5 — {STEPS[step - 1].label}</p>
+        <p className="text-sm text-gray-500 mt-0.5">Step {step} of {STEPS.length} — {STEPS[step - 1].label}</p>
       </div>
 
       {/* Step indicator */}
@@ -403,7 +526,7 @@ export default function ClientsNew() {
                 <Label>State *</Label>
                 <Select value={form.state} onValueChange={(v) => set("state", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  <SelectContent className="max-h-60 overflow-y-auto">{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
@@ -473,7 +596,7 @@ export default function ClientsNew() {
                 <Label>State *</Label>
                 <Select value={form.ownerState} onValueChange={(v) => set("ownerState", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  <SelectContent className="max-h-60 overflow-y-auto">{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
@@ -520,7 +643,7 @@ export default function ClientsNew() {
                 <Label>State of Incorporation *</Label>
                 <Select value={form.incorporationState} onValueChange={(v) => set("incorporationState", v)}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  <SelectContent className="max-h-60 overflow-y-auto">{US_STATES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-1.5">
@@ -574,10 +697,12 @@ export default function ClientsNew() {
               <div className="space-y-1.5">
                 <Label>First Pay Period Start *</Label>
                 <Input value={form.payBeginDate} onChange={(e) => set("payBeginDate", e.target.value)} type="date" />
+                <p className="text-[11px] text-gray-400 leading-tight">The first day employees start tracking hours for payroll (usually today or next Monday).</p>
               </div>
               <div className="space-y-1.5">
                 <Label>First Pay Date *</Label>
                 <Input value={form.payDate} onChange={(e) => set("payDate", e.target.value)} type="date" />
+                <p className="text-[11px] text-gray-400 leading-tight">The date employees receive their first paycheck — must be after the pay period ends.</p>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -602,8 +727,55 @@ export default function ClientsNew() {
           </div>
         )}
 
-        {/* ── Step 6 ── */}
+        {/* ── Step 6 — Bank Account ── */}
         {step === 6 && (
+          <div className="px-8 py-6 space-y-5">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">Bank Account</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                A bank account is required so Rollfi can fund payroll and collect tax payments on behalf of this company.
+              </p>
+            </div>
+
+            <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
+              <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+              <div>
+                <p className="font-semibold">Sandbox mode — test bank auto-configured</p>
+                <p className="mt-0.5 text-blue-700">In production, you would enter the company's real business checking account details. For sandbox testing, BrightBridge automatically submits a test bank account when the client is created.</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-3">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                <Landmark className="h-3.5 w-3.5" />Sandbox Test Account (auto-submitted)
+              </p>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                {[
+                  { label: "Bank Name", value: "BrightBridge Test Bank" },
+                  { label: "Routing Number", value: "221982389" },
+                  { label: "Account Number", value: "Uses company EIN" },
+                  { label: "Account Type", value: "Business Checking" },
+                ].map(({ label, value }) => (
+                  <div key={label} className="space-y-0.5">
+                    <p className="text-xs text-gray-400">{label}</p>
+                    <p className="font-mono font-medium text-gray-800">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+              <div>
+                <p className="font-medium">Micro-deposit verification required</p>
+                <p className="mt-0.5">After creation, Rollfi sends two small test deposits (usually $0.01–$0.99) to verify the account. KYB approval is also required before payroll can run. Both typically take 1–3 business days in production.</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Step 7 — State Taxes ── */}
+        {step === 7 && (
           <div className="px-8 py-6 space-y-5">
             <div>
               <h2 className="text-lg font-bold text-gray-900">State Tax Registrations</h2>
@@ -703,7 +875,7 @@ export default function ClientsNew() {
           <Button variant="outline" onClick={() => step > 1 ? setStep(step - 1) : navigate("/clients")} className="gap-1.5">
             <ChevronLeft className="h-4 w-4" />{step > 1 ? "Back" : "Cancel"}
           </Button>
-          {step < 6 ? (
+          {step < STEPS.length ? (
             <Button onClick={() => setStep(step + 1)} className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
               disabled={
                 (step === 1 && (!form.companyName || !form.phone)) ||

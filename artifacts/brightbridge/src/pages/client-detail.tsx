@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
   ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2, ShieldCheck,
-  Eye, EyeOff, Copy, X, KeyRound, Pause, Ban, RotateCcw, UserX, Globe,
+  Eye, EyeOff, Copy, X, KeyRound, Pause, Ban, RotateCcw, UserX, Globe, UserPlus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -798,6 +798,173 @@ function RetryStateRegButton({ regId, label = "Retry", onSuccess }: { regId: str
   );
 }
 
+function OwnerAccessSection({ company }: { company: Company }) {
+  const queryClient = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [newForm, setNewForm] = useState({ name: "", email: "", password: "" });
+  const [showPw, setShowPw] = useState(false);
+  const [createdUser, setCreatedUser] = useState<{ name: string; email: string; password: string } | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [credUser, setCredUser] = useState<CompanyUser | null>(null);
+
+  const copyField = (val: string, field: string) => {
+    void navigator.clipboard.writeText(val);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const { data, isLoading, refetch } = useQuery<{ users: CompanyUser[] }>({
+    queryKey: ["/api/companies/users/settings", company.id],
+    queryFn: () => fetch(`/api/companies/${company.id}/users`, { credentials: "include" }).then((r) => r.json()),
+  });
+  const managers = (data?.users ?? []).filter((u) => u.role === "manager" || u.role === "owner");
+
+  const handleCreate = async () => {
+    if (!newForm.name || !newForm.email || !newForm.password) {
+      setCreateError("Name, email, and password are all required");
+      return;
+    }
+    setCreating(true);
+    setCreateError("");
+    try {
+      const res = await fetch("/api/auth/create-manager", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newForm.name, email: newForm.email, companyId: company.id, position: "Daycare Manager" }),
+      });
+      const d = await res.json() as { name?: string; email?: string; password?: string; error?: string };
+      if (!res.ok) throw new Error(d.error ?? "Failed to create login");
+      setCreatedUser({ name: d.name ?? newForm.name, email: d.email ?? newForm.email, password: d.password ?? newForm.password });
+      setShowForm(false);
+      setNewForm({ name: "", email: "", password: "" });
+      void refetch();
+      void queryClient.invalidateQueries({ queryKey: ["/api/companies/users", company.id] });
+    } catch (e) {
+      setCreateError(e instanceof Error ? e.message : "Failed to create login");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border p-5 shadow-sm space-y-4">
+      {credUser && (
+        <CredentialModal
+          user={credUser}
+          companyId={company.id}
+          onClose={() => setCredUser(null)}
+          onSaved={() => { setCredUser(null); void refetch(); }}
+        />
+      )}
+
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-bold text-gray-800 flex items-center gap-2">
+            <KeyRound className="h-4 w-4 text-[#284362]" />Owner &amp; Manager Logins
+          </p>
+          <p className="text-xs text-gray-500 mt-0.5">Accounts that can log in and manage this company</p>
+        </div>
+        {!showForm && (
+          <Button size="sm" variant="outline" onClick={() => { setShowForm(true); setCreateError(""); setCreatedUser(null); }} className="gap-1.5 text-xs">
+            <UserPlus className="h-3.5 w-3.5" />Add Login
+          </Button>
+        )}
+      </div>
+
+      {createdUser && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-2">
+          <p className="text-sm font-semibold text-emerald-700 flex items-center gap-2"><CheckCircle2 className="h-4 w-4" />Login created</p>
+          {[
+            { label: "Name", val: createdUser.name, field: "name" },
+            { label: "Email", val: createdUser.email, field: "email" },
+            { label: "Password", val: createdUser.password, field: "pw" },
+          ].map(({ label, val, field }) => (
+            <div key={field} className="flex items-center justify-between text-sm">
+              <span className="text-gray-500 text-xs">{label}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono text-xs text-gray-800">{field === "pw" ? (showPw ? val : "••••••••") : val}</span>
+                {field === "pw" && <button onClick={() => setShowPw((p) => !p)} className="text-gray-400 hover:text-gray-600">{showPw ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}</button>}
+                <button onClick={() => copyField(val, field)} className="text-gray-400 hover:text-[#284362]"><Copy className="h-3 w-3" /></button>
+                {copiedField === field && <span className="text-[10px] text-emerald-600">Copied!</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isLoading ? (
+        <Skeleton className="h-12 rounded-lg" />
+      ) : managers.length === 0 && !showForm ? (
+        <div className="border-2 border-dashed border-gray-200 rounded-xl p-6 text-center">
+          <KeyRound className="h-7 w-7 mx-auto mb-2 text-gray-300" />
+          <p className="text-sm font-medium text-gray-700">No manager logins yet</p>
+          <p className="text-xs text-gray-400 mt-1 mb-3">Create a login so the daycare owner can access their company's payroll and staff data.</p>
+          <Button size="sm" variant="outline" onClick={() => setShowForm(true)} className="gap-1.5 text-xs">
+            <UserPlus className="h-3.5 w-3.5" />Create First Login
+          </Button>
+        </div>
+      ) : managers.length > 0 ? (
+        <div className="divide-y border rounded-xl overflow-hidden">
+          {managers.map((u) => (
+            <div key={u.id} className="flex items-center justify-between px-4 py-3 bg-white hover:bg-gray-50/50">
+              <div>
+                <p className="text-sm font-medium text-gray-800">{u.name}</p>
+                <p className="text-xs text-gray-400 font-mono">{u.email}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#284362]/10 text-[#284362] capitalize">{u.role}</span>
+                <button onClick={() => setCredUser(u)} className="inline-flex items-center gap-1 text-xs font-medium text-[#284362] hover:text-[#E8622A] border border-[#284362]/20 hover:border-[#E8622A]/40 rounded-lg px-2.5 py-1 transition-colors">
+                  <KeyRound className="h-3 w-3" />Edit
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {showForm && (
+        <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+          <p className="text-sm font-semibold text-gray-800">Create Manager Login</p>
+          {createError && (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
+              <AlertTriangle className="h-4 w-4 shrink-0" />{createError}
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500">Full Name</Label>
+              <Input value={newForm.name} onChange={(e) => setNewForm((f) => ({ ...f, name: e.target.value }))} className="h-8 text-sm" placeholder="Jane Smith" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-500">Email (login)</Label>
+              <Input value={newForm.email} onChange={(e) => setNewForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" />
+            </div>
+            <div className="col-span-2 space-y-1">
+              <Label className="text-xs text-gray-500">Password</Label>
+              <div className="relative">
+                <Input type={showPw ? "text" : "password"} value={newForm.password} onChange={(e) => setNewForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9" placeholder="Min 8 characters" />
+                <button type="button" onClick={() => setShowPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                  {showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setCreateError(""); }}>
+              <X className="h-3.5 w-3.5 mr-1" />Cancel
+            </Button>
+            <Button size="sm" onClick={() => { void handleCreate(); }} disabled={creating} className="gap-1.5 text-white border-0" style={{ background: NAVY }}>
+              {creating ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Creating…</> : <><KeyRound className="h-3.5 w-3.5" />Create Login</>}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SettingsTab({ company, onRefresh }: { company: Company; onRefresh: () => void }) {
   const [onboarding, setOnboarding] = useState(false);
   const [error, setError] = useState("");
@@ -838,6 +1005,7 @@ function SettingsTab({ company, onRefresh }: { company: Company; onRefresh: () =
         </div>
       )}
 
+      <OwnerAccessSection company={company} />
       <StateRegistrationSection company={company} />
     </div>
   );
