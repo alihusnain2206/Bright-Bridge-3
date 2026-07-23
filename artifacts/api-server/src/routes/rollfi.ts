@@ -46,8 +46,39 @@ interface KycOnboardingResult {
 // Non-fatal errors are logged (idempotent re-runs are fine).
 async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<KycOnboardingResult> {
   const headers = rollfiHeaders();
-  // Rollfi expects raw 9 digits (no dashes)
-  const ssn = randomNineDigits();
+
+  // Look up real employee data from DB — use it if present, fall back to sandbox defaults
+  let empAddress1 = "123 Main St";
+  let empCity = "Newark";
+  let empState = "NJ";
+  let empZipcode = "07101";
+  let empDateOfBirth = "1990-01-15";
+  // Rollfi expects raw 9 digits (no dashes); use real SSN if stored, else generate random
+  let ssn = randomNineDigits();
+  try {
+    const [emp] = await db.select({
+      homeAddress: employeesTable.homeAddress,
+      homeCity: employeesTable.homeCity,
+      homeState: employeesTable.homeState,
+      homeZip: employeesTable.homeZip,
+      dateOfBirth: employeesTable.dateOfBirth,
+      ssn: employeesTable.ssn,
+    }).from(employeesTable).where(eq(employeesTable.rollfiUserId, rollfiUserId));
+    if (emp) {
+      if (emp.homeAddress) empAddress1 = emp.homeAddress;
+      if (emp.homeCity)    empCity     = emp.homeCity;
+      if (emp.homeState)   empState    = emp.homeState;
+      if (emp.homeZip)     empZipcode  = emp.homeZip;
+      if (emp.dateOfBirth) empDateOfBirth = emp.dateOfBirth;
+      if (emp.ssn) {
+        const digits = emp.ssn.replace(/\D/g, "");
+        if (digits.length === 9) ssn = digits;
+      }
+    }
+    log.info({ rollfiUserId, hasRealAddress: !!emp?.homeAddress, hasRealDob: !!emp?.dateOfBirth }, "KYC: resolved employee identity data");
+  } catch (e) {
+    log.warn({ e }, "KYC: failed to look up employee data from DB — using defaults");
+  }
 
   // Step 1 — accept terms (PUT)
   try {
@@ -69,12 +100,12 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
         kycInformation: {
           userId: rollfiUserId,
           ssn,
-          dateOfBirth: "1990-01-15",
-          address1: "123 Main St",
+          dateOfBirth: empDateOfBirth,
+          address1: empAddress1,
           address2: "",
-          city: "Newark",
-          state: "NJ",
-          zipcode: "07101",
+          city: empCity,
+          state: empState,
+          zipcode: empZipcode,
         },
       },
       { headers }

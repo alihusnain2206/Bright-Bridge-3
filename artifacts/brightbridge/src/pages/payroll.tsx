@@ -1273,9 +1273,14 @@ export default function Payroll() {
                                     const msg = (retryKyc.error as Error)?.message ?? "KYC retry failed";
                                     const isKybBlocked = msg.toLowerCase().includes("kyb");
                                     return isKybBlocked ? (
-                                      <div className="flex items-start gap-1.5 text-amber-400/80 text-xs max-w-xs">
-                                        <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                                        <span>KYC blocked — company KYB must pass first. The company&apos;s business verification failed in Rollfi (sandbox limitation with test data).</span>
+                                      <div className="flex flex-col gap-1.5 max-w-xs">
+                                        <div className="flex items-start gap-1.5 text-amber-400/80 text-xs">
+                                          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                                          <span>KYC blocked — company KYB must pass first.</span>
+                                        </div>
+                                        <p className="text-white/40 text-[11px] pl-5">
+                                          If Rollfi support has already verified your KYB, click <strong className="text-white/60">Complete KYC</strong> again above — the block is now lifted and it will go through.
+                                        </p>
                                       </div>
                                     ) : (
                                       <span className="text-red-400/70 text-xs">{msg}</span>
