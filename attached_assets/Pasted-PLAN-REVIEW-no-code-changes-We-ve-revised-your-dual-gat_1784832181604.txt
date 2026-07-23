@@ -1,0 +1,62 @@
+PLAN REVIEW — no code changes. We've revised your dual-gate payroll
+readiness plan based on our earlier investigation findings. Before anything
+is implemented, review this revised plan critically as an engineer who
+knows this codebase, and give your honest input.
+
+THE REVISED PLAN:
+
+1. WEBHOOKS AS PRIMARY SYNC: Fix the webhook handler (rollfi.ts ~3203) to
+   read body.trigger.eventType (it currently checks body.event/type/
+   eventType — which is why all 93 real events stored as "unknown"). On
+   employee.employeestatus.update events, extract kycStatus, userStatus,
+   and bank status from the payload and UPDATE the employee's DB record.
+   Webhooks become the primary way Rollfi status stays fresh.
+
+2. YOUR live-status endpoint stays, but demoted to manual refresh +
+   fallback: used by a Refresh button on the profile Payroll tab, NOT
+   fired per-company on directory page load. The directory reads local
+   DB columns only.
+
+3. PERSIST BOTH STATUSES: kyc_status column exists; confirm whether a
+   suitable column exists for Rollfi account status (userStatus) or
+   whether we add one. Every webhook and every manual fetch writes both.
+
+4. PREREQUISITE FIXES in the same change set, sequenced FIRST:
+   a. companies.ts:637 — remove the unconditional status:"active"
+      overwrite; creation ends at "onboarding"; activation only via the
+      all-required-tasks check, with a guard for the zero-required-tasks
+      case ([].every() === true trap).
+   b. Data repair: existing employees who are "active" with pending
+      required tasks get reset to "onboarding" (report affected list
+      before running; skip task-less backfilled employees).
+
+5. GATE 1 DEFINITION: payroll readiness = W-4 + Direct Deposit + I-9
+   (+ state registration where applicable) ONLY. Handbook, policy,
+   background check gate the employee STATUS, not payroll readiness.
+   The profile panel still displays both groups, but only the
+   payroll-critical set decides the Ready/In Progress badge.
+
+6. WHITE-LABEL COPY: owner-facing UI says "Payroll provider
+   verification" — the word "Rollfi" appears only in super-admin views.
+
+YOUR REVIEW — answer these specifically:
+
+A. Feasibility check against the real code: anything in this plan that
+   conflicts with how the codebase actually works? (Webhook payload
+   shapes, column availability, where the directory computes the Payroll
+   badge, the activation check location.)
+
+B. Risks or edge cases we've missed? (e.g. webhook events arriving for
+   employees not yet in our DB, ordering of webhook vs creation,
+   multiple events for the same employee, what happens to Sunshine's
+   store-based test users like John/Mary under the new logic.)
+
+C. Anything in our plan you disagree with — and why. Be direct; if you
+   think page-load fetching is still needed somewhere, argue it.
+
+D. Your suggested implementation ORDER as concrete steps, each
+   independently testable.
+
+E. Effort estimate per step (S/M/L).
+
+Do not start implementing. Output: your review + final proposed plan.
