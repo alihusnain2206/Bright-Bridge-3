@@ -34,7 +34,8 @@ const US_STATES_FULL = [
   { code: "WV", name: "West Virginia" }, { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" },
 ];
 const today = () => new Date().toISOString().split("T")[0];
-const twoWeeksOut = () => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().split("T")[0]; };
+const daysOut = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+const payDateOffsetDays: Record<string, number> = { Weekly: 7, BiWeekly: 14, SemiMonthly: 15, Monthly: 30 };
 function randomTestEin() { return `${String(Math.floor(10 + Math.random()*89))}-${String(Math.floor(1000000 + Math.random()*9000000))}`; }
 
 interface FormData {
@@ -181,7 +182,7 @@ export default function ClientsNew() {
     ownerDob: "", ownerSsn: "", ownerAddress1: "", ownerCity: "", ownerState: "NJ", ownerZip: "",
     ownershipPercentage: 100, isPayrollAdmin: true,
     entityType: "LLC", ein: "", incorporationState: "NJ", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
-    payFrequency: "BiWeekly", payBeginDate: today(), payDate: twoWeeksOut(), workerType: "W2",
+    payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
   });
 
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
@@ -680,7 +681,7 @@ export default function ClientsNew() {
                 { value: "Monthly", label: "Monthly" },
               ].map(({ value, label }) => (
                 <label key={value} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors text-sm ${form.payFrequency === value ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
-                  <input type="radio" name="freq" value={value} checked={form.payFrequency === value} onChange={() => set("payFrequency", value)} />
+                  <input type="radio" name="freq" value={value} checked={form.payFrequency === value} onChange={() => setForm((f) => ({ ...f, payFrequency: value, payBeginDate: today(), payDate: daysOut(payDateOffsetDays[value] ?? 14) }))} />
                   {label} {value === "BiWeekly" && <span className="ml-auto px-1.5 py-0.5 bg-[#284362]/10 text-[#284362] text-[10px] font-bold rounded">DEFAULT</span>}
                 </label>
               ))}
@@ -714,7 +715,7 @@ export default function ClientsNew() {
               <p className="text-xs font-bold text-[#284362] uppercase tracking-wide flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" />Pay Schedule Preview</p>
               <p className="text-sm text-gray-700">First pay period starts: <strong>{form.payBeginDate}</strong></p>
               <p className="text-sm text-gray-700">First pay date: <strong>{form.payDate}</strong></p>
-              <p className="text-sm text-gray-700">Frequency: <strong>Every {form.payFrequency === "BiWeekly" ? "2 weeks" : form.payFrequency.toLowerCase()}</strong></p>
+              <p className="text-sm text-gray-700">Frequency: <strong>{{ Weekly: "Every week", BiWeekly: "Every 2 weeks", SemiMonthly: "Twice a month", Monthly: "Once a month" }[form.payFrequency] ?? form.payFrequency}</strong></p>
             </div>
           </div>
         )}
