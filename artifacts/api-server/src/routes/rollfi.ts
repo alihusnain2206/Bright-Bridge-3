@@ -2053,9 +2053,48 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
     res.status(403).json({ error: "Access denied" }); return;
   }
 
-  const [company] = await db.select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
-    .from(companiesTable).where(eq(companiesTable.id, emp.companyId));
-  if (!company?.rollfiCompanyId) {
+  const [companyRow] = await db.select({
+    rollfiCompanyId: companiesTable.rollfiCompanyId,
+    name: companiesTable.name,
+  }).from(companiesTable).where(eq(companiesTable.id, emp.companyId));
+
+  let rollfiCompanyId = companyRow?.rollfiCompanyId ?? null;
+
+  // Auto-recover: if rollfiCompanyId is missing from our DB but the employee has a rollfiUserId,
+  // the company was registered in Rollfi in a prior session without the ID being saved back.
+  // Use getCompanies to find it by name, then persist it so future calls are instant.
+  if (!rollfiCompanyId && companyRow?.name) {
+    req.log.warn({ companyId: emp.companyId, companyName: companyRow.name }, "live-status: rollfiCompanyId missing — attempting recovery via getCompanies");
+    try {
+      const gcRes = await axios.post(
+        `${ROLLFI_BASE_URL}/reports#getCompanies`,
+        { method: "getCompanies" },
+        { headers: rollfiHeaders() }
+      );
+      const list = (gcRes.data as { Company?: { company: string; companyID: string }[] }).Company ?? [];
+      const match = list.find(c => c.company.toLowerCase() === companyRow.name.toLowerCase());
+      if (match) {
+        rollfiCompanyId = match.companyID;
+        // Also fetch the location ID so the record is complete
+        let rollfiLocationId = "";
+        try {
+          const locRes = await axios.post(
+            `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+            { method: "getCompanyLocationInfo", companyId: match.companyID },
+            { headers: rollfiHeaders() }
+          );
+          const locs = (locRes.data as { CompanyLocation?: { companyLocationID: string; isWorkLocation?: boolean }[] }).CompanyLocation ?? [];
+          rollfiLocationId = (locs.find(l => l.isWorkLocation) ?? locs[0])?.companyLocationID ?? "";
+        } catch { /* location is optional for live-status */ }
+        await persistRollfiCompany(emp.companyId, { rollfiCompanyId: match.companyID, rollfiLocationId, onboardedAt: new Date().toISOString() });
+        req.log.info({ companyId: emp.companyId, rollfiCompanyId }, "live-status: recovered rollfiCompanyId via getCompanies");
+      }
+    } catch (recoveryErr) {
+      req.log.error({ recoveryErr }, "live-status: getCompanies recovery failed");
+    }
+  }
+
+  if (!rollfiCompanyId) {
     res.status(400).json({ error: "Company not onboarded to Rollfi" }); return;
   }
 
@@ -2063,7 +2102,7 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
     type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
     const r = await axios.post(
       `${ROLLFI_BASE_URL}/reports#getUsers`,
-      { method: "getUsers", companyId: company.rollfiCompanyId },
+      { method: "getUsers", companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
     const users: RollfiUser[] = ((r.data as { users?: RollfiUser[] }).users ?? []);
