@@ -2316,6 +2316,18 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
+  // Fetch current hourlyWage from DB for each staff employee (single batch query).
+  // People Hub wage edits write to the DB; the in-memory store is seeded at startup and
+  // never updated, so the DB is the source of truth for current rates.
+  const staffEmpIds = allStaff.map((u) => u.employeeId).filter((id): id is string => !!id);
+  const dbWageRows = staffEmpIds.length > 0
+    ? await db
+        .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+        .from(employeesTable)
+        .where(inArray(employeesTable.id, staffEmpIds))
+    : [];
+  const dbWageByEmpId = new Map(dbWageRows.map((r) => [r.id, r.hourlyWage]));
+
   // Preview is display-only: show period-specific approvals if they exist,
   // otherwise fall back to the latest approval so the submit page shows meaningful hours.
   // (The fallback does NOT apply to the actual import/initiate endpoints.)
@@ -2336,7 +2348,8 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     const unapprovedHours = 0;
     const netPayableHours = approval ? approval.approvedHours  : 0;
     const hoursSource     = approval ? approval.source         : "pending_approval";
-    const hourlyRateCents = u.hourlyWage ?? 1500;
+    // DB value takes priority over the in-memory store (DB reflects People Hub edits)
+    const hourlyRateCents = dbWageByEmpId.get(u.employeeId ?? "") ?? u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
     const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
     const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
