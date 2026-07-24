@@ -1,0 +1,87 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express, brand navy #1B3A6B / teal #0EA5C9, success
+#10B981, warning #F59E0B, error #EF4444).
+
+GOAL: Build the "Workforce Management And Attendance" dashboard — a new
+top-level section powered by the Phase 1 data layer.
+
+SCOPE BOUNDARY — DO NOT TOUCH: Rollfi payroll/import/comp-wipe/webhooks,
+payroll readiness dual-gate, EasyTeam iframe/token/registration/sync
+internals, the existing Timesheets and Schedule pages (they stay as
+separate top-level menu items — do NOT move or fold them), People module.
+Read-only consumption of existing endpoints; no new tables.
+
+NAVIGATION:
+- New sidebar item labelled "Workforce" (short label — full name is the
+  page heading), route /workforce
+- Visible to owner and super_admin only
+- Page heading: "Workforce Management And Attendance"
+- Sub-nav skeleton on the page (like the People hub): Overview (built) +
+  "Soon" pills for My Team, All Employees, Locations, Departments
+- Date range picker in the header, defaulting to the current pay period
+  (same logic the Timesheets page uses); all widgets respect it
+
+DATA SOURCES (reuse — do not create new fetch logic):
+- GET /api/timesheets/shifts?companyId=&from=&to=  → shifts + flags +
+  summary (totalShifts, totalPayableHours, activeNow, missedPunchCount,
+  extendedBreakCount)
+- GET /api/timesheets/trend?companyId=&from=&to=   → days[] + totals
+  {duration, amount}
+- Existing timesheet_entries/approvals endpoints for approval data
+- Existing departments + employees data for headcount/department views
+Company-scoped; ONE useEffect keyed on (companyId, dateRange) — no
+duplicate calls.
+
+WIDGETS (per client mockup):
+1. KPI row:
+   - Total Hours (trend totals.duration)
+   - Overtime Hours (compute per employee per ISO week from shifts:
+     payable hours above 40/week; show 0 with a tooltip explaining the
+     rule)
+   - Estimated Labor Cost (trend totals.amount) — replaces "Attendance
+     Rate" for now
+   - Pending Approvals (count from approvals data, links to /timesheets)
+   - Active Now (summary.activeNow)
+   - Attendance Rate → render as a disabled "Coming Soon" card with
+     tooltip "Requires schedule data" (schedules endpoint returns empty)
+2. Weekly Hours Trend — line/bar chart from trend days[] (recharts)
+3. Punch Status panel — Missed punches, Extended breaks, Long shifts,
+   Currently clocked in; each row links to a filtered shift list
+4. Timesheets Needing Approval — table of employees with unapproved
+   hours for the period + "Review" action deep-linking to /timesheets.
+   REUSE the existing approval data/components; do not duplicate approval
+   logic
+5. Time Entry Status donut — based on OUR approval states (Approved /
+   Pending / Manager-edited). Label it "Approval Status" — do not imply
+   EasyTeam submission states we don't have
+6. Department Overview — hours by department (join shifts→employee→
+   department), bar list with headcount
+7. Alerts & Notifications — derived feed: missed punches, extended
+   breaks, pending approvals past cutoff, unmapped shifts (employeeId
+   null). Each links to the relevant view
+8. Quick Actions — navigation shortcuts only: Pull Hours, Approve
+   Timesheets, View Schedule, Add Time Entry (link to existing pages)
+9. Time Off Taken + Time Off Calendar + Schedule Coverage → honest
+   "Coming Soon" cards with a one-line note that these activate once
+   time-off/schedule data is available (endpoints work but return empty
+   in sandbox). Do NOT show placeholder numbers.
+
+REQUIREMENTS: loading skeletons, empty states ("No shifts in this period"),
+error states with retry; responsive; small-company friendly (this must
+look right with 3 employees, not just 247); TypeScript; brand colors;
+no fake data anywhere.
+
+TESTING CHECKLIST:
+- Owner login sees "Workforce" in sidebar; employee/manager do not
+- Sunshine, Jul 1–24: KPIs, trend chart, punch panel, approvals widget
+  all render with real values consistent with the API responses
+- Changing the date range updates every widget (one fetch cycle, no
+  duplicate calls — verify in network tab)
+- Empty period (future dates) shows empty states, not errors or zeros
+  masquerading as data
+- Coming Soon cards are visibly disabled, no fake numbers
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, route added, screenshots-in-words of each
+widget's data source, checklist confirmations.
+REMINDER: Publish required for bright-bridge-3.replit.app.

@@ -5,7 +5,7 @@ import {
   Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  Bell, Search,
+  Bell, Search, BarChart2,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,7 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: "/dashboard/super-admin", label: "Dashboard", icon: LayoutDashboard },
         { href: "/clients",               label: "Clients",    icon: Building2 },
         { href: "/people",               label: "People",     icon: Users, children: PEOPLE_SUBNAV },
+        { href: "/workforce",            label: "Workforce",  icon: BarChart2 },
         { href: "/timeclock",             label: "Time Clock", icon: Clock },
         { href: "/timesheets",            label: "Timesheets", icon: CalendarDays },
         { href: "/schedule",             label: "Schedule",   icon: Calendar },
@@ -60,6 +61,7 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: "/dashboard/owner",  label: "Dashboard",  icon: LayoutDashboard },
         { href: "/people",           label: "People",     icon: Users, children: PEOPLE_SUBNAV },
+        { href: "/workforce",        label: "Workforce",  icon: BarChart2 },
         { href: "/timesheets",       label: "Timesheets", icon: CalendarDays },
         { href: "/schedule",         label: "Schedule",   icon: Calendar },
         {
