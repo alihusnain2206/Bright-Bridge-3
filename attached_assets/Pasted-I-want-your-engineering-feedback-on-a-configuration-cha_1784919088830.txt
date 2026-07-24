@@ -1,0 +1,114 @@
+I want your engineering feedback on a 
+configuration change BEFORE you 
+implement anything. Do NOT modify any 
+code in this response — audit and 
+advise only.
+
+THE PROBLEM I AM SOLVING:
+We are about to switch this app from 
+Rollfi sandbox credentials to Rollfi 
+production credentials (real payroll, 
+real money). I need to be able to 
+switch between the two environments 
+safely and reversibly, without ever 
+losing the sandbox credentials or 
+accidentally believing I am in sandbox 
+when I am actually live.
+
+THE APPROACH I AM CONSIDERING:
+
+Instead of overwriting a single set of 
+credential environment variables each 
+time I switch, store BOTH sets 
+permanently and use one switch 
+variable:
+
+ROLLFI_ENV                 = "sandbox" 
+                             or 
+                             "production"
+ROLLFI_SANDBOX_API_URL
+ROLLFI_SANDBOX_CLIENT_ID
+ROLLFI_SANDBOX_SECRET_KEY
+ROLLFI_PROD_API_URL
+ROLLFI_PROD_CLIENT_ID
+ROLLFI_PROD_SECRET_KEY
+
+A single config module would resolve 
+which set to use based on ROLLFI_ENV, 
+and every part of the codebase that 
+currently reads Rollfi credentials 
+would import from that module instead. 
+Switching environments would then mean 
+changing one value and restarting.
+
+Additional intent: a UI banner that 
+reads the active environment (red 
+"PRODUCTION" vs the current blue 
+"SANDBOX") so the interface can never 
+disagree with the credentials actually 
+in use, plus extra confirmation dialogs 
+in production before running payroll, 
+creating a company, or terminating an 
+employee.
+
+WHAT I WANT FROM YOU — AUDIT AND 
+FEEDBACK:
+
+1. Show me exactly how Rollfi 
+credentials are currently read in this 
+codebase: which environment variables 
+are used, and every file/location that 
+reads them. Are they read once at 
+startup or per request?
+
+2. Would the proposed approach work 
+cleanly with the current architecture, 
+or does something about how the app is 
+structured make it awkward? Be honest 
+about problems.
+
+3. Are there other places besides the 
+Rollfi API calls that depend on the 
+environment and would also need to 
+switch — for example webhook URLs 
+registered with Rollfi, the EasyTeam 
+integration, any hardcoded sandbox 
+URLs, redirect URLs, or the sandbox 
+banner logic?
+
+4. Do you see any risk with the 
+existing database when switching 
+environments? My understanding is that 
+existing test companies and employees 
+hold sandbox-issued Rollfi IDs 
+(rollfiCompanyId, rollfiUserId) that 
+will not exist in production, so their 
+payroll pages will error. Confirm 
+whether that is correct, and whether 
+those errors would be handled 
+gracefully or would crash any pages.
+
+5. Is there anything cached in memory 
+(store.ts) or persisted that would 
+need to be cleared or would behave 
+incorrectly after an environment 
+switch?
+
+6. Would you recommend this approach, 
+a different approach, or a variation? 
+If you would do it differently, explain 
+why and what the tradeoffs are.
+
+7. What would you consider the safest 
+possible implementation, given that 
+this app will be running real payroll 
+for a live client within days? Include 
+any fail-safe behaviour you would 
+recommend (for example, treating any 
+unrecognised ROLLFI_ENV value as 
+sandbox rather than production).
+
+Please report your findings and 
+recommendation. I will review your 
+feedback before asking you to 
+implement.
