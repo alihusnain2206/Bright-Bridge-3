@@ -89,6 +89,15 @@ function calcErTax(gross: number) {
 const NAVY   = "#284362";
 const ORANGE = "#E8622A";
 
+function ImportStatCard({ label, value, accent = "#2C4562" }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="bg-white rounded-xl border shadow-sm p-4 flex flex-col gap-1">
+      <div className="text-xs text-gray-500 font-medium">{label}</div>
+      <div className="text-xl font-bold" style={{ color: accent }}>{value}</div>
+    </div>
+  );
+}
+
 // ── Pay period status badge ────────────────────────────────────
 
 function PayPeriodStatusBadge({ status }: { status: string }) {
@@ -222,7 +231,7 @@ export default function ManagerPayrollSubmit() {
   const [importResult, setImportResult]   = useState<ImportResult | null>(null);
   const [payrollResult, setPayrollResult] = useState<PayrollResult | null>(null);
   const [confirmOpen, setConfirmOpen]     = useState(false);
-  const [expandedImportEmp, setExpandedImportEmp] = useState<string | null>(null);
+  const [selectedImportEmp, setSelectedImportEmp] = useState<{ lineItem: Record<string, unknown>; previewEmp?: PreviewEmployee; name: string; position: string } | null>(null);
 
   const { data: payPeriod, isLoading: periodLoading, refetch: refetchPeriod } =
     useQuery<PayPeriod>({
@@ -237,7 +246,7 @@ export default function ManagerPayrollSubmit() {
   useEffect(() => {
     if (payPeriod?.payPeriodId) {
       setAdjustments({});
-      setExpandedImportEmp(null);
+      setSelectedImportEmp(null);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payPeriod?.payPeriodId]);
@@ -325,9 +334,6 @@ export default function ManagerPayrollSubmit() {
 
   // ── Derived totals ──────────────────────────────────────────
 
-  const totalGross = preview?.totalGrossPay ?? 0;
-
-  const zeroHourEmps = preview?.employees.filter((e) => e.hoursWorked === 0 && e.grossPay === 0) ?? [];
 
   return (
     <div className="min-h-screen" style={{ background: `linear-gradient(160deg, ${NAVY} 0%, #1a2e45 100%)` }}>
@@ -426,7 +432,7 @@ export default function ManagerPayrollSubmit() {
               <table className="w-full text-sm">
                 <thead>
                   <tr style={{ background: "rgba(255,255,255,0.06)" }}>
-                    {["Employee", "Worked", "Net Hrs", "Rate", "Gross Pay", "Rollfi"].map((h) => (
+                    {["Employee", "Worked", "Net Hrs", "Rate"].map((h) => (
                       <th key={h} className="text-left px-4 py-3 text-white/50 font-semibold text-xs">{h}</th>
                     ))}
                   </tr>
@@ -470,19 +476,11 @@ export default function ManagerPayrollSubmit() {
                           </td>
                           <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
                           <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
-                          <td className="px-4 py-3 text-emerald-400 font-bold">
-                            {isZeroHours ? <span className="text-white/20 text-xs">—</span> : fmtD(emp.grossPay)}
-                          </td>
-                          <td className="px-4 py-3">
-                            {emp.onboardedToRollfi
-                              ? <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                              : <XCircle className="h-4 w-4 text-white/20" />}
-                          </td>
                         </tr>
 
                         {isExpanded && (
                           <tr key={`${key}-exp`}>
-                            <td colSpan={6} className="px-4 py-0">
+                            <td colSpan={4} className="px-4 py-0">
                               <div className="my-3 rounded-lg border border-white/10 overflow-hidden text-xs" style={{ background: "rgba(20,40,65,0.7)" }}>
                                 <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between">
                                   <span className="font-semibold text-white/80">{emp.name} — Full Pay Breakdown</span>
@@ -521,32 +519,10 @@ export default function ManagerPayrollSubmit() {
                     );
                   })}
                 </tbody>
-                <tfoot>
-                  <tr style={{ background: "rgba(255,255,255,0.04)" }}>
-                    <td className="px-4 py-3 text-white font-semibold" colSpan={4}>Total Gross Pay</td>
-                    <td className="px-4 py-3 text-emerald-400 font-bold text-base">{fmtD(totalGross)}</td>
-                    <td />
-                  </tr>
-                </tfoot>
               </table>
             </div>
 
 
-            {/* Zero-hours exclusion warning */}
-            {zeroHourEmps.length > 0 && (
-              <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg border border-amber-500/30 mb-4" style={{ background: "rgba(245,158,11,0.08)" }}>
-                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-amber-300 font-semibold text-xs mb-0.5">
-                    {zeroHourEmps.length === 1
-                      ? `${zeroHourEmps[0].name} has no hours and will not be included in this payroll run.`
-                      : `${zeroHourEmps.length} employees have no hours and will not be included in this payroll run.`}
-                  </p>
-                  {zeroHourEmps.length > 1 && <p className="text-amber-400/70 text-xs">{zeroHourEmps.map((e) => e.name).join(", ")}</p>}
-                  <p className="text-amber-400/50 text-xs mt-0.5">Check EasyTeam timesheets if this is unexpected before submitting.</p>
-                </div>
-              </div>
-            )}
 
             {/* Adjustments */}
             {periodSubmittable && (
@@ -691,37 +667,130 @@ export default function ManagerPayrollSubmit() {
 
                 {importResult.success && importResult.realTotals && (() => {
                   const t = importResult.realTotals!;
-                  return (
-                    <div className="px-5 py-4 space-y-4">
-                      <div className="grid grid-cols-2 gap-6 text-xs">
-                        <div>
-                          <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employee Payments</p>
-                          <div className="flex justify-between py-1"><span className="text-white/60">Total Gross Pay</span><span className="text-emerald-400 font-semibold">{fmtD(t.grossPay)}</span></div>
-                          <div className="flex justify-between py-1"><span className="text-white/60">Total Employee Taxes</span><span className="text-red-300">−{fmtD(t.employeeTax)}</span></div>
-                          <div className="flex justify-between py-1 border-t border-white/10 mt-1 pt-2 font-semibold"><span className="text-white/80">Net Pay to Staff</span><span className="text-white">{fmtD(t.netPay)}</span></div>
+
+                  if (selectedImportEmp) {
+                    const item = selectedImportEmp.lineItem;
+                    const selName = selectedImportEmp.name;
+                    const selPos = selectedImportEmp.position;
+                    const selPrev = selectedImportEmp.previewEmp;
+                    const grossPay     = Number(item.grossTotal ?? 0);
+                    const netPay       = Number(item.netTotal ?? 0);
+                    const empDed       = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
+                    const erTaxTotal   = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
+                    const addComp      = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                    const hours        = selPrev?.netPayableHours ?? selPrev?.hoursWorked ?? 0;
+                    const empTaxes     = (item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
+                    const erTaxes      = (item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
+                    return (
+                      <div className="px-5 py-4 space-y-4">
+                        {/* KPI cards */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                          <ImportStatCard label="Total Employer Taxes" value={fmtD(t.employerTax)} accent="#2C4562" />
+                          <ImportStatCard label="Total Employee Deductions" value={fmtD(t.employeeTax)} accent="#6b7280" />
+                          <ImportStatCard label="Total Gross Pay" value={fmtD(t.grossPay)} accent="#2C4562" />
+                          <ImportStatCard label="Total Debit Amount" value={fmtD(t.totalDebit)} accent="#E8622A" />
                         </div>
-                        <div>
-                          <p className="text-white/40 font-bold uppercase tracking-wide text-[10px] mb-2">Employer Costs</p>
-                          <div className="flex justify-between py-1 font-semibold"><span className="text-white/60">Total Employer Taxes</span><span className="text-amber-300">+{fmtD(t.employerTax)}</span></div>
-                        </div>
-                      </div>
-                      <div className="rounded-lg border border-amber-500/40 overflow-hidden" style={{ background: "rgba(232,98,42,0.12)" }}>
-                        <div className="px-4 py-3 flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <AlertTriangle className="h-4 w-4 text-amber-400" />
+                        {/* Back */}
+                        <button
+                          onClick={() => setSelectedImportEmp(null)}
+                          className="flex items-center gap-1.5 text-sm font-medium text-blue-300 hover:text-blue-200 transition-colors">
+                          ← Back to all employees
+                        </button>
+                        {/* Employee header */}
+                        <div className="bg-white rounded-xl border shadow-sm p-5">
+                          <div className="flex items-start justify-between mb-4">
                             <div>
-                              <p className="text-amber-300 font-bold text-sm">Total Bank Debit</p>
-                              <p className="text-amber-400/60 text-[10px]">Confirmed by Rollfi · Will be debited on pay date</p>
+                              <h2 className="text-xl font-bold text-gray-900">{selName}</h2>
+                              {selPos && <p className="text-sm text-gray-500 mt-0.5">{selPos}</p>}
+                            </div>
+                            {payPeriod && (
+                              <div className="text-right">
+                                <div className="text-xs text-gray-400">Pay Date</div>
+                                <div className="text-sm font-semibold text-gray-700">{fmtDate(payPeriod.payDate)}</div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-3 gap-4 mb-4">
+                            <div className="bg-gray-50 rounded-lg p-3">
+                              <div className="text-xs text-gray-500 mb-0.5">Base Earnings</div>
+                              <div className="text-xl font-bold text-gray-900">{fmtD(grossPay - addComp)}</div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-3">
+                              <div className="text-xs text-gray-500 mb-0.5">Gross Earnings</div>
+                              <div className="text-xl font-bold text-gray-900">{fmtD(grossPay + addComp)}</div>
+                            </div>
+                            <div className="bg-gray-50 rounded-lg p-3">
+                              <div className="text-xs text-gray-500 mb-0.5">Net Earnings</div>
+                              <div className="text-xl font-bold text-emerald-600">{fmtD(netPay)}</div>
                             </div>
                           </div>
-                          <span className="text-amber-300 font-bold text-2xl">{fmtD(t.totalDebit)}</span>
+                          <div className="grid grid-cols-3 gap-4 text-sm">
+                            <div><span className="text-gray-400">Regular Hours</span><br /><span className="font-semibold text-gray-800">{hours}</span></div>
+                            <div><span className="text-gray-400">Total Hours</span><br /><span className="font-semibold text-gray-800">{hours}</span></div>
+                            <div><span className="text-gray-400">Pay Date</span><br /><span className="font-semibold text-gray-800">{fmtDate(payPeriod?.payDate)}</span></div>
+                          </div>
                         </div>
+                        {/* Tax tables */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                            <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
+                              <span className="font-semibold text-gray-800">Employee Taxes</span>
+                              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
+                            </div>
+                            {empTaxes.length > 0 ? (
+                              <>
+                                {empTaxes.map((tax, i) => (
+                                  <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
+                                    <span className="text-gray-700">{String(tax.name ?? tax.description ?? tax.taxName ?? `Tax ${i + 1}`)}</span>
+                                    <span className="font-medium text-gray-900">{fmtD(Number(tax.amount ?? tax.value ?? tax.taxAmount ?? 0))}</span>
+                                  </div>
+                                ))}
+                                <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
+                                  <span>Total</span><span>{fmtD(empDed)}</span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="px-5 py-4 text-sm text-gray-400">No employee tax details available.</div>
+                            )}
+                          </div>
+                          <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                            <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
+                              <span className="font-semibold text-gray-800">Employer Taxes</span>
+                              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
+                            </div>
+                            {erTaxes.length > 0 ? (
+                              <>
+                                {erTaxes.map((tax, i) => (
+                                  <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
+                                    <span className="text-gray-700">{String(tax.name ?? tax.description ?? tax.taxName ?? `Tax ${i + 1}`)}</span>
+                                    <span className="font-medium text-gray-900">{fmtD(Number(tax.amount ?? tax.value ?? tax.taxAmount ?? 0))}</span>
+                                  </div>
+                                ))}
+                                <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
+                                  <span>Total</span><span>{fmtD(erTaxTotal)}</span>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="px-5 py-4 text-sm text-gray-400">No employer tax details available.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="px-5 py-4 space-y-4">
+                      {/* 4 KPI cards */}
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                        <ImportStatCard label="Total Employer Taxes" value={fmtD(t.employerTax)} accent="#2C4562" />
+                        <ImportStatCard label="Total Employee Deductions" value={fmtD(t.employeeTax)} accent="#6b7280" />
+                        <ImportStatCard label="Total Gross Pay" value={fmtD(t.grossPay)} accent="#2C4562" />
+                        <ImportStatCard label="Total Debit Amount" value={fmtD(t.totalDebit)} accent="#E8622A" />
                       </div>
                       {importResult.skippedEmployees && importResult.skippedEmployees.length > 0 && (
                         <p className="text-amber-400/70 text-xs">⚠ Excluded: {importResult.skippedEmployees.map((e) => e.name ?? e.rollfiUserId).join(", ")}</p>
                       )}
-
-                      {/* Per-employee breakdown table */}
                       {importResult.lineItems && importResult.lineItems.length > 0 && (
                         <div>
                           <div className="flex items-center gap-2 mb-2">
@@ -742,117 +811,41 @@ export default function ManagerPayrollSubmit() {
                               <tbody className="divide-y divide-white/5">
                                 {importResult.lineItems.map((item, idx) => {
                                   const uid = (item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined;
-                                  const previewEmp = preview?.employees.find((e) => e.rollfiUserId?.toUpperCase() === uid?.toUpperCase());
-                                  const name = previewEmp?.name ?? uid ?? `Employee ${idx + 1}`;
-                                  const position = previewEmp?.position ?? "";
-                                  const grossPay        = Number(item.grossTotal ?? 0);
-                                  const netPay          = Number(item.netTotal ?? 0);
-                                  const employerTax     = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
-                                  const additionalComp  = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
-                                  const empDeductions   = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
-                                  const subtotal        = Number(item.subtotal ?? item.grossTotal ?? 0);
-                                  const empTaxes        = (item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
-                                  const erTaxes         = (item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
-                                  const rowKey          = uid ?? String(idx);
-                                  const isExpanded      = expandedImportEmp === rowKey;
+                                  const pe = preview?.employees.find((e) => e.rollfiUserId?.toUpperCase() === uid?.toUpperCase());
+                                  const empName = pe?.name ?? uid ?? `Employee ${idx + 1}`;
+                                  const empPos  = pe?.position ?? "";
+                                  const grossPay    = Number(item.grossTotal ?? 0);
+                                  const netPay      = Number(item.netTotal ?? 0);
+                                  const erTax       = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
+                                  const addComp     = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                                  const empDed      = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
+                                  const subtotal    = Number(item.subtotal ?? item.grossTotal ?? 0);
                                   return (
-                                    <React.Fragment key={rowKey}>
-                                      <tr
-                                        className="hover:bg-white/5 transition-colors cursor-pointer select-none"
-                                        onClick={() => setExpandedImportEmp(isExpanded ? null : rowKey)}
-                                      >
-                                        <td className="px-4 py-3">
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-white/30 text-[10px] w-3">{isExpanded ? "▲" : "▼"}</span>
-                                            <div>
-                                              <div className="text-white font-medium">{name}</div>
-                                              {position && <div className="text-white/40 text-[10px]">{position}</div>}
-                                            </div>
-                                          </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          {grossPay > 0 ? <span className="text-emerald-400 font-semibold">{fmtD(grossPay)}</span> : <span className="text-white/30">$0.00</span>}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          {employerTax > 0 ? <span className="text-amber-300">+{fmtD(employerTax)}</span> : <span className="text-white/30">$0.00</span>}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          {additionalComp > 0 ? <span className="text-white/70">{fmtD(additionalComp)}</span> : <span className="text-white/30">$0.00</span>}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          {empDeductions > 0 ? <span className="text-red-300">−{fmtD(empDeductions)}</span> : <span className="text-white/30">$0.00</span>}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                          {subtotal > 0 ? <span className="text-white font-bold">{fmtD(subtotal)}</span> : netPay > 0 ? <span className="text-white font-bold">{fmtD(netPay)}</span> : <span className="text-white/30">$0.00</span>}
-                                        </td>
-                                      </tr>
-                                      {isExpanded && (
-                                        <tr key={`${rowKey}-tax`}>
-                                          <td colSpan={6} className="px-4 py-0">
-                                            <div className="my-3 rounded-lg border border-white/10 overflow-hidden" style={{ background: "rgba(20,40,65,0.7)" }}>
-                                              <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between">
-                                                <div>
-                                                  <span className="font-semibold text-white/80 text-xs">{name}</span>
-                                                  {position && <span className="text-white/30 text-[10px] ml-2">{position}</span>}
-                                                </div>
-                                                <div className="flex gap-4 text-[10px]">
-                                                  <span className="text-white/40">Gross <span className="text-emerald-400 font-semibold">{fmtD(grossPay)}</span></span>
-                                                  <span className="text-white/40">Net <span className="text-white font-semibold">{fmtD(netPay)}</span></span>
-                                                </div>
-                                              </div>
-                                              {empTaxes.length > 0 || erTaxes.length > 0 ? (
-                                                <div className="px-4 py-3 grid grid-cols-2 gap-6 text-xs">
-                                                  <div>
-                                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employee Taxes</p>
-                                                    {empTaxes.map((t, i) => (
-                                                      <div key={i} className="flex justify-between py-0.5">
-                                                        <span className="text-white/50">{String(t.name ?? t.description ?? t.taxName ?? `Tax ${i + 1}`)}</span>
-                                                        <span className="text-red-300">{fmtD(Number(t.amount ?? t.value ?? t.taxAmount ?? 0))}</span>
-                                                      </div>
-                                                    ))}
-                                                    {empTaxes.length > 0 && (
-                                                      <div className="flex justify-between py-1 border-t border-white/10 mt-1 font-semibold">
-                                                        <span className="text-white/70">Total</span>
-                                                        <span className="text-red-400">{fmtD(empTaxes.reduce((s, t) => s + Number(t.amount ?? t.value ?? t.taxAmount ?? 0), 0))}</span>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                  <div>
-                                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employer Taxes</p>
-                                                    {erTaxes.map((t, i) => (
-                                                      <div key={i} className="flex justify-between py-0.5">
-                                                        <span className="text-white/50">{String(t.name ?? t.description ?? t.taxName ?? `Tax ${i + 1}`)}</span>
-                                                        <span className="text-amber-300">+{fmtD(Number(t.amount ?? t.value ?? t.taxAmount ?? 0))}</span>
-                                                      </div>
-                                                    ))}
-                                                    {erTaxes.length > 0 && (
-                                                      <div className="flex justify-between py-1 border-t border-white/10 mt-1 font-semibold">
-                                                        <span className="text-white/70">Total</span>
-                                                        <span className="text-amber-300">+{fmtD(erTaxes.reduce((s, t) => s + Number(t.amount ?? t.value ?? t.taxAmount ?? 0), 0))}</span>
-                                                      </div>
-                                                    )}
-                                                  </div>
-                                                </div>
-                                              ) : (
-                                                <div className="px-4 py-3 grid grid-cols-2 gap-6 text-xs">
-                                                  <div>
-                                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Payments</p>
-                                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Base Pay</span><span className="text-emerald-400">{fmtD(grossPay)}</span></div>
-                                                    {additionalComp > 0 && <div className="flex justify-between py-0.5"><span className="text-white/50">Additional Comp</span><span className="text-white/60">{fmtD(additionalComp)}</span></div>}
-                                                    {empDeductions > 0 && <div className="flex justify-between py-0.5"><span className="text-white/50">Employee Deductions</span><span className="text-red-300">−{fmtD(empDeductions)}</span></div>}
-                                                    <div className="flex justify-between py-1 border-t border-white/10 mt-1 font-semibold"><span className="text-white/70">Net Pay</span><span className="text-white">{fmtD(netPay)}</span></div>
-                                                  </div>
-                                                  <div>
-                                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employer Costs</p>
-                                                    {employerTax > 0 && <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Taxes</span><span className="text-amber-300">+{fmtD(employerTax)}</span></div>}
-                                                  </div>
-                                                </div>
-                                              )}
-                                            </div>
-                                          </td>
-                                        </tr>
-                                      )}
-                                    </React.Fragment>
+                                    <tr
+                                      key={uid ?? idx}
+                                      className="hover:bg-white/5 transition-colors cursor-pointer select-none"
+                                      onClick={() => setSelectedImportEmp({ lineItem: item, previewEmp: pe, name: empName, position: empPos })}
+                                    >
+                                      <td className="px-4 py-3">
+                                        <div className="text-white font-medium">{empName}</div>
+                                        {empPos && <div className="text-white/40 text-[10px]">{empPos}</div>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {grossPay > 0 ? <span className="text-emerald-400 font-semibold">{fmtD(grossPay)}</span> : <span className="text-white/30">$0.00</span>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {erTax > 0 ? <span className="text-amber-300">+{fmtD(erTax)}</span> : <span className="text-white/30">$0.00</span>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {addComp > 0 ? <span className="text-white/70">{fmtD(addComp)}</span> : <span className="text-white/30">$0.00</span>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {empDed > 0 ? <span className="text-red-300">−{fmtD(empDed)}</span> : <span className="text-white/30">$0.00</span>}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        {subtotal > 0 ? <span className="text-white font-bold">{fmtD(subtotal)}</span> : netPay > 0 ? <span className="text-white font-bold">{fmtD(netPay)}</span> : <span className="text-white/30">$0.00</span>}
+                                      </td>
+                                    </tr>
                                   );
                                 })}
                               </tbody>
