@@ -1718,22 +1718,32 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
   // If we don't have the wageId stored, try to fetch it from Rollfi
   let resolvedWageId = rollfiWageId;
   if (!resolvedWageId) {
-    try {
-      const r = await axios.post(
-        `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
-        { method: "getUserWage", userId: rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
-        { headers }
-      );
-      req.log.info({ rollfiResponse: r.data }, "fix-wage: getUserWage response");
-      const raw = r.data as Record<string, unknown>;
-      const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
-        : raw.userWageId ? [raw] : [];
-      const active = wages.find(w => (w.status as string)?.toLowerCase() !== "inactive") ?? wages[0];
-      resolvedWageId = (active?.userWageId ?? active?.id) as string | undefined;
-      req.log.info({ resolvedWageId }, "fix-wage: resolved wageId from Rollfi");
-    } catch (e) {
-      req.log.warn({ e }, "fix-wage: getUserWage failed — will try updateUserWage without wageId");
+    // Try variant 1: with companyId
+    for (const body of [
+      { method: "getUserWage", userId: rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
+      { method: "getUserWage", userId: rollfiUserId },
+      { method: "getUserWage", rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
+    ]) {
+      try {
+        const r = await axios.post(
+          `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
+          body,
+          { headers, validateStatus: () => true }
+        );
+        req.log.info({ status: r.status, rollfiResponse: r.data, requestBody: JSON.stringify(body) }, "fix-wage: getUserWage attempt");
+        if (r.status === 200) {
+          const raw = r.data as Record<string, unknown>;
+          const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
+            : raw.userWageId ? [raw] : [];
+          const active = wages.find(w => (w.status as string)?.toLowerCase() !== "inactive") ?? wages[0];
+          resolvedWageId = (active?.userWageId ?? active?.id) as string | undefined;
+          if (resolvedWageId) break;
+        }
+      } catch (e) {
+        req.log.warn({ e }, "fix-wage: getUserWage attempt threw");
+      }
     }
+    req.log.info({ resolvedWageId }, "fix-wage: resolved wageId from Rollfi");
   }
 
   // Attempt 1: updateUserWage — Rollfi's correct method for updating existing wage records
@@ -1778,8 +1788,50 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
     }
   }
 
+  // Attempt 2: addUserWage — fallback when no wageId is available (seeded employees whose
+  // wageId was never persisted during KYC onboarding). Rollfi may create a second wage
+  // record, but the most recent active one takes precedence for payroll calculations.
+  try {
+    const r2 = await axios.post(
+      `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+      {
+        method: "addUserWage",
+        userWage: {
+          companyId: rollfiCompany.rollfiCompanyId,
+          userId: rollfiUserId,
+          wageRate: wageRateDollars,
+          wageBasis: "Per Hour",
+          workerType: "W2",
+          differentialPay: "No",
+          userType: "Paid by the hour",
+          employmentStatus: "Full Time (30+ Hours per week)",
+          userRefTaxExempt: "No, this employee is not tax exempt",
+          paymentMethod: "Direct Deposit",
+        },
+      },
+      { headers }
+    );
+    req.log.info({ rollfiResponse: r2.data }, "fix-wage: addUserWage (fallback) response");
+    const raw2 = r2.data as Record<string, unknown>;
+    const errMsg2 = (raw2.error as Record<string, unknown> | undefined)?.message as string | undefined;
+    if (!errMsg2) {
+      const newWageId = (raw2.userWage as Record<string, unknown> | undefined)?.userWageId as string | undefined;
+      if (staffUser?.employeeId && newWageId) {
+        const existing = store.getRollfiEmployee(staffUser.employeeId);
+        if (existing) await persistRollfiEmployee(staffUser.employeeId, { ...existing, rollfiWageId: newWageId });
+      }
+      res.json({ success: true, method: "addUserWage", wageRateDollars, rollfiResponse: raw2 });
+      return;
+    }
+    req.log.warn({ errMsg2 }, "fix-wage: addUserWage (fallback) returned error body");
+    res.status(400).json({ error: errMsg2, wageRateDollars });
+    return;
+  } catch (e2) {
+    req.log.warn({ e2 }, "fix-wage: addUserWage (fallback) failed");
+  }
+
   res.status(400).json({
-    error: "Could not update wage in Rollfi — wage record exists but updateUserWage failed. This may need to be corrected manually in the Rollfi dashboard or via Rollfi support.",
+    error: "Could not update wage in Rollfi — both updateUserWage and addUserWage failed.",
     wageRateDollars,
     resolvedWageId: resolvedWageId ?? null,
   });
@@ -1808,52 +1860,111 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
 
     let resolvedWageId = rollfiRec.rollfiWageId;
     if (!resolvedWageId) {
+      for (const body of [
+        { method: "getUserWage", userId: rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
+        { method: "getUserWage", userId: rollfiUserId },
+      ]) {
+        try {
+          const r = await axios.post(
+            `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
+            body,
+            { headers, validateStatus: () => true }
+          );
+          req.log.info({ status: r.status, rollfiResponse: r.data, requestBody: JSON.stringify(body), name: u.name }, "repair-store-wages: getUserWage attempt");
+          if (r.status === 200) {
+            const raw = r.data as Record<string, unknown>;
+            const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
+              : raw.userWageId ? [raw] : [];
+            const active = wages.find(w => (w.status as string)?.toLowerCase() !== "inactive") ?? wages[0];
+            resolvedWageId = (active?.userWageId ?? active?.id) as string | undefined;
+            if (resolvedWageId) break;
+          }
+        } catch (e) {
+          req.log.warn({ e, rollfiUserId, name: u.name }, "repair-store-wages: getUserWage attempt threw");
+        }
+      }
+      req.log.info({ resolvedWageId, rollfiUserId, name: u.name }, "repair-store-wages: resolved wageId");
+    }
+
+    let repairSuccess = false;
+    let repairMethod = "";
+    let repairError: string | null = null;
+    let repairResponse: unknown = null;
+
+    if (resolvedWageId) {
       try {
-        const r = await axios.post(
-          `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
-          { method: "getUserWage", userId: rollfiUserId, companyId: rollfiCompany.rollfiCompanyId },
-          { headers }
-        );
-        req.log.info({ rollfiResponse: r.data }, "repair-store-wages: getUserWage response");
+        const r = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#updateUserWage`, {
+          method: "updateUserWage",
+          userWage: {
+            companyId: rollfiCompany.rollfiCompanyId,
+            userId: rollfiUserId,
+            userWageId: resolvedWageId,
+            wageRate: wageRateDollars,
+            wageBasis: "Per Hour",
+            workerType: "W2",
+            differentialPay: "No",
+            userType: "Paid by the hour",
+            employmentStatus: "Full Time (30+ Hours per week)",
+            userRefTaxExempt: "No, this employee is not tax exempt",
+            paymentMethod: "Direct Deposit",
+          },
+        }, { headers });
+        req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r.data }, "repair-store-wages: updateUserWage response");
         const raw = r.data as Record<string, unknown>;
-        const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
-          : raw.userWageId ? [raw] : [];
-        const active = wages.find(w => (w.status as string)?.toLowerCase() !== "inactive") ?? wages[0];
-        resolvedWageId = (active?.userWageId ?? active?.id) as string | undefined;
+        const errMsg = (raw.error as Record<string, unknown> | undefined)?.message as string | undefined;
+        if (!errMsg) {
+          repairSuccess = true; repairMethod = "updateUserWage"; repairResponse = raw;
+          if (u.employeeId) {
+            const existing = store.getRollfiEmployee(u.employeeId);
+            if (existing) await persistRollfiEmployee(u.employeeId, { ...existing, rollfiWageId: resolvedWageId });
+          }
+        } else {
+          repairError = errMsg;
+        }
       } catch (e) {
-        req.log.warn({ e, rollfiUserId }, "repair-store-wages: getUserWage failed");
+        repairError = e instanceof Error ? e.message : String(e);
+        req.log.warn({ rollfiUserId, name: u.name, err: e }, "repair-store-wages: updateUserWage HTTP error");
       }
     }
 
-    const requestBody = {
-      method: "updateUserWage",
-      userWage: {
-        companyId: rollfiCompany.rollfiCompanyId,
-        userId: rollfiUserId,
-        userWageId: resolvedWageId ?? "",
-        wageRate: wageRateDollars,
-        wageBasis: "Per Hour",
-        workerType: "W2",
-        differentialPay: "No",
-        userType: "Paid by the hour",
-        employmentStatus: "Full Time (30+ Hours per week)",
-        userRefTaxExempt: "No, this employee is not tax exempt",
-        paymentMethod: "Direct Deposit",
-      },
-    };
-    req.log.info({ rollfiUserId, name: u.name, requestBody: JSON.stringify(requestBody) }, "repair-store-wages: updateUserWage request");
-
-    try {
-      const r = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#updateUserWage`, requestBody, { headers });
-      req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r.data }, "repair-store-wages: updateUserWage response");
-      const raw = r.data as Record<string, unknown>;
-      const errMsg = (raw.error as Record<string, unknown> | undefined)?.message as string | undefined;
-      results.push({ name: u.name, rollfiUserId, wageRateDollars, success: !errMsg, error: errMsg ?? null, rollfiResponse: raw });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      req.log.warn({ rollfiUserId, name: u.name, err: e }, "repair-store-wages: updateUserWage HTTP error");
-      results.push({ name: u.name, rollfiUserId, wageRateDollars, success: false, error: msg });
+    // Fallback: addUserWage when no wageId available or update failed
+    if (!repairSuccess) {
+      try {
+        const r2 = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUserWage`, {
+          method: "addUserWage",
+          userWage: {
+            companyId: rollfiCompany.rollfiCompanyId,
+            userId: rollfiUserId,
+            wageRate: wageRateDollars,
+            wageBasis: "Per Hour",
+            workerType: "W2",
+            differentialPay: "No",
+            userType: "Paid by the hour",
+            employmentStatus: "Full Time (30+ Hours per week)",
+            userRefTaxExempt: "No, this employee is not tax exempt",
+            paymentMethod: "Direct Deposit",
+          },
+        }, { headers });
+        req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r2.data }, "repair-store-wages: addUserWage (fallback) response");
+        const raw2 = r2.data as Record<string, unknown>;
+        const errMsg2 = (raw2.error as Record<string, unknown> | undefined)?.message as string | undefined;
+        if (!errMsg2) {
+          repairSuccess = true; repairMethod = "addUserWage"; repairResponse = raw2; repairError = null;
+          const newWageId = (raw2.userWage as Record<string, unknown> | undefined)?.userWageId as string | undefined;
+          if (u.employeeId && newWageId) {
+            const existing = store.getRollfiEmployee(u.employeeId);
+            if (existing) await persistRollfiEmployee(u.employeeId, { ...existing, rollfiWageId: newWageId });
+          }
+        } else {
+          repairError = errMsg2;
+        }
+      } catch (e2) {
+        repairError = e2 instanceof Error ? e2.message : String(e2);
+        req.log.warn({ rollfiUserId, name: u.name, err: e2 }, "repair-store-wages: addUserWage HTTP error");
+      }
     }
+
+    results.push({ name: u.name, rollfiUserId, wageRateDollars, success: repairSuccess, method: repairMethod || null, error: repairError, rollfiResponse: repairResponse });
   }
 
   res.json({ repaired: results.filter(r => r.success).length, total: results.length, results });

@@ -679,8 +679,8 @@ export default function ManagerPayrollSubmit() {
                     const erTaxTotal   = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
                     const addComp      = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
                     const hours        = selPrev?.netPayableHours ?? selPrev?.hoursWorked ?? 0;
-                    const empTaxes     = (item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
-                    const erTaxes      = (item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
+                    const empTaxes     = (item.employeeTaxDetails ?? item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
+                    const erTaxes      = (item.employerTaxDetails ?? item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
                     return (
                       <div className="px-5 py-4 space-y-4">
                         {/* KPI cards */}
