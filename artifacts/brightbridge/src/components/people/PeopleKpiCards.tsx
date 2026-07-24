@@ -59,7 +59,7 @@ function KpiCard({ icon, iconBg, title, value, sub, subColor, link, linkLabel, o
   onValueClick?: () => void; loading?: boolean;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col gap-3 min-h-[120px]">
+    <div className="rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3 min-h-[120px]" style={{ background: "hsl(212 20% 90%)" }}>
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg shrink-0" style={{ background: iconBg }}>{icon}</div>
         <div className="flex-1 min-w-0">

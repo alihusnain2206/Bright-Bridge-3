@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import {
   FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
   Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
+  Bell, Search,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -117,13 +118,41 @@ const ROLE_COLOR: Record<string, string> = {
   parent:      "#2563eb",
 };
 
+interface CompanyInfo { id: string; name: string; ein?: string; }
+
+function getGreeting(name: string): { text: string; emoji: string; sub: string } {
+  const h = new Date().getHours();
+  const first = name.split(" ")[0] ?? name;
+  if (h < 12) return { text: `Good morning, ${first}!`, emoji: "☀️", sub: "Here's what's happening with your workforce today." };
+  if (h < 17) return { text: `Good afternoon, ${first}!`, emoji: "👋", sub: "Here's what's happening with your workforce today." };
+  return { text: `Good evening, ${first}!`, emoji: "🌙", sub: "Here's what's happening with your workforce today." };
+}
+
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
   const search = useSearch();
   const navItems = getNavItems(user?.role);
-
   const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
+  const [company, setCompany] = useState<CompanyInfo | null>(null);
+
+  useEffect(() => {
+    if (!user?.companyId) return;
+    fetch(`/api/companies?companyId=${user.companyId}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: { companies: CompanyInfo[] }) => {
+        const c = d.companies.find(co => co.id === user.companyId);
+        if (c) setCompany(c);
+      })
+      .catch(() => {});
+  }, [user?.companyId]);
+
+  const greeting = user ? getGreeting(user.name) : null;
+  const companyName = company?.name ?? (user?.role === "super_admin" ? "BrightBridge Assist" : "");
+  const companyEin = company?.ein;
+  const userInitials = user
+    ? user.name.split(" ").filter(Boolean).map(p => p[0]).join("").toUpperCase().slice(0, 2)
+    : "?";
 
   const handleLogout = async () => {
     await logout();
@@ -149,7 +178,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const isSubItemActive = (childHref: string, label: string) => {
+  const isSubItemActive = (childHref: string, _label: string) => {
     const [childPath, childQuery] = childHref.split("?");
     if (location !== childPath) return false;
     if (childQuery) {
@@ -174,23 +203,76 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <span className="opacity-70 font-normal">Testing environment — no real data or payments</span>
       </div>
 
+      {/* ── Top Header ── */}
+      <header className="flex items-center gap-3 px-5 h-16 bg-white border-b border-gray-100 shrink-0 z-10">
+        {/* Logo */}
+        <Link href={user ? dashboardPath(user.role) : "/"}>
+          <img
+            src="/brightbridge-logo.png"
+            alt="BrightBridge"
+            className="h-11 object-contain cursor-pointer"
+          />
+        </Link>
+
+        {/* Divider */}
+        <div className="w-px h-8 bg-gray-100 mx-1 hidden lg:block" />
+
+        {/* Greeting */}
+        {greeting && (
+          <div className="hidden lg:block">
+            <div className="font-bold text-gray-900 text-sm leading-tight">
+              {greeting.text} {greeting.emoji}
+            </div>
+            <div className="text-xs text-gray-400 leading-tight">{greeting.sub}</div>
+          </div>
+        )}
+
+        {/* Flex spacer */}
+        <div className="flex-1" />
+
+        {/* Search bar */}
+        <div className="relative hidden md:block w-72">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Search employees, documents, policies…"
+            className="w-full pl-9 pr-4 h-9 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#E8622A]/20 focus:border-[#E8622A]/50 transition-colors"
+          />
+          <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 font-mono hidden xl:block">⌘ K</kbd>
+        </div>
+
+        {/* Bell */}
+        <button className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 transition-colors shrink-0">
+          <Bell className="h-[18px] w-[18px]" />
+        </button>
+
+        {/* Company + EIN + Avatar */}
+        {companyName && (
+          <div className="hidden md:flex items-center gap-2.5 pl-3 border-l border-gray-100">
+            <div className="text-right">
+              <div className="text-sm font-semibold text-gray-900 leading-tight whitespace-nowrap">{companyName}</div>
+              {companyEin ? (
+                <div className="text-[11px] text-gray-400 leading-tight">EIN: {companyEin}</div>
+              ) : (
+                <div className="text-[11px] text-gray-400 leading-tight capitalize">
+                  {(user?.role ?? "").replace(/_/g, " ")}
+                </div>
+              )}
+            </div>
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 select-none"
+              style={{ background: ROLE_COLOR[user?.role ?? ""] ?? "#E8622A" }}
+            >
+              {userInitials}
+            </div>
+          </div>
+        )}
+      </header>
+
       <div className="flex flex-1 min-h-0">
 
         {/* ── Sidebar ── */}
-        <aside
-          className="w-56 flex flex-col shrink-0 overflow-y-auto"
-          style={{ background: "#1b3250" }}
-        >
-          {/* Logo */}
-          <div className="px-5 py-4 border-b border-white/10 shrink-0 bg-white">
-            <Link href={user ? dashboardPath(user.role) : "/"}>
-              <img
-                src="/brightbridge-logo.png"
-                alt="BrightBridge"
-                className="h-8 object-contain cursor-pointer"
-              />
-            </Link>
-          </div>
+        <aside className="w-56 flex flex-col shrink-0 overflow-y-auto bg-white border-r border-gray-100">
 
           {/* Nav items */}
           <nav className="flex-1 px-3 py-4 space-y-0.5">
@@ -204,7 +286,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
                         isActive(href)
                           ? "bg-[#E8622A] text-white shadow-sm"
-                          : "text-white/60 hover:text-white hover:bg-white/10"
+                          : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                       }`}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
@@ -224,26 +306,26 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       onClick={() => { if (parentActive) toggleGroup(href); }}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
                         parentActive
-                          ? "bg-[#E8622A]/20 text-white"
-                          : "text-white/60 hover:text-white hover:bg-white/10"
+                          ? "bg-orange-50 text-[#E8622A]"
+                          : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                       }`}
                     >
                       <Icon className="h-4 w-4 shrink-0" />
                       <span className="flex-1">{label}</span>
                       {expanded
-                        ? <ChevronDown className="h-3.5 w-3.5 opacity-60" />
-                        : <ChevronRight className="h-3.5 w-3.5 opacity-40" />}
+                        ? <ChevronDown className={`h-3.5 w-3.5 ${parentActive ? "text-[#E8622A]/60" : "text-gray-400"}`} />
+                        : <ChevronRight className={`h-3.5 w-3.5 ${parentActive ? "text-[#E8622A]/50" : "text-gray-300"}`} />}
                     </button>
                   </Link>
 
                   {expanded && (
-                    <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-white/10 pl-3">
+                    <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-gray-200 pl-3">
                       {children.map(child => (
                         child.soon ? (
                           <div key={child.label}
-                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-white/25 cursor-not-allowed select-none">
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-300 cursor-not-allowed select-none">
                             <span className="flex-1 truncate">{child.label}</span>
-                            <span className="text-[9px] font-semibold bg-white/10 text-white/30 px-1 py-0.5 rounded uppercase tracking-wide shrink-0">Soon</span>
+                            <span className="text-[9px] font-semibold bg-gray-100 text-gray-400 px-1 py-0.5 rounded uppercase tracking-wide shrink-0">Soon</span>
                           </div>
                         ) : (
                           <Link key={child.href + child.label} href={child.href}>
@@ -251,7 +333,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                               className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                                 isSubItemActive(child.href, child.label)
                                   ? "bg-[#E8622A] text-white shadow-sm"
-                                  : "text-white/50 hover:text-white hover:bg-white/10"
+                                  : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
                               }`}
                             >
                               {child.label}
@@ -275,19 +357,19 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* User + Logout */}
-          <div className="px-4 pt-3 pb-5 border-t border-white/10 shrink-0">
+          <div className="px-4 pt-3 pb-5 border-t border-gray-100 shrink-0">
             {user && (
               <div className="space-y-2">
                 <div className="flex items-center gap-2 px-1">
                   <div
                     className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
-                    style={{ background: `${ROLE_COLOR[user.role] ?? "#E8622A"}30` }}
+                    style={{ background: `${ROLE_COLOR[user.role] ?? "#E8622A"}15` }}
                   >
                     <ShieldCheck className="h-3.5 w-3.5" style={{ color: ROLE_COLOR[user.role] ?? "#E8622A" }} />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-white text-xs font-semibold truncate">{user.name.split(" ")[0]}</div>
-                    <div className="text-white/40 text-[10px] uppercase tracking-wider truncate">
+                    <div className="text-gray-800 text-xs font-semibold truncate">{user.name.split(" ")[0]}</div>
+                    <div className="text-gray-400 text-[10px] uppercase tracking-wider truncate">
                       {user.role.replace(/_/g, " ")}
                     </div>
                   </div>
@@ -296,7 +378,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   variant="ghost"
                   size="sm"
                   onClick={handleLogout}
-                  className="w-full justify-start h-7 text-xs text-white/50 hover:text-white hover:bg-white/10 gap-2 px-2"
+                  className="w-full justify-start h-7 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 gap-2 px-2"
                 >
                   <LogOut className="h-3.5 w-3.5" />
                   Logout
@@ -307,14 +389,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* ── Main content ── */}
-        <main
-          className="flex-1 overflow-y-auto"
-          style={{ background: "linear-gradient(160deg, #f0f4fb 0%, #f7f8fc 60%, #fdf6f3 100%)" }}
-        >
+        <main className="flex-1 overflow-y-auto bg-white">
           <div className="px-6 py-6">
             {children}
           </div>
-          <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100/80">
+          <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100">
             BrightBridge Assist · EasyTeam Embedded SDK Integration Test
           </footer>
         </main>
