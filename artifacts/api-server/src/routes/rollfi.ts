@@ -3017,15 +3017,22 @@ router.get("/rollfi/company-tasks", async (req, res) => {
     const tasks = (raw.tasks ?? []) as Array<{ task: string; description: string }>;
     const kybTask = tasks.find((t) => t.task === "KYB verification");
     const bankTask = tasks.find((t) => t.task === "Connect bank account");
-    res.json({
-      tasks,
-      kybStatus: kybTask
-        ? kybTask.description.toLowerCase().includes("failed") ? "failed"
-          : kybTask.description.toLowerCase().includes("pending") ? "pending"
-          : "issue"
-        : "ok",
-      bankLinked: !bankTask,
-    });
+    // kybStatus derivation:
+    //   "approved" — no pending KYB task (Rollfi removes the task once approved), OR task description says approved/verified
+    //   "pending"  — task exists and description contains "pending"
+    //   "failed"   — task exists and description contains "failed"
+    //   "issue"    — task exists with an unrecognised description
+    let kybStatus: string;
+    if (!kybTask) {
+      kybStatus = "approved";
+    } else {
+      const desc = kybTask.description.toLowerCase();
+      if (desc.includes("failed")) kybStatus = "failed";
+      else if (desc.includes("pending") || desc.includes("review")) kybStatus = "pending";
+      else if (desc.includes("approved") || desc.includes("verified") || desc.includes("success")) kybStatus = "approved";
+      else kybStatus = "issue";
+    }
+    res.json({ tasks, kybStatus, bankLinked: !bankTask });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     res.status(500).json({ error: String(err), rollfiErrorBody: e.response?.data });

@@ -128,7 +128,7 @@ function HealthScore({ tasks, empStatuses, detail, preview, hasHistory }: {
 }) {
   const checks = [
     { label: "Bank account verified", done: tasks?.bankLinked === true },
-    { label: "KYB passed", done: tasks?.kybStatus?.toLowerCase() === "approved" || tasks?.kybStatus?.toLowerCase() === "approved" },
+    { label: "KYB passed", done: tasks?.kybStatus === "approved" },
     { label: "All employees onboarded", done: empStatuses ? empStatuses.every(e => e.userStatus.toLowerCase() === "active") : false },
     { label: "Payroll calculated", done: !!(detail?.payrollLineItems?.length) },
     { label: "Payroll approved / submitted", done: !!(detail && !["new",""].includes(detail.PayPeriodStatus?.toLowerCase())) },
