@@ -42,6 +42,7 @@ interface PeopleEmployee {
   bankAccountAdded?: boolean | null;
   photoUrl?: string | null;
   kycStatus?: string | null;
+  rollfiAccountStatus?: string | null;
   createdAt: string;
 }
 
@@ -86,12 +87,14 @@ function isNewHire(emp: PeopleEmployee): boolean {
   return (Date.now() - new Date(emp.startDate).getTime()) < 30 * 86400000;
 }
 
-function payrollChip(emp: PeopleEmployee): { label: string; cls: string } {
-  if (emp.rollfiUserId && emp.bankAccountAdded && (emp.hourlyWage ?? 0) > 0)
-    return { label: "Ready", cls: "bg-emerald-100 text-emerald-700" };
-  if (emp.rollfiUserId || emp.bankAccountAdded)
-    return { label: "Pending", cls: "bg-amber-100 text-amber-700" };
-  return { label: "Not Started", cls: "bg-gray-100 text-gray-500" };
+function payrollBadge(emp: PeopleEmployee): { label: string; cls: string; link: boolean } {
+  if (!emp.rollfiUserId)
+    return { label: "Not set up", cls: "bg-gray-100 text-gray-500", link: false };
+  const appReady    = emp.payrollReady === true;
+  const rollfiReady = emp.rollfiAccountStatus === "Active" && emp.kycStatus === "passed";
+  if (appReady && rollfiReady)
+    return { label: "Ready", cls: "bg-emerald-100 text-emerald-700", link: false };
+  return { label: "In Progress", cls: "bg-amber-100 text-amber-700", link: true };
 }
 
 const STATUS_CFG: Record<string, { label: string; dot: string; bg: string; text: string }> = {
@@ -743,7 +746,7 @@ export default function PeoplePage() {
                         paginated.map(emp => {
                           const isTerminated = emp.status === "terminated";
                           const hasRollfi    = !!emp.rollfiUserId;
-                          const chip         = payrollChip(emp);
+                          const chip         = payrollBadge(emp);
                           const title        = emp.jobTitle ?? emp.position ?? "—";
                           const color        = avatarColor(`${emp.firstName} ${emp.lastName}`);
 
@@ -803,9 +806,16 @@ export default function PeoplePage() {
 
                               {/* Payroll */}
                               <td className="px-4 py-4">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${chip.cls}`}>
-                                  {chip.label}
-                                </span>
+                                {chip.link ? (
+                                  <Link href={`/people/${emp.id}?tab=payroll`}
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${chip.cls} hover:opacity-80 transition-opacity`}>
+                                    {chip.label}
+                                  </Link>
+                                ) : (
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${chip.cls}`}>
+                                    {chip.label}
+                                  </span>
+                                )}
                               </td>
 
                               {/* Actions */}

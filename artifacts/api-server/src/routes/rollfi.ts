@@ -2034,6 +2034,64 @@ router.get("/rollfi/employees/status", async (req, res) => {
   }
 });
 
+// GET /rollfi/employees/:rollfiUserId/live-status — fetch current Rollfi status
+// for a single employee, write kycStatus + rollfiAccountStatus back to DB.
+// Used by the manual Refresh button on the employee profile Payroll tab.
+router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+
+  const { rollfiUserId } = req.params;
+  const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.rollfiUserId, rollfiUserId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  const caller = store.getUserById(req.session.userId);
+  if (!caller) { res.status(401).json({ error: "User not found" }); return; }
+  if (caller.role !== "super_admin" && caller.companyId !== emp.companyId) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+
+  const [company] = await db.select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+    .from(companiesTable).where(eq(companiesTable.id, emp.companyId));
+  if (!company?.rollfiCompanyId) {
+    res.status(400).json({ error: "Company not onboarded to Rollfi" }); return;
+  }
+
+  try {
+    type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
+    const r = await axios.post(
+      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      { method: "getUsers", companyId: company.rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    const users: RollfiUser[] = ((r.data as { users?: RollfiUser[] }).users ?? []);
+    const found = users.find(u => u.userId === rollfiUserId);
+    if (!found) { res.status(404).json({ error: "Employee not found in Rollfi" }); return; }
+
+    const nowISO = new Date().toISOString();
+    await db.update(employeesTable).set({
+      kycStatus: found.kycStatus ?? emp.kycStatus ?? undefined,
+      rollfiAccountStatus: found.status?.userStatus ?? emp.rollfiAccountStatus ?? undefined,
+      updatedAt: nowISO,
+    }).where(eq(employeesTable.id, emp.id));
+
+    req.log.info({ employeeId: emp.id, userStatus: found.status?.userStatus, kycStatus: found.kycStatus }, "live-status: wrote back");
+    res.json({
+      rollfiUserId,
+      employeeId: emp.id,
+      userStatus: found.status?.userStatus ?? null,
+      kycStatus: found.kycStatus ?? null,
+      fetchedAt: nowISO,
+    });
+  } catch (err) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "live-status: getUsers failed");
+    res.status(500).json({ error: "Failed to reach payroll provider", details: e.response?.data ?? String(err) });
+  }
+});
+
 // ── Sync employees from Rollfi → link missing rollfiUserIds ──
 
 router.post("/rollfi/companies/:companyId/sync-employees", async (req, res) => {

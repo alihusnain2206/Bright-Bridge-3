@@ -1,11 +1,11 @@
 import React, { useState, useRef } from "react";
-import { useRoute, useLocation, useSearch } from "wouter";
+import { useRoute, useLocation, useSearch, Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Pencil, MoreVertical, Pause, Ban, RotateCcw, AlertCircle,
   Mail, Phone, MapPin, Calendar, Briefcase, User, DollarSign, Building2,
   ClipboardList, ShieldCheck, FolderOpen, PhoneCall, CreditCard, Activity,
-  Camera, X, Loader2, CheckCircle2, Clock,
+  Camera, X, Loader2, CheckCircle2, Clock, RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -31,8 +31,9 @@ interface EmployeeDetail {
   homeAddress?: string|null; homeCity?: string|null; homeState?: string|null; homeZip?: string|null;
   complianceScore?: number|null; onboardingProgress?: number|null;
   rollfiUserId?: string|null; easyteamId?: string|null; kycStatus?: string|null;
+  rollfiAccountStatus?: string|null;
   bankAccountAdded?: boolean|null; w4Submitted?: boolean|null; payrollReady?: boolean|null;
-  photoUrl?: string|null; notes?: string|null; createdAt: string;
+  photoUrl?: string|null; notes?: string|null; createdAt: string; updatedAt?: string|null;
 }
 interface ActivityEntry {
   id: string; action: string; description: string; category: string;
@@ -394,19 +395,220 @@ function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: strin
         <InfoRow label="Overtime Eligible" value={emp.overtimeEligible === true ? "Yes" : emp.overtimeEligible === false ? "No" : null} />
         {emp.rollfiUserId && (
           <div className="mt-2 pt-2 border-t border-gray-50">
-            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Synced with Rollfi</span>
+            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Payroll Connected</span>
           </div>
         )}
       </Card>
       <Card title="System Status">
         <InfoRow label="Employee ID" value={emp.employeeDisplayId} />
         <InfoRow label="Internal ID" value={<span className="font-mono text-xs text-gray-500">{emp.id.slice(0, 8)}…</span>} />
-        <InfoRow label="Rollfi" value={emp.rollfiUserId ? <span className="text-emerald-600">Synced ✓</span> : <span className="text-gray-400">Not synced</span>} />
+        <InfoRow label="Payroll Provider" value={emp.rollfiUserId ? <span className="text-emerald-600">Synced ✓</span> : <span className="text-gray-400">Not synced</span>} />
         <InfoRow label="EasyTeam" value={emp.easyteamId ? <span className="text-emerald-600">Synced ✓</span> : <span className="text-gray-400">Not synced</span>} />
-        <InfoRow label="KYC Status" value={emp.kycStatus ?? "—"} />
+        <InfoRow label="Verification Status" value={emp.kycStatus ?? "—"} />
         <InfoRow label="Bank Account" value={emp.bankAccountAdded ? "Added ✓" : "Not added"} />
         <InfoRow label="W-4 Submitted" value={emp.w4Submitted ? "Yes ✓" : "No"} />
       </Card>
+    </div>
+  );
+}
+
+// ── Payroll Readiness Panel ────────────────────────────────────
+
+function fmtAgo(isoDate?: string | null): string {
+  if (!isoDate) return "never";
+  const diff = Date.now() - new Date(isoDate).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins === 1) return "1 min ago";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs === 1) return "1 hr ago";
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
+interface ComplianceItemP { id: string; type: string; name: string; status: string; isRequired: boolean; }
+
+const PAYROLL_ITEMS = [
+  { type: "w4",             label: "W-4 Form" },
+  { type: "direct_deposit", label: "Direct Deposit" },
+  { type: "i9",             label: "I-9 Verification" },
+];
+const STATUS_ITEMS = [
+  { type: "background_check", label: "Background Check" },
+  { type: "handbook",         label: "Handbook Acknowledgment" },
+  { type: "policy",           label: "Policy Acknowledgment" },
+];
+
+function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isSuperAdmin: boolean }) {
+  const qc = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+
+  const { data: compData, isLoading: compLoading } = useQuery<{ items: ComplianceItemP[]; score: number }>({
+    queryKey: ["compliance", emp.id],
+    queryFn: () => fetch(`/api/compliance?employeeId=${emp.id}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ items: ComplianceItemP[]; score: number }>),
+    staleTime: 30_000,
+  });
+
+  const items = compData?.items ?? [];
+  const done = (type: string) => items.some(i => i.type === type && i.status === "completed");
+
+  const providerLabel = isSuperAdmin ? "Rollfi" : "Payroll Provider";
+  const accountStatus = emp.rollfiAccountStatus;
+  const kycStatus     = emp.kycStatus;
+
+  const appReady    = PAYROLL_ITEMS.every(i => done(i.type));
+  const rollfiReady = accountStatus === "Active" && kycStatus === "passed";
+  const fullyReady  = !!emp.rollfiUserId && appReady && rollfiReady;
+  const needsKyc    = !!emp.rollfiUserId && (kycStatus === "new" || kycStatus === "pending");
+
+  async function handleRefresh() {
+    if (!emp.rollfiUserId) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const r = await fetch(`/api/rollfi/employees/${emp.rollfiUserId}/live-status`, { credentials: "include" });
+      if (!r.ok) throw new Error((await r.json() as { error?: string }).error ?? "Failed");
+      await qc.invalidateQueries({ queryKey: ["employee-detail", emp.id] });
+    } catch {
+      setRefreshError("Could not reach payroll provider — showing last known status");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm mb-5">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          {fullyReady
+            ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            : <Clock className="h-4 w-4 text-amber-500" />
+          }
+          <span className="font-semibold text-gray-800 text-sm">Payroll Readiness</span>
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${fullyReady ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
+            {fullyReady ? "Ready" : "In Progress"}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {emp.updatedAt && (
+            <span className="text-xs text-gray-400">Updated {fmtAgo(emp.updatedAt)}</span>
+          )}
+          {emp.rollfiUserId && (
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 text-xs text-[#0EA5C9] hover:text-[#0284a8] disabled:opacity-50 transition-colors"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing…" : "Refresh"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {refreshError && (
+        <div className="mx-5 mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          ⚠ {refreshError}
+        </div>
+      )}
+
+      {/* Two-gate body */}
+      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+        {/* Gate 1 — Our Records */}
+        <div className="px-5 py-4">
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Our Records</p>
+          {compLoading ? (
+            <div className="space-y-2">{[1,2,3,4,5,6].map(i => <Skeleton key={i} className="h-5 w-full" />)}</div>
+          ) : (
+            <>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Payroll-critical</p>
+              <div className="space-y-2 mb-4">
+                {PAYROLL_ITEMS.map(item => (
+                  <div key={item.type} className="flex items-center gap-2">
+                    {done(item.type)
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      : <AlertCircle  className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                    }
+                    <span className={`text-sm ${done(item.type) ? "text-gray-700" : "text-gray-500"}`}>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-2">Employment-required</p>
+              <div className="space-y-2">
+                {STATUS_ITEMS.map(item => (
+                  <div key={item.type} className="flex items-center gap-2">
+                    {done(item.type)
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      : <AlertCircle  className="h-3.5 w-3.5 text-gray-300 shrink-0" />
+                    }
+                    <span className={`text-sm ${done(item.type) ? "text-gray-700" : "text-gray-400"}`}>{item.label}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Gate 2 — Provider Verification */}
+        <div className="px-5 py-4">
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">
+            {providerLabel} Verification
+          </p>
+          {!emp.rollfiUserId ? (
+            <div className="text-sm text-gray-400 flex items-center gap-2 mt-1">
+              <span className="w-2 h-2 rounded-full bg-gray-300 shrink-0" />
+              Not connected to payroll provider
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                  accountStatus === "Active"      ? "bg-emerald-100 text-emerald-700" :
+                  accountStatus === "Invite Sent" ? "bg-amber-100 text-amber-700"    :
+                                                   "bg-gray-100 text-gray-500"
+                }`}>
+                  {accountStatus ?? "Unknown"}
+                </span>
+                <span className="text-sm text-gray-600">Account status</span>
+              </div>
+              <div className="flex items-center gap-2">
+                {kycStatus === "passed"
+                  ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                  : <AlertCircle  className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                }
+                <span className="text-sm text-gray-600">
+                  Verification:{" "}
+                  <span className={`font-medium ${kycStatus === "passed" ? "text-emerald-700" : "text-amber-700"}`}>
+                    {kycStatus === "passed"  ? "Passed"
+                   : kycStatus === "new"     ? "Not started"
+                   : kycStatus === "pending" ? "In progress"
+                   : (kycStatus ?? "Unknown")}
+                  </span>
+                </span>
+              </div>
+              {isSuperAdmin && (
+                <p className="text-[11px] text-gray-400 font-mono truncate">ID: {emp.rollfiUserId}</p>
+              )}
+              <div className="flex items-center gap-2 pt-1">
+                {needsKyc && (
+                  <Link href="/payroll"
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#1B3A6B] text-white hover:bg-[#284362] transition-colors">
+                    {isSuperAdmin ? "Complete KYC →" : "Complete Verification →"}
+                  </Link>
+                )}
+                <Link href="/payroll"
+                  className="inline-flex items-center gap-1.5 text-xs text-[#0EA5C9] hover:underline">
+                  Open in Payroll →
+                </Link>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -428,7 +630,7 @@ function periodLabel(p: PayPeriod) {
   return p.payPeriodId ?? "Period";
 }
 
-function PayrollTab({ emp }: { emp: EmployeeDetail }) {
+function PayrollTab({ emp, isSuperAdmin }: { emp: EmployeeDetail; isSuperAdmin: boolean }) {
   const [selectedPeriodId, setSelectedPeriodId] = useState<string>("");
   const [selectedPayDate, setSelectedPayDate] = useState<string | undefined>();
 
@@ -458,24 +660,6 @@ function PayrollTab({ emp }: { emp: EmployeeDetail }) {
     staleTime: 120_000,
   });
 
-  if (!emp.rollfiUserId) return (
-    <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
-      <CreditCard className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-      <p className="text-gray-600 font-medium">Payroll setup incomplete</p>
-      <p className="text-gray-400 text-sm mt-1">This employee hasn&apos;t been connected to payroll yet.</p>
-    </div>
-  );
-
-  if (histLoading) return <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-16" />)}</div>;
-
-  if (periods.length === 0) return (
-    <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
-      <CreditCard className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-      <p className="text-gray-600 font-medium">No pay periods found</p>
-      <p className="text-gray-400 text-sm mt-1">Run payroll first to see paystub details here.</p>
-    </div>
-  );
-
   const myStub = stubData?.stubs.find(s =>
     (s.employeeId && s.employeeId === emp.id) ||
     (s.rollfiUserId && emp.rollfiUserId && s.rollfiUserId.toUpperCase() === emp.rollfiUserId.toUpperCase())
@@ -487,155 +671,173 @@ function PayrollTab({ emp }: { emp: EmployeeDetail }) {
 
   return (
     <div className="space-y-5">
-      {/* Period selector */}
-      <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-gray-600 shrink-0">Pay Period</label>
-        <select
-          value={selectedPeriodId}
-          onChange={e => {
-            const p = periods.find(x => x.payPeriodId === e.target.value);
-            setSelectedPeriodId(e.target.value);
-            setSelectedPayDate(p?.payDate ?? p?.payEndDate);
-          }}
-          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#284362]/30 min-w-[240px]">
-          {periods.map(p => (
-            <option key={p.payPeriodId} value={p.payPeriodId ?? ""}>{periodLabel(p)}</option>
-          ))}
-        </select>
-      </div>
+      {/* Readiness panel — always shown */}
+      <PayrollReadinessPanel emp={emp} isSuperAdmin={isSuperAdmin} />
 
-      {stubLoading && <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>}
-
-      {!stubLoading && !myStub && (
-        <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
-          <CreditCard className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-600 font-medium">No paystub for this period</p>
-          <p className="text-gray-400 text-sm mt-1">This employee wasn&apos;t included in this pay run.</p>
-        </div>
-      )}
-
-      {!stubLoading && myStub && (
-        <>
-          {/* Earnings summary card */}
-          <div className="bg-white rounded-xl border shadow-sm p-5">
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">{myStub.name}</h3>
-                <p className="text-sm text-gray-500 mt-0.5">{myStub.position}</p>
-              </div>
-              {selectedPayDate && (
-                <div className="text-right">
-                  <div className="text-xs text-gray-400">Pay Date</div>
-                  <div className="text-sm font-semibold text-gray-700">{fmtPayDate(selectedPayDate)}</div>
-                </div>
-              )}
-            </div>
-
-            {/* Earnings row */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-0.5">Base Earnings</div>
-                <div className="text-xl font-bold text-gray-900">{fmtMoney(myStub.baseTotal ?? myStub.grossPay)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-0.5">Gross Earnings</div>
-                <div className="text-xl font-bold text-gray-900">{fmtMoney(myStub.grossPay + addComp)}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <div className="text-xs text-gray-500 mb-0.5">Net Earnings</div>
-                <div className="text-xl font-bold text-emerald-600">{fmtMoney(myStub.netPay)}</div>
-              </div>
-            </div>
-
-            {/* Hours + pay date row */}
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <span className="text-gray-400">Regular Hours</span>
-                <br /><span className="font-semibold text-gray-800">{myStub.hoursWorked}</span>
-              </div>
-              <div>
-                <span className="text-gray-400">Total Hours</span>
-                <br /><span className="font-semibold text-gray-800">{myStub.hoursWorked}</span>
-              </div>
-              <div>
-                <span className="text-gray-400">Pay Date</span>
-                <br /><span className="font-semibold text-gray-800">{fmtPayDate(selectedPayDate)}</span>
-              </div>
-            </div>
+      {/* Pay stubs — only when connected to payroll */}
+      {emp.rollfiUserId && (
+        histLoading ? (
+          <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-16" />)}</div>
+        ) : periods.length === 0 ? (
+          <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+            <CreditCard className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-600 font-medium">No pay periods found</p>
+            <p className="text-gray-400 text-sm mt-1">Run payroll first to see paystub details here.</p>
           </div>
+        ) : (
+          <>
+            {/* Period selector */}
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-600 shrink-0">Pay Period</label>
+              <select
+                value={selectedPeriodId}
+                onChange={e => {
+                  const p = periods.find(x => x.payPeriodId === e.target.value);
+                  setSelectedPeriodId(e.target.value);
+                  setSelectedPayDate(p?.payDate ?? p?.payEndDate);
+                }}
+                className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#284362]/30 min-w-[240px]">
+                {periods.map(p => (
+                  <option key={p.payPeriodId} value={p.payPeriodId ?? ""}>{periodLabel(p)}</option>
+                ))}
+              </select>
+            </div>
 
-          {/* Tax tables side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Employee Taxes */}
-            <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
-                <span className="font-semibold text-gray-800">Employee Taxes</span>
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
+            {stubLoading && <div className="space-y-3">{[1,2,3].map(i => <Skeleton key={i} className="h-20" />)}</div>}
+
+            {!stubLoading && !myStub && (
+              <div className="text-center py-16 bg-white rounded-xl border border-gray-200">
+                <CreditCard className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+                <p className="text-gray-600 font-medium">No paystub for this period</p>
+                <p className="text-gray-400 text-sm mt-1">This employee wasn&apos;t included in this pay run.</p>
               </div>
-              {myStub.employeeTaxDetails && myStub.employeeTaxDetails.length > 0 ? (
-                <>
-                  {myStub.employeeTaxDetails.map((t, i) => (
-                    <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
-                      <span className="text-gray-700">{t.taxName}</span>
-                      <span className="font-medium text-gray-900">{fmtMoney(t.taxAmount)}</span>
+            )}
+
+            {!stubLoading && myStub && (
+              <>
+                {/* Earnings summary card */}
+                <div className="bg-white rounded-xl border shadow-sm p-5">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="text-lg font-bold text-gray-900">{myStub.name}</h3>
+                      <p className="text-sm text-gray-500 mt-0.5">{myStub.position}</p>
                     </div>
-                  ))}
-                  <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
-                    <span>Total</span><span>{fmtMoney(totalEmpTax)}</span>
+                    {selectedPayDate && (
+                      <div className="text-right">
+                        <div className="text-xs text-gray-400">Pay Date</div>
+                        <div className="text-sm font-semibold text-gray-700">{fmtPayDate(selectedPayDate)}</div>
+                      </div>
+                    )}
                   </div>
-                </>
-              ) : (
-                <div className="px-5 py-8 text-sm text-gray-400 text-center">
-                  {myStub.fromRollfi ? "No employee tax details for this period." : "Employee not yet processed in Rollfi."}
-                </div>
-              )}
-            </div>
 
-            {/* Employer Taxes */}
-            <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
-                <span className="font-semibold text-gray-800">Employer Taxes</span>
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
-              </div>
-              {myStub.employerTaxDetails && myStub.employerTaxDetails.length > 0 ? (
-                <>
-                  {myStub.employerTaxDetails.map((t, i) => (
-                    <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
-                      <span className="text-gray-700">{t.taxName}</span>
-                      <span className="font-medium text-gray-900">{fmtMoney(t.taxAmount)}</span>
+                  {/* Earnings row */}
+                  <div className="grid grid-cols-3 gap-4 mb-4">
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-0.5">Base Earnings</div>
+                      <div className="text-xl font-bold text-gray-900">{fmtMoney(myStub.baseTotal ?? myStub.grossPay)}</div>
                     </div>
-                  ))}
-                  <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
-                    <span>Total</span><span>{fmtMoney(totalErTax)}</span>
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-0.5">Gross Earnings</div>
+                      <div className="text-xl font-bold text-gray-900">{fmtMoney(myStub.grossPay + addComp)}</div>
+                    </div>
+                    <div className="bg-gray-50 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-0.5">Net Earnings</div>
+                      <div className="text-xl font-bold text-emerald-600">{fmtMoney(myStub.netPay)}</div>
+                    </div>
                   </div>
-                </>
-              ) : (
-                <div className="px-5 py-8 text-sm text-gray-400 text-center">No employer tax details available.</div>
-              )}
-            </div>
-          </div>
 
-          {/* Additional Compensations */}
-          {myStub.additionalCompensations && myStub.additionalCompensations.length > 0 && (
-            <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
-              <div className="px-5 py-3 bg-gray-50 border-b font-semibold text-gray-800">Additional Compensation</div>
-              {myStub.additionalCompensations.map((a, i) => (
-                <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
-                  <span className="text-gray-700">
-                    {a.payrollLineItemAdditionalCompensationVertexCompensationIdentifier.compensationDescription}
-                  </span>
-                  <span className="font-medium">{fmtMoney(a.amount)}</span>
+                  {/* Hours + pay date row */}
+                  <div className="grid grid-cols-3 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-400">Regular Hours</span>
+                      <br /><span className="font-semibold text-gray-800">{myStub.hoursWorked}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Total Hours</span>
+                      <br /><span className="font-semibold text-gray-800">{myStub.hoursWorked}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400">Pay Date</span>
+                      <br /><span className="font-semibold text-gray-800">{fmtPayDate(selectedPayDate)}</span>
+                    </div>
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
 
-          {/* YTD summary footer */}
-          <div className="bg-gray-50 rounded-xl border border-gray-200 px-5 py-3 flex items-center justify-between text-sm">
-            <span className="text-gray-500">YTD Gross Pay</span>
-            <span className="font-bold text-gray-900">{fmtMoney(myStub.ytdGross)}</span>
-          </div>
-        </>
+                {/* Tax tables side by side */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                  {/* Employee Taxes */}
+                  <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
+                      <span className="font-semibold text-gray-800">Employee Taxes</span>
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
+                    </div>
+                    {myStub.employeeTaxDetails && myStub.employeeTaxDetails.length > 0 ? (
+                      <>
+                        {myStub.employeeTaxDetails.map((t, i) => (
+                          <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
+                            <span className="text-gray-700">{t.taxName}</span>
+                            <span className="font-medium text-gray-900">{fmtMoney(t.taxAmount)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
+                          <span>Total</span><span>{fmtMoney(totalEmpTax)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="px-5 py-8 text-sm text-gray-400 text-center">
+                        {myStub.fromRollfi ? "No employee tax details for this period." : "Employee not yet processed in payroll."}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Employer Taxes */}
+                  <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                    <div className="flex items-center justify-between px-5 py-3 bg-gray-50 border-b">
+                      <span className="font-semibold text-gray-800">Employer Taxes</span>
+                      <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</span>
+                    </div>
+                    {myStub.employerTaxDetails && myStub.employerTaxDetails.length > 0 ? (
+                      <>
+                        {myStub.employerTaxDetails.map((t, i) => (
+                          <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
+                            <span className="text-gray-700">{t.taxName}</span>
+                            <span className="font-medium text-gray-900">{fmtMoney(t.taxAmount)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between px-5 py-3 bg-gray-50 border-t font-bold text-sm">
+                          <span>Total</span><span>{fmtMoney(totalErTax)}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="px-5 py-8 text-sm text-gray-400 text-center">No employer tax details available.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Additional Compensations */}
+                {myStub.additionalCompensations && myStub.additionalCompensations.length > 0 && (
+                  <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                    <div className="px-5 py-3 bg-gray-50 border-b font-semibold text-gray-800">Additional Compensation</div>
+                    {myStub.additionalCompensations.map((a, i) => (
+                      <div key={i} className="flex justify-between px-5 py-3 border-b last:border-b-0 text-sm">
+                        <span className="text-gray-700">
+                          {a.payrollLineItemAdditionalCompensationVertexCompensationIdentifier.compensationDescription}
+                        </span>
+                        <span className="font-medium">{fmtMoney(a.amount)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* YTD summary footer */}
+                <div className="bg-gray-50 rounded-xl border border-gray-200 px-5 py-3 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">YTD Gross Pay</span>
+                  <span className="font-bold text-gray-900">{fmtMoney(myStub.ytdGross)}</span>
+                </div>
+              </>
+            )}
+          </>
+        )
       )}
     </div>
   );
@@ -855,10 +1057,12 @@ export default function EmployeeProfilePage() {
 
             {/* Readiness chips */}
             <div className="mt-3 flex flex-wrap gap-2">
-              {emp.rollfiUserId && emp.bankAccountAdded && (emp.hourlyWage ?? 0) > 0 ? (
+              {!emp.rollfiUserId ? (
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Payroll Not Set Up</span>
+              ) : emp.payrollReady && emp.rollfiAccountStatus === "Active" && emp.kycStatus === "passed" ? (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">✓ Payroll Ready</span>
               ) : (
-                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-gray-100 text-gray-500">⏳ Payroll Setup</span>
+                <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">⏳ Payroll In Progress</span>
               )}
               {emp.easyteamId ? (
                 <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">✓ EasyTeam</span>
@@ -917,7 +1121,7 @@ export default function EmployeeProfilePage() {
         {activeTab === "contacts" && (
           <EmergencyContactForm employeeId={emp.id} companyId={emp.companyId} />
         )}
-        {activeTab === "payroll" && <PayrollTab emp={emp} />}
+        {activeTab === "payroll" && <PayrollTab emp={emp} isSuperAdmin={user?.role === "super_admin"} />}
         {activeTab === "activity" && <ActivityTab emp={emp} />}
       </div>
 
