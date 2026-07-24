@@ -15,6 +15,14 @@ export interface EmployeeSyncInput {
   hourlyWageCents: number;
   /** Employee's home state — used for state W-4 submission. Defaults to "NJ". */
   homeState?: string;
+  /** Real home address fields — forwarded to Rollfi addKycInformation. */
+  homeAddress?: string;
+  homeCity?: string;
+  homeZip?: string;
+  /** Raw 9-digit SSN (no dashes). */
+  ssn?: string;
+  /** ISO date YYYY-MM-DD. */
+  dateOfBirth?: string;
   w4FilingStatus?: string;
   w4MultipleJobs?: boolean;
   w4Dependents?: number;
@@ -70,7 +78,9 @@ export async function syncEmployeeToIntegrations(
     const r = await onboardEmployeeToRollfi(
       {
         id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents / 100,
-        homeState: emp.homeState, w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
+        homeState: emp.homeState, homeAddress: emp.homeAddress, homeCity: emp.homeCity, homeZip: emp.homeZip,
+        ssn: emp.ssn, dateOfBirth: emp.dateOfBirth,
+        w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
         w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
         stateW4Fields: emp.stateW4Fields,
       },

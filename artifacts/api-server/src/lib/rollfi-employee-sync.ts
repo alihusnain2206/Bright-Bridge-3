@@ -38,14 +38,31 @@ const DEFAULT_W4: W4Data = {
   homeState: "NJ",
 };
 
+interface KycIdentity {
+  address1?: string;
+  city?: string;
+  state?: string;
+  zipcode?: string;
+  ssn?: string;
+  dateOfBirth?: string;
+}
+
 export async function runEmployeeKycOnboarding(
   rollfiUserId: string,
   rollfiCompanyId: string,
   log: Logger,
-  w4: W4Data = DEFAULT_W4
+  w4: W4Data = DEFAULT_W4,
+  identity: KycIdentity = {}
 ): Promise<void> {
   const headers = rollfiHeaders();
-  const ssn = randomNineDigits();
+  const ssn = identity.ssn ?? randomNineDigits();
+  const dateOfBirth = identity.dateOfBirth ?? "1990-01-15";
+  const address1 = identity.address1 ?? "123 Main St";
+  const city = identity.city ?? "Newark";
+  const state = identity.state ?? "NJ";
+  const zipcode = identity.zipcode ?? "07101";
+
+  log.info({ hasRealAddress: !!identity.address1, hasRealDob: !!identity.dateOfBirth, hasRealSsn: !!identity.ssn }, "runEmployeeKycOnboarding: identity source");
 
   try {
     const r = await axios.put(`${ROLLFI_BASE_URL}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
@@ -56,7 +73,7 @@ export async function runEmployeeKycOnboarding(
   try {
     const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addKycInformation`, {
       method: "addKycInformation",
-      kycInformation: { userId: rollfiUserId, ssn, dateOfBirth: "1990-01-15", address1: "123 Main St", address2: "", city: "Newark", state: "NJ", zipcode: "07101" },
+      kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
     }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi addKycInformation response");
     const raw = r.data as Record<string, unknown>;
@@ -136,6 +153,14 @@ export interface RollfiEmployeeInput {
   wage: number;
   /** Employee's home state — drives which state W-4 fields are submitted. Defaults to "NJ". */
   homeState?: string;
+  /** Real home address — sent to Rollfi addKycInformation instead of the dummy fallback. */
+  homeAddress?: string;
+  homeCity?: string;
+  homeZip?: string;
+  /** Raw 9-digit SSN (no dashes). If omitted a random one is generated for the sandbox. */
+  ssn?: string;
+  /** ISO date YYYY-MM-DD. Defaults to 1990-01-15 if omitted. */
+  dateOfBirth?: string;
   w4FilingStatus?: string;
   w4MultipleJobs?: boolean;
   w4Dependents?: number;
@@ -301,6 +326,13 @@ export async function onboardEmployeeToRollfi(
       extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
       homeState: emp.homeState ?? DEFAULT_W4.homeState,
       stateW4Fields: emp.stateW4Fields,
+    }, {
+      address1: emp.homeAddress,
+      city: emp.homeCity,
+      state: emp.homeState,
+      zipcode: emp.homeZip,
+      ssn: emp.ssn,
+      dateOfBirth: emp.dateOfBirth,
     });
 
     await persistRollfiEmployee(emp.id, {
