@@ -465,6 +465,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
 
   let restSynced = 0;
   let restApiResponded = false;
+  let totalSkippedForeign = 0;
   for (const co of companiesToSync) {
     const locId = co.locationId;
     const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
@@ -472,14 +473,28 @@ router.post("/easyteam/hours/sync", async (req, res) => {
 
     if ("shifts" in result) {
       restApiResponded = true; // API responded — don't fall through to seed even if 0 in range
-      // Only count shifts that fall within the requested date range
-      const norm = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
+      const etLocId = result.easyteamLocationId;
+      let skippedForeignShifts = 0;
+      // FIX 1: use utcStartTime (genuine UTC) — the old norm(startTime) appended Z to a local
+      //   timestamp, misclassifying shifts near pay-period boundaries.
+      // FIX 2: location guard — flat /timesheets returns all org shifts regardless of which
+      //   location's JWT was used; only persist shifts whose locationId matches this company's
+      //   EasyTeam location UUID to prevent cross-company contamination.
       const inRange = result.shifts.filter((s) => {
-        if (!s.startTime) return false;
-        const start = new Date(norm(s.startTime));
+        if (!s.utcStartTime) return false;
+        if (s.locationId !== etLocId) {
+          req.log.warn(
+            { shiftId: s.id, shiftLocationId: s.locationId, expectedLocationId: etLocId, companyId: co.id },
+            "Sync: skipping shift from foreign location",
+          );
+          skippedForeignShifts++;
+          return false;
+        }
+        const start = new Date(s.utcStartTime);
         return start >= fromDate && start <= toDate;
       });
-      req.log.info({ locationId: locId, total: result.shifts.length, inRange: inRange.length, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
+      totalSkippedForeign += skippedForeignShifts;
+      req.log.info({ locationId: locId, etLocId, total: result.shifts.length, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
       const minutesByEmp = new Map<string, number>();
       const breaksByEmp2 = new Map<string, number>();
       for (const s of inRange) {
@@ -550,9 +565,9 @@ router.post("/easyteam/hours/sync", async (req, res) => {
   }
 
   if (restApiResponded) {
-    req.log.info({ periodKey, companyId, restSynced }, "Sync: used EasyTeam REST API data");
+    req.log.info({ periodKey, companyId, restSynced, totalSkippedForeign }, "Sync: used EasyTeam REST API data");
     if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${restSynced} employee${restSynced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
-    res.json({ success: true, source: "easyteam", periodKey, synced: restSynced });
+    res.json({ success: true, source: "easyteam", periodKey, synced: restSynced, skippedForeignShifts: totalSkippedForeign });
     return;
   }
 
@@ -673,7 +688,7 @@ async function fetchEasyTeamShiftsForLocation(
   fromDate: Date,
   toDate: Date,
   companyId?: string,
-): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
+): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string; easyteamLocationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
 
   // CRITICAL GUARD: dates are required — the documented flat endpoint returns HTTP 200
@@ -784,7 +799,7 @@ async function fetchEasyTeamShiftsForLocation(
       );
     }
 
-    return { shifts, source: "api", locationId };
+    return { shifts, source: "api", locationId, easyteamLocationId: internalLocId };
   } catch (err) {
     const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
     const detail = axErr.response
