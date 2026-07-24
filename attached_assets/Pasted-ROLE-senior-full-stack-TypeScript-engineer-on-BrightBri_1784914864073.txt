@@ -1,0 +1,80 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express + PostgreSQL/Drizzle).
+
+CONTEXT: EasyTeam support confirmed a docs prefix bug — all documented
+endpoints live under /embed/api/*. Our current sync calls an OLD
+location-nested path that ignores date filters. Verified by probe:
+  GET /embed/api/timesheets?startDate=&endDate=   ← documented, filters WORK
+  returns { shifts:[], lockedDays:[], totals:{duration,totalPaidBreaks,
+  totalUnpaidBreaks,notesCount} }
+  Shift fields: id, employeeId, locationId, roleId, startTime, endTime,
+  utcStartTime, utcEndTime, utcOffset, duration, payableDuration (ms),
+  totalPaidBreaks, totalUnpaidBreaks, breaks[{startTime,endTime,typeId,
+  paid,name,mandatory,durationInSettingsMinutes}], hourlyWage, active,
+  locked, manualEntry, scheduleShiftId, createdAt, updatedAt, deletedAt
+Phase 1 = data layer only. No dashboard UI in this prompt.
+
+SCOPE BOUNDARY — DO NOT TOUCH: Rollfi payroll import/comp-wipe/webhooks,
+payroll readiness dual-gate, EasyTeam iframe/token/registration code,
+timesheet_approvals and the approval flow, any UI page.
+
+CHANGES:
+
+1. SWITCH THE SYNC TO THE CORRECT ENDPOINT.
+   Replace the location-nested timesheets call in the Pull Hours sync with
+   GET {EASYTEAM_BASE}/embed/api/timesheets?startDate=YYYY-MM-DD&endDate=
+   YYYY-MM-DD using the existing exchanged Bearer token.
+   *** CRITICAL GUARD: dates are REQUIRED — omitting them returns 0 shifts
+   with HTTP 200, which would silently import zero hours into payroll.
+   Throw before the call if either date is missing/invalid, and if the
+   response returns 0 shifts, log a WARN with the exact URL used. ***
+   Read shifts from response.shifts (not a bare array).
+
+2. NEW TABLE timesheet_shifts (lib/db/src/schema/index.ts):
+   easyteamShiftId text PRIMARY KEY, employeeId text (OUR id, resolved via
+   the existing EasyTeam-UUID→employee mapping; null + warning if
+   unmapped), companyId, easyteamLocationId, roleId text null,
+   utcStartTime text, utcEndTime text null, utcOffset integer,
+   durationMs integer, payableDurationMs integer, totalPaidBreakMin real,
+   totalUnpaidBreakMin real, breaks jsonb, active boolean, locked boolean,
+   manualEntry boolean, scheduleShiftId text null, deletedAt text null,
+   syncedAt text.
+   Migration on dev; confirm production applies at Publish.
+
+3. PERSIST DURING SYNC: upsert every fetched shift by easyteamShiftId
+   (last-write-wins so open shifts update when they close). Do NOT change
+   what timesheet_entries stores or how it aggregates — only its data
+   source changes.
+
+4. NEW READ ENDPOINT GET /api/timesheets/shifts?companyId=&from=&to=
+   Company-scoped + role-checked. Returns shifts from our DB plus
+   server-computed flags: missedPunch (active && utcStartTime older than
+   16h), extendedBreak (any single break > 60 min), longShift
+   (payableDurationMs > 10h). Plus summary: totalShifts,
+   totalPayableHours, activeNow, missedPunchCount, extendedBreakCount.
+   Put 16h/60min/10h in one named THRESHOLDS constant with a comment that
+   these become configurable later.
+
+5. TREND DATA: also add GET /api/timesheets/trend?companyId=&from=&to=
+   that proxies EasyTeam's GET /embed/api/timesheets/reports (same
+   required-dates guard), returning its { days[], totals{duration,amount,
+   ...} } for the future Weekly Hours Trend chart. Cache nothing for now.
+
+6. CLEANUP: remove the dead /timesheets/export call (404 confirmed) and
+   the stale comment claiming extra params return [] — replace with an
+   accurate note about the old vs documented endpoint.
+
+TESTING CHECKLIST:
+- REGRESSION FIRST: for the current pay period, compare hours per employee
+  in timesheet_entries BEFORE and AFTER the endpoint switch. Report both
+  sets. They should match; explain any difference before proceeding.
+- Pull Hours populates timesheet_shifts; re-running does not duplicate
+  (upsert verified)
+- Narrow vs wide date range returns different counts (filters live)
+- Missing-date guard throws instead of silently importing zero
+- New endpoints return sane data + flags; unmapped employee logs a warning
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, migration confirmation, before/after hours
+comparison table, sample responses from both new endpoints, checklist
+results. REMINDER: Publish required for production.

@@ -5,8 +5,10 @@ import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
 import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
-import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable } from "@workspace/db";
-import { eq, and, inArray } from "drizzle-orm";
+import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable } from "@workspace/db";
+import { eq, and, inArray, gte, lte } from "drizzle-orm";
+import { logger } from "../lib/logger.js";
+import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange } from "../lib/timesheet-shifts-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
 
 const router: IRouter = Router();
@@ -312,12 +314,11 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
     const headers = { Authorization: `Bearer ${accessToken}` };
     const orgLocBase = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
 
-    // Try export endpoint patterns — EasyTeam fires our registered webhook when an export is triggered
+    // Try export endpoint patterns — EasyTeam fires our registered webhook when triggered.
+    // /timesheets/export confirmed 404; keeping /timesheets/email and /export only.
     const exportEndpoints = [
-      `${orgLocBase}/timesheets/export`,
       `${orgLocBase}/timesheets/email`,
       `${orgLocBase}/export`,
-      `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/timesheets/export`,
     ];
 
     for (const endpoint of exportEndpoints) {
@@ -490,12 +491,44 @@ router.post("/easyteam/hours/sync", async (req, res) => {
         await clearTimesheetEntriesForCompanyPeriod(co.id, periodKey);
       }
       const companyUsers = store.getUsersForCompany(co.id);
+
+      // Persist raw shifts to timesheet_shifts (upsert — last-write-wins so open shifts update on close)
+      const syncedAt = new Date().toISOString();
+      await Promise.all(inRange.map(async (s) => {
+        const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
+        const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
+        if (!mappedEmpId) {
+          req.log.warn({ etEmpId: s.employeeId }, "Sync: persisting shift with null employeeId — EasyTeam UUID not in registry");
+        }
+        await upsertTimesheetShift({
+          easyteamShiftId:     s.id,
+          employeeId:          mappedEmpId,
+          companyId:           co.id,
+          easyteamLocationId:  s.locationId,
+          roleId:              s.roleId ?? null,
+          utcStartTime:        s.utcStartTime ?? s.startTime,
+          utcEndTime:          s.utcEndTime ?? s.endTime ?? null,
+          utcOffset:           s.utcOffset ?? 0,
+          durationMs:          s.duration ?? 0,
+          payableDurationMs:   (s.payableDuration != null && s.payableDuration > 10000) ? s.payableDuration : (s.payableDuration ?? 0) * 60000,
+          totalPaidBreakMin:   s.totalPaidBreaks ?? null,
+          totalUnpaidBreakMin: s.totalUnpaidBreaks ?? null,
+          breaks:              s.breaks ?? null,
+          active:              s.active ?? false,
+          locked:              s.locked ?? false,
+          manualEntry:         s.manualEntry ?? false,
+          scheduleShiftId:     s.scheduleShiftId ?? null,
+          deletedAt:           s.deletedAt ?? null,
+          syncedAt,
+        });
+      }));
+
       for (const [etEmpId, totalMinutes] of minutesByEmp) {
         // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
         const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
         // Skip entries whose UUID we can't map — they belong to employees outside our system
         if (internalEmpId === etEmpId) {
-          req.log.warn({ etEmpId }, "Sync: skipping shift for unrecognised EasyTeam UUID (not in our employee registry)");
+          req.log.warn({ etEmpId }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
           continue;
         }
         const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
@@ -509,7 +542,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
           breakDeduction: breakHours,
           approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 10000) / 10000),
           source: "easyteam",
-          syncedAt: new Date().toISOString(),
+          syncedAt,
         });
         restSynced++;
       }
@@ -562,12 +595,33 @@ interface EasyTeamShift {
   id: string;
   employeeId: string;
   locationId: string;
+  roleId?: string | null;
   startTime: string;
   endTime: string | null;
-  payableDuration?: number; // milliseconds in EasyTeam timesheets endpoint; may be absent
-  totalUnpaidBreaks?: number; // minutes; may be absent in timesheets response
-  breaks?: Array<{ startTime: string; endTime: string }>;
+  utcStartTime?: string;
+  utcEndTime?: string | null;
+  utcOffset?: number;
+  duration?: number;           // total duration ms
+  payableDuration?: number;    // net payable ms (EasyTeam timesheets endpoint)
+  totalPaidBreaks?: number;    // minutes
+  totalUnpaidBreaks?: number;  // minutes
+  hourlyWage?: number;
   active?: boolean;
+  locked?: boolean;
+  manualEntry?: boolean;
+  scheduleShiftId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  deletedAt?: string | null;
+  breaks?: Array<{
+    startTime: string;
+    endTime: string;
+    typeId?: string;
+    paid?: boolean;
+    name?: string;
+    mandatory?: boolean;
+    durationInSettingsMinutes?: number;
+  }>;
 }
 
 /** Returns worked minutes for a timesheet entry. Prefers payableDuration (EasyTeam's
@@ -616,11 +670,22 @@ function extractArrayFromResponse(data: unknown): EasyTeamShift[] {
 
 async function fetchEasyTeamShiftsForLocation(
   locationId: string,
-  _fromDate?: Date,
-  _toDate?: Date,
+  fromDate: Date,
+  toDate: Date,
   companyId?: string,
 ): Promise<{ shifts: EasyTeamShift[]; source: "api"; locationId: string } | { error: string }> {
   if (!EASYTEAM_API_KEY) return { error: "No API key configured" };
+
+  // CRITICAL GUARD: dates are required — the documented flat endpoint returns HTTP 200
+  // with 0 shifts when dates are omitted, which would silently import zero hours into payroll.
+  if (!fromDate || isNaN(fromDate.getTime()) || !toDate || isNaN(toDate.getTime())) {
+    throw new Error(
+      "fetchEasyTeamShiftsForLocation: fromDate and toDate are required — " +
+      "omitting them returns HTTP 200 with 0 shifts (silent payroll wipe)"
+    );
+  }
+  const startDateStr = fromDate.toISOString().split("T")[0]!;
+  const endDateStr   = toDate.toISOString().split("T")[0]!;
 
   // 1. Try in-memory store — covers Sunshine/Rainbow and any owners/managers loaded at boot
   let managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
@@ -701,11 +766,23 @@ async function fetchEasyTeamShiftsForLocation(
     } catch { /* keep defaults */ }
 
     const headers = { Authorization: `Bearer ${accessToken}` };
-    const timesheetsUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}/timesheets`;
 
-    // Call /timesheets with NO extra params — additional params (limit, page, date filters) cause EasyTeam to return []
-    const r = await axios.get(timesheetsUrl, { headers, timeout: 10000 });
-    const shifts = extractArrayFromResponse(r.data);
+    // Documented flat endpoint — date filters are REQUIRED and work correctly.
+    // The old location-nested path (/organizations/{org}/locations/{loc}/timesheets)
+    // silently ignored date parameters and always returned all shifts.
+    // This endpoint returns { shifts[], lockedDays[], totals{} }; read from .shifts.
+    const timesheetsUrl =
+      `${EASYTEAM_EMBED_API}/timesheets?startDate=${startDateStr}&endDate=${endDateStr}`;
+
+    const r = await axios.get<{ shifts?: EasyTeamShift[] }>(timesheetsUrl, { headers, timeout: 10000 });
+    const shifts = r.data.shifts ?? [];
+
+    if (shifts.length === 0) {
+      logger.warn(
+        { timesheetsUrl, startDate: startDateStr, endDate: endDateStr },
+        "fetchEasyTeamShiftsForLocation: 0 shifts returned — verify date range has EasyTeam data",
+      );
+    }
 
     return { shifts, source: "api", locationId };
   } catch (err) {
@@ -1102,6 +1179,150 @@ router.post("/easyteam/webhook/export", async (req, res) => {
 
 router.get("/easyteam/exports", (_req, res) => {
   res.json({ exports: exportLog, total: exportLog.length });
+});
+
+// ── Shift flag thresholds — will become configurable per-company later ───────
+const SHIFT_THRESHOLDS = {
+  MISSED_PUNCH_HOURS:  16, // active shift older than this (hours) → missedPunch
+  EXTENDED_BREAK_MIN:  60, // any single break longer than this (minutes) → extendedBreak
+  LONG_SHIFT_HOURS:    10, // payableDurationMs > this * 3_600_000 → longShift
+} as const;
+
+// ── GET /api/timesheets/shifts — company-scoped shift store with computed flags ──
+router.get("/timesheets/shifts", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const user = store.getUserById(req.session.userId);
+  if (!user || (user.role !== "super_admin" && user.role !== "owner" && user.role !== "manager")) {
+    res.status(403).json({ error: "Insufficient role" }); return;
+  }
+
+  const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  if (!from || !to)  { res.status(400).json({ error: "from and to dates are required" }); return; }
+
+  const fromDate = new Date(from);
+  const toDate   = new Date(to + "T23:59:59.999Z");
+  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+    res.status(400).json({ error: "Invalid date format for from/to" }); return;
+  }
+
+  const rows = await getTimesheetShiftsByCompanyAndRange(companyId, fromDate, toDate);
+  const now  = Date.now();
+
+  const shifts = rows.map((r) => {
+    const startMs   = new Date(r.utcStartTime).getTime();
+    const ageHours  = (now - startMs) / 3_600_000;
+
+    const missedPunch = !!r.active && ageHours > SHIFT_THRESHOLDS.MISSED_PUNCH_HOURS;
+
+    const breaksArr = Array.isArray(r.breaks)
+      ? (r.breaks as Array<{ startTime: string; endTime: string }>)
+      : [];
+    const extendedBreak = breaksArr.some((b) => {
+      const bs = new Date(b.startTime).getTime();
+      const be = new Date(b.endTime).getTime();
+      return !isNaN(bs) && !isNaN(be) && (be - bs) / 60_000 > SHIFT_THRESHOLDS.EXTENDED_BREAK_MIN;
+    });
+
+    const longShift = r.payableDurationMs > SHIFT_THRESHOLDS.LONG_SHIFT_HOURS * 3_600_000;
+
+    return { ...r, missedPunch, extendedBreak, longShift };
+  });
+
+  const summary = {
+    totalShifts:        shifts.length,
+    totalPayableHours:  Math.round(shifts.reduce((s, r) => s + r.payableDurationMs, 0) / 3_600_000 * 100) / 100,
+    activeNow:          shifts.filter((r) => r.active && !r.utcEndTime).length,
+    missedPunchCount:   shifts.filter((r) => r.missedPunch).length,
+    extendedBreakCount: shifts.filter((r) => r.extendedBreak).length,
+  };
+
+  res.json({ companyId, from, to, summary, shifts });
+});
+
+// ── GET /api/timesheets/trend — proxy EasyTeam /timesheets/reports for trend chart ──
+router.get("/timesheets/trend", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  if (!from || !to)  { res.status(400).json({ error: "from and to dates are required — omitting them returns 0-day response" }); return; }
+
+  const fromDate = new Date(from);
+  const toDate   = new Date(to + "T23:59:59.999Z");
+  if (isNaN(fromDate.getTime()) || isNaN(toDate.getTime())) {
+    res.status(400).json({ error: "Invalid date format for from/to" }); return;
+  }
+
+  if (!EASYTEAM_API_KEY) { res.status(503).json({ error: "EasyTeam API key not configured" }); return; }
+
+  try {
+    // Resolve a manager/owner user for this company to sign the JWT
+    let managerUser = store.getAllStaffUsers()
+      .find((u) => u.companyId === companyId && (u.role === "manager" || u.role === "owner" || u.role === "super_admin") && u.employeeId);
+    if (!managerUser?.employeeId) {
+      const [dbManager] = await db.select().from(userAccountsTable)
+        .where(and(eq(userAccountsTable.companyId, companyId), inArray(userAccountsTable.role, ["manager", "owner"])));
+      if (dbManager?.employeeId) {
+        managerUser = { id: dbManager.id, name: dbManager.name ?? "Manager", email: dbManager.email,
+          role: "owner", companyId, employeeId: dbManager.employeeId,
+          locationId: dbManager.locationId ?? "", position: dbManager.position ?? "Manager" };
+      }
+    }
+    if (!managerUser?.employeeId) { res.status(503).json({ error: "No manager user found for company" }); return; }
+
+    const co = store.getCompany(companyId);
+    const locationId = co?.locationId ?? managerUser.locationId ?? "";
+
+    const adminJwt = jwt.sign(
+      {
+        employeeId: managerUser.employeeId,
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: {
+          name: "manager",
+          permissions: [
+            "LOCATION_ADMIN", "LOCATION_READ",
+            "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+            "SCHEDULE_READ", "SCHEDULE_WRITE",
+            "TIMESHEET_READ", "TIMESHEET_WRITE",
+          ],
+        },
+        role: { name: managerUser.position ?? "Manager", hourlyWage: 25 },
+        wage: 25,
+        wageType: "hourly",
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256", expiresIn: "1h" }
+    );
+
+    const exchangeResp = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    const accessToken = exchangeResp.data.accessToken;
+
+    const startDateStr = fromDate.toISOString().split("T")[0]!;
+    const endDateStr   = toDate.toISOString().split("T")[0]!;
+    // Same required-dates guard as the sync — missing dates return 0-day response with HTTP 200
+    const reportsUrl = `${EASYTEAM_EMBED_API}/timesheets/reports?startDate=${startDateStr}&endDate=${endDateStr}`;
+
+    const r = await axios.get(reportsUrl, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      timeout: 10000,
+    });
+
+    res.json(r.data);
+  } catch (err) {
+    const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
+    const detail = axErr.response
+      ? `HTTP ${axErr.response.status}: ${JSON.stringify(axErr.response.data)}`
+      : (axErr.message ?? "Unknown error");
+    req.log.error({ companyId, error: detail }, "timesheets/trend: EasyTeam reports proxy failed");
+    res.status(502).json({ error: "EasyTeam reports request failed", detail });
+  }
 });
 
 router.post("/easyteam/test-connection", async (req, res) => {

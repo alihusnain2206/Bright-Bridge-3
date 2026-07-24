@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, real, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, real, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 
 export const clientEmployeeRecords = pgTable("client_employee_records", {
   id:                  text("id").primaryKey(),
@@ -346,4 +346,32 @@ export const beneficialOwners = pgTable("beneficial_owners", {
   zipcode:             text("zipcode").notNull(),
   ownershipPercentage: integer("ownership_percentage").notNull().default(100),
   isPayrollAdmin:      boolean("is_payroll_admin").notNull().default(true),
+});
+
+// ── EasyTeam Shift Store ──────────────────────────────────────
+// Raw shifts from GET /embed/api/timesheets — upserted on every Pull Hours sync.
+// employeeId is our internal ID resolved via EasyTeam-UUID→employee mapping;
+// null + WARN logged when the UUID is not in our registry.
+// Thresholds (missedPunch / extendedBreak / longShift) are computed at read time
+// by GET /api/timesheets/shifts and will become configurable later.
+export const timesheetShifts = pgTable("timesheet_shifts", {
+  easyteamShiftId:     text("easyteam_shift_id").primaryKey(),
+  employeeId:          text("employee_id"),
+  companyId:           text("company_id").notNull(),
+  easyteamLocationId:  text("easyteam_location_id").notNull(),
+  roleId:              text("role_id"),
+  utcStartTime:        text("utc_start_time").notNull(),
+  utcEndTime:          text("utc_end_time"),
+  utcOffset:           integer("utc_offset").notNull().default(0),
+  durationMs:          integer("duration_ms").notNull().default(0),
+  payableDurationMs:   integer("payable_duration_ms").notNull().default(0),
+  totalPaidBreakMin:   real("total_paid_break_min"),
+  totalUnpaidBreakMin: real("total_unpaid_break_min"),
+  breaks:              jsonb("breaks"),
+  active:              boolean("active").notNull().default(false),
+  locked:              boolean("locked").notNull().default(false),
+  manualEntry:         boolean("manual_entry").notNull().default(false),
+  scheduleShiftId:     text("schedule_shift_id"),
+  deletedAt:           text("deleted_at"),
+  syncedAt:            text("synced_at").notNull(),
 });
