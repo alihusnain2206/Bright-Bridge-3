@@ -60,7 +60,7 @@ function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
 
-interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly" }
+interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly"; status?: string; }
 
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
   "ORG-SUNSHINE": [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }],
@@ -112,6 +112,7 @@ export default function ManagerDashboard() {
 
   // Derived name lookup from live employee list
   const employeeNames = Object.fromEntries(companyEmployees.map((e) => [e.id, e.name]));
+  const employeeStatuses = Object.fromEntries(companyEmployees.map((e) => [e.id, e.status]));
 
   const { launch, navigateToDate } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
   // Track whether EasyTeam has been launched at least once so we know when auto-navigate is safe
@@ -493,7 +494,14 @@ export default function ManagerDashboard() {
                   <tbody className="divide-y divide-white/5">
                     {hours.map((e) => (
                       <tr key={e.employeeId}>
-                        <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}</td>
+                        <td className="py-2.5 text-white/80">
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            {employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}
+                            {employeeStatuses[e.employeeId] === "onboarding" && (
+                              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">Onboarding</span>
+                            )}
+                          </span>
+                        </td>
                         <td className="py-2.5 text-right text-white/60">{formatHours(e.hoursWorked)}</td>
                         <td className="py-2.5 text-right text-amber-400/60">−{formatHours(e.breakDeduction)}</td>
                         <td className="py-2.5 text-right">

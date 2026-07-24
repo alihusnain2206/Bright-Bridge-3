@@ -33,7 +33,7 @@ const LAUNCH_ORG = { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" };
 
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
-interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly" }
+interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly"; status?: string; }
 interface Company { id: string; name: string; locationName?: string | null; address1?: string | null; city?: string | null; state?: string | null; status: string }
 interface CreatedManager { id: string; name: string; email: string; companyId: string; role: string; password: string; loginEmail: string; position: string }
 

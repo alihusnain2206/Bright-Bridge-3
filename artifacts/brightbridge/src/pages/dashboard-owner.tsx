@@ -20,7 +20,7 @@ const ORANGE = "#E8622A";
 interface EasyTeamEmployee {
   id: string; name: string; role?: string;
   timeTrackingEnabled?: boolean; isVisible?: boolean;
-  wage?: number; wageType?: "hourly";
+  wage?: number; wageType?: "hourly"; status?: string;
 }
 
 interface ApiEmployee {
@@ -139,6 +139,7 @@ export default function OwnerDashboard() {
   const [editNotes, setEditNotes]           = useState<Record<string, string>>({});
   const [companyEmployees, setCompanyEmployees] = useState<EasyTeamEmployee[]>([]);
   const employeeNames = Object.fromEntries(companyEmployees.map(e => [e.id, e.name]));
+  const employeeStatuses = Object.fromEntries(companyEmployees.map(e => [e.id, e.status]));
 
   const fetchCompanyEmployees = useCallback(async () => {
     if (!user?.companyId) return [];
@@ -612,7 +613,14 @@ export default function OwnerDashboard() {
                 <tbody className="divide-y divide-white/5">
                   {hours.map(e => (
                     <tr key={e.employeeId}>
-                      <td className="py-2.5 text-white/80">{employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}</td>
+                      <td className="py-2.5 text-white/80">
+                        <span className="flex items-center gap-1.5 flex-wrap">
+                          {employeeNames[e.employeeId] ?? (e.employeeId.includes("-") && e.employeeId.length > 20 ? "External Staff" : e.employeeId)}
+                          {employeeStatuses[e.employeeId] === "onboarding" && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">Onboarding</span>
+                          )}
+                        </span>
+                      </td>
                       <td className="py-2.5 text-right text-white/60">{formatHours(e.hoursWorked)}</td>
                       <td className="py-2.5 text-right text-amber-400/60">−{formatHours(e.breakDeduction)}</td>
                       <td className="py-2.5 text-right">

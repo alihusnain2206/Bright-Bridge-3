@@ -105,7 +105,7 @@ router.get("/easyteam/employees", (req, res) => {
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
   const employees = users
-    .filter((u) => u.employeeId && u.role === "employee" && (!u.status || u.status === "active"))
+    .filter((u) => u.employeeId && u.role === "employee" && (!u.status || u.status === "active" || u.status === "onboarding"))
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
@@ -114,6 +114,7 @@ router.get("/easyteam/employees", (req, res) => {
       timeTrackingEnabled: true,
       wage: u.hourlyWage ?? 1500,
       wageType: "hourly" as const,
+      status: u.status ?? "active",
     }));
   res.json({ employees });
 });
