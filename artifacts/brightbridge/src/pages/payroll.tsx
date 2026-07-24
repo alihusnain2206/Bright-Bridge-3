@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import { PayrollWidgets } from "./PayrollWidgets";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -525,6 +526,8 @@ function HistorySection({ periods, companyName, companyId, onViewStubs }: {
 function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; rollfiCompanyId: string }) {
   const [open, setOpen] = useState(false);
   const queryClient = useQueryClient();
+  const rollfiEnv = useRollfiEnv();
+  const isProduction = rollfiEnv === "production";
   const { data, isLoading, refetch } = useQuery<CompanyTasksData>({
     queryKey: ["rollfi-tasks", companyId],
     queryFn: () => api.get(`/rollfi/company-tasks?companyId=${companyId}`),
@@ -624,7 +627,9 @@ function CompanyTasksPanel({ companyId, rollfiCompanyId }: { companyId: string; 
           {hasBankPending && (
             <div className="mt-3 pt-3 border-t border-white/5 space-y-2">
               <p className="text-[10px] text-amber-300/70">
-                Bank account is pending micro-deposit verification. Click below to attempt verification — Rollfi sandbox accepts any amounts so this should resolve it without support.
+                {isProduction
+                  ? "Bank account is pending micro-deposit verification. Contact Rollfi support if verification does not complete automatically."
+                  : "Bank account is pending micro-deposit verification. Click below to attempt verification — Rollfi sandbox accepts any amounts so this should resolve it without support."}
               </p>
               <Button
                 size="sm"
@@ -800,6 +805,9 @@ export default function Payroll() {
   const [stubsPeriod, setStubsPeriod] = useState<ProcessedPeriod | null>(null);
   const [expandedEmp, setExpandedEmp] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [runInput, setRunInput] = useState("");
+  const rollfiEnv = useRollfiEnv();
+  const isProduction = rollfiEnv === "production";
   const [expandedEmpId, setExpandedEmpId] = useState<string | null>(null);
   const [singleEmpStatus, setSingleEmpStatus] = useState<Record<string, EmpRollfiStatus & { loading?: boolean }>>({});
   const [selectedHistoryPeriodId, setSelectedHistoryPeriodId] = useState<string | null>(null);
@@ -1881,7 +1889,7 @@ export default function Payroll() {
                           <div className="pt-1">
                             <Button
                               disabled={submitPayroll.isPending}
-                              onClick={() => setConfirmOpen(true)}
+                              onClick={() => { setConfirmOpen(true); setRunInput(""); }}
                               className="w-full gap-2 text-white font-semibold"
                               style={{ background: ORANGE }}>
                               {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting Payroll…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
@@ -1895,7 +1903,7 @@ export default function Payroll() {
                         <p className="text-white/50 text-sm mb-4">Hours imported successfully. Real totals not yet available — review the preview above and confirm to continue.</p>
                         <Button
                           disabled={submitPayroll.isPending}
-                          onClick={() => setConfirmOpen(true)}
+                          onClick={() => { setConfirmOpen(true); setRunInput(""); }}
                           className="w-full gap-2 text-white font-semibold"
                           style={{ background: ORANGE }}>
                           {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
@@ -2035,20 +2043,38 @@ export default function Payroll() {
               <p className="text-white/30 text-xs mb-4">
                 ⚠️ This will finalize and initiate payroll with Rollfi. Hours are already imported — this step cannot be undone.
               </p>
+              {isProduction && (
+                <div className="mb-4">
+                  <p className="text-red-400 text-xs font-bold mb-1.5 flex items-center gap-1">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    PRODUCTION — type <span className="font-mono bg-white/10 px-1 rounded">RUN</span> to enable submission:
+                  </p>
+                  <input
+                    value={runInput}
+                    onChange={(e) => setRunInput(e.target.value)}
+                    placeholder="RUN"
+                    autoFocus
+                    className="w-full py-2 px-3 rounded-lg text-white text-sm font-mono placeholder-white/30 focus:outline-none focus:ring-1 focus:ring-red-400/60"
+                    style={{ background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.4)" }}
+                  />
+                </div>
+              )}
               <div className="flex gap-3">
                 <button
-                  onClick={() => setConfirmOpen(false)}
+                  onClick={() => { setConfirmOpen(false); setRunInput(""); }}
                   className="flex-1 py-2.5 rounded-lg border border-white/10 text-white/60 hover:text-white/80 hover:border-white/20 text-sm font-medium transition-colors"
                 >
                   Cancel
                 </button>
                 <button
+                  disabled={isProduction && runInput.toLowerCase() !== "run"}
                   onClick={() => {
                     setConfirmOpen(false);
+                    setRunInput("");
                     setPayrollResult(null);
                     submitPayroll.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId });
                   }}
-                  className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90"
+                  className="flex-1 py-2.5 rounded-lg text-white font-semibold text-sm flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{ background: ORANGE }}
                 >
                   <Play className="h-4 w-4" /> Yes, Submit Payroll

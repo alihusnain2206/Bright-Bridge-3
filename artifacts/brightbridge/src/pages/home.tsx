@@ -256,7 +256,7 @@ export default function Home() {
                 { label: "Environment", value: status?.environment ?? "Unknown", tag: true },
                 { label: "API Key", value: status?.apiKeyPresent ? "RSA private key present" : "Missing — add EASYTEAM_API_KEY", ok: status?.apiKeyPresent },
                 { label: "SDK Version", value: status?.sdkVersion ?? "Unknown" },
-                { label: "Base URL", value: "easyteam.io/sandbox/embed/iframe", mono: true },
+                { label: "Base URL", value: "easyteam.io/embed/iframe", mono: true },
               ].map(({ label, value, tag, ok, mono }) => (
                 <div key={label} className="flex items-start justify-between gap-3 py-2 border-b last:border-0" style={DARK_DIV}>
                   <span className="text-white/40 text-xs shrink-0 pt-0.5">{label}</span>

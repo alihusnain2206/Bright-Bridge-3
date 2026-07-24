@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import {
   Users, Plus, RefreshCw, Loader2, CheckCircle2, XCircle,
   AlertTriangle, Pause, Ban, RotateCcw, UserX, KeyRound,
@@ -247,6 +248,7 @@ function TerminateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess:
   const [confirmText, setConfirmText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const rollfiEnv = useRollfiEnv();
   const fullName = `${emp.firstName} ${emp.lastName}`;
   const canSubmit = confirmText === "TERMINATE" && !!terminationReason && !!lastWorkingDay;
 
@@ -277,6 +279,12 @@ function TerminateModal({ emp, onClose, onSuccess }: { emp: Employee; onSuccess:
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
         </div>
         <div className="p-5 space-y-4">
+          {rollfiEnv === "production" && (
+            <div className="p-3 rounded-lg bg-red-600 text-white text-sm font-bold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              PRODUCTION — This terminates {fullName} in the LIVE payroll system.
+            </div>
+          )}
           <div className="p-3 rounded-lg bg-red-50 border border-red-300 text-sm text-red-800 font-semibold">
             This action is PERMANENT and cannot be undone!
           </div>

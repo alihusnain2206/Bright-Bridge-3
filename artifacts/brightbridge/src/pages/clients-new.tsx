@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useLocation } from "wouter";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import {
   Building2, MapPin, User, FileText, Calendar, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, RefreshCw,
@@ -106,6 +107,9 @@ export default function ClientsNew() {
   const [loginError, setLoginError] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [showProdConfirm, setShowProdConfirm] = useState(false);
+  const rollfiEnv = useRollfiEnv();
+  const isProduction = rollfiEnv === "production";
 
   const copyField = (val: string, field: string) => {
     void navigator.clipboard.writeText(val);
@@ -626,11 +630,13 @@ export default function ClientsNew() {
                 <Label>EIN / Tax ID *</Label>
                 <div className="flex gap-1.5">
                   <Input value={form.ein} onChange={(e) => set("ein", e.target.value)} placeholder="XX-XXXXXXX" className="flex-1" />
-                  <Button type="button" size="sm" variant="outline" onClick={() => set("ein", randomTestEin())} className="shrink-0 text-xs gap-1">
-                    <RefreshCw className="h-3 w-3" />Test EIN
-                  </Button>
+                  {!isProduction && (
+                    <Button type="button" size="sm" variant="outline" onClick={() => set("ein", randomTestEin())} className="shrink-0 text-xs gap-1">
+                      <RefreshCw className="h-3 w-3" />Test EIN
+                    </Button>
+                  )}
                 </div>
-                <p className="text-[10px] text-gray-400">Sandbox: click Test EIN to auto-fill</p>
+                {!isProduction && <p className="text-[10px] text-gray-400">Sandbox: click Test EIN to auto-fill</p>}
               </div>
               <div className="space-y-1.5">
                 <Label>State of Incorporation *</Label>
@@ -730,17 +736,27 @@ export default function ClientsNew() {
               </p>
             </div>
 
-            <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
-              <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
-              <div>
-                <p className="font-semibold">Sandbox mode — test bank auto-configured</p>
-                <p className="mt-0.5 text-blue-700">In production, you would enter the company's real business checking account details. For sandbox testing, BrightBridge automatically submits a test bank account when the client is created.</p>
+            {!isProduction ? (
+              <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
+                <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+                <div>
+                  <p className="font-semibold">Sandbox mode — test bank auto-configured</p>
+                  <p className="mt-0.5 text-blue-700">In production, you would enter the company's real business checking account details. For sandbox testing, BrightBridge automatically submits a test bank account when the client is created.</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                <div>
+                  <p className="font-semibold">Bank account required for payroll funding</p>
+                  <p className="mt-0.5 text-amber-700">A real business checking account will be submitted to Rollfi to fund payroll and collect tax payments on behalf of this company.</p>
+                </div>
+              </div>
+            )}
 
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-3">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <Landmark className="h-3.5 w-3.5" />Sandbox Test Account (auto-submitted)
+                <Landmark className="h-3.5 w-3.5" />{isProduction ? "Bank Account" : "Sandbox Test Account (auto-submitted)"}
               </p>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 {[
@@ -879,13 +895,49 @@ export default function ClientsNew() {
               Next <ChevronRight className="h-4 w-4" />
             </Button>
           ) : (
-            <Button onClick={handleSubmit} className="gap-1.5 text-white border-0 min-w-[140px]" style={{ background: ORANGE }}
+            <Button onClick={isProduction ? () => setShowProdConfirm(true) : () => { void handleSubmit(); }} className="gap-1.5 text-white border-0 min-w-[140px]" style={{ background: ORANGE }}
               disabled={stateTaxEntries.length === 0}>
               Create Client <ChevronRight className="h-4 w-4" />
             </Button>
           )}
         </div>
       </div>
+
+      {/* Production-only confirmation before creating a real company */}
+      {showProdConfirm && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+            <div className="flex items-center gap-3 px-6 py-4 border-b" style={{ background: "#FEF2F2" }}>
+              <AlertTriangle className="h-5 w-5 text-red-600 shrink-0" />
+              <div>
+                <p className="font-bold text-red-800">Create Real Company</p>
+                <p className="text-xs text-red-600 mt-0.5">PRODUCTION — this creates a live payroll entity</p>
+              </div>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              <p className="text-sm text-gray-700">You are about to create a real company record in Rollfi and start KYB verification:</p>
+              <div className="bg-gray-50 border rounded-xl px-4 py-3 space-y-2 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-500">Legal Name</span>
+                  <span className="font-semibold text-gray-900 text-right">{form.companyName}</span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-500">EIN</span>
+                  <span className="font-mono text-gray-900">{form.ein}</span>
+                </div>
+              </div>
+              <p className="text-xs text-red-600 font-medium">This cannot be undone. KYB will begin immediately upon confirmation.</p>
+            </div>
+            <div className="flex gap-3 px-6 pb-5">
+              <Button variant="outline" className="flex-1" autoFocus onClick={() => setShowProdConfirm(false)}>Cancel</Button>
+              <Button className="flex-1 text-white border-0" style={{ background: "#DC2626" }}
+                onClick={() => { setShowProdConfirm(false); void handleSubmit(); }}>
+                Confirm — Create Company
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

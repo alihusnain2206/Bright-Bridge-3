@@ -8,19 +8,17 @@ import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { desc, eq, inArray, and } from "drizzle-orm";
+import { getRollfiConfig } from "../lib/rollfi-config.js";
 
 const router: IRouter = Router();
 
-const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
-const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
-const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
-
 function rollfiHeaders() {
-  const clientId = ROLLFI_CLIENT_ID ?? "";
-  const secretKey = ROLLFI_SECRET_KEY ?? "";
-  const encoded = Buffer.from(`${clientId}:${secretKey}`).toString("base64");
+  const { clientId, secretKey } = getRollfiConfig();
+  const encoded = Buffer.from(`${clientId ?? ""}:${secretKey ?? ""}`).toString("base64");
   return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
 }
+
+function getBaseUrl(): string { return getRollfiConfig().baseUrl; }
 
 // Generate a random 9-digit number string (EIN or SSN format, no leading zeros)
 function randomNineDigits(): string {
@@ -83,7 +81,7 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   // Step 1 — accept terms (PUT)
   try {
     const r = await axios.put(
-      `${ROLLFI_BASE_URL}/userOnboarding#acceptTermsAndCondition`,
+      `${getBaseUrl()}/userOnboarding#acceptTermsAndCondition`,
       { method: "acceptTermsAndCondition", userId: rollfiUserId },
       { headers }
     );
@@ -94,7 +92,7 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   let kycAdded = false;
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/userOnboarding#addKycInformation`,
+      `${getBaseUrl()}/userOnboarding#addKycInformation`,
       {
         method: "addKycInformation",
         kycInformation: {
@@ -120,7 +118,7 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   // Step 3 — W4 federal tax withholding (independent of KYC)
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/userOnboarding#addW4Information`,
+      `${getBaseUrl()}/userOnboarding#addW4Information`,
       {
         method: "addW4Information",
         w4Information: {
@@ -147,7 +145,7 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   } else {
     try {
       const r = await axios.post(
-        `${ROLLFI_BASE_URL}/userOnboarding#initiateUserKyc`,
+        `${getBaseUrl()}/userOnboarding#initiateUserKyc`,
         { method: "initiateUserKyc", userId: rollfiUserId },
         { headers }
       );
@@ -167,7 +165,7 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   let bankAdded = false;
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`,
+      `${getBaseUrl()}/userPortal#addUserBankAccount`,
       {
         method: "addUserBankAccount",
         linkType: "Manual",
@@ -248,7 +246,7 @@ async function wipeAdditionalCompensations(
       batch.map(async (userId) => {
         try {
           const r = await axios.post(
-            `${ROLLFI_BASE_URL}/payroll#removeAdditionalCompensations`,
+            `${getBaseUrl()}/payroll#removeAdditionalCompensations`,
             { method: "removeAdditionalCompensations", companyId, payPeriodId, userId },
             { headers: rollfiHeaders() }
           );
@@ -278,10 +276,16 @@ async function wipeAdditionalCompensations(
 // ── Status ───────────────────────────────────────────────────
 
 router.get("/rollfi/status", (_req, res) => {
+  const cfg = getRollfiConfig();
   res.json({
-    configured: !!(ROLLFI_CLIENT_ID && ROLLFI_SECRET_KEY),
-    baseUrl: ROLLFI_BASE_URL,
+    configured: cfg.credentialsPresent,
+    baseUrl: cfg.baseUrl,
+    rollfiEnv: cfg.env,
   });
+});
+
+router.get("/config/env", (_req, res) => {
+  res.json({ rollfiEnv: getRollfiConfig().env });
 });
 
 // ── State W-4 form fields (proxy to Rollfi getStateW4FormFields) ──────────────
@@ -293,7 +297,7 @@ router.get("/rollfi/state-w4-fields/:stateCode", async (req, res) => {
   if (!stateCode) { res.status(400).json({ error: "stateCode is required" }); return; }
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getStateW4FormFields`,
+      `${getBaseUrl()}/reports#getStateW4FormFields`,
       { method: "getStateW4FormFields", stateCode },
       { headers: rollfiHeaders() }
     );
@@ -514,7 +518,7 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
   const exitDate = expectedReturnDate ? expectedReturnDate.slice(0, 10) : new Date().toISOString().slice(0, 10);
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal/deactivateUser`,
+      `${getBaseUrl()}/adminPortal/deactivateUser`,
       {
         method: "deactivateUser",
         user: {
@@ -578,7 +582,7 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal/terminateUser`,
+      `${getBaseUrl()}/adminPortal/terminateUser`,
       {
         method: "terminateUser",
         user: {
@@ -652,7 +656,7 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal/activateUser`,
+      `${getBaseUrl()}/adminPortal/activateUser`,
       {
         method: "activateUser",
         user: {
@@ -680,7 +684,7 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
 // ── Company onboarding ───────────────────────────────────────
 
 router.post("/rollfi/onboard/company", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
     return;
   }
@@ -704,7 +708,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   // Helper: recover an existing Rollfi company when EIN was already registered
   async function findExistingRollfiCompany(name: string): Promise<{ companyID: string } | null> {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getCompanies`,
+      `${getBaseUrl()}/reports#getCompanies`,
       { method: "getCompanies" },
       { headers: rollfiHeaders() }
     );
@@ -716,7 +720,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   // Helper: fetch the first work-location ID for a Rollfi company
   async function fetchRollfiLocationId(rollfiCompanyId: string): Promise<string> {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+      `${getBaseUrl()}/reports#getCompanyLocationInfo`,
       { method: "getCompanyLocationInfo", companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -735,7 +739,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // 0 — Submit KYB data (prerequisite for initiateCompanyKyb to take effect)
     try {
       const r0 = await axios.post(
-        `${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`,
+        `${getBaseUrl()}/companyOnboarding#addKybInformation`,
         {
           method: "addKybInformation",
           kybInformation: {
@@ -755,7 +759,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // 1 — Initiate KYB verification
     try {
       const r1 = await axios.post(
-        `${ROLLFI_BASE_URL}/companyOnboarding#initiateCompanyKyb`,
+        `${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`,
         { method: "initiateCompanyKyb", companyId: rollfiCompanyId },
         { headers: rollfiHeaders() }
       );
@@ -768,7 +772,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // 2 — Bank account (funding source for payroll; uses stable 9-digit EIN as account number)
     try {
       const r2 = await axios.post(
-        `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+        `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
         {
           method: "addCompanyBankAccount",
           companyFundingSourceEntity: {
@@ -792,7 +796,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       const payDate = new Date(today.getTime() + 1 * 24 * 60 * 60 * 1000); // tomorrow
       const fmt = (d: Date) => d.toISOString().split("T")[0];
       const r3 = await axios.post(
-        `${ROLLFI_BASE_URL}/payroll#addPaySchedule`,
+        `${getBaseUrl()}/payroll#addPaySchedule`,
         {
           method: "addPaySchedule",
           paySchedule: {
@@ -817,7 +821,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`,
+      `${getBaseUrl()}/companyOnboarding#createBusiness`,
       {
         method: "createBusiness",
         registration: {
@@ -949,7 +953,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
 // re-initiates initiateCompanyKyb, and re-adds the bank account.
 
 router.post("/rollfi/retry-kyb", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -975,7 +979,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   // unique in their sandbox or KYB is rejected ("already exists for another user").
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`,
+      `${getBaseUrl()}/companyOnboarding#addKybInformation`,
       {
         method: "addKybInformation",
         kybInformation: {
@@ -1013,7 +1017,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   // Step 2 — re-initiate KYB
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/companyOnboarding#initiateCompanyKyb`,
+      `${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`,
       { method: "initiateCompanyKyb", companyId: rollfiCompanyId },
       { headers }
     );
@@ -1029,7 +1033,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   await new Promise((resolve) => setTimeout(resolve, 3000));
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+      `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
       {
         method: "addCompanyBankAccount",
         companyFundingSourceEntity: {
@@ -1066,7 +1070,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
 // ── Fix pay schedule ─────────────────────────────────────────
 
 router.post("/rollfi/fix-pay-schedule", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -1100,7 +1104,7 @@ router.post("/rollfi/fix-pay-schedule", async (req, res) => {
 
   // Try update first (schedule may already exist)
   try {
-    const upd = await axios.post(`${ROLLFI_BASE_URL}/payroll#updatePaySchedule`, {
+    const upd = await axios.post(`${getBaseUrl()}/payroll#updatePaySchedule`, {
       method: "updatePaySchedule",
       paySchedule: { companyId: rollfiCompanyId, workerType: "W2", compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
     }, { headers });
@@ -1117,7 +1121,7 @@ router.post("/rollfi/fix-pay-schedule", async (req, res) => {
 
   // Fallback: addPaySchedule
   try {
-    const add = await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
+    const add = await axios.post(`${getBaseUrl()}/payroll#addPaySchedule`, {
       method: "addPaySchedule",
       paySchedule: { companyId: rollfiCompanyId, workerType: "W2", compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
     }, { headers });
@@ -1134,7 +1138,7 @@ router.post("/rollfi/fix-pay-schedule", async (req, res) => {
 // ── Bank account linking ─────────────────────────────────────
 
 router.post("/rollfi/onboard/bank-account", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -1149,7 +1153,7 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
 
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`,
+      `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
       {
         method: "addCompanyBankAccount",
         companyFundingSourceEntity: {
@@ -1185,7 +1189,7 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
   try {
     // Support confirmed: use getCompanyInfo to read current funding source status
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getCompanyInfo`,
+      `${getBaseUrl()}/reports#getCompanyInfo`,
       { method: "getCompanyInfo", companyId: rollfiCompany.rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -1209,7 +1213,7 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
 // ── Micro-deposit verification ────────────────────────────────
 
 router.post("/rollfi/onboard/verify-bank", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -1225,7 +1229,7 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   let currentStatus: string | undefined;
   try {
     const infoResp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getCompanyInfo`,
+      `${getBaseUrl()}/reports#getCompanyInfo`,
       { method: "getCompanyInfo", companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -1250,7 +1254,7 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   const { debitAmount1 = 0.01, debitAmount2 = 0.01 } = req.body as { debitAmount1?: number; debitAmount2?: number };
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#verifyMicroDeposits`,
+      `${getBaseUrl()}/adminPortal#verifyMicroDeposits`,
       { method: "verifyMicroDeposits", companyId: rollfiCompanyId, debitAmount1, debitAmount2 },
       { headers: rollfiHeaders() }
     );
@@ -1273,7 +1277,7 @@ router.get("/rollfi/state-fields/:stateCode", async (req, res) => {
   try {
     const response = await axios({
       method: "get",
-      url: `${ROLLFI_BASE_URL}/reports/getStateRegistrationFields`,
+      url: `${getBaseUrl()}/reports/getStateRegistrationFields`,
       data: { method: "getStateRegistrationFields", code: stateCode },
       headers: rollfiHeaders(),
     });
@@ -1333,7 +1337,7 @@ router.post("/rollfi/onboard/state-registration", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal/addStateRegistrationInfo`,
+      `${getBaseUrl()}/adminPortal/addStateRegistrationInfo`,
       {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
@@ -1416,7 +1420,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
 
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal/addStateRegistrationInfo`,
+      `${getBaseUrl()}/adminPortal/addStateRegistrationInfo`,
       {
         method: "addStateRegistrationInfo",
         companyId: rollfiCompanyId,
@@ -1455,7 +1459,7 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
 // ── Employee onboarding ──────────────────────────────────────
 
 router.post("/rollfi/onboard/employee", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
     return;
   }
@@ -1484,7 +1488,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     try {
       const locationId = await (async () => {
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+          `${getBaseUrl()}/reports#getCompanyLocationInfo`,
           { method: "getCompanyLocationInfo", companyId: rollfiCompany.rollfiCompanyId },
           { headers: rollfiHeaders() }
         );
@@ -1504,7 +1508,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 
   try {
     const addUserResp = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#addUser`,
+      `${getBaseUrl()}/adminPortal#addUser`,
       {
         method: "addUser",
         user: {
@@ -1545,7 +1549,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
 
     const addWageResp = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+      `${getBaseUrl()}/adminPortal#addUserWage`,
       {
         method: "addUserWage",
         userWage: {
@@ -1596,7 +1600,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       try {
         // getUsers returns ALL users (active + inactive + pending KYC) — key is `users` not `user`
         const usersResp = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          `${getBaseUrl()}/reports#getUsers`,
           { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
           { headers: rollfiHeaders() }
         );
@@ -1622,7 +1626,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           let rollfiWageId = "";
           try {
             const addWageResp = await axios.post(
-              `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+              `${getBaseUrl()}/adminPortal#addUserWage`,
               {
                 method: "addUserWage",
                 userWage: {
@@ -1692,7 +1696,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 // Tries editUserWage first (update in-place), then addUserWage (add new record).
 
 router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const { rollfiUserId } = req.params;
@@ -1726,7 +1730,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
     ]) {
       try {
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
+          `${getBaseUrl()}/adminPortal#getUserWage`,
           body,
           { headers, validateStatus: () => true }
         );
@@ -1751,7 +1755,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
   if (resolvedWageId) {
     try {
       const r = await axios.post(
-        `${ROLLFI_BASE_URL}/adminPortal#updateUserWage`,
+        `${getBaseUrl()}/adminPortal#updateUserWage`,
         {
           method: "updateUserWage",
           userWage: {
@@ -1793,7 +1797,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
   // record, but the most recent active one takes precedence for payroll calculations.
   try {
     const r2 = await axios.post(
-      `${ROLLFI_BASE_URL}/adminPortal#addUserWage`,
+      `${getBaseUrl()}/adminPortal#addUserWage`,
       {
         method: "addUserWage",
         userWage: {
@@ -1842,7 +1846,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
 // for every store employee that has been onboarded. Safe to call repeatedly.
 
 router.post("/rollfi/repair-store-wages", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const headers = rollfiHeaders();
@@ -1866,7 +1870,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
       ]) {
         try {
           const r = await axios.post(
-            `${ROLLFI_BASE_URL}/adminPortal#getUserWage`,
+            `${getBaseUrl()}/adminPortal#getUserWage`,
             body,
             { headers, validateStatus: () => true }
           );
@@ -1893,7 +1897,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
 
     if (resolvedWageId) {
       try {
-        const r = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#updateUserWage`, {
+        const r = await axios.post(`${getBaseUrl()}/adminPortal#updateUserWage`, {
           method: "updateUserWage",
           userWage: {
             companyId: rollfiCompany.rollfiCompanyId,
@@ -1930,7 +1934,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
     // Fallback: addUserWage when no wageId available or update failed
     if (!repairSuccess) {
       try {
-        const r2 = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUserWage`, {
+        const r2 = await axios.post(`${getBaseUrl()}/adminPortal#addUserWage`, {
           method: "addUserWage",
           userWage: {
             companyId: rollfiCompany.rollfiCompanyId,
@@ -1971,7 +1975,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
 });
 
 router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2015,7 +2019,7 @@ router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
 // ── Pay period ───────────────────────────────────────────────
 
 router.get("/rollfi/payperiod", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2039,7 +2043,7 @@ router.get("/rollfi/payperiod", async (req, res) => {
     let period: Record<string, unknown> | null = null;
     try {
       const gpResponse = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+        `${getBaseUrl()}/reports#getPayPeriod`,
         { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
         { headers: rollfiHeaders() }
       );
@@ -2068,7 +2072,7 @@ router.get("/rollfi/payperiod", async (req, res) => {
       let periods: Array<Record<string, unknown>> = [];
       for (let attempt = 1; attempt <= 3; attempt++) {
         const response = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+          `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
           { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
           { headers: rollfiHeaders() }
         );
@@ -2113,7 +2117,7 @@ router.get("/rollfi/payperiod", async (req, res) => {
 // ── Employee Rollfi activation status ────────────────────────
 
 router.get("/rollfi/employees/status", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2125,7 +2129,7 @@ router.get("/rollfi/employees/status", async (req, res) => {
   }
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      `${getBaseUrl()}/reports#getUsers`,
       { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -2150,7 +2154,7 @@ router.get("/rollfi/employees/status", async (req, res) => {
 // Used by the manual Refresh button on the employee profile Payroll tab.
 router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
 
@@ -2178,7 +2182,7 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
     req.log.warn({ companyId: emp.companyId, companyName: companyRow.name }, "live-status: rollfiCompanyId missing — attempting recovery via getCompanies");
     try {
       const gcRes = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getCompanies`,
+        `${getBaseUrl()}/reports#getCompanies`,
         { method: "getCompanies" },
         { headers: rollfiHeaders() }
       );
@@ -2190,7 +2194,7 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
         let rollfiLocationId = "";
         try {
           const locRes = await axios.post(
-            `${ROLLFI_BASE_URL}/reports#getCompanyLocationInfo`,
+            `${getBaseUrl()}/reports#getCompanyLocationInfo`,
             { method: "getCompanyLocationInfo", companyId: match.companyID },
             { headers: rollfiHeaders() }
           );
@@ -2212,7 +2216,7 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
   try {
     type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      `${getBaseUrl()}/reports#getUsers`,
       { method: "getUsers", companyId: rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -2249,7 +2253,7 @@ router.post("/rollfi/companies/:companyId/sync-employees", async (req, res) => {
   const caller = store.getUserById(req.session.userId);
   if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin required" }); return; }
 
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
 
@@ -2261,7 +2265,7 @@ router.post("/rollfi/companies/:companyId/sync-employees", async (req, res) => {
 
   try {
     const usersResp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getUsers`,
+      `${getBaseUrl()}/reports#getUsers`,
       { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -2389,7 +2393,7 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 // ── Payroll type lookups ──────────────────────────────────────
 
 router.get("/rollfi/overtime-types", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const { companyId } = req.query as { companyId?: string };
@@ -2398,7 +2402,7 @@ router.get("/rollfi/overtime-types", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
   try {
     const resp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports/getOverTimeTypes`,
+      `${getBaseUrl()}/reports/getOverTimeTypes`,
       { method: "getOverTimeTypes" },
       { headers: rollfiHeaders() }
     );
@@ -2410,7 +2414,7 @@ router.get("/rollfi/overtime-types", async (req, res) => {
 });
 
 router.get("/rollfi/compensation-types", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const { companyId } = req.query as { companyId?: string };
@@ -2419,7 +2423,7 @@ router.get("/rollfi/compensation-types", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
   try {
     const resp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports/getAdditionalCompensationDescription`,
+      `${getBaseUrl()}/reports/getAdditionalCompensationDescription`,
       { method: "getAdditionalCompensationDescription" },
       { headers: rollfiHeaders() }
     );
@@ -2433,7 +2437,7 @@ router.get("/rollfi/compensation-types", async (req, res) => {
 // ── Initiate payroll ─────────────────────────────────────────
 
 router.post("/rollfi/payroll/initiate", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2465,7 +2469,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     // This ensures employees auto-enrolled by Rollfi (e.g. from previous sessions) are never skipped.
     req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId }, "Rollfi initiatePayroll: fetching enrolled employees");
     const rosterResp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+      `${getBaseUrl()}/reports#getPayPeriodDetails`,
       { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
       { headers: rollfiHeaders() }
     );
@@ -2562,7 +2566,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       req.log
     );
     const importResp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+      `${getBaseUrl()}/payroll#importRegularPayrollData`,
       initiateImportBody,
       { headers: rollfiHeaders() }
     );
@@ -2577,7 +2581,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     // Step 2: initiatePayroll
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+      `${getBaseUrl()}/payroll#initiatePayroll`,
       {
         method: "initiatePayroll",
         companyId: rollfiCompany.rollfiCompanyId,
@@ -2612,7 +2616,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 // ── Import payroll data (Step 1 of 2-step payroll flow) ──────
 
 router.post("/rollfi/payroll/import", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2637,7 +2641,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     // Build the payroll roster from Rollfi's getPayPeriodDetails — not from our in-memory store.
     req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, payPeriodId }, "Rollfi import: fetching enrolled employees from getPayPeriodDetails");
     const rosterResp = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+      `${getBaseUrl()}/reports#getPayPeriodDetails`,
       { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
       { headers: rollfiHeaders() }
     );
@@ -2734,7 +2738,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log
     );
     const importResp = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+      `${getBaseUrl()}/payroll#importRegularPayrollData`,
       importBody,
       { headers: rollfiHeaders() }
     );
@@ -2779,7 +2783,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
           // fetching details — calling getPayPeriodDetails mid-import returns stale data.
           try {
             const statusResp = await axios.post(
-              `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+              `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
               { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId },
               { headers: rollfiHeaders() }
             );
@@ -2795,7 +2799,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
         }
         try {
           const vr = await axios.post(
-            `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+            `${getBaseUrl()}/reports#getPayPeriodDetails`,
             { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
             { headers: rollfiHeaders() }
           );
@@ -2861,7 +2865,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
 // ── Submit payroll (Step 2 of 2-step payroll flow) ───────────
 
 router.post("/rollfi/payroll/submit", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2870,7 +2874,7 @@ router.post("/rollfi/payroll/submit", async (req, res) => {
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+      `${getBaseUrl()}/payroll#initiatePayroll`,
       { method: "initiatePayroll", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, runNow: false },
       { headers: rollfiHeaders() }
     );
@@ -2897,7 +2901,7 @@ router.post("/rollfi/payroll/submit", async (req, res) => {
 // ── Payroll overview (all companies, current period) ─────────
 
 router.get("/rollfi/payroll/overview", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2907,7 +2911,7 @@ router.get("/rollfi/payroll/overview", async (req, res) => {
       const rollfiCompany = store.getRollfiCompany(company.id)!;
       try {
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+          `${getBaseUrl()}/reports#getPayPeriod`,
           { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
           { headers: rollfiHeaders() }
         );
@@ -2930,7 +2934,7 @@ router.get("/rollfi/payroll/overview", async (req, res) => {
 // ── Pay period history (processed periods) ───────────────────
 
 router.get("/rollfi/payperiod/history", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -2944,7 +2948,7 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
   let processedPeriods: Array<Record<string, unknown>> = [];
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodsDetails`,
+      `${getBaseUrl()}/reports#getProcessedPayperiodsDetails`,
       { method: "getProcessedPayperiodsDetails", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
       { headers: rollfiHeaders() }
     );
@@ -2965,7 +2969,7 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
   let pendingPeriods: Array<Record<string, unknown>> = [];
   try {
     const r2 = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+      `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
       { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
       { headers: rollfiHeaders() }
     );
@@ -3007,7 +3011,7 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
 // ── Run all payroll (all onboarded companies in sequence) ─────
 
 router.post("/rollfi/payroll/run-all", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -3019,7 +3023,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
     try {
       // Get current unprocessed period
       const ppResp = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+        `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
         { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
         { headers: rollfiHeaders() }
       );
@@ -3050,7 +3054,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       // Build roster from Rollfi's enrolled employees — not from our store.
       // addUsersToRegularPayPeriod removed: Rollfi auto-enrolls on pay period creation.
       const ppDetailsResp = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+        `${getBaseUrl()}/reports#getPayPeriodDetails`,
         { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
         { headers: rollfiHeaders() }
       );
@@ -3094,7 +3098,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
         req.log
       );
       const importResp = await axios.post(
-        `${ROLLFI_BASE_URL}/payroll#importRegularPayrollData`,
+        `${getBaseUrl()}/payroll#importRegularPayrollData`,
         runAllImportBody,
         { headers: rollfiHeaders() }
       );
@@ -3102,7 +3106,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
 
       // Initiate
       const initiateResp = await axios.post(
-        `${ROLLFI_BASE_URL}/payroll#initiatePayroll`,
+        `${getBaseUrl()}/payroll#initiatePayroll`,
         { method: "initiatePayroll", companyId: rollfiCompany.rollfiCompanyId, payPeriodId, runNow: false },
         { headers: rollfiHeaders() }
       );
@@ -3120,7 +3124,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
 // ── Company task list (onboarding status) ────────────────────
 
 router.get("/rollfi/company-tasks", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
@@ -3132,7 +3136,7 @@ router.get("/rollfi/company-tasks", async (req, res) => {
   }
   try {
     const r = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getCompanyTask`,
+      `${getBaseUrl()}/reports#getCompanyTask`,
       { method: "getCompanyTask", companyId: rollfiCompany.rollfiCompanyId },
       { headers: rollfiHeaders() }
     );
@@ -3166,7 +3170,7 @@ router.get("/rollfi/company-tasks", async (req, res) => {
 // ── Pay period details (real tax data from Rollfi after processing) ──────
 
 router.get("/rollfi/payperiod/details", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const { companyId, payPeriodId } = req.query as { companyId: string; payPeriodId: string };
@@ -3175,7 +3179,7 @@ router.get("/rollfi/payperiod/details", async (req, res) => {
   if (!payPeriodId) { res.status(400).json({ error: "payPeriodId required" }); return; }
   try {
     const response = await axios.post(
-      `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+      `${getBaseUrl()}/reports#getPayPeriodDetails`,
       { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
       { headers: rollfiHeaders() }
     );
@@ -3190,7 +3194,7 @@ router.get("/rollfi/payperiod/details", async (req, res) => {
 // ── Pay stubs (per-employee pay breakdown for a processed period) ─────────
 
 router.get("/rollfi/paystubs", async (req, res) => {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
   const { companyId, payPeriodId, payBeginDate: pbDate, payEndDate: peDate } = req.query as { companyId: string; payPeriodId?: string; payBeginDate?: string; payEndDate?: string };
@@ -3210,7 +3214,7 @@ router.get("/rollfi/paystubs", async (req, res) => {
     // Primary: getPayPeriodDetails — richer data with employeeTaxDetails, employerTaxDetails, netTotal, payDetails
     try {
       const r = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getPayPeriodDetails`,
+        `${getBaseUrl()}/reports#getPayPeriodDetails`,
         { method: "getPayPeriodDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
         { headers: rollfiHeaders() }
       );
@@ -3244,7 +3248,7 @@ router.get("/rollfi/paystubs", async (req, res) => {
       // Fallback: getProcessedPayperiodEmpDetails
       try {
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getProcessedPayperiodEmpDetails`,
+          `${getBaseUrl()}/reports#getProcessedPayperiodEmpDetails`,
           { method: "getProcessedPayperiodEmpDetails", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
           { headers: rollfiHeaders() }
         );
@@ -3519,7 +3523,7 @@ router.post("/rollfi/admin/seed-statuses", async (req, res) => {
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const caller = store.getUserById(req.session.userId);
   if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin required" }); return; }
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
 
@@ -3539,7 +3543,7 @@ router.post("/rollfi/admin/seed-statuses", async (req, res) => {
     const companyReport: (typeof report)[0] = { company: company.name, companyId: company.id, employees: [] };
     try {
       const r = await axios.post(
-        `${ROLLFI_BASE_URL}/reports#getUsers`,
+        `${getBaseUrl()}/reports#getUsers`,
         { method: "getUsers", companyId: company.rollfiCompanyId },
         { headers: rollfiHeaders() }
       );

@@ -7,17 +7,17 @@ import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity, calculateComplianceScore, calculateReadinessFlags } from "./people.js";
+import { getRollfiConfig } from "../lib/rollfi-config.js";
 
 const router: IRouter = Router();
 
-const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
-const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
-const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
-
 function rollfiHeaders() {
-  const encoded = Buffer.from(`${ROLLFI_CLIENT_ID ?? ""}:${ROLLFI_SECRET_KEY ?? ""}`).toString("base64");
+  const { clientId, secretKey } = getRollfiConfig();
+  const encoded = Buffer.from(`${clientId ?? ""}:${secretKey ?? ""}`).toString("base64");
   return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
 }
+
+function getBaseUrl(): string { return getRollfiConfig().baseUrl; }
 
 function randomNineDigits(): string {
   return String(Math.floor(100_000_000 + Math.random() * 900_000_000));
@@ -39,20 +39,20 @@ async function ensureFullOnboarding(
   payScheduleParams?: { payFrequency: string; payBeginDate: string; payDate: string; workerType: string },
 ): Promise<void> {
   try {
-    await axios.post(`${ROLLFI_BASE_URL}/companyOnboarding#addKybInformation`, {
+    await axios.post(`${getBaseUrl()}/companyOnboarding#addKybInformation`, {
       method: "addKybInformation",
       kybInformation: { companyId: rollfiCompanyId, ein, entityType: "LLC", dateOfIncorporation: "2015-01-01", incorporationState: "New Jersey", irsAssisgnedFederalFilingForm: "941" },
     }, { headers: rollfiHeaders() });
   } catch (e) { log.warn({ e }, "addKybInformation failed"); }
 
   try {
-    await axios.post(`${ROLLFI_BASE_URL}/companyOnboarding#initiateCompanyKyb`, { method: "initiateCompanyKyb", companyId: rollfiCompanyId }, { headers: rollfiHeaders() });
+    await axios.post(`${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`, { method: "initiateCompanyKyb", companyId: rollfiCompanyId }, { headers: rollfiHeaders() });
   } catch (e) { log.warn({ e }, "initiateCompanyKyb failed"); }
 
   await new Promise((r) => setTimeout(r, 2000));
 
   try {
-    await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addCompanyBankAccount`, {
+    await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, {
       method: "addCompanyBankAccount",
       companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" },
     }, { headers: rollfiHeaders() });
@@ -74,7 +74,7 @@ async function ensureFullOnboarding(
     // Try update first (company may already have a schedule); fall back to add
     let scheduleSet = false;
     try {
-      const upd = await axios.post(`${ROLLFI_BASE_URL}/payroll#updatePaySchedule`, {
+      const upd = await axios.post(`${getBaseUrl()}/payroll#updatePaySchedule`, {
         method: "updatePaySchedule",
         paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
@@ -83,7 +83,7 @@ async function ensureFullOnboarding(
       else { log.warn({ rollfiResponse: updData }, "updatePaySchedule returned error body, trying add"); }
     } catch (_) { /* fall through to add */ }
     if (!scheduleSet) {
-      const add = await axios.post(`${ROLLFI_BASE_URL}/payroll#addPaySchedule`, {
+      const add = await axios.post(`${getBaseUrl()}/payroll#addPaySchedule`, {
         method: "addPaySchedule",
         paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
@@ -244,13 +244,13 @@ router.post("/companies", async (req: Request, res: Response) => {
     let rollfiResult: { rollfiCompanyId?: string; rollfiLocationId?: string; error?: string } = {};
 
     // 4. Trigger Rollfi onboarding if credentials configured
-    if (ROLLFI_CLIENT_ID && ROLLFI_SECRET_KEY) {
+    if (getRollfiConfig().credentialsPresent) {
       try {
         const incorporationDate = body.dateOfIncorporation
           ? body.dateOfIncorporation.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2")
           : "2015-01-01";
 
-        const response = await axios.post(`${ROLLFI_BASE_URL}/companyOnboarding#createBusiness`, {
+        const response = await axios.post(`${getBaseUrl()}/companyOnboarding#createBusiness`, {
           method: "createBusiness",
           registration: { company: body.companyName, businessWebsite: body.businessWebsite ?? "", doingBusinessAs: body.doingBusinessAs ?? body.companyName, isTermsAccepted: true },
           kybInformation: { ein: useEin, entityType: body.entityType ?? "LLC", incorporationState: body.incorporationState ?? "New Jersey", dateOfIncorporation: incorporationDate, irsAssisgnedFederalFilingForm: body.irsFilingForm ?? "941", payrollRunThisYear: body.payrollRunThisYear === "Yes" ? "Yes" : "No", formerPaidThisYear: "No" },
@@ -280,7 +280,7 @@ router.post("/companies", async (req: Request, res: Response) => {
             const fieldValuesJson = JSON.stringify(fieldValues);
             try {
               const srResp = await axios.post(
-                `${ROLLFI_BASE_URL}/adminPortal/addStateRegistrationInfo`,
+                `${getBaseUrl()}/adminPortal/addStateRegistrationInfo`,
                 {
                   method: "addStateRegistrationInfo",
                   companyId: rollfiCompanyId,
@@ -828,7 +828,7 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
 
   // ── Strategy 1: Rollfi live pay period ────────────────────
   const rollfiCompany = store.getRollfiCompany(companyId);
-  if (rollfiCompany && ROLLFI_CLIENT_ID && ROLLFI_SECRET_KEY) {
+  if (rollfiCompany && getRollfiConfig().credentialsPresent) {
     try {
       let rollfiFrom: string | null = null;
       let rollfiTo: string | null = null;
@@ -836,7 +836,7 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
       // Try getPayPeriod first (recommended by Rollfi docs)
       try {
         const gpRes = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getPayPeriod`,
+          `${getBaseUrl()}/reports#getPayPeriod`,
           { method: "getPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
           { headers: rollfiHeaders() }
         );
@@ -850,7 +850,7 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
       // Fallback: getUnProcessedPayPeriod
       if (!rollfiFrom) {
         const upRes = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getUnProcessedPayPeriod`,
+          `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
           { method: "getUnProcessedPayPeriod", companyId: rollfiCompany.rollfiCompanyId, workerType: "W2" },
           { headers: rollfiHeaders() }
         );

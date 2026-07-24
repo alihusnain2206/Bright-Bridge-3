@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useLocation, useParams } from "wouter";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   User, DollarSign, Lock, CreditCard, CheckCircle2, AlertTriangle,
@@ -185,6 +186,8 @@ export default function ClientEmployeesNew() {
   });
   const company = companyData;
   const queryClient = useQueryClient();
+  const rollfiEnv = useRollfiEnv();
+  const isProduction = rollfiEnv === "production";
 
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
@@ -716,9 +719,11 @@ export default function ClientEmployeesNew() {
             {form.bankSetupMethod === "manual" && (
               <div className="space-y-4 border-t pt-4">
                 <div className="flex justify-end">
-                  <Button type="button" size="sm" variant="outline" className="text-xs gap-1" onClick={() => setForm((f) => ({ ...f, bankName: "Chase Bank", routingNumber: "122238242", accountNumber: "9889890989", accountType: "checking" }))}>
-                    Use Test Bank Details (Sandbox)
-                  </Button>
+                  {!isProduction && (
+                    <Button type="button" size="sm" variant="outline" className="text-xs gap-1" onClick={() => setForm((f) => ({ ...f, bankName: "Chase Bank", routingNumber: "122238242", accountNumber: "9889890989", accountType: "checking" }))}>
+                      Use Test Bank Details (Sandbox)
+                    </Button>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5"><Label>Bank Name *</Label><Input value={form.bankName} onChange={(e) => set("bankName", e.target.value)} placeholder="Chase Bank" /></div>

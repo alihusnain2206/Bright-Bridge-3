@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Pause, Ban, RotateCcw, CheckCircle2, XCircle, X, Loader2 } from "lucide-react";
+import { Pause, Ban, RotateCcw, CheckCircle2, XCircle, X, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 
 // Minimal employee fields required by all three modals
 export interface ModalEmployee {
@@ -100,6 +101,7 @@ export function TerminateModal({ emp, onClose, onSuccess }: {
   const [confirmText, setConfirmText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const rollfiEnv = useRollfiEnv();
   const fullName = `${emp.firstName} ${emp.lastName}`;
   const canSubmit = confirmText === "TERMINATE" && !!terminationReason && !!lastWorkingDay;
 
@@ -131,6 +133,12 @@ export function TerminateModal({ emp, onClose, onSuccess }: {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
         </div>
         <div className="p-5 space-y-4">
+          {rollfiEnv === "production" && (
+            <div className="p-3 rounded-lg bg-red-600 text-white text-sm font-bold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              PRODUCTION — This terminates {fullName} in the LIVE payroll system.
+            </div>
+          )}
           <div className="p-3 rounded-lg bg-red-50 border border-red-300 text-sm text-red-800 font-semibold">This action is PERMANENT and cannot be undone!</div>
           <p className="text-sm text-gray-600"><strong>{fullName}</strong> will be permanently removed from all future payrolls and will be unable to clock in. Their records will be kept for compliance purposes.</p>
           <div className="space-y-1.5 text-xs">

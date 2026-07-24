@@ -1,0 +1,165 @@
+Approved — please implement exactly as 
+you outlined in your audit, including 
+your recommended variation (function, 
+not constants).
+
+Implement all of the following:
+
+1. New api-server/src/lib/rollfi-config.ts 
+exporting getRollfiConfig() as a 
+FUNCTION (not bare constants), 
+resolving credentials from ROLLFI_ENV 
+with an exact equality check 
+(env === "production"). Any other value 
+— undefined, empty, misspelled, "prod", 
+"PRODUCTION" — must map to sandbox. 
+Never write the guard as 
+env !== "sandbox".
+
+Variables:
+ROLLFI_ENV
+ROLLFI_SANDBOX_API_URL
+ROLLFI_SANDBOX_CLIENT_ID
+ROLLFI_SANDBOX_SECRET_KEY
+ROLLFI_PROD_API_URL
+ROLLFI_PROD_CLIENT_ID
+ROLLFI_PROD_SECRET_KEY
+
+Keep backward compatibility: if the new 
+variables are absent but the existing 
+ROLLFI_BASE_URL / ROLLFI_CLIENT_ID / 
+ROLLFI_SECRET_KEY are present, fall back 
+to those so nothing breaks before I add 
+the new secrets.
+
+Startup validation: if 
+ROLLFI_ENV=production and any production 
+credential is missing or empty, fail 
+loudly — refuse to start or disable all 
+Rollfi routes with a fatal log naming 
+the missing variable. Never fall back to 
+empty-string credentials.
+
+2. Update rollfi.ts and companies.ts to 
+call getRollfiConfig() inside each 
+handler instead of using module-level 
+constants.
+
+3. Include { rollfiEnv } in every Pino 
+log line for outbound Rollfi requests. 
+Never log clientId or secretKey.
+
+4. Add GET /api/config/env returning 
+{ rollfiEnv }. Must be an API endpoint, 
+not a VITE_ build-time variable, and 
+must never return credentials.
+
+5. layout.tsx banner driven by that 
+endpoint:
+- sandbox: current blue styling and copy
+- production: red (#DC2626), white bold 
+  text, warning icon, slightly taller — 
+  "PRODUCTION · LIVE PAYROLL — real 
+  employees and real money"
+- unknown/error: neutral grey — 
+  "Environment unknown — verify 
+  configuration before taking action". 
+  Never default to displaying SANDBOX 
+  when the environment cannot be 
+  confirmed.
+Also prefix the browser tab title with 
+"[LIVE] " in production.
+
+6. Hide or disable ALL sandbox-only UI 
+when in production. This is the 
+highest-risk item — a test-bank button 
+must be impossible to click during a 
+real client onboarding:
+- "Use Test Bank Details (Sandbox)" 
+  button in client-employees-new.tsx
+- Test EIN auto-fill and sandbox copy 
+  in clients-new.tsx ("Sandbox: click 
+  Test EIN to auto-fill", "Sandbox mode 
+  — test bank auto-configured", "In 
+  production, you would enter...")
+- sandbox wording in payroll.tsx line 
+  ~627
+In sandbox these remain exactly as they 
+are today.
+
+7. Production-only confirmation modals 
+on three actions (sandbox behaviour 
+unchanged):
+- initiatePayroll: modal showing company 
+  name, pay period dates, pay date, 
+  employee count and the exact total 
+  bank debit; require typing RUN 
+  (case-insensitive) before the confirm 
+  button enables; Cancel is the default 
+  focused action
+- terminateUser: modal showing employee 
+  name and display ID; Confirm / Cancel
+- final company creation submit: modal 
+  showing company legal name and EIN, 
+  noting this creates a real company and 
+  starts KYB; Confirm / Cancel
+These must wrap the EXISTING flows — do 
+not rewrite or duplicate the underlying 
+submit logic.
+
+8. Fix the Config/home page display 
+showing the outdated EasyTeam iframe 
+URL.
+
+DO NOT create or run any database 
+migration or cleanup script. Do not 
+modify, null, or delete any existing 
+company or employee records, and do not 
+touch the rollfi_webhook_events table. I 
+will handle data cleanup separately when 
+I decide to.
+
+Do not modify the Rollfi API call logic, 
+request payloads, the employee sync 
+chain, or payroll calculations in any 
+way. The wizard and payroll submit flows 
+must behave identically in sandbox after 
+this change — the only differences 
+should be where credentials are read 
+from, the new banner, hidden 
+sandbox-only buttons, and the production 
+confirmation modals.
+
+Keep ROLLFI_ENV defaulting to sandbox so 
+nothing changes until I explicitly 
+switch.
+
+TESTING CHECKLIST:
+- ROLLFI_ENV="sandbox": blue banner, all 
+  sandbox helper buttons present, no 
+  extra confirmations, company wizard 
+  and employee wizard and payroll 
+  preview all work exactly as before
+- ROLLFI_ENV="production": red banner 
+  everywhere including login, "[LIVE]" 
+  title prefix, sandbox helper buttons 
+  gone, confirmation modals appear
+- ROLLFI_ENV misspelled or missing: 
+  resolves to sandbox (fail safe)
+- Missing production credentials with 
+  ROLLFI_ENV=production: clear fatal 
+  error naming the variable
+- /api/config/env returns no credentials
+- Existing features unaffected: employee 
+  onboarding Rollfi chain, payroll 
+  processing, People module, EasyTeam, 
+  timesheets
+
+DELIVERABLE SUMMARY: files changed, 
+every location updated to use 
+getRollfiConfig(), the exact list of 
+environment variables I must add to 
+Replit Secrets, confirmation that no 
+credentials are exposed to the frontend 
+or logged, and confirmation that no 
+database records were modified.

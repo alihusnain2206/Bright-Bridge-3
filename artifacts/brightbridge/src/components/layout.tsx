@@ -5,10 +5,11 @@ import {
   Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  Bell, Search, BarChart2,
+  Bell, Search, BarChart2, AlertTriangle,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 
 interface NavSubItem {
   href: string;
@@ -130,6 +131,61 @@ function getGreeting(name: string): { text: string; emoji: string; sub: string }
   return { text: `Good evening, ${first}!`, emoji: "🌙", sub: "Here's what's happening with your workforce today." };
 }
 
+function EnvironmentBanner() {
+  const rollfiEnv = useRollfiEnv();
+
+  useEffect(() => {
+    if (rollfiEnv === "production") {
+      if (!document.title.startsWith("[LIVE] ")) {
+        document.title = `[LIVE] ${document.title}`;
+      }
+    } else {
+      if (document.title.startsWith("[LIVE] ")) {
+        document.title = document.title.slice(7);
+      }
+    }
+  }, [rollfiEnv]);
+
+  if (rollfiEnv === "production") {
+    return (
+      <div
+        className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold tracking-wide shrink-0"
+        style={{ background: "#DC2626", color: "#fff" }}
+      >
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span>PRODUCTION · LIVE PAYROLL</span>
+        <span className="mx-1 opacity-60">—</span>
+        <span className="font-normal opacity-90">real employees and real money</span>
+      </div>
+    );
+  }
+
+  if (rollfiEnv === "unknown") {
+    return (
+      <div
+        className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide shrink-0"
+        style={{ background: "#6B7280", color: "#fff" }}
+      >
+        <span className="opacity-80">Environment unknown</span>
+        <span className="opacity-40 mx-1">—</span>
+        <span className="opacity-70 font-normal">verify configuration before taking action</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide shrink-0"
+      style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}
+    >
+      <FlaskConical className="h-3.5 w-3.5 opacity-70" />
+      <span className="opacity-80">SANDBOX</span>
+      <span className="opacity-40 mx-1">·</span>
+      <span className="opacity-70 font-normal">Testing environment — no real data or payments</span>
+    </div>
+  );
+}
+
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
@@ -194,16 +250,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
 
-      {/* Sandbox banner */}
-      <div
-        className="flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-semibold tracking-wide shrink-0"
-        style={{ background: "linear-gradient(90deg, #284362 0%, #325278 100%)", color: "#fff" }}
-      >
-        <FlaskConical className="h-3.5 w-3.5 opacity-70" />
-        <span className="opacity-80">SANDBOX</span>
-        <span className="opacity-40 mx-1">·</span>
-        <span className="opacity-70 font-normal">Testing environment — no real data or payments</span>
-      </div>
+      <EnvironmentBanner />
 
       {/* ── Top Header ── */}
       <header className="flex items-center gap-3 px-5 h-16 bg-white border-b border-gray-100 shrink-0 z-10">

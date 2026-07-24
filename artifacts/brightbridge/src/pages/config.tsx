@@ -202,7 +202,7 @@ export default function Config() {
               <Globe className="h-5 w-5 text-accent" />
               SDK Endpoints
             </CardTitle>
-            <CardDescription>EasyTeam sandbox URLs used by this integration.</CardDescription>
+            <CardDescription>EasyTeam iframe URLs used by this integration.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {[
