@@ -372,6 +372,7 @@ export const timesheetShifts = pgTable("timesheet_shifts", {
   locked:              boolean("locked").notNull().default(false),
   manualEntry:         boolean("manual_entry").notNull().default(false),
   scheduleShiftId:     text("schedule_shift_id"),
+  localDate:           text("local_date"),      // YYYY-MM-DD derived from utcStartTime + utcOffset (employee's local timezone); backfilled for existing rows
   deletedAt:           text("deleted_at"),
   syncedAt:            text("synced_at").notNull(),
 });

@@ -8,7 +8,7 @@ import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
 import { db, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable } from "@workspace/db";
 import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
-import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange } from "../lib/timesheet-shifts-persist.js";
+import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
 
 const router: IRouter = Router();
@@ -480,6 +480,10 @@ router.post("/easyteam/hours/sync", async (req, res) => {
       // FIX 2: location guard — flat /timesheets returns all org shifts regardless of which
       //   location's JWT was used; only persist shifts whose locationId matches this company's
       //   EasyTeam location UUID to prevent cross-company contamination.
+      // Compare by local calendar date (utcStartTime + utcOffset) so shifts that
+      // start near midnight are attributed to the correct pay-period day.
+      const fromDateStr = fromDate.toISOString().split("T")[0]!;
+      const toDateStr   = toDate.toISOString().split("T")[0]!;
       const inRange = result.shifts.filter((s) => {
         if (!s.utcStartTime) return false;
         if (s.locationId !== etLocId) {
@@ -490,8 +494,8 @@ router.post("/easyteam/hours/sync", async (req, res) => {
           skippedForeignShifts++;
           return false;
         }
-        const start = new Date(s.utcStartTime);
-        return start >= fromDate && start <= toDate;
+        const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0);
+        return ld >= fromDateStr && ld <= toDateStr;
       });
       totalSkippedForeign += skippedForeignShifts;
       req.log.info({ locationId: locId, etLocId, total: result.shifts.length, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
@@ -524,6 +528,7 @@ router.post("/easyteam/hours/sync", async (req, res) => {
           utcStartTime:        s.utcStartTime ?? s.startTime,
           utcEndTime:          s.utcEndTime ?? s.endTime ?? null,
           utcOffset:           s.utcOffset ?? 0,
+          localDate:           shiftLocalDate(s.utcStartTime ?? s.startTime, s.utcOffset ?? 0),
           durationMs:          s.duration ?? 0,
           payableDurationMs:   (s.payableDuration != null && s.payableDuration > 10000) ? s.payableDuration : (s.payableDuration ?? 0) * 60000,
           totalPaidBreakMin:   s.totalPaidBreaks ?? null,
@@ -887,10 +892,14 @@ router.post("/easyteam/hours/approve", async (req, res) => {
 
     if ("shifts" in result && result.shifts.length > 0) {
       const normTs = (t: string) => t.includes("T") ? t : t.replace(" ", "T") + "Z";
+      // Use local date via utcStartTime + utcOffset (same logic as the main sync).
+      const fromDateStr2 = fromDate.toISOString().split("T")[0]!;
+      const toDateStr2   = toDate.toISOString().split("T")[0]!;
       const inRange = result.shifts.filter((s) => {
-        if (!s.startTime) return false;
-        const start = new Date(normTs(s.startTime));
-        return start >= fromDate && start <= toDate;
+        const ts = s.utcStartTime ?? (s.startTime ? normTs(s.startTime) : null);
+        if (!ts) return false;
+        const ld = shiftLocalDate(ts, s.utcOffset ?? 0);
+        return ld >= fromDateStr2 && ld <= toDateStr2;
       });
 
       if (inRange.length > 0) {
@@ -1329,7 +1338,11 @@ router.get("/timesheets/trend", async (req, res) => {
       timeout: 10000,
     });
 
-    res.json(r.data);
+    const responseData = r.data as { days?: unknown[]; totals?: unknown };
+    if (Array.isArray(responseData.days) && responseData.days.length > 0) {
+      req.log.info({ sample: responseData.days[0] }, "timesheets/trend: sample days[0] shape");
+    }
+    res.json(responseData);
   } catch (err) {
     const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
     const detail = axErr.response

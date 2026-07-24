@@ -329,19 +329,23 @@ export default function WorkforcePage() {
     ].filter(d => d.value > 0);
   }, [entries]);
 
-  const trendChartData = useMemo(() =>
-    (trend?.days ?? []).map(d => ({
-      date: (() => {
-        const raw = d.date ?? d.day ?? "";
-        if (!raw) return "";
-        const dt = new Date(raw + "T12:00:00");
-        return dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-      })(),
-      hours: Math.round(d.duration / 3_600_000 * 10) / 10,
-      amount: Math.round(d.amount * 100) / 100,
-    })),
-    [trend]
-  );
+  const trendChartData = useMemo(() => {
+    const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return (trend?.days ?? []).map(d => {
+      const raw = (d.date ?? d.day ?? "").trim();
+      // Parse YYYY-MM-DD directly — never construct a Date object from a bare date
+      // string because that shifts by the browser's timezone offset.
+      const parts = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const label = parts
+        ? `${MONTHS[parseInt(parts[2]!, 10) - 1] ?? "?"} ${parseInt(parts[3]!, 10)}`
+        : raw;
+      return {
+        date:   label,
+        hours:  Math.round(d.duration / 3_600_000 * 10) / 10,
+        amount: Math.round(d.amount * 100) / 100,
+      };
+    });
+  }, [trend]);
 
   const longShiftCount = shifts.filter(s => s.longShift).length;
 
