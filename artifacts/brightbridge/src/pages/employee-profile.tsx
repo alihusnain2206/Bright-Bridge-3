@@ -17,7 +17,7 @@ import EmployeeDocuments from "@/components/EmployeeDocuments";
 import EmergencyContactForm from "@/components/EmergencyContactForm";
 import { OnLeaveModal, TerminateModal, ReactivateModal } from "@/components/EmployeeStatusModals";
 
-const NAVY  = "#1B3A6B";
+const NAVY  = "#2C4562";
 const ACCENT = "#0EA5C9";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -596,7 +596,7 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
               <div className="flex items-center gap-2 pt-1">
                 {needsKyc && (
                   <Link href="/payroll"
-                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#1B3A6B] text-white hover:bg-[#284362] transition-colors">
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#2C4562] text-white hover:bg-[#3a5878] transition-colors">
                     {isSuperAdmin ? "Complete KYC →" : "Complete Verification →"}
                   </Link>
                 )}

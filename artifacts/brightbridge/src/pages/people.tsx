@@ -19,7 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { useAuth } from "@/hooks/useAuth";
 import { OnLeaveModal, TerminateModal, ReactivateModal, type ModalEmployee } from "@/components/EmployeeStatusModals";
 
-const NAVY = "#1B3A6B";
+const NAVY = "#2C4562";
 const ACCENT = "#0EA5C9";
 
 // ── Types ─────────────────────────────────────────────────────

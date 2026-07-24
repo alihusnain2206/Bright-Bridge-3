@@ -6,7 +6,7 @@ import {
   CheckCheck,
 } from "lucide-react";
 
-const NAVY = "#1B3A6B";
+const NAVY = "#2C4562";
 
 interface Action {
   icon: React.ReactNode;
@@ -53,7 +53,7 @@ function ActionButton({ action }: { action: Action }) {
   );
 }
 
-const ICON_CLS = "h-4 w-4 text-[#1B3A6B]";
+const ICON_CLS = "h-4 w-4 text-[#2C4562]";
 
 const ADMIN_ACTIONS: Action[] = [
   { icon: <UserPlus className={ICON_CLS} />,    label: "Add Employee",       href: "/people/new" },

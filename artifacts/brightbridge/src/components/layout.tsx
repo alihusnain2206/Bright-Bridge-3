@@ -285,7 +285,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                     <button
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
                         isActive(href)
-                          ? "bg-[#E8622A] text-white shadow-sm"
+                          ? "bg-[#2C4562] text-white shadow-sm"
                           : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                       }`}
                     >
@@ -306,7 +306,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       onClick={() => { if (parentActive) toggleGroup(href); }}
                       className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all text-left ${
                         parentActive
-                          ? "bg-orange-50 text-[#E8622A]"
+                          ? "bg-[#2C4562]/10 text-[#2C4562]"
                           : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
                       }`}
                     >
@@ -332,7 +332,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                             <button
                               className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
                                 isSubItemActive(child.href, child.label)
-                                  ? "bg-[#E8622A] text-white shadow-sm"
+                                  ? "bg-[#2C4562] text-white shadow-sm"
                                   : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
                               }`}
                             >

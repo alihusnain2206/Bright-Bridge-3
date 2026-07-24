@@ -4,7 +4,7 @@ import { Link } from "wouter";
 import { Users, UserPlus, ClipboardList, ShieldCheck, DollarSign, TrendingDown, TrendingUp } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const NAVY = "#1B3A6B";
+const NAVY = "#2C4562";
 const ACCENT = "#0EA5C9";
 
 interface Employee {
@@ -59,7 +59,7 @@ function KpiCard({ icon, iconBg, title, value, sub, subColor, link, linkLabel, o
   onValueClick?: () => void; loading?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3 min-h-[120px]" style={{ background: "hsl(212 20% 90%)" }}>
+    <div className="rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-3 min-h-[120px]" style={{ background: "rgb(250 250 250)" }}>
       <div className="flex items-start gap-3">
         <div className="p-2 rounded-lg shrink-0" style={{ background: iconBg }}>{icon}</div>
         <div className="flex-1 min-w-0">

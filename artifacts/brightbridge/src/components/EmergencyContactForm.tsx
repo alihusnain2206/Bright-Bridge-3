@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const NAVY = "#1B3A6B";
+const NAVY = "#2C4562";
 
 interface EmergencyContact {
   id: string; employeeId: string; companyId: string;
@@ -143,7 +143,7 @@ export default function EmergencyContactForm({ employeeId, companyId, onFirstSav
       ))}
 
       {adding ? (
-        <div className="rounded-xl border border-[#1B3A6B]/20 bg-white p-4 space-y-3">
+        <div className="rounded-xl border border-[#2C4562]/20 bg-white p-4 space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-gray-900">{editingId ? "Edit Contact" : "New Emergency Contact"}</p>
             <button onClick={cancel} className="text-gray-400 hover:text-gray-600 transition-colors"><X className="h-4 w-4" /></button>
@@ -239,7 +239,7 @@ export default function EmergencyContactForm({ employeeId, companyId, onFirstSav
       ) : (
         <button
           onClick={startAdd}
-          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-[#1B3A6B]/30 hover:text-[#1B3A6B] transition-colors"
+          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-[#2C4562]/30 hover:text-[#2C4562] transition-colors"
         >
           <Plus className="h-4 w-4" /> Add Emergency Contact
         </button>

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import TaskActionModal from "@/components/TaskActionModal";
 
-const NAVY = "#1B3A6B";
+const NAVY = "#2C4562";
 const ACCENT = "#0EA5C9";
 
 interface LinkedTask { id: string; taskName: string; status: string; isRequired: boolean; }
