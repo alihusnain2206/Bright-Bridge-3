@@ -384,6 +384,28 @@ export async function backfillEmployeeScores(): Promise<void> {
         .where(and(eq(complianceItemsTable.employeeId, emp.id), eq(complianceItemsTable.type, "state_w4")));
     }
 
+    // ── Step 1b: Repair i9 compliance items that were incorrectly completed ──
+    // Previously, completing either I-9 Section 1 OR Section 2 alone would flip the
+    // compliance item to "completed". Correct rule: BOTH must be done.
+    const i9Ci = await db.select({ id: complianceItemsTable.id, status: complianceItemsTable.status })
+      .from(complianceItemsTable)
+      .where(and(eq(complianceItemsTable.employeeId, emp.id), eq(complianceItemsTable.type, "i9")));
+    if (i9Ci.length > 0 && i9Ci[0].status === "completed") {
+      const i9Tasks = await db.select({ status: onboardingTasksTable.status, isRequired: onboardingTasksTable.isRequired })
+        .from(onboardingTasksTable)
+        .where(and(
+          eq(onboardingTasksTable.employeeId, emp.id),
+          inArray(onboardingTasksTable.taskName, ["I-9 Section 1", "I-9 Section 2 Verification"]),
+        ));
+      const pendingRequired = i9Tasks.filter(t => t.isRequired && t.status !== "completed" && t.status !== "skipped");
+      if (pendingRequired.length > 0) {
+        // One or both sections still pending — roll back the compliance item
+        await db.update(complianceItemsTable)
+          .set({ status: "not_started", completedAt: null, updatedAt: nowIso() } as Record<string, unknown>)
+          .where(eq(complianceItemsTable.id, i9Ci[0].id));
+      }
+    }
+
     // ── Step 2: Recalculate scores for employees with stale (0) scores ──
     const [taskRows, complianceRows] = await Promise.all([
       db.select({ status: onboardingTasksTable.status }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, emp.id)),
@@ -889,7 +911,23 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
       const [ci] = await db.select().from(complianceItemsTable)
         .where(and(eq(complianceItemsTable.employeeId, task.employeeId), eq(complianceItemsTable.type, ciType)));
       if (ci && ci.status !== "completed") {
-        await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, ci.id));
+        // For compliance types backed by multiple onboarding tasks (e.g. i9 has Section 1 + Section 2),
+        // only mark complete when ALL linked required tasks are done.
+        const allLinkedNames = getLinkedTaskNames(ciType, ci.name);
+        let canComplete = true;
+        if (allLinkedNames.length > 1) {
+          const linkedTasks = await db.select({ status: onboardingTasksTable.status, isRequired: onboardingTasksTable.isRequired })
+            .from(onboardingTasksTable)
+            .where(and(
+              eq(onboardingTasksTable.employeeId, task.employeeId),
+              inArray(onboardingTasksTable.taskName, allLinkedNames),
+            ));
+          const stillPending = linkedTasks.filter(t => t.isRequired && t.status !== "completed" && t.status !== "skipped");
+          if (stillPending.length > 0) canComplete = false;
+        }
+        if (canComplete) {
+          await db.update(complianceItemsTable).set({ status: "completed", completedAt: now, updatedAt: now }).where(eq(complianceItemsTable.id, ci.id));
+        }
       }
     } else {
       // Pass 2: name-match for certification/training/custom compliance items
