@@ -256,6 +256,8 @@ export default function ManagerPayrollSubmit() {
       queryKey: ["submit-preview", companyId],
       queryFn: () => api.get(`/rollfi/payroll/preview?companyId=${companyId}`),
       enabled: !!companyId,
+      refetchOnMount: "always",
+      staleTime: 0,
     });
 
   const { data: otTypesRaw, isLoading: otLoading, isError: otError } = useQuery<Record<string, unknown>>({
@@ -675,12 +677,14 @@ export default function ManagerPayrollSubmit() {
                     const selPrev = selectedImportEmp.previewEmp;
                     const grossPay     = Number(item.grossTotal ?? 0);
                     const netPay       = Number(item.netTotal ?? 0);
-                    const empDed       = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
-                    const erTaxTotal   = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
                     const addComp      = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
                     const hours        = selPrev?.netPayableHours ?? selPrev?.hoursWorked ?? 0;
                     const empTaxes     = (item.employeeTaxDetails ?? item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
                     const erTaxes      = (item.employerTaxDetails ?? item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
+                    const empTaxesSum  = empTaxes.reduce((s, t) => s + Number(t.amount ?? t.value ?? t.taxAmount ?? 0), 0);
+                    const erTaxesSum   = erTaxes.reduce((s, t) => s + Number(t.amount ?? t.value ?? t.taxAmount ?? 0), 0);
+                    const empDed       = Number(item.employeeTaxTotal ?? item.deductions ?? 0) || empTaxesSum;
+                    const erTaxTotal   = Number(item.employerTaxTotal ?? item.employerTax ?? 0) || erTaxesSum;
                     return (
                       <div className="px-5 py-4 space-y-4">
                         {/* KPI cards */}
