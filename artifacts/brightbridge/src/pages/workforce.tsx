@@ -48,6 +48,7 @@ interface ShiftsSummary {
   activeNow: number;
   missedPunchCount: number;
   extendedBreakCount: number;
+  laborCost?: number;
 }
 interface ShiftsData { summary: ShiftsSummary; shifts: ShiftRow[] }
 interface TrendDay   { date?: string; day?: string; duration: number; amount: number }
@@ -453,8 +454,8 @@ export default function WorkforcePage() {
                 <KpiCard
                   icon={<DollarSign className="h-4 w-4" />}
                   label="Est. Labor Cost"
-                  value={trend ? fmtCurrency(trend.totals.amount) : "—"}
-                  sub="From EasyTeam reports"
+                  value={summary ? fmtCurrency(summary.laborCost ?? 0) : "—"}
+                  sub="Based on current pay rates"
                   color="#818cf8"
                 />
                 <KpiCard

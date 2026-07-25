@@ -1253,12 +1253,49 @@ router.get("/timesheets/shifts", async (req, res) => {
     return { ...r, missedPunch, extendedBreak, longShift };
   });
 
+  // ── Wage map: employeeId → dollars (our DB, always current) ─────────────────
+  // Priority: in-memory store → user_accounts table → employees table.
+  // This replaces EasyTeam's stale frozen wage with the wage the user last set.
+  const wageMap = new Map<string, number>();
+  for (const u of store.getAllStaffUsers()) {
+    if (u.employeeId && u.hourlyWage != null) wageMap.set(u.employeeId, u.hourlyWage / 100);
+  }
+  const needWage = [...new Set(shifts.map(s => s.employeeId).filter((id): id is string => !!id && !wageMap.has(id)))];
+  if (needWage.length > 0) {
+    const dbAccts = await db
+      .select({ employeeId: userAccountsTable.employeeId, hourlyWage: userAccountsTable.hourlyWage })
+      .from(userAccountsTable)
+      .where(inArray(userAccountsTable.employeeId, needWage));
+    for (const a of dbAccts) {
+      if (a.employeeId && a.hourlyWage != null) wageMap.set(a.employeeId, a.hourlyWage / 100);
+    }
+    const stillMissing = needWage.filter(id => !wageMap.has(id));
+    if (stillMissing.length > 0) {
+      const dbEmps = await db
+        .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+        .from(employeesTable)
+        .where(inArray(employeesTable.id, stillMissing));
+      for (const e of dbEmps) {
+        if (e.hourlyWage != null) wageMap.set(e.id, e.hourlyWage / 100);
+      }
+    }
+  }
+
+  // Labor cost = payable hours × current wage (not EasyTeam's stale frozen wage)
+  const laborCost = Math.round(
+    shifts.reduce((sum, s) => {
+      const wage = s.employeeId ? (wageMap.get(s.employeeId) ?? 0) : 0;
+      return sum + (s.payableDurationMs / 3_600_000) * wage;
+    }, 0) * 100
+  ) / 100;
+
   const summary = {
     totalShifts:        shifts.length,
     totalPayableHours:  Math.round(shifts.reduce((s, r) => s + r.payableDurationMs, 0) / 3_600_000 * 100) / 100,
     activeNow:          shifts.filter((r) => r.active && !r.utcEndTime).length,
     missedPunchCount:   shifts.filter((r) => r.missedPunch).length,
     extendedBreakCount: shifts.filter((r) => r.extendedBreak).length,
+    laborCost,
   };
 
   res.json({ companyId, from, to, summary, shifts });
