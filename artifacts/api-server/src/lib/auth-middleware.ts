@@ -32,3 +32,40 @@ export function requireRole(...roles: string[]) {
     next();
   };
 }
+
+/**
+ * Inline company-access guard for use inside route handlers (after requireRole).
+ *
+ * super_admin is cross-company (always returns true).
+ * All other roles (owner, manager, employee) are scoped to their own companyId.
+ *
+ * Sends the appropriate error response and returns false when access is denied,
+ * so callers can do: `if (!assertCompanyAccess(req, res, body.companyId)) return;`
+ *
+ * Authoritative company membership source: store.getUserById(req.session.userId).companyId
+ * (backed by testUsers seed + createStaffUser / createManagerUser mutations).
+ * DB-persisted users are reflected there via the same store interface.
+ */
+export function assertCompanyAccess(
+  req: Request,
+  res: Response,
+  companyId: string | undefined,
+): boolean {
+  if (!req.session?.userId) {
+    res.status(401).json({ error: "Not authenticated" });
+    return false;
+  }
+  if (!companyId) {
+    res.status(400).json({ error: "companyId is required" });
+    return false;
+  }
+  const user = store.getUserById(req.session.userId);
+  if (!user) {
+    res.status(401).json({ error: "User not found" });
+    return false;
+  }
+  if (user.role === "super_admin") return true;
+  if (user.companyId === companyId) return true;
+  res.status(403).json({ error: "Access denied: company mismatch" });
+  return false;
+}

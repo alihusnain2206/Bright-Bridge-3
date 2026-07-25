@@ -1,0 +1,56 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+Two security changes. Build as SHARED helpers (not one-offs), consistent
+with requireAuth/requireRole in lib/auth-middleware.ts.
+
+=== PART A: Webhook HMAC hard-reject (POST /easyteam/webhook/export) ===
+Currently warns-and-processes on signature mismatch (lines ~1148-1158).
+Change to hard-reject, safely:
+
+1. Add a log line on signature PASS too (currently only failures log), so
+   we can confirm legitimate webhooks pass before enforcing. Report from
+   recent logs whether real EasyTeam export webhooks are passing.
+2. Enforce: on missing OR invalid signature → res.status(401) + return,
+   do NOT process the payload.
+3. ENVIRONMENT-AWARE secret handling (important — current unset-secret
+   default skips verification, which is dangerous in production):
+   - If CONVOY_WEBHOOK_SECRET is SET: verify, hard-reject on mismatch.
+   - If UNSET in a non-production environment: keep current warn-and-skip
+     (sandbox convenience) but log loudly.
+   - If UNSET in production: this is a misconfiguration — reject all and
+     log an error (do not silently process unverified webhooks in prod).
+   Detect environment via existing env/config the app already uses.
+4. Keep a clear log line on every rejection so misconfig is visible.
+
+=== PART B: Manager company-scoping (shared helper) ===
+Managers can call POST /easyteam/hours/sync with ANY companyId (requireRole
+passes, ownership unchecked).
+
+1. AUDIT (report): the authoritative source of a user's company membership
+   (session→user→companyId? user_accounts.company_id? store?). super_admin
+   = cross-company; owner/manager = own company only.
+2. Create shared helper in lib/auth-middleware.ts, e.g.
+   requireCompanyAccess(req, companyId) → true if super_admin, or if the
+   user's own companyId matches; else it signals 403. Reusable across
+   routes.
+3. Apply it ONLY to POST /easyteam/hours/sync for now: after requireRole,
+   compare body.companyId to the caller's company (super_admin exempt),
+   403 on mismatch.
+4. Do NOT retrofit the others yet. Just CONFIRM the full list of companyId
+   endpoints needing this later (you already found: hours/approve,
+   timesheets/shifts, timesheets/trend, easyteam/employees, easyteam/users)
+   — report it so we track it for the permissions pass.
+
+SCOPE BOUNDARY: don't touch sync logic, Rollfi flows, dashboard, wage
+lookup. No new inline checks — use the shared helpers.
+
+TESTING (dev):
+- Part A: with secret set → valid webhook processed, tampered/missing →
+  401. Report whether real webhooks pass. Confirm the prod-unset case
+  errors rather than processes.
+- Part B: manager of Company A → hours/sync Company A = 200, Company B =
+  403; super_admin → any = 200; owner → own only.
+- Existing flows unchanged; EasyTeam iframe token still works; tsc clean.
+
+DELIVERABLE: Part A pass/fail findings + env-aware behavior; Part B
+company-source audit + the shared helper + confirmed list of other
+companyId endpoints for the tracker; test matrix. Report before publishing.

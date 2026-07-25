@@ -10,7 +10,7 @@ import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
-import { requireAuth, requireRole } from "../lib/auth-middleware.js";
+import { requireAuth, requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
 
 const router: IRouter = Router();
 
@@ -344,11 +344,12 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
 
 // ── Sync EasyTeam hours → Rollfi bridge ──────────────────────
 
-// TODO(manager-scope): managers should only be able to sync their own company.
-// The role gate is applied now; company-scoping should be enforced once the
-// actorSync pattern is extended to reject cross-company requests for managers.
 router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
+
+  // Company-scope guard: super_admin may pass any companyId; owner/manager are scoped to their own.
+  if (!assertCompanyAccess(req, res, companyId)) return;
+
   const toDate   = to   ? new Date(to + "T23:59:59.999Z") : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
@@ -1136,27 +1137,39 @@ router.get("/easyteam/webhooks", requireRole("super_admin", "owner"), (_req, res
   res.json({ events: webhookLog, total: webhookLog.length });
 });
 
-// PRE-LAUNCH HARDENING: This endpoint currently validates the Convoy HMAC signature
-// but only warns on mismatch — it still processes the payload regardless. Before going
-// live, change the mismatch branch to a hard reject (res.status(401).json + return) so
-// unauthenticated callers cannot inject export events. The inbound webhook itself
-// (/easyteam/webhook) uses a different auth model and is intentionally left unguarded.
 router.post("/easyteam/webhook/export", async (req, res) => {
   const rawBody = JSON.stringify(req.body);
   const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
+  const isProd = process.env.NODE_ENV === "production";
 
-  // Verify signature — warn on failure but still process (sandbox: signing secret may differ from CONVOY_WEBHOOK_SECRET)
+  // ── Environment-aware HMAC verification (hard-reject enforced) ────────────
   let signatureValid = false;
-  if (CONVOY_WEBHOOK_SECRET && signatureHeader) {
-    signatureValid = verifyConvoySignature(rawBody, signatureHeader, CONVOY_WEBHOOK_SECRET);
-    if (!signatureValid) {
-      req.log.warn({ signatureHeader }, "Export webhook signature mismatch — processing anyway (sandbox mode)");
+  if (!CONVOY_WEBHOOK_SECRET) {
+    if (isProd) {
+      // Misconfiguration in production — never process unverified webhooks.
+      req.log.error("CONVOY_WEBHOOK_SECRET is not set in production — rejecting unverified export webhook");
+      res.status(401).json({ error: "Webhook signature verification not configured" });
+      return;
     }
-  } else if (!signatureHeader) {
-    req.log.warn("Export webhook received with no signature header");
+    // Non-production without secret — sandbox convenience, log loudly.
+    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification (non-production sandbox mode)");
   } else {
-    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification");
+    // Secret is set — full verification; hard-reject on any failure.
+    if (!signatureHeader) {
+      req.log.warn({ path: req.path }, "Export webhook rejected: missing x-convoy-signature header");
+      res.status(401).json({ error: "Missing webhook signature" });
+      return;
+    }
+    signatureValid = verifyConvoySignature(rawBody, signatureHeader, CONVOY_WEBHOOK_SECRET);
+    if (signatureValid) {
+      req.log.info({ sig: signatureHeader.slice(0, 24) + "…" }, "Export webhook signature verified OK");
+    } else {
+      req.log.warn({ signatureHeader }, "Export webhook rejected: HMAC signature mismatch");
+      res.status(401).json({ error: "Invalid webhook signature" });
+      return;
+    }
   }
+  // ─────────────────────────────────────────────────────────────────────────
 
   const payload = req.body as {
     event_type?: string;
