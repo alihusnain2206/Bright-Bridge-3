@@ -1,0 +1,49 @@
+SANDBOX EXPERIMENT — report only. Do NOT submit/process any payroll; we
+only create, import, and read. Sandbox environment only (verify
+ROLLFI_ENV is sandbox before starting).
+
+GOAL: Determine whether sending basicPay.payHours: 0 for a SALARIED
+employee zeroes out their pay. Our import currently sends every enrolled
+employee with explicit payHours (0 when they have no hours) — and salaried
+staff never clock in, so they will ALWAYS have 0 hours. If Rollfi treats
+that as their pay basis, salaried employees would get $0.
+
+STEP 1 — Create a salaried test employee in Sunshine (sandbox):
+Use the normal addUser flow, then addUserWage with:
+  wageRate: 52000, wageBasis: "Per Year", workerType: "W2",
+  userType: "Salary/No overtime",
+  employmentStatus: "Full Time (30+ Hours per week)",
+  paymentMethod: "Direct Deposit", userRefTaxExempt: (existing default)
+Name it clearly, e.g. "Salary Test". Complete whatever onboarding steps
+are needed for them to be payroll-eligible. Report the userId.
+
+STEP 2 — BASELINE (critical): BEFORE any import, call getPayPeriodDetails
+for the current open pay period. Report this employee's full line item
+exactly as returned — especially grossTotal / netTotal / payHours /
+anything indicating auto-calculated salary. Does Rollfi already show their
+salary without us importing anything? This is the key baseline.
+
+STEP 3 — Import with payHours: 0 (what our code does today):
+importRegularPayrollData including this employee with
+basicPay: { payHours: 0 }, additionalCompensation: [], overTime: [].
+Wait for completion (poll status / webhook), then getPayPeriodDetails again.
+Report their line item. Did gross pay stay at the salary amount, or drop
+to 0?
+
+STEP 4 — Import with a non-zero payHours (e.g. 80):
+Same employee, basicPay: { payHours: 80 }. Read the line item again.
+Does gross change? (Tells us whether hours are ignored, added on top of
+salary, or override it.)
+
+STEP 5 — Exclude them entirely:
+Run an import that omits this employee from payrollData. Read the line
+item. Does their salary remain intact?
+
+REPORT AS A TABLE:
+| Step | What we sent | grossTotal | payHours in response | Verdict |
+
+Then state plainly: does payHours: 0 zero out a salaried employee's pay —
+YES or NO? And what is the correct way for our import to handle salaried
+employees?
+
+Do NOT change any application code. This is a sandbox experiment only.
