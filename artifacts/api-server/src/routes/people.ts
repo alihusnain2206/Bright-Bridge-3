@@ -16,6 +16,7 @@ import path from "path";
 import fs from "fs";
 import axios from "axios";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
+import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -563,8 +564,8 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
     }
   }
 
-  // updateUserWage — syncs hourlyWage (stored as cents, Rollfi wants dollars)
-  if (changed.has("hourlyWage")) {
+  // updateUserWage — syncs wage when hourlyWage, annualSalary, or payType changes
+  if (changed.has("hourlyWage") || changed.has("annualSalary") || changed.has("payType")) {
     try {
       const [companyRec] = await db.select().from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, emp.companyId));
       const [empRec]     = await db.select().from(rollfiEmployeeRecords).where(eq(rollfiEmployeeRecords.employeeId, emp.id));
@@ -573,7 +574,12 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       const rollfiCompanyId = companyRec?.rollfiCompanyId ?? storeRollfiCo?.rollfiCompanyId;
       const rollfiWageId    = empRec?.rollfiWageId        ?? storeRollfiEmp?.rollfiWageId ?? "";
       if (rollfiCompanyId) {
-        const wageInDollars = (emp.hourlyWage ?? 0) / 100;
+        const { wageRate, wageBasis, userType } = getRollfiWageFields({
+          payType:         emp.payType,
+          hourlyWage:      emp.hourlyWage,
+          annualSalary:    emp.annualSalary,
+          overtimeEligible: emp.overtimeEligible,
+        });
         const r = await axios.post(
           `${rollfiCfg.baseUrl}/adminPortal#updateUserWage`,
           {
@@ -582,9 +588,10 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
               companyId: rollfiCompanyId,
               userId: rollfiUserId,
               userWageId: rollfiWageId,
-              wageRate: wageInDollars,
+              wageRate,
               paymentType: "Regular",
-              wageBasis: "Per Hour",
+              wageBasis,
+              userType,
               workerType: emp.workerType ?? "W2",
               paymentMethod: emp.paymentMethod ?? "Direct Deposit",
             },
@@ -620,7 +627,7 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
   ] as const;
 
   // Integer fields
-  const intFields = ["hourlyWage","w4Dependents","w4ExtraWithholding"] as const;
+  const intFields = ["hourlyWage","annualSalary","w4Dependents","w4ExtraWithholding"] as const;
 
   // Boolean fields
   const boolFields = ["overtimeEligible","w4MultipleJobs","taxExempt"] as const;

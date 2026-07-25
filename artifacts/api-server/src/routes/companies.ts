@@ -613,7 +613,12 @@ router.post("/employees", async (req: Request, res: Response) => {
 
   const now = new Date().toISOString();
   const employeeId = `EMP-${uid().toUpperCase()}`;
-  const hourlyWageCents = Math.round((body.wageAmount ?? 18) * 100);
+  // Normalise pay type: "salary_yearly" / "salary_monthly" / "salary_weekly" all become "salary"
+  const isSalary = body.payType === "salary" || (typeof body.payType === "string" && body.payType.startsWith("salary_"));
+  const payTypeNormalized = isSalary ? "salary" : "hourly";
+  // hourlyWage is 0 for salaried employees — annualSalary carries the real amount
+  const hourlyWageCents   = isSalary ? 0 : Math.round((body.wageAmount ?? 18) * 100);
+  const annualSalaryCents = isSalary ? Math.round((body.wageAmount ?? 0) * 100) : null;
   const ssn = body.ssn?.replace(/\D/g, "") ?? randomNineDigits();
   const dob = body.dateOfBirth?.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") ?? "1990-01-15";
 
@@ -630,9 +635,10 @@ router.post("/employees", async (req: Request, res: Response) => {
       employmentType: body.employmentType,
       workerType: body.workerType,
       startDate: body.startDate,
-      payType: body.payType,
+      payType: payTypeNormalized,
       hourlyWage: hourlyWageCents,
-      overtimeEligible: body.overtimeEligible ?? true,
+      annualSalary: annualSalaryCents,
+      overtimeEligible: body.overtimeEligible ?? (isSalary ? false : true),
       paymentMethod: body.paymentMethod,
       taxExempt: body.taxExempt ?? false,
       ssn,
@@ -670,6 +676,9 @@ router.post("/employees", async (req: Request, res: Response) => {
         email: body.email,
         position: body.position,
         hourlyWageCents,
+        payType: payTypeNormalized,
+        annualSalaryCents,
+        overtimeEligible: body.overtimeEligible ?? (isSalary ? false : true),
         homeAddress: body.homeAddress,
         homeCity: body.homeCity,
         homeState: body.homeState,

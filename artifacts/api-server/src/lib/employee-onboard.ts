@@ -11,8 +11,14 @@ export interface EmployeeSyncInput {
   name: string;
   email: string;
   position: string;
-  /** Stored in cents (e.g. 1800 = $18.00/hr). */
+  /** Stored in cents (e.g. 1800 = $18.00/hr). Only meaningful when payType = 'hourly'. */
   hourlyWageCents: number;
+  /** 'hourly' | 'salary'. Defaults to 'hourly'. */
+  payType?: string;
+  /** Annual salary in cents — only meaningful when payType = 'salary'. */
+  annualSalaryCents?: number | null;
+  /** Whether the employee qualifies for overtime (affects Rollfi userType for salary). */
+  overtimeEligible?: boolean;
   /** Employee's home state — used for state W-4 submission. Defaults to "NJ". */
   homeState?: string;
   /** Real home address fields — forwarded to Rollfi addKycInformation. */
@@ -84,6 +90,9 @@ export async function syncEmployeeToIntegrations(
     const r = await onboardEmployeeToRollfi(
       {
         id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents / 100,
+        payType: emp.payType,
+        annualSalaryCents: emp.annualSalaryCents,
+        overtimeEligible: emp.overtimeEligible,
         homeState: emp.homeState, homeAddress: emp.homeAddress, homeCity: emp.homeCity, homeZip: emp.homeZip,
         ssn: emp.ssn, dateOfBirth: emp.dateOfBirth,
         w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,

@@ -141,7 +141,10 @@ export const employees = pgTable("employees", {
   startDate:         text("start_date").notNull(),
   // Pay
   payType:           text("pay_type").notNull().default("hourly"),
+  // hourlyWage is only meaningful when payType = 'hourly'; do not store salary here
   hourlyWage:        integer("hourly_wage").notNull().default(1500),
+  // annualSalary is only meaningful when payType = 'salary' (cents, e.g. 5200000 = $52,000/yr)
+  annualSalary:      integer("annual_salary"),
   overtimeEligible:  boolean("overtime_eligible").notNull().default(true),
   paymentMethod:     text("payment_method").notNull().default("Direct Deposit"),
   taxExempt:         boolean("tax_exempt").notNull().default(false),

@@ -26,6 +26,10 @@ interface PreviewEmployee {
   hoursWorked: number; breakDeduction: number; unapprovedHours: number;
   netPayableHours: number; hourlyRate: number; grossPay: number;
   hoursSource?: "easyteam" | "seeded" | "estimated" | "easyteam_sync" | "manager_edit" | "pending_approval";
+  /** 'hourly' | 'salary' — drives display-only changes; import logic is unchanged */
+  payType?: string | null;
+  /** Annual salary in cents — only meaningful when payType = 'salary' */
+  annualSalaryCents?: number | null;
   onboardedToRollfi: boolean; rollfiUserId: string | null;
 }
 interface PayrollPreview {
@@ -1505,7 +1509,8 @@ export default function Payroll() {
                         const er  = calcErTax(emp.grossPay);
                         const key = emp.employeeId ?? emp.name;
                         const isExpanded = expandedEmp === key;
-                        const isZeroHours = emp.hoursWorked === 0 && emp.grossPay === 0;
+                        const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false);
+                        const isZeroHours = !isSalary && emp.hoursWorked === 0 && emp.grossPay === 0;
                         return (
                           <React.Fragment key={key}>
                             <tr
@@ -1538,10 +1543,18 @@ export default function Payroll() {
                                 </div>
                               </td>
                               <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
-                              <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
-                              <td className="px-4 py-3 text-emerald-400 font-bold">{isZeroHours ? <span className="text-white/20 text-xs">—</span> : fmtD(emp.grossPay)}</td>
-                              <td className="px-4 py-3 text-red-300/80 text-xs">{isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.total)}`}</td>
-                              <td className="px-4 py-3 text-white font-semibold text-xs">{isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.net)}`}</td>
+                              <td className="px-4 py-3 text-white/70">
+                                {isSalary
+                                  ? <span className="text-white/40 italic text-xs">Salaried</span>
+                                  : `$${emp.hourlyRate.toFixed(2)}/hr`}
+                              </td>
+                              <td className="px-4 py-3 text-emerald-400 font-bold">
+                                {isSalary
+                                  ? <span className="text-white/30 text-xs italic">auto (Rollfi)</span>
+                                  : isZeroHours ? <span className="text-white/20 text-xs">—</span> : fmtD(emp.grossPay)}
+                              </td>
+                              <td className="px-4 py-3 text-red-300/80 text-xs">{isSalary || isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.total)}`}</td>
+                              <td className="px-4 py-3 text-white font-semibold text-xs">{isSalary || isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.net)}`}</td>
                               <td className="px-4 py-3">{emp.onboardedToRollfi ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <XCircle className="h-4 w-4 text-white/20" />}</td>
                             </tr>
                             {isExpanded && (
@@ -1555,8 +1568,11 @@ export default function Payroll() {
                                     <div className="px-4 py-3 grid grid-cols-2 gap-6">
                                       <div className="space-y-0.5">
                                         <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Earnings</p>
-                                        <div className="flex justify-between py-1"><span className="text-white/50">Regular: {emp.netPayableHours}h × ${emp.hourlyRate.toFixed(2)}</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
-                                        <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Gross Pay</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                        {isSalary
+                                          ? <div className="flex justify-between py-1"><span className="text-white/50">Salaried — Rollfi auto-computes from annual rate</span><span className="text-emerald-400/50 italic text-xs">see paystub</span></div>
+                                          : <div className="flex justify-between py-1"><span className="text-white/50">Regular: {emp.netPayableHours}h × ${emp.hourlyRate.toFixed(2)}</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                        }
+                                        <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Gross Pay</span><span className="text-emerald-400">{isSalary ? <span className="italic text-xs opacity-60">auto</span> : fmtD(emp.grossPay)}</span></div>
                                         <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mt-3 mb-2">Employee Deductions (estimated)</p>
                                         <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Income Tax (12%)</span><span className="text-red-300">−{fmtD(tax.federal)}</span></div>
                                         <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Tax (5%)</span><span className="text-red-300">−{fmtD(tax.state)}</span></div>
@@ -1701,7 +1717,7 @@ export default function Payroll() {
                               <div className="flex items-center justify-between">
                                 <div>
                                   <div className="text-white text-sm font-medium">{emp.name}</div>
-                                  <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate.toFixed(2)}/hr</div>
+                                  <div className="text-white/40 text-xs">{emp.position}{(emp.payType === "salary" || emp.payType?.startsWith("salary_")) ? " · Salaried" : ` · $${emp.hourlyRate.toFixed(2)}/hr`}</div>
                                 </div>
                                 {hasAdj && (
                                   <button
@@ -1782,7 +1798,8 @@ export default function Payroll() {
 
                 {/* Zero-hours exclusion warning */}
                 {(() => {
-                  const excluded = preview.employees.filter((e) => e.hoursWorked === 0 && e.grossPay === 0);
+                  // Salaried employees intentionally have 0 hours — exclude them from this warning
+                  const excluded = preview.employees.filter((e) => e.hoursWorked === 0 && e.grossPay === 0 && e.payType !== "salary" && !e.payType?.startsWith("salary_"));
                   if (excluded.length === 0) return null;
                   return (
                     <div className="flex items-start gap-2.5 px-4 py-3 rounded-lg border border-amber-500/30 bg-amber-500/8 text-xs">

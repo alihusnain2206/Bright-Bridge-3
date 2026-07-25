@@ -27,7 +27,7 @@ interface EmployeeDetail {
   position: string; jobTitle?: string|null; employmentType: string; workerType: string;
   startDate?: string|null; status: string; employeeDisplayId?: string|null;
   department?: string|null; managerId?: string|null; managerName?: string|null;
-  payType?: string|null; hourlyWage?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
+  payType?: string|null; hourlyWage?: number|null; annualSalary?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
   homeAddress?: string|null; homeCity?: string|null; homeState?: string|null; homeZip?: string|null;
   complianceScore?: number|null; onboardingProgress?: number|null;
   rollfiUserId?: string|null; easyteamId?: string|null; kycStatus?: string|null;
@@ -279,7 +279,10 @@ function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (
   const pendingTasks = tasks.filter(t => t.status !== "completed" && t.status !== "skipped" && t.isRequired).slice(0, 3);
   const activity = actData?.entries ?? [];
 
-  const wageDisplay = emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null;
+  const _isSalary = emp.payType === "salary" || emp.payType?.startsWith("salary_");
+  const wageDisplay = _isSalary
+    ? (emp.annualSalary != null ? `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr` : null)
+    : (emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null);
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -377,7 +380,10 @@ function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (
 
 // ── Job & Pay Tab ──────────────────────────────────────────────
 function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: string) => void }) {
-  const wageDisplay = emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null;
+  const _isSalary = emp.payType === "salary" || emp.payType?.startsWith("salary_");
+  const wageDisplay = _isSalary
+    ? (emp.annualSalary != null ? `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr` : null)
+    : (emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null);
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card title="Position">

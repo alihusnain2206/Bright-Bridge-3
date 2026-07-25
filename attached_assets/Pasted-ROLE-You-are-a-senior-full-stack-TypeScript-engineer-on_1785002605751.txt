@@ -1,0 +1,111 @@
+ROLE: You are a senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express + PostgreSQL/Drizzle, brand navy #1B3A6B / teal
+#0EA5C9).
+
+CONTEXT: Client requirement (confirmed): companies will have BOTH salaried
+and hourly employees, often in the same company. Salaried staff (typically
+management) do NOT clock in; hourly staff do.
+
+PROVEN BY OUR OWN SANDBOX EXPERIMENT — do not re-litigate these:
+- Rollfi computes salary automatically from the wage record when
+  wageBasis = "Per Year". It IGNORES basicPay.payHours for such employees
+  (payHours 0 / 80 / absent / excluded all produced identical gross).
+- Therefore the payroll IMPORT needs NO changes for salaried employees.
+- The bugs are in ONBOARDING and UI display.
+
+CONFIRMED BUGS TO FIX:
+1. wageBasis is hardcoded to "Per Hour" when we call addUserWage → salaried
+   employees are registered in Rollfi as hourly.
+2. Annual salary would be stored in the hourly_wage column → $52,000/yr
+   becomes 5,200,000 cents and is sent as wageRate 52000 + "Per Hour"
+   (= $52,000 per hour).
+3. UI computes gross as hours × rate → salaried staff show $0 in payroll
+   preview and Workforce labor cost.
+
+SCOPE BOUNDARY — DO NOT TOUCH: the payroll import logic (payHours, comp
+wipe, roster from getPayPeriodDetails), Rollfi webhook handling, EasyTeam
+sync, the auth/company-scope middleware, the People lifecycle/dual-gate
+readiness work.
+
+STEP 0 — AUDIT AND REPORT FIRST (before building):
+a. Does the employees table already have a pay-type field, an overtime-
+   eligible field, or any salary field? (The profile UI shows "Pay Type:
+   hourly" and "Overtime Eligible: Yes" — find where those come from.)
+b. Show the current addUserWage payload construction — every field we send
+   (wageRate, wageBasis, workerType, userType, employmentStatus,
+   userRefTaxExempt, paymentMethod) and which are hardcoded.
+c. Show where the wizard collects the wage and how it converts to cents.
+d. List every place that computes pay as hours × rate (payroll submit
+   screen, preview, Workforce labor cost, timesheet approval, profile).
+Report a–d, then proceed with the build below.
+
+BUILD:
+
+1. DATA MODEL — one source of truth for pay:
+   - Add `pay_type` text ('hourly' | 'salary', default 'hourly') and
+     `annual_salary` integer (cents, nullable) to employees.
+   - Do NOT overload hourly_wage for salary. Add a code comment that
+     hourly_wage is only meaningful when pay_type='hourly'.
+   - Reuse/confirm an overtime-eligible field; add `overtime_eligible`
+     boolean if none exists.
+   - Migration on dev; production applies at Publish (state this).
+
+2. SHARED RESOLVER (one component, many doors):
+   Create ONE helper, e.g. getRollfiWageFields(employee) returning
+   { wageRate, wageBasis, userType }:
+     - hourly → wageRate = hourly_wage/100, wageBasis "Per Hour",
+       userType "Paid by the hour"
+     - salary → wageRate = annual_salary/100, wageBasis "Per Year",
+       userType = overtime_eligible ? "Salary/Eligible for overtime"
+                                     : "Salary/No overtime"
+   EVERY addUserWage and updateUserWage call must use this helper. No
+   hardcoded "Per Hour" anywhere after this change (grep and prove it).
+
+3. WIZARD (employee creation):
+   - Add a Pay Type selector (Hourly / Salary) in the pay step.
+   - Hourly → "Hourly Rate ($/hr)" field (existing behavior).
+   - Salary → "Annual Salary ($/year)" field + an "Overtime eligible"
+     toggle (default OFF for salary; some salaried roles legally qualify —
+     the owner chooses).
+   - Validate: salary requires annual_salary, hourly requires hourly_wage.
+   - Store in the correct column; send Rollfi the resolver's values.
+
+4. EDIT FLOW: the existing wage-edit path (updateUserWage) must respect
+   pay type and use the same resolver. Confirm we have the wageId
+   available (rollfi_employee_records.rollfi_wage_id, or getUser exposes
+   userWageId).
+
+5. UI — stop assuming hourly:
+   - Profile Job & Pay: show "Salary: $52,000/yr" for salaried, hourly rate
+     otherwise; show overtime eligibility.
+   - Payroll submit/preview: for SALARIED employees do NOT compute gross as
+     hours × rate. Read their gross from Rollfi's getPayPeriodDetails line
+     item (which is already correct). Show hours as "—" or "N/A (salaried)".
+   - The "N employees have no hours and will not be included" warning must
+     EXCLUDE salaried employees (they're expected to have no hours).
+   - Workforce dashboard labor cost: include salaried pay (from Rollfi's
+     line items) rather than hours × rate only; if that's non-trivial,
+     label the metric accurately and report what you did.
+   - Employee directory: show pay type where rate is displayed.
+
+TESTING CHECKLIST:
+- Create a SALARIED test employee ($52,000/yr, OT not eligible) through the
+  wizard. Then call Rollfi getUser for them and confirm the stored wage is
+  wageRate 52000, wageBasis "Per Year", userType "Salary/No overtime".
+  NOTE: newly created employees sit at userStatus "Invite Sent" and cannot
+  be added to a pay period — so verify via the WAGE RECORD, not pay-period
+  gross. Do not attempt payroll import for them.
+- Create an HOURLY test employee — confirm unchanged behavior
+  (wageBasis "Per Hour", userType "Paid by the hour", correct rate).
+- Edit a salaried employee's salary → confirm updateUserWage sends
+  "Per Year" and the new amount.
+- Grep proof: no hardcoded "Per Hour" outside the resolver.
+- Salaried employee shows salary (not $0) on the profile, and is excluded
+  from the "no hours" warning.
+- Existing hourly employees are completely unaffected (regression check).
+- tsc --noEmit clean.
+
+DELIVERABLE: the Step 0 audit findings, files changed, migration
+confirmation, the resolver signature, grep proof, and each checklist result
+with the actual Rollfi getUser response for the salaried test employee.
+REMINDER: Publish required for bright-bridge-3.replit.app.

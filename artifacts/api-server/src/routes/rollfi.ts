@@ -9,6 +9,7 @@ import { db, rollfiWebhookEvents, companies as companiesTable, employees as empl
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { desc, eq, inArray, and } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
+import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 
 const router: IRouter = Router();
 
@@ -1542,6 +1543,14 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
   const lastName = nameParts.slice(1).join(" ") || "Staff";
   const wage = staffUser.hourlyWage ?? 1500;
 
+  // Look up pay-type fields from DB (the in-memory store only carries hourlyWage)
+  const [dbPayInfo] = await db.select({
+    payType:         employeesTable.payType,
+    hourlyWage:      employeesTable.hourlyWage,
+    annualSalary:    employeesTable.annualSalary,
+    overtimeEligible: employeesTable.overtimeEligible,
+  }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [] as never[]);
+
   // If location ID is missing (e.g. company was recovered via getCompanies), fetch it now
   if (!rollfiCompany.rollfiLocationId) {
     try {
@@ -1607,6 +1616,12 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     // Run KYC onboarding flow to move employee from "Invite Sent" → active status
     await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
 
+    const _wf1 = getRollfiWageFields({
+      payType:         dbPayInfo?.payType,
+      hourlyWage:      dbPayInfo?.hourlyWage ?? wage,
+      annualSalary:    dbPayInfo?.annualSalary ?? null,
+      overtimeEligible: dbPayInfo?.overtimeEligible ?? true,
+    });
     const addWageResp = await axios.post(
       `${getBaseUrl()}/adminPortal#addUserWage`,
       {
@@ -1615,10 +1630,10 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           companyId: rollfiCompany.rollfiCompanyId,
           userId: rollfiUserId,
           differentialPay: "No",
-          wageRate: wage / 100,
+          wageRate: _wf1.wageRate,
           workerType: "W2",
-          wageBasis: "Per Hour",
-          userType: "Paid by the hour",
+          wageBasis: _wf1.wageBasis,
+          userType: _wf1.userType,
           employmentStatus: "Full Time (30+ Hours per week)",
           userRefTaxExempt: "No, this employee is not tax exempt",
           startDate: "2024-01-01",
@@ -1684,6 +1699,12 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           // Ensure wage is set — may have been skipped on a previous recovery
           let rollfiWageId = "";
           try {
+            const _wf2 = getRollfiWageFields({
+              payType:         dbPayInfo?.payType,
+              hourlyWage:      dbPayInfo?.hourlyWage ?? staffUser.hourlyWage ?? 1500,
+              annualSalary:    dbPayInfo?.annualSalary ?? null,
+              overtimeEligible: dbPayInfo?.overtimeEligible ?? true,
+            });
             const addWageResp = await axios.post(
               `${getBaseUrl()}/adminPortal#addUserWage`,
               {
@@ -1692,10 +1713,10 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
                   companyId: rollfiCompany.rollfiCompanyId,
                   userId: found.userId,
                   differentialPay: "No",
-                  wageRate: (staffUser.hourlyWage ?? 1500) / 100,
+                  wageRate: _wf2.wageRate,
                   workerType: "W2",
-                  wageBasis: "Per Hour",
-                  userType: "Paid by the hour",
+                  wageBasis: _wf2.wageBasis,
+                  userType: _wf2.userType,
                   employmentStatus: "Full Time (30+ Hours per week)",
                   userRefTaxExempt: "No, this employee is not tax exempt",
                   startDate: "2024-01-01",
@@ -1771,7 +1792,24 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
     const rec = u.employeeId ? store.getRollfiEmployee(u.employeeId) : null;
     return rec?.rollfiUserId === rollfiUserId;
   });
-  const wageRateDollars = (staffUser?.hourlyWage ?? 1800) / 100;
+  // Look up pay type from DB (the store only has hourlyWage; employees table has annualSalary + payType)
+  const fixWageEmpId = staffUser?.employeeId;
+  const [fixWageDbInfo] = fixWageEmpId
+    ? await db.select({
+        payType:         employeesTable.payType,
+        hourlyWage:      employeesTable.hourlyWage,
+        annualSalary:    employeesTable.annualSalary,
+        overtimeEligible: employeesTable.overtimeEligible,
+      }).from(employeesTable).where(eq(employeesTable.id, fixWageEmpId)).catch(() => [] as never[])
+    : [undefined];
+  const _wfFix = getRollfiWageFields({
+    payType:         fixWageDbInfo?.payType,
+    hourlyWage:      fixWageDbInfo?.hourlyWage ?? staffUser?.hourlyWage ?? 1800,
+    annualSalary:    fixWageDbInfo?.annualSalary ?? null,
+    overtimeEligible: fixWageDbInfo?.overtimeEligible ?? true,
+  });
+  const wageRateDollars = _wfFix.wageRate; // preserved for logging
+
   const rollfiWageId = staffUser?.employeeId ? store.getRollfiEmployee(staffUser.employeeId)?.rollfiWageId : undefined;
 
   req.log.info({ rollfiUserId, wageRateDollars, rollfiWageId }, "Fixing wage rate in Rollfi");
@@ -1821,11 +1859,11 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
             companyId: rollfiCompany.rollfiCompanyId,
             userId: rollfiUserId,
             userWageId: resolvedWageId,
-            wageRate: wageRateDollars,
-            wageBasis: "Per Hour",
+            wageRate: _wfFix.wageRate,
+            wageBasis: _wfFix.wageBasis,
             workerType: "W2",
             differentialPay: "No",
-            userType: "Paid by the hour",
+            userType: _wfFix.userType,
             employmentStatus: "Full Time (30+ Hours per week)",
             userRefTaxExempt: "No, this employee is not tax exempt",
             paymentMethod: "Direct Deposit",
@@ -1862,11 +1900,11 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
         userWage: {
           companyId: rollfiCompany.rollfiCompanyId,
           userId: rollfiUserId,
-          wageRate: wageRateDollars,
-          wageBasis: "Per Hour",
+          wageRate: _wfFix.wageRate,
+          wageBasis: _wfFix.wageBasis,
           workerType: "W2",
           differentialPay: "No",
-          userType: "Paid by the hour",
+          userType: _wfFix.userType,
           employmentStatus: "Full Time (30+ Hours per week)",
           userRefTaxExempt: "No, this employee is not tax exempt",
           paymentMethod: "Direct Deposit",
@@ -1912,12 +1950,32 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
   const allUsers = store.getAllStaffUsers().filter(u => u.employeeId && u.role === "employee");
   const results: Array<Record<string, unknown>> = [];
 
+  // Batch-load pay type data for all employees
+  const _repairEmpIds = allUsers.map(u => u.employeeId).filter((id): id is string => !!id);
+  const _repairPayRows = _repairEmpIds.length > 0
+    ? await db.select({
+        id:              employeesTable.id,
+        payType:         employeesTable.payType,
+        hourlyWage:      employeesTable.hourlyWage,
+        annualSalary:    employeesTable.annualSalary,
+        overtimeEligible: employeesTable.overtimeEligible,
+      }).from(employeesTable).where(inArray(employeesTable.id, _repairEmpIds)).catch(() => [] as never[])
+    : [];
+  const _repairPayMap = new Map(_repairPayRows.map(r => [r.id, r]));
+
   for (const u of allUsers) {
     const rollfiRec = store.getRollfiEmployee(u.employeeId!);
     if (!rollfiRec?.rollfiUserId) continue;
 
     const rollfiUserId  = rollfiRec.rollfiUserId;
-    const wageRateDollars = (u.hourlyWage ?? 1500) / 100;
+    const _empPay = u.employeeId ? _repairPayMap.get(u.employeeId) : undefined;
+    const _wfRepair = getRollfiWageFields({
+      payType:         _empPay?.payType,
+      hourlyWage:      _empPay?.hourlyWage ?? u.hourlyWage ?? 1500,
+      annualSalary:    _empPay?.annualSalary ?? null,
+      overtimeEligible: _empPay?.overtimeEligible ?? true,
+    });
+    const wageRateDollars = _wfRepair.wageRate; // preserved for logging
     const rollfiCompany = store.getRollfiCompany(u.companyId);
     if (!rollfiCompany) continue;
 
@@ -1962,11 +2020,11 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
             companyId: rollfiCompany.rollfiCompanyId,
             userId: rollfiUserId,
             userWageId: resolvedWageId,
-            wageRate: wageRateDollars,
-            wageBasis: "Per Hour",
+            wageRate: _wfRepair.wageRate,
+            wageBasis: _wfRepair.wageBasis,
             workerType: "W2",
             differentialPay: "No",
-            userType: "Paid by the hour",
+            userType: _wfRepair.userType,
             employmentStatus: "Full Time (30+ Hours per week)",
             userRefTaxExempt: "No, this employee is not tax exempt",
             paymentMethod: "Direct Deposit",
@@ -1998,11 +2056,11 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
           userWage: {
             companyId: rollfiCompany.rollfiCompanyId,
             userId: rollfiUserId,
-            wageRate: wageRateDollars,
-            wageBasis: "Per Hour",
+            wageRate: _wfRepair.wageRate,
+            wageBasis: _wfRepair.wageBasis,
             workerType: "W2",
             differentialPay: "No",
-            userType: "Paid by the hour",
+            userType: _wfRepair.userType,
             employmentStatus: "Full Time (30+ Hours per week)",
             userRefTaxExempt: "No, this employee is not tax exempt",
             paymentMethod: "Direct Deposit",
@@ -2385,11 +2443,17 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
   const staffEmpIds = allStaff.map((u) => u.employeeId).filter((id): id is string => !!id);
   const dbWageRows = staffEmpIds.length > 0
     ? await db
-        .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+        .select({
+          id:              employeesTable.id,
+          hourlyWage:      employeesTable.hourlyWage,
+          payType:         employeesTable.payType,
+          annualSalary:    employeesTable.annualSalary,
+          overtimeEligible: employeesTable.overtimeEligible,
+        })
         .from(employeesTable)
         .where(inArray(employeesTable.id, staffEmpIds))
     : [];
-  const dbWageByEmpId = new Map(dbWageRows.map((r) => [r.id, r.hourlyWage]));
+  const dbWageByEmpId = new Map(dbWageRows.map((r) => [r.id, r]));
 
   // Preview is display-only: show period-specific approvals if they exist,
   // otherwise fall back to the latest approval so the submit page shows meaningful hours.
@@ -2412,9 +2476,15 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     const netPayableHours = approval ? approval.approvedHours  : 0;
     const hoursSource     = approval ? approval.source         : "pending_approval";
     // DB value takes priority over the in-memory store (DB reflects People Hub edits)
-    const hourlyRateCents = dbWageByEmpId.get(u.employeeId ?? "") ?? u.hourlyWage ?? 1500;
+    const dbRow = dbWageByEmpId.get(u.employeeId ?? "");
+    const hourlyRateCents = dbRow?.hourlyWage ?? u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
-    const grossPay = Math.round(netPayableHours * hourlyRate * 100) / 100;
+    const payType = dbRow?.payType ?? "hourly";
+    const annualSalaryCents = dbRow?.annualSalary ?? null;
+    // Salaried employees have no clocked hours; grossPay = 0 here; payType flag signals the UI
+    const grossPay = payType === "salary" || payType?.startsWith("salary_")
+      ? 0
+      : Math.round(netPayableHours * hourlyRate * 100) / 100;
     const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
 
     return {
@@ -2429,6 +2499,8 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
       hourlyRate,
       grossPay,
       hoursSource,
+      payType,
+      annualSalaryCents,
       onboardedToRollfi: !!rollfiEmp,
       rollfiUserId: rollfiEmp?.rollfiUserId ?? null,
     };

@@ -349,7 +349,9 @@ export default function ClientEmployeesNew() {
               { done: true, label: "BrightBridge profile created" },
               { done: !!created.rollfiSynced, label: created.rollfiSynced ? "Rollfi payroll account created" : "Rollfi: pending (company may need onboarding first)" },
               { done: true, label: "Identity verification submitted" },
-              { done: true, label: `Wage set: $${form.wageAmount.toFixed(2)}/hr` },
+              { done: true, label: form.payType === "salary"
+                  ? `Salary set: $${form.wageAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr`
+                  : `Wage set: $${form.wageAmount.toFixed(2)}/hr` },
               { done: true, label: "W4 tax withholding configured" },
               { done: created.easyteamSynced, label: created.easyteamSynced ? "EasyTeam time clock ready — can clock in immediately!" : "EasyTeam: will sync on first Time Clock use" },
             ].map(({ done, label }) => (
@@ -577,23 +579,27 @@ export default function ClientEmployeesNew() {
               <Label>Pay Type *</Label>
               {[
                 { value: "hourly", label: "Hourly" },
-                { value: "salary_weekly", label: "Salary (per week)" },
-                { value: "salary_monthly", label: "Salary (per month)" },
-                { value: "salary_yearly", label: "Salary (per year)" },
-                { value: "commission", label: "Commission" },
+                { value: "salary", label: "Salary (Annual)" },
               ].map(({ value, label }) => (
                 <label key={value} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer text-sm ${form.payType === value ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
-                  <input type="radio" name="pt" value={value} checked={form.payType === value} onChange={() => set("payType", value)} />
+                  <input
+                    type="radio" name="pt" value={value} checked={form.payType === value}
+                    onChange={() => {
+                      set("payType", value);
+                      if (value === "salary") set("overtimeEligible", false);
+                      else set("overtimeEligible", true);
+                    }}
+                  />
                   {label}
                 </label>
               ))}
             </div>
             <div className="space-y-1.5">
-              <Label>{form.payType === "hourly" ? "Hourly Rate" : form.payType === "salary_weekly" ? "Weekly Salary" : form.payType === "salary_monthly" ? "Monthly Salary" : "Annual Salary"} ($ USD) *</Label>
+              <Label>{form.payType === "hourly" ? "Hourly Rate" : "Annual Salary"} ($ USD) *</Label>
               <div className="flex items-center gap-2">
                 <span className="text-gray-400">$</span>
-                <Input value={form.wageAmount} onChange={(e) => set("wageAmount", parseFloat(e.target.value) || 0)} type="number" step="0.01" min="0" placeholder="18.00" className="max-w-[140px]" />
-                {form.payType === "hourly" && <span className="text-gray-400 text-sm">/hr</span>}
+                <Input value={form.wageAmount} onChange={(e) => set("wageAmount", parseFloat(e.target.value) || 0)} type="number" step={form.payType === "hourly" ? "0.01" : "1"} min="0" placeholder={form.payType === "hourly" ? "18.00" : "52000"} className="max-w-[160px]" />
+                <span className="text-gray-400 text-sm">{form.payType === "hourly" ? "/hr" : "/yr"}</span>
               </div>
             </div>
             {form.payType === "hourly" && <PayPreview wage={form.wageAmount} />}
@@ -746,7 +752,9 @@ export default function ClientEmployeesNew() {
                 { label: "Employee", value: `${form.firstName} ${form.lastName}` },
                 { label: "Position", value: form.position },
                 { label: "Start Date", value: form.startDate },
-                { label: "Pay", value: `$${form.wageAmount.toFixed(2)}/hr (${form.workerType}, ${form.employmentType.split(" ")[0]} ${form.employmentType.split(" ")[1]})` },
+                { label: "Pay", value: form.payType === "salary"
+                    ? `$${form.wageAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr — Salary (${form.workerType})`
+                    : `$${form.wageAmount.toFixed(2)}/hr (${form.workerType}, ${form.employmentType.split(" ")[0]} ${form.employmentType.split(" ")[1]})` },
                 { label: "Payment", value: form.paymentMethod },
                 { label: "Bank", value: form.bankSetupMethod === "invite" ? "Invite to be sent" : form.bankName ? `${form.bankName} ****${form.accountNumber.slice(-4)}` : "—" },
               ].map(({ label, value }) => (

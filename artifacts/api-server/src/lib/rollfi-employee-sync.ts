@@ -2,6 +2,7 @@ import axios from "axios";
 import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
 import { getRollfiConfig } from "./rollfi-config.js";
+import { getRollfiWageFields } from "./rollfi-wage.js";
 
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
@@ -166,8 +167,14 @@ export interface RollfiEmployeeInput {
   name: string;
   email?: string;
   roleName: string;
-  /** wageRate passed to Rollfi addUserWage (preserves the existing unit per call site). */
+  /** Hourly wage in dollars (used when payType = 'hourly' or payType is absent). */
   wage: number;
+  /** Pay type: 'hourly' | 'salary'. When absent defaults to 'hourly'. */
+  payType?: string | null;
+  /** Annual salary in CENTS — only used when payType = 'salary'. */
+  annualSalaryCents?: number | null;
+  /** Whether the employee qualifies for overtime pay (affects Rollfi userType for salary). */
+  overtimeEligible?: boolean | null;
   /** Employee's home state — drives which state W-4 fields are submitted. Defaults to "NJ". */
   homeState?: string;
   /** Real home address — sent to Rollfi addKycInformation instead of the dummy fallback. */
@@ -323,16 +330,22 @@ export async function onboardEmployeeToRollfi(
     }
 
     // Add wage BEFORE initiating KYC — Rollfi requires wage info to exist first
+    const wageFields = getRollfiWageFields({
+      payType: emp.payType,
+      hourlyWage: Math.round(emp.wage * 100), // wage is dollars → convert to cents for resolver
+      annualSalary: emp.annualSalaryCents ?? null,
+      overtimeEligible: emp.overtimeEligible,
+    });
     const addWageResp = await axios.post(`${baseUrl}/adminPortal#addUserWage`, {
       method: "addUserWage",
       userWage: {
         companyId: rollfiCompany.rollfiCompanyId,
         userId: rollfiUserId,
         differentialPay: "No",
-        wageRate: emp.wage,
+        wageRate: wageFields.wageRate,
         workerType: "W2",
-        wageBasis: "Per Hour",
-        userType: "Paid by the hour",
+        wageBasis: wageFields.wageBasis,
+        userType: wageFields.userType,
         employmentStatus: "Full Time (30+ Hours per week)",
         userRefTaxExempt: "No, this employee is not tax exempt",
         startDate: "2024-01-01",
