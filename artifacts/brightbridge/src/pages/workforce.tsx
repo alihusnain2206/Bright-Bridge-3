@@ -20,12 +20,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 
 // ── Brand constants ──────────────────────────────────────────────────────────
 const NAVY   = "#1B3A6B";
-const DARK   = "#284362";
 const TEAL   = "#0EA5C9";
 const SUCCESS = "#10B981";
 const WARN    = "#F59E0B";
 const ERR     = "#EF4444";
-const PANEL   = { background: DARK, borderColor: "rgba(255,255,255,0.1)" } as const;
+const PANEL   = { background: "#ffffff", borderColor: "#E5E7EB" } as const;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface ShiftRow {
@@ -173,18 +172,18 @@ function buildAlerts(
 // ── Sub-components ───────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
-    <div className="rounded-xl border border-white/10 p-4 animate-pulse" style={{ background: "rgba(255,255,255,0.04)" }}>
-      <div className="h-3 w-24 rounded bg-white/10 mb-3" />
-      <div className="h-7 w-16 rounded bg-white/15" />
+    <div className="rounded-xl border border-gray-100 bg-white p-4 animate-pulse shadow-sm">
+      <div className="h-3 w-24 rounded bg-gray-100 mb-3" />
+      <div className="h-7 w-16 rounded bg-gray-100" />
     </div>
   );
 }
 
 function SoonPill({ label }: { label: string }) {
   return (
-    <span className="flex items-center gap-1.5 text-sm text-white/40 cursor-default select-none">
+    <span className="flex items-center gap-1.5 text-sm text-gray-400 cursor-default select-none">
       {label}
-      <span className="text-xs px-1.5 py-0.5 rounded-full border border-white/15 text-white/35" style={{ fontSize: "10px" }}>
+      <span className="text-xs px-1.5 py-0.5 rounded-full border border-gray-200 text-gray-400" style={{ fontSize: "10px" }}>
         Soon
       </span>
     </span>
@@ -199,16 +198,15 @@ interface KpiCardProps {
 function KpiCard({ icon, label, value, sub, color = TEAL, link, disabled, tooltip }: KpiCardProps) {
   const inner = (
     <div
-      className={`rounded-xl border p-4 flex flex-col gap-2 transition-all ${disabled ? "opacity-50" : link ? "hover:border-white/25 cursor-pointer" : ""}`}
-      style={{ background: "rgba(255,255,255,0.04)", borderColor: "rgba(255,255,255,0.1)" }}
+      className={`rounded-xl border border-gray-100 bg-white p-4 flex flex-col gap-2 shadow-sm transition-all ${disabled ? "opacity-50" : link ? "hover:border-gray-200 hover:shadow-md cursor-pointer" : ""}`}
     >
       <div className="flex items-center justify-between">
-        <span className="text-xs text-white/50 font-medium uppercase tracking-wider">{label}</span>
+        <span className="text-xs text-gray-500 font-medium uppercase tracking-wider">{label}</span>
         <span style={{ color }}>{icon}</span>
       </div>
-      <div className="text-2xl font-bold text-white/90">{value}</div>
-      {sub && <div className="text-xs text-white/40">{sub}</div>}
-      {disabled && <div className="text-xs px-2 py-0.5 rounded-full w-fit border border-white/15 text-white/40" style={{ fontSize: "10px" }}>Coming Soon</div>}
+      <div className="text-2xl font-bold text-gray-900">{value}</div>
+      {sub && <div className="text-xs text-gray-400">{sub}</div>}
+      {disabled && <div className="text-xs px-2 py-0.5 rounded-full w-fit border border-gray-200 text-gray-400" style={{ fontSize: "10px" }}>Coming Soon</div>}
     </div>
   );
   if (tooltip) {
@@ -435,20 +433,20 @@ export default function WorkforcePage() {
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen" style={{ background: "linear-gradient(160deg, #0e1f3a 0%, #112244 60%, #0a1525 100%)" }}>
+    <div className="min-h-screen bg-gray-50">
 
       {/* ── Header ── */}
-      <div className="border-b border-white/10 px-6 py-5">
+      <div className="border-b border-gray-100 bg-white px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h1 className="text-xl font-bold text-white">Workforce Management &amp; Attendance</h1>
-            <p className="text-sm text-white/50 mt-0.5">{fmtDateLabel(fromDate, toDate)}</p>
+            <h1 className="text-xl font-bold text-gray-900">Workforce Management &amp; Attendance</h1>
+            <p className="text-sm text-gray-400 mt-0.5">{fmtDateLabel(fromDate, toDate)}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Company selector — super_admin only */}
             {isSuperAdmin && clients.length > 0 && (
               <Select value={companyId} onValueChange={v => setCompanyId(v)}>
-                <SelectTrigger className="h-8 w-44 text-xs border-white/20 bg-white/5 text-white">
+                <SelectTrigger className="h-8 w-44 text-xs border-gray-200 bg-white text-gray-700">
                   <SelectValue placeholder="Select company" />
                 </SelectTrigger>
                 <SelectContent>
@@ -462,19 +460,19 @@ export default function WorkforcePage() {
             <input
               type="date" value={fromDate}
               onChange={e => setFromDate(e.target.value)}
-              className="h-8 rounded border border-white/20 bg-white/5 px-2 text-xs text-white [color-scheme:dark]"
+              className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
             />
-            <span className="text-white/40 text-xs">–</span>
+            <span className="text-gray-400 text-xs">–</span>
             <input
               type="date" value={toDate}
               onChange={e => setToDate(e.target.value)}
-              className="h-8 rounded border border-white/20 bg-white/5 px-2 text-xs text-white [color-scheme:dark]"
+              className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
             />
             <Button
               size="sm" variant="ghost"
               onClick={() => void fetchAll()}
               disabled={loading}
-              className="h-8 text-xs text-white/70 border border-white/20 hover:bg-white/10"
+              className="h-8 text-xs text-gray-500 border border-gray-200 hover:bg-gray-50"
             >
               {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
             </Button>
@@ -495,11 +493,11 @@ export default function WorkforcePage() {
 
         {/* Error state */}
         {error && (
-          <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 flex items-center gap-3">
-            <XCircle className="h-5 w-5 text-red-400 flex-shrink-0" />
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-center gap-3">
+            <XCircle className="h-5 w-5 text-red-500 flex-shrink-0" />
             <div className="flex-1">
-              <p className="text-sm text-red-300">{error}</p>
-              <button onClick={() => void fetchAll()} className="text-xs text-red-400 underline mt-1">Retry</button>
+              <p className="text-sm text-red-600">{error}</p>
+              <button onClick={() => void fetchAll()} className="text-xs text-red-500 underline mt-1">Retry</button>
             </div>
           </div>
         )}
@@ -574,22 +572,22 @@ export default function WorkforcePage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
           {/* Weekly Hours Trend */}
-          <div className="xl:col-span-2 rounded-xl border p-5" style={PANEL}>
+          <div className="xl:col-span-2 rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-white">Weekly Hours Trend</h2>
-              <span className="text-xs text-white/40">{fmtDateLabel(fromDate, toDate)}</span>
+              <h2 className="text-sm font-semibold text-gray-800">Weekly Hours Trend</h2>
+              <span className="text-xs text-gray-400">{fmtDateLabel(fromDate, toDate)}</span>
             </div>
             {loading && !effectiveTrend ? (
-              <div className="h-48 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-white/30" /></div>
+              <div className="h-48 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-gray-300" /></div>
             ) : trendChartData.length === 0 ? (
               <div className="h-48 flex flex-col items-center justify-center gap-3">
-                <TrendingUp className="h-8 w-8 text-white/15" />
-                <p className="text-sm text-white/35">No shift data in this period</p>
+                <TrendingUp className="h-8 w-8 text-gray-200" />
+                <p className="text-sm text-gray-400">No shift data in this period</p>
                 <Button
                   size="sm" variant="ghost"
                   onClick={() => void handleSync()}
                   disabled={syncing || loading}
-                  className="h-7 text-xs gap-1.5 border border-white/20 text-white/60 hover:text-white hover:bg-white/10"
+                  className="h-7 text-xs gap-1.5 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50"
                 >
                   {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                   {syncing ? "Pulling from EasyTeam…" : "Pull from EasyTeam"}
@@ -600,16 +598,16 @@ export default function WorkforcePage() {
                 <AreaChart data={trendChartData} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
                   <defs>
                     <linearGradient id="hoursGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%"  stopColor={TEAL} stopOpacity={0.3} />
+                      <stop offset="5%"  stopColor={TEAL} stopOpacity={0.15} />
                       <stop offset="95%" stopColor={TEAL} stopOpacity={0} />
                     </linearGradient>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: "rgba(255,255,255,0.4)" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "rgba(255,255,255,0.4)" }} tickLine={false} axisLine={false} />
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.05)" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: "#9CA3AF" }} tickLine={false} axisLine={false} />
                   <Tooltip
-                    contentStyle={{ background: "#1e3a5f", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
-                    labelStyle={{ color: "rgba(255,255,255,0.8)" }}
+                    contentStyle={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, fontSize: 12 }}
+                    labelStyle={{ color: "#374151" }}
                     formatter={(v: number, name: string) =>
                       name === "hours" ? [`${v}h`, "Hours"] : [`$${v.toFixed(2)}`, "Cost"]
                     }
@@ -621,14 +619,14 @@ export default function WorkforcePage() {
           </div>
 
           {/* Punch Status */}
-          <div className="rounded-xl border p-5" style={PANEL}>
-            <h2 className="text-sm font-semibold text-white mb-4">Punch Status</h2>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-gray-800 mb-4">Punch Status</h2>
             {loading && !summary ? (
-              <div className="space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />)}</div>
+              <div className="space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />)}</div>
             ) : !summary ? (
               <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <Timer className="h-8 w-8 text-white/15" />
-                <p className="text-sm text-white/35">No data</p>
+                <Timer className="h-8 w-8 text-gray-200" />
+                <p className="text-sm text-gray-400">No data</p>
               </div>
             ) : (
               <div className="space-y-2">
@@ -639,26 +637,26 @@ export default function WorkforcePage() {
                   { label: "Clocked In Now",  count: summary.activeNow,          icon: <Activity     className="h-4 w-4" />, color: SUCCESS, link: "/timesheets" },
                 ].map(({ label, count, icon, color, link }) => (
                   <Link key={label} href={link}>
-                    <div className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-white/5 cursor-pointer" style={{ border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div className="flex items-center justify-between rounded-lg px-3 py-2.5 transition-colors hover:bg-gray-50 cursor-pointer border border-gray-100">
                       <div className="flex items-center gap-2.5">
                         <span style={{ color }}>{icon}</span>
-                        <span className="text-sm text-white/75">{label}</span>
+                        <span className="text-sm text-gray-700">{label}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold" style={{ color: count > 0 ? color : "rgba(255,255,255,0.3)" }}>{count}</span>
-                        <ChevronRight className="h-3.5 w-3.5 text-white/20" />
+                        <span className="text-sm font-semibold" style={{ color: count > 0 ? color : "#D1D5DB" }}>{count}</span>
+                        <ChevronRight className="h-3.5 w-3.5 text-gray-300" />
                       </div>
                     </div>
                   </Link>
                 ))}
-                <div className="pt-2 border-t border-white/8">
-                  <div className="flex items-center justify-between px-1 text-xs text-white/35">
+                <div className="pt-2 border-t border-gray-100">
+                  <div className="flex items-center justify-between px-1 text-xs text-gray-400">
                     <span>Total shifts in period</span>
-                    <span className="font-medium text-white/50">{summary.totalShifts}</span>
+                    <span className="font-medium text-gray-600">{summary.totalShifts}</span>
                   </div>
-                  <div className="flex items-center justify-between px-1 text-xs text-white/35 mt-1">
+                  <div className="flex items-center justify-between px-1 text-xs text-gray-400 mt-1">
                     <span>Total payable hours</span>
-                    <span className="font-medium text-white/50">{fmtHours(summary.totalPayableHours)}</span>
+                    <span className="font-medium text-gray-600">{fmtHours(summary.totalPayableHours)}</span>
                   </div>
                 </div>
               </div>
@@ -670,21 +668,21 @@ export default function WorkforcePage() {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
 
           {/* Timesheets Needing Approval */}
-          <div className="xl:col-span-2 rounded-xl border p-5" style={PANEL}>
+          <div className="xl:col-span-2 rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-white">Timesheets Needing Approval</h2>
+              <h2 className="text-sm font-semibold text-gray-800">Timesheets Needing Approval</h2>
               <Link href="/timesheets">
-                <Button size="sm" variant="ghost" className="h-7 text-xs text-[#0EA5C9] hover:text-[#0EA5C9] hover:bg-white/5 gap-1">
+                <Button size="sm" variant="ghost" className="h-7 text-xs text-[#0EA5C9] hover:text-[#0EA5C9] hover:bg-teal-50 gap-1">
                   Go to Timesheets <ChevronRight className="h-3.5 w-3.5" />
                 </Button>
               </Link>
             </div>
             {loading && entries.length === 0 ? (
-              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 rounded-lg bg-white/5 animate-pulse" />)}</div>
+              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 rounded-lg bg-gray-100 animate-pulse" />)}</div>
             ) : pendingApproval.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
-                <CheckCircle2 className="h-8 w-8 text-emerald-500/40" />
-                <p className="text-sm text-white/50">
+                <CheckCircle2 className="h-8 w-8 text-emerald-400/60" />
+                <p className="text-sm text-gray-400">
                   {entries.length === 0 ? "No timesheet data for this period" : "All timesheets approved"}
                 </p>
                 {entries.length === 0 && (
@@ -692,7 +690,7 @@ export default function WorkforcePage() {
                     size="sm" variant="ghost"
                     onClick={() => void handleSync()}
                     disabled={syncing || loading}
-                    className="h-7 text-xs gap-1.5 border border-white/20 text-white/50 hover:text-white hover:bg-white/10 mt-1"
+                    className="h-7 text-xs gap-1.5 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-gray-50 mt-1"
                   >
                     {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
                     {syncing ? "Pulling…" : "Pull from EasyTeam"}
@@ -704,20 +702,19 @@ export default function WorkforcePage() {
                 {pendingApproval.map(e => (
                   <div
                     key={e.employeeId}
-                    className="flex items-center justify-between rounded-lg px-3 py-2.5"
-                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)" }}
+                    className="flex items-center justify-between rounded-lg px-3 py-2.5 border border-gray-100 bg-gray-50"
                   >
                     <div className="flex items-center gap-3">
-                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium" style={{ background: "rgba(14,165,201,0.2)", color: TEAL }}>
+                      <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-medium" style={{ background: "rgba(14,165,201,0.12)", color: TEAL }}>
                         {empDisplayName(e.employeeId, names, employees).charAt(0).toUpperCase()}
                       </div>
                       <div>
-                        <p className="text-sm text-white/80">{empDisplayName(e.employeeId, names, employees)}</p>
-                        <p className="text-xs text-white/40">{fmtHours(e.hoursWorked)} worked · {fmtHours(e.approvedHours)} approved</p>
+                        <p className="text-sm text-gray-800">{empDisplayName(e.employeeId, names, employees)}</p>
+                        <p className="text-xs text-gray-400">{fmtHours(e.hoursWorked)} worked · {fmtHours(e.approvedHours)} approved</p>
                       </div>
                     </div>
                     <Link href="/timesheets">
-                      <Button size="sm" variant="ghost" className="h-6 text-xs px-2 border border-white/15 text-white/60 hover:text-white hover:bg-white/5">
+                      <Button size="sm" variant="ghost" className="h-6 text-xs px-2 border border-gray-200 text-gray-500 hover:text-gray-700 hover:bg-white">
                         Review
                       </Button>
                     </Link>
@@ -728,24 +725,24 @@ export default function WorkforcePage() {
           </div>
 
           {/* Approval Status donut */}
-          <div className="rounded-xl border p-5" style={PANEL}>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
-              <h2 className="text-sm font-semibold text-white">Approval Status</h2>
+              <h2 className="text-sm font-semibold text-gray-800">Approval Status</h2>
               <UITooltip>
-                <TooltipTrigger><Info className="h-3.5 w-3.5 text-white/30" /></TooltipTrigger>
+                <TooltipTrigger><Info className="h-3.5 w-3.5 text-gray-300" /></TooltipTrigger>
                 <TooltipContent>Based on manager approval records in BrightBridge — not EasyTeam submission states</TooltipContent>
               </UITooltip>
             </div>
             {loading && entries.length === 0 ? (
-              <div className="h-40 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-white/30" /></div>
+              <div className="h-40 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-gray-300" /></div>
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <CheckCircle2 className="h-8 w-8 text-white/15" />
-                <p className="text-sm text-white/35">No approval data</p>
+                <CheckCircle2 className="h-8 w-8 text-gray-200" />
+                <p className="text-sm text-gray-400">No approval data</p>
               </div>
             ) : approvalDonut.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <p className="text-sm text-white/35">No entries in period</p>
+                <p className="text-sm text-gray-400">No entries in period</p>
               </div>
             ) : (
               <>
@@ -758,7 +755,7 @@ export default function WorkforcePage() {
                       {approvalDonut.map((d, i) => <Cell key={i} fill={d.color} />)}
                     </Pie>
                     <Tooltip
-                      contentStyle={{ background: "#1e3a5f", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
+                      contentStyle={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 8, fontSize: 12 }}
                       formatter={(v: number, name: string) => [`${v} employee${v !== 1 ? "s" : ""}`, name]}
                     />
                   </PieChart>
@@ -768,9 +765,9 @@ export default function WorkforcePage() {
                     <div key={d.name} className="flex items-center justify-between text-xs">
                       <div className="flex items-center gap-2">
                         <div className="h-2 w-2 rounded-full" style={{ background: d.color }} />
-                        <span className="text-white/60">{d.name}</span>
+                        <span className="text-gray-500">{d.name}</span>
                       </div>
-                      <span className="font-medium text-white/70">{d.value}</span>
+                      <span className="font-medium text-gray-700">{d.value}</span>
                     </div>
                   ))}
                 </div>
@@ -783,18 +780,18 @@ export default function WorkforcePage() {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
           {/* Department Overview */}
-          <div className="rounded-xl border p-5" style={PANEL}>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
-              <Building2 className="h-4 w-4 text-white/40" />
-              <h2 className="text-sm font-semibold text-white">Department Overview</h2>
+              <Building2 className="h-4 w-4 text-gray-400" />
+              <h2 className="text-sm font-semibold text-gray-800">Department Overview</h2>
             </div>
             {loading && deptBreakdown.length === 0 ? (
-              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 rounded-lg bg-white/5 animate-pulse" />)}</div>
+              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 rounded-lg bg-gray-100 animate-pulse" />)}</div>
             ) : deptBreakdown.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
-                <Building2 className="h-8 w-8 text-white/15" />
-                <p className="text-sm text-white/35">No department data</p>
-                <p className="text-xs text-white/25">Shifts must map to employees with assigned departments</p>
+                <Building2 className="h-8 w-8 text-gray-200" />
+                <p className="text-sm text-gray-400">No department data</p>
+                <p className="text-xs text-gray-300">Shifts must map to employees with assigned departments</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -804,12 +801,12 @@ export default function WorkforcePage() {
                     <div key={d.dept}>
                       <div className="flex items-center justify-between text-xs mb-1">
                         <div className="flex items-center gap-2">
-                          <span className="text-white/75 font-medium">{d.dept}</span>
-                          <span className="text-white/35">{d.headcount} staff</span>
+                          <span className="text-gray-700 font-medium">{d.dept}</span>
+                          <span className="text-gray-400">{d.headcount} staff</span>
                         </div>
-                        <span className="text-white/55 font-medium">{fmtHours(d.hours)}</span>
+                        <span className="text-gray-500 font-medium">{fmtHours(d.hours)}</span>
                       </div>
-                      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.06)" }}>
+                      <div className="h-1.5 rounded-full overflow-hidden bg-gray-100">
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{ width: `${(d.hours / maxH) * 100}%`, background: TEAL }}
@@ -823,36 +820,36 @@ export default function WorkforcePage() {
           </div>
 
           {/* Alerts & Notifications */}
-          <div className="rounded-xl border p-5" style={PANEL}>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
-              <Bell className="h-4 w-4 text-white/40" />
-              <h2 className="text-sm font-semibold text-white">Alerts &amp; Notifications</h2>
+              <Bell className="h-4 w-4 text-gray-400" />
+              <h2 className="text-sm font-semibold text-gray-800">Alerts &amp; Notifications</h2>
               {alerts.length > 0 && (
-                <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: "rgba(239,68,68,0.15)", color: ERR }}>
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full font-medium bg-red-50 text-red-500">
                   {alerts.length}
                 </span>
               )}
             </div>
             {loading && alerts.length === 0 ? (
-              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 rounded-lg bg-white/5 animate-pulse" />)}</div>
+              <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 rounded-lg bg-gray-100 animate-pulse" />)}</div>
             ) : alerts.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-32 gap-2">
-                <CheckCircle2 className="h-8 w-8 text-emerald-500/30" />
-                <p className="text-sm text-white/50">All clear — no alerts for this period</p>
+                <CheckCircle2 className="h-8 w-8 text-emerald-400/50" />
+                <p className="text-sm text-gray-400">All clear — no alerts for this period</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {alerts.map((a, i) => (
                   <Link key={i} href={a.link}>
                     <div
-                      className="flex items-start gap-3 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-white/5 transition-colors"
-                      style={{ border: `1px solid ${a.level === "error" ? "rgba(239,68,68,0.2)" : a.level === "warn" ? "rgba(245,158,11,0.2)" : "rgba(14,165,201,0.15)"}` }}
+                      className="flex items-start gap-3 rounded-lg px-3 py-2.5 cursor-pointer hover:bg-gray-50 transition-colors border"
+                      style={{ borderColor: a.level === "error" ? "#FECACA" : a.level === "warn" ? "#FDE68A" : "#BAE6FD" }}
                     >
                       <span className="mt-0.5 flex-shrink-0" style={{ color: a.level === "error" ? ERR : a.level === "warn" ? WARN : TEAL }}>
                         {a.level === "error" ? <XCircle className="h-4 w-4" /> : a.level === "warn" ? <AlertTriangle className="h-4 w-4" /> : <Info className="h-4 w-4" />}
                       </span>
-                      <p className="text-xs text-white/70 leading-relaxed">{a.text}</p>
-                      <ChevronRight className="h-3.5 w-3.5 text-white/20 flex-shrink-0 mt-0.5 ml-auto" />
+                      <p className="text-xs text-gray-600 leading-relaxed">{a.text}</p>
+                      <ChevronRight className="h-3.5 w-3.5 text-gray-300 flex-shrink-0 mt-0.5 ml-auto" />
                     </div>
                   </Link>
                 ))}
@@ -865,25 +862,24 @@ export default function WorkforcePage() {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
 
           {/* Quick Actions */}
-          <div className="rounded-xl border p-5" style={PANEL}>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
               <Zap className="h-4 w-4 text-yellow-400" />
-              <h2 className="text-sm font-semibold text-white">Quick Actions</h2>
+              <h2 className="text-sm font-semibold text-gray-800">Quick Actions</h2>
             </div>
             <div className="grid grid-cols-2 gap-2">
               {/* Pull Hours — triggers sync directly, no page nav required */}
               <button
                 onClick={() => void handleSync()}
                 disabled={syncing || loading}
-                className="rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors hover:bg-white/8 disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
+                className="rounded-lg px-3 py-3 flex items-center gap-3 text-left border border-gray-100 bg-gray-50 transition-colors hover:bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <span style={{ color: TEAL }}>
                   {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 </span>
                 <div>
-                  <p className="text-xs font-medium text-white/80">{syncing ? "Syncing…" : "Pull Hours"}</p>
-                  <p className="text-xs text-white/35">Sync from EasyTeam</p>
+                  <p className="text-xs font-medium text-gray-700">{syncing ? "Syncing…" : "Pull Hours"}</p>
+                  <p className="text-xs text-gray-400">Sync from EasyTeam</p>
                 </div>
               </button>
               {[
@@ -892,14 +888,11 @@ export default function WorkforcePage() {
                 { label: "Manage People",     sub: "Employee directory",  link: "/people",      icon: <Users      className="h-4 w-4" />, color: WARN   },
               ].map(({ label, sub, link, icon, color }) => (
                 <Link key={label} href={link}>
-                  <div
-                    className="rounded-lg px-3 py-3 flex items-center gap-3 cursor-pointer hover:bg-white/8 transition-colors"
-                    style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
-                  >
+                  <div className="rounded-lg px-3 py-3 flex items-center gap-3 cursor-pointer border border-gray-100 bg-gray-50 hover:bg-gray-100 transition-colors">
                     <span style={{ color }}>{icon}</span>
                     <div>
-                      <p className="text-xs font-medium text-white/80">{label}</p>
-                      <p className="text-xs text-white/35">{sub}</p>
+                      <p className="text-xs font-medium text-gray-700">{label}</p>
+                      <p className="text-xs text-gray-400">{sub}</p>
                     </div>
                   </div>
                 </Link>
@@ -908,8 +901,8 @@ export default function WorkforcePage() {
           </div>
 
           {/* Coming Soon cards */}
-          <div className="rounded-xl border p-5" style={PANEL}>
-            <h2 className="text-sm font-semibold text-white mb-4">Additional Features</h2>
+          <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-gray-800 mb-4">Additional Features</h2>
             <div className="space-y-2">
               {[
                 { label: "Time Off Taken",      note: "Activates once time-off data is available from the EasyTeam schedule" },
@@ -918,14 +911,13 @@ export default function WorkforcePage() {
               ].map(({ label, note }) => (
                 <div
                   key={label}
-                  className="flex items-start justify-between rounded-lg px-3 py-3 opacity-50"
-                  style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)" }}
+                  className="flex items-start justify-between rounded-lg px-3 py-3 opacity-60 border border-gray-100 bg-gray-50"
                 >
                   <div>
-                    <p className="text-sm text-white/60 font-medium">{label}</p>
-                    <p className="text-xs text-white/35 mt-0.5">{note}</p>
+                    <p className="text-sm text-gray-600 font-medium">{label}</p>
+                    <p className="text-xs text-gray-400 mt-0.5">{note}</p>
                   </div>
-                  <span className="text-xs px-2 py-0.5 rounded-full border border-white/15 text-white/35 flex-shrink-0 ml-3" style={{ fontSize: "10px" }}>
+                  <span className="text-xs px-2 py-0.5 rounded-full border border-gray-200 text-gray-400 flex-shrink-0 ml-3" style={{ fontSize: "10px" }}>
                     Coming Soon
                   </span>
                 </div>
