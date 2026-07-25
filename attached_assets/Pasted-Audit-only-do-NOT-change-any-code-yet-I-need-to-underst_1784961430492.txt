@@ -1,0 +1,70 @@
+Audit-only — do NOT change any code 
+yet. I need to understand how sensitive 
+data is stored in our database before 
+we go live with real payroll.
+
+We now store sensitive financial and 
+personal data in the database, 
+including:
+- Employee bank account numbers and 
+  routing numbers (newly added columns)
+- Company funding account numbers and 
+  routing numbers
+- Employee SSNs
+- Dates of birth
+- Home addresses
+
+Please report on the following:
+
+1. ENCRYPTION AT REST:
+For each of these sensitive fields, is 
+the value stored encrypted, or as plain 
+text in the database?
+- Employee bank_name, routing_number, 
+  account_number, account_type
+- Company funding routing/account numbers
+- Employee SSN
+- Date of birth
+Show me exactly how each is stored 
+(schema column type and whether any 
+encryption/hashing is applied on write).
+
+2. WHAT THE DATABASE PROVIDER OFFERS:
+Our database is PostgreSQL (Neon/Replit). 
+Does it provide encryption at rest at 
+the storage level by default? If so, 
+what does that cover and not cover?
+
+3. HOW SSN IS CURRENTLY HANDLED:
+We already collect and send SSNs to 
+Rollfi during KYC. Do we STORE the SSN 
+in our own database at all, or do we 
+only pass it through to Rollfi without 
+persisting it? If we store it, where 
+and how?
+
+4. WHETHER WE NEED TO STORE BANK 
+NUMBERS AT ALL:
+The employee bank columns were added so 
+retry/re-sync flows have the data. But 
+Rollfi is the system of record for 
+payroll. Is it actually necessary to 
+persist the full account and routing 
+numbers in our database, or could we:
+   (a) store only a masked version 
+       (last 4 digits) for display, and 
+       re-fetch or re-collect the full 
+       number when a retry is genuinely 
+       needed, or
+   (b) rely on Rollfi to hold the full 
+       details after first submission?
+Report the tradeoffs.
+
+5. LOGGING:
+Confirm that full SSNs, bank account 
+numbers, and routing numbers never 
+appear in application logs.
+
+Please report findings only. Based on 
+your report I'll decide what to change. 
+Do not modify code in this response.
