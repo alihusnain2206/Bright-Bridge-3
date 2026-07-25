@@ -15,14 +15,7 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
-
-const ROLLFI_BASE_URL  = process.env.ROLLFI_BASE_URL  ?? "https://sandbox.rollfi.xyz";
-const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
-const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
-function rollfiHeaders() {
-  const encoded = Buffer.from(`${ROLLFI_CLIENT_ID ?? ""}:${ROLLFI_SECRET_KEY ?? ""}`).toString("base64");
-  return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
-}
+import { getRollfiConfig } from "../lib/rollfi-config.js";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -519,7 +512,12 @@ type EmpRow = typeof employees.$inferSelect;
 async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<RollfiSyncResult> {
   const rollfiUserId = emp.rollfiUserId;
   if (!rollfiUserId) return { skipped: true, reason: "no_rollfi_account" };
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) return { skipped: true, reason: "not_configured" };
+  const rollfiCfg = getRollfiConfig();
+  if (!rollfiCfg.credentialsPresent) return { skipped: true, reason: "not_configured" };
+  function rollfiHeaders() {
+    const encoded = Buffer.from(`${rollfiCfg.clientId ?? ""}:${rollfiCfg.secretKey ?? ""}`).toString("base64");
+    return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
+  }
 
   const result: RollfiSyncResult = { skipped: false, updateUser: null, updateKycInfo: null, updateWage: null };
 
@@ -534,7 +532,7 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       if (changed.has("workerType")) user.workerType    = emp.workerType;
       if (changed.has("jobTitle"))   user.jobTitle      = emp.jobTitle;
       const r = await axios.put(
-        `${ROLLFI_BASE_URL}/adminPortal/updateUser`,
+        `${rollfiCfg.baseUrl}/adminPortal/updateUser`,
         { method: "updateUser", user },
         { headers: rollfiHeaders() },
       );
@@ -555,7 +553,7 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       if (changed.has("homeZip"))     kycInfo.zipcode      = emp.homeZip;
       if (changed.has("phone"))       kycInfo.phoneNumber  = emp.phone;
       const r = await axios.put(
-        `${ROLLFI_BASE_URL}/userPortal/updateKycInformation`,
+        `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
         { method: "updateKycInformation", kycInformation: kycInfo },
         { headers: rollfiHeaders() },
       );
@@ -577,7 +575,7 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       if (rollfiCompanyId) {
         const wageInDollars = (emp.hourlyWage ?? 0) / 100;
         const r = await axios.post(
-          `${ROLLFI_BASE_URL}/adminPortal#updateUserWage`,
+          `${rollfiCfg.baseUrl}/adminPortal#updateUserWage`,
           {
             method: "updateUserWage",
             userWage: {

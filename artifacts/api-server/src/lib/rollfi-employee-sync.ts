@@ -3,16 +3,10 @@ import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
 import { getRollfiConfig } from "./rollfi-config.js";
 
-const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
-const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
-const ROLLFI_SECRET_KEY = process.env.ROLLFI_SECRET_KEY;
-
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
-function rollfiHeaders() {
-  const clientId = ROLLFI_CLIENT_ID ?? "";
-  const secretKey = ROLLFI_SECRET_KEY ?? "";
-  const encoded = Buffer.from(`${clientId}:${secretKey}`).toString("base64");
+function makeRollfiHeaders(clientId: string | undefined, secretKey: string | undefined) {
+  const encoded = Buffer.from(`${clientId ?? ""}:${secretKey ?? ""}`).toString("base64");
   return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
 }
 
@@ -66,7 +60,9 @@ export async function runEmployeeKycOnboarding(
   identity: KycIdentity = {},
   bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string }
 ): Promise<void> {
-  const headers = rollfiHeaders();
+  const _cfg = getRollfiConfig();
+  const baseUrl = _cfg.baseUrl;
+  const headers = makeRollfiHeaders(_cfg.clientId, _cfg.secretKey);
   const ssn = identity.ssn ?? randomNineDigits();
   const dateOfBirth = identity.dateOfBirth ?? "1990-01-15";
   const address1 = identity.address1 ?? "123 Main St";
@@ -77,13 +73,13 @@ export async function runEmployeeKycOnboarding(
   log.info({ hasRealAddress: !!identity.address1, hasRealDob: !!identity.dateOfBirth, hasRealSsn: !!identity.ssn }, "runEmployeeKycOnboarding: identity source");
 
   try {
-    const r = await axios.put(`${ROLLFI_BASE_URL}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
+    const r = await axios.put(`${baseUrl}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi acceptTermsAndCondition response");
   } catch (e) { log.warn({ e }, "acceptTermsAndCondition failed (ignoring)"); }
 
   let kycAdded = false;
   try {
-    const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addKycInformation`, {
+    const r = await axios.post(`${baseUrl}/userOnboarding#addKycInformation`, {
       method: "addKycInformation",
       kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
     }, { headers });
@@ -95,7 +91,7 @@ export async function runEmployeeKycOnboarding(
 
   // Federal W-4 — use actual form data, not hardcoded defaults
   try {
-    const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addW4Information`, {
+    const r = await axios.post(`${baseUrl}/userOnboarding#addW4Information`, {
       method: "addW4Information",
       w4Information: {
         userId: rollfiUserId,
@@ -119,7 +115,7 @@ export async function runEmployeeKycOnboarding(
     : buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
   if (stateW4Payload) {
     try {
-      const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#addStateW4Information`, {
+      const r = await axios.post(`${baseUrl}/userOnboarding#addStateW4Information`, {
         method: "addStateW4Information",
         userId: rollfiUserId,
         stateW4Information: stateW4Payload,
@@ -134,12 +130,12 @@ export async function runEmployeeKycOnboarding(
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
   } else {
     try {
-      const r = await axios.post(`${ROLLFI_BASE_URL}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
+      const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
       log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
     } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
   }
 
-  const isProduction = getRollfiConfig().env === "production";
+  const isProduction = _cfg.env === "production";
   if (isProduction && !bankInput?.accountNumber) {
     log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping bank step");
   } else {
@@ -147,8 +143,8 @@ export async function runEmployeeKycOnboarding(
       const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
         ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
         : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
-      log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
-      const r = await axios.post(`${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`, {
+      log.info({ env: _cfg.env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
+      const r = await axios.post(`${baseUrl}/userPortal#addUserBankAccount`, {
         method: "addUserBankAccount",
         linkType: "Manual",
         userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
@@ -251,9 +247,12 @@ export async function onboardEmployeeToRollfi(
   rollfiCompany: RollfiCompanyRecord,
   log: Logger
 ): Promise<OnboardResult> {
-  if (!ROLLFI_CLIENT_ID || !ROLLFI_SECRET_KEY) {
+  const _cfg = getRollfiConfig();
+  if (!_cfg.credentialsPresent) {
     return { success: false, error: "Rollfi credentials not configured" };
   }
+  const baseUrl = _cfg.baseUrl;
+  const headers = makeRollfiHeaders(_cfg.clientId, _cfg.secretKey);
 
   const existing = store.getRollfiEmployee(emp.id);
   if (existing) {
@@ -267,7 +266,7 @@ export async function onboardEmployeeToRollfi(
   try {
     let rollfiUserId: string | undefined;
 
-    const addUserResp = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUser`, {
+    const addUserResp = await axios.post(`${baseUrl}/adminPortal#addUser`, {
       method: "addUser",
       user: {
         companyId: rollfiCompany.rollfiCompanyId,
@@ -283,7 +282,7 @@ export async function onboardEmployeeToRollfi(
         stateCode: "NJ",
         companyLocationId: rollfiCompany.rollfiLocationId,
       },
-    }, { headers: rollfiHeaders() });
+    }, { headers });
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
 
@@ -293,9 +292,9 @@ export async function onboardEmployeeToRollfi(
       log.warn({ empId: emp.id, email: emp.email }, "Rollfi email already in use — looking up existing user");
       try {
         const getUsersResp = await axios.post(
-          `${ROLLFI_BASE_URL}/reports#getUsers`,
+          `${baseUrl}/reports#getUsers`,
           { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
-          { headers: rollfiHeaders() }
+          { headers }
         );
         type RollfiUser = { userId: string; firstName?: string; lastName?: string; email?: string };
         const users = ((getUsersResp.data as { users?: RollfiUser[] }).users ?? []);
@@ -324,7 +323,7 @@ export async function onboardEmployeeToRollfi(
     }
 
     // Add wage BEFORE initiating KYC — Rollfi requires wage info to exist first
-    const addWageResp = await axios.post(`${ROLLFI_BASE_URL}/adminPortal#addUserWage`, {
+    const addWageResp = await axios.post(`${baseUrl}/adminPortal#addUserWage`, {
       method: "addUserWage",
       userWage: {
         companyId: rollfiCompany.rollfiCompanyId,
@@ -339,7 +338,7 @@ export async function onboardEmployeeToRollfi(
         startDate: "2024-01-01",
         paymentMethod: "Direct Deposit",
       },
-    }, { headers: rollfiHeaders() });
+    }, { headers });
     log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;

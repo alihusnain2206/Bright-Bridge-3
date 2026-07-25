@@ -6,6 +6,29 @@
  *
  * Backward compatibility: if the new ROLLFI_SANDBOX_* / ROLLFI_PROD_* vars are absent,
  * falls back to the legacy ROLLFI_BASE_URL / ROLLFI_CLIENT_ID / ROLLFI_SECRET_KEY.
+ *
+ * ── Intended environment variable matrix ──────────────────────────────────────
+ *
+ *  Dev repl (default / sandbox testing):
+ *    ROLLFI_ENV              — unset (or any value other than "production")
+ *    ROLLFI_SANDBOX_API_URL  — sandbox base URL (or legacy ROLLFI_BASE_URL)
+ *    ROLLFI_SANDBOX_CLIENT_ID — sandbox client id (or legacy ROLLFI_CLIENT_ID)
+ *    ROLLFI_SANDBOX_SECRET_KEY — sandbox secret (or legacy ROLLFI_SECRET_KEY)
+ *    DATABASE_URL            — dev Postgres instance (Replit auto-provisioned)
+ *    DATABASE_ENV            — unset (or "sandbox")
+ *
+ *  Deployed production:
+ *    ROLLFI_ENV=production
+ *    ROLLFI_PROD_API_URL     — production base URL
+ *    ROLLFI_PROD_CLIENT_ID   — production client id
+ *    ROLLFI_PROD_SECRET_KEY  — production secret key
+ *    DATABASE_URL            — prod Postgres instance (Replit deployment auto-provisioned)
+ *    DATABASE_ENV=production — tells the coherence check this DB is prod
+ *
+ *  IMPORTANT: never set ROLLFI_ENV=production in the dev repl. The only
+ *  safeguard preventing real-money calls against the dev database is
+ *  keeping these two variables in their matching tiers.
+ * ──────────────────────────────────────────────────────────────────────────────
  */
 
 const _env = process.env.ROLLFI_ENV;

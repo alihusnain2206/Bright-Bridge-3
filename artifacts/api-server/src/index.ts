@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { pool } from "@workspace/db";
+import { getRollfiConfig } from "./lib/rollfi-config.js";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts, migrateManagerAccountsToOwner } from "./lib/user-account-persist.js";
@@ -179,6 +180,64 @@ async function bootEasyTeamSync() {
   logger.info({ registered, skipped }, "Boot EasyTeam sync complete");
 }
 
+/**
+ * Log the active Rollfi environment and assert coherence with the database tier.
+ *
+ * Coherence rule:
+ *   ROLLFI_ENV=production  →  DATABASE_ENV must also equal "production"
+ *   ROLLFI_ENV=sandbox     →  DATABASE_ENV should NOT be "production"
+ *
+ * Set DATABASE_ENV=production in the deployed environment alongside the prod
+ * DATABASE_URL so this check can distinguish the two tiers. The app does NOT
+ * hard-block on mismatch — it logs a FATAL-level warning and continues, because
+ * blocking boot on a misconfigured env var would make recovery harder.
+ */
+function assertEnvCoherence() {
+  const cfg = getRollfiConfig();
+  const dbEnv = (process.env.DATABASE_ENV ?? "").trim().toLowerCase();
+  const dbUrl = process.env.DATABASE_URL ?? "";
+
+  // Infer DB tier: explicit flag wins; fall back to URL hostname pattern.
+  const dbLooksLikeProd =
+    dbEnv === "production" ||
+    /prod(?:uction)?[.\-_]/i.test(dbUrl) ||
+    /[.\-_]prod(?:uction)?/i.test(dbUrl);
+
+  const rollfiIsProd = cfg.env === "production";
+
+  // Emit the mandatory boot status line (always, regardless of match).
+  logger.info(
+    {
+      rollfiEnv: cfg.env,
+      dbEnv: dbEnv || "unset",
+      dbLooksLikeProd,
+      rollfiBaseUrl: cfg.baseUrl,
+      rollfiCredentials: cfg.credentialsPresent ? "present" : "missing",
+    },
+    `Rollfi env: ${cfg.env} | DB tier: ${dbLooksLikeProd ? "production" : "dev/sandbox"}`,
+  );
+
+  if (rollfiIsProd && !dbLooksLikeProd) {
+    process.stderr.write(
+      "[FATAL] Environment coherence mismatch: ROLLFI_ENV=production but DATABASE_ENV is not set to 'production' " +
+      "and DATABASE_URL does not appear to be a production host. " +
+      "This risks real-money Rollfi calls against the development database. " +
+      "Set DATABASE_ENV=production in the deployed environment to confirm the DB tier, or unset ROLLFI_ENV to use sandbox.\n",
+    );
+    logger.error(
+      { rollfiEnv: cfg.env, dbEnv: dbEnv || "unset" },
+      "FATAL: prod Rollfi + non-prod DB — real-money risk. Set DATABASE_ENV=production or revert ROLLFI_ENV.",
+    );
+  }
+
+  if (!rollfiIsProd && dbLooksLikeProd) {
+    logger.warn(
+      { rollfiEnv: cfg.env, dbEnv: dbEnv || "unset" },
+      "Warning: sandbox Rollfi is pointed at a database that looks like production. Confirm DATABASE_ENV is correct.",
+    );
+  }
+}
+
 // Start listening immediately so the healthcheck always responds during boot.
 // Boot tasks run in the background — the server is functional before they finish.
 app.listen(port, (err) => {
@@ -187,6 +246,7 @@ app.listen(port, (err) => {
     process.exit(1);
   }
   logger.info({ port }, "Server listening");
+  assertEnvCoherence();
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([

@@ -1,0 +1,51 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+GOAL: Close the environment-separation gaps found in the audit, so that
+integrating Rollfi PRODUCTION keys is safe. Do all four; report before
+publishing.
+
+FIX G1 (critical) — single Rollfi config resolver:
+people.ts currently reads legacy module-level vars (ROLLFI_BASE_URL,
+ROLLFI_CLIENT_ID, ROLLFI_SECRET_KEY) instead of getRollfiConfig(). Migrate
+ALL Rollfi-touching code in people.ts to call getRollfiConfig() per request
+(same pattern as rollfi.ts and companies.ts), so every Rollfi call resolves
+through ONE source. After: confirm no route anywhere still reads the legacy
+ROLLFI_* vars directly (grep and report).
+
+FIX G2/G3 — startup env-coherence assertion:
+Add a startup check (in index.ts or rollfi-config startup validation): if
+ROLLFI_ENV=production, verify the database appears to be production too
+(via a DATABASE_ENV=production flag we set, or a known prod-host pattern in
+DATABASE_URL). On mismatch, log a FATAL/ERROR-level warning loudly (do NOT
+hard-block boot — avoid chicken-and-egg), so a dev-DB + prod-Rollfi
+misconfiguration is immediately visible. Also log, at every boot, one clear
+line stating the active Rollfi env + whether DB looks like the matching
+tier.
+
+FIX G5 (cosmetic) — login page banner:
+Replace the hardcoded "SANDBOX" string in login.tsx with a value driven by
+the real env (server-passed or the same /api/config/env the main banner
+uses), so it reads "PRODUCTION" when prod keys are active.
+
+DOCUMENT — add a short comment block (or /docs note) with the intended var
+matrix: Dev repl → ROLLFI_ENV unset, ROLLFI_SANDBOX_*, dev Postgres;
+Deployed production → ROLLFI_ENV=production, ROLLFI_PROD_*, prod Postgres.
+
+SCOPE BOUNDARY: don't change Rollfi call LOGIC (the onboarding chain,
+imports) — only the CONFIG SOURCE they read from. Don't touch dashboard,
+EasyTeam, payroll import behavior.
+
+TESTING:
+- grep confirms zero direct reads of legacy ROLLFI_* vars outside
+  getRollfiConfig()
+- With ROLLFI_ENV unset (sandbox): all routes incl. people.ts hit sandbox;
+  banner shows SANDBOX; boot logs "Rollfi env: sandbox"
+- Simulate ROLLFI_ENV=production in dev (keys can be dummy): boot logs the
+  coherence WARNING (prod Rollfi + dev DB mismatch), proving the guard fires
+  — then revert
+- Login page banner reflects env
+- tsc clean
+
+DELIVERABLE: files changed, grep proof of single-resolver, the boot-log
+lines (sandbox + the simulated-prod warning), test results.
+REMINDER: publish required.

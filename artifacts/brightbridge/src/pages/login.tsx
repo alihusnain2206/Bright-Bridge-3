@@ -4,7 +4,8 @@ import { useAuth, dashboardPath, type UserRole } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, LogIn, Zap } from "lucide-react";
+import { AlertCircle, AlertTriangle, FlaskConical, LogIn, Zap } from "lucide-react";
+import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 
 const QUICK_LOGINS = [
   { label: "Super Admin — Joanne",  email: "joanne@brightbridgeassist.com", password: "Admin123!",   dot: "#ef4444" },
@@ -154,6 +155,7 @@ export default function Login() {
   const [error, setError]     = useState("");
   const [pending, setPending] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const rollfiEnv = useRollfiEnv();
 
   useEffect(() => { const t = setTimeout(() => setMounted(true), 80); return () => clearTimeout(t); }, []);
   useEffect(() => { if (!isLoading && user) navigate(dashboardPath(user.role as UserRole)); }, [user, isLoading, navigate]);
@@ -249,14 +251,30 @@ export default function Login() {
         <div className="pointer-events-none absolute inset-0"
           style={{ background: "radial-gradient(ellipse 80% 80% at 50% 50%, transparent 40%, rgba(5,10,20,0.65) 100%)" }} />
 
-        {/* Sandbox stripe */}
-        <div className="relative z-10 flex items-center justify-center gap-2 px-4 py-1.5 text-xs"
-          style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.25)" }}>
-          <Zap className="h-3 w-3" style={{ color: "#E8622A" }} />
-          <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 600, letterSpacing: "0.05em" }}>SANDBOX</span>
-          <span style={{ color: "rgba(255,255,255,0.12)" }}>·</span>
-          <span style={{ color: "rgba(255,255,255,0.22)" }}>Testing environment — no real data or payments</span>
-        </div>
+        {/* Environment stripe — driven by live /api/config/env */}
+        {rollfiEnv === "production" ? (
+          <div className="relative z-10 flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-bold tracking-wide"
+            style={{ borderBottom: "1px solid rgba(255,255,255,0.08)", background: "#DC2626", color: "#fff" }}>
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span>PRODUCTION · LIVE PAYROLL</span>
+            <span style={{ opacity: 0.6, margin: "0 4px" }}>—</span>
+            <span style={{ fontWeight: 400, opacity: 0.9 }}>real employees and real money</span>
+          </div>
+        ) : rollfiEnv === "unknown" ? (
+          <div className="relative z-10 flex items-center justify-center gap-2 px-4 py-1.5 text-xs"
+            style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.25)" }}>
+            <Zap className="h-3 w-3" style={{ color: "#E8622A" }} />
+            <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 600, letterSpacing: "0.05em" }}>LOADING</span>
+          </div>
+        ) : (
+          <div className="relative z-10 flex items-center justify-center gap-2 px-4 py-1.5 text-xs"
+            style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: "rgba(0,0,0,0.25)" }}>
+            <FlaskConical className="h-3 w-3" style={{ color: "rgba(255,255,255,0.4)" }} />
+            <span style={{ color: "rgba(255,255,255,0.35)", fontWeight: 600, letterSpacing: "0.05em" }}>SANDBOX</span>
+            <span style={{ color: "rgba(255,255,255,0.12)" }}>·</span>
+            <span style={{ color: "rgba(255,255,255,0.22)" }}>Testing environment — no real data or payments</span>
+          </div>
+        )}
 
         {/* Content */}
         <div className="relative z-10 flex-1 flex items-center justify-center px-4 py-10">
