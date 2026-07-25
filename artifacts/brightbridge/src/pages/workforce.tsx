@@ -333,9 +333,11 @@ export default function WorkforcePage() {
     const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     return (trend?.days ?? []).map(d => {
       const raw = (d.date ?? d.day ?? "").trim();
-      // Parse YYYY-MM-DD directly — never construct a Date object from a bare date
-      // string because that shifts by the browser's timezone offset.
-      const parts = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      // EasyTeam returns either "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS".
+      // Take the first 10 chars to isolate the date portion, then match.
+      // Never construct a Date object — timezone shifts corrupt bare date strings.
+      const datePart = raw.slice(0, 10);
+      const parts = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
       const label = parts
         ? `${MONTHS[parseInt(parts[2]!, 10) - 1] ?? "?"} ${parseInt(parts[3]!, 10)}`
         : raw;
