@@ -468,7 +468,7 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
   const appReady    = PAYROLL_ITEMS.every(i => done(i.type));
   const rollfiReady = accountStatus === "Active" && kycStatus === "passed";
   const fullyReady  = !!emp.rollfiUserId && appReady && rollfiReady;
-  const needsKyc    = !!emp.rollfiUserId && (kycStatus === "new" || kycStatus === "pending");
+  const needsKyc    = !!emp.rollfiUserId && (kycStatus === "new" || kycStatus === "pending" || kycStatus === "not_started");
 
   async function handleRefresh() {
     if (!emp.rollfiUserId) return;
@@ -589,9 +589,10 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
                 <span className="text-sm text-gray-600">
                   Verification:{" "}
                   <span className={`font-medium ${kycStatus === "passed" ? "text-emerald-700" : "text-amber-700"}`}>
-                    {kycStatus === "passed"  ? "Passed"
-                   : kycStatus === "new"     ? "Not started"
-                   : kycStatus === "pending" ? "In progress"
+                    {kycStatus === "passed"       ? "Passed"
+                   : kycStatus === "new"          ? "Not started"
+                   : kycStatus === "not_started"  ? "Not started"
+                   : kycStatus === "pending"       ? "In progress"
                    : (kycStatus ?? "Unknown")}
                   </span>
                 </span>
