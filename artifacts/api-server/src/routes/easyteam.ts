@@ -1254,29 +1254,38 @@ router.get("/timesheets/shifts", async (req, res) => {
   });
 
   // ── Wage map: employeeId → dollars (our DB, always current) ─────────────────
-  // Priority: in-memory store → user_accounts table → employees table.
-  // This replaces EasyTeam's stale frozen wage with the wage the user last set.
+  // Priority: employees table (People module writes here) → user_accounts table
+  // → in-memory store seed (last resort for employees with no DB record yet).
+  // The store seed is intentionally last — it holds the original seed wage and
+  // is never updated when the user edits pay rate through the UI.
   const wageMap = new Map<string, number>();
-  for (const u of store.getAllStaffUsers()) {
-    if (u.employeeId && u.hourlyWage != null) wageMap.set(u.employeeId, u.hourlyWage / 100);
-  }
-  const needWage = [...new Set(shifts.map(s => s.employeeId).filter((id): id is string => !!id && !wageMap.has(id)))];
-  if (needWage.length > 0) {
-    const dbAccts = await db
-      .select({ employeeId: userAccountsTable.employeeId, hourlyWage: userAccountsTable.hourlyWage })
-      .from(userAccountsTable)
-      .where(inArray(userAccountsTable.employeeId, needWage));
-    for (const a of dbAccts) {
-      if (a.employeeId && a.hourlyWage != null) wageMap.set(a.employeeId, a.hourlyWage / 100);
+  const allShiftEmpIds = [...new Set(shifts.map(s => s.employeeId).filter((id): id is string => !!id))];
+
+  if (allShiftEmpIds.length > 0) {
+    // 1. employees table — authoritative; People module saves wage edits here
+    const dbEmps = await db
+      .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+      .from(employeesTable)
+      .where(inArray(employeesTable.id, allShiftEmpIds));
+    for (const e of dbEmps) {
+      if (e.hourlyWage != null) wageMap.set(e.id, e.hourlyWage / 100);
     }
-    const stillMissing = needWage.filter(id => !wageMap.has(id));
-    if (stillMissing.length > 0) {
-      const dbEmps = await db
-        .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
-        .from(employeesTable)
-        .where(inArray(employeesTable.id, stillMissing));
-      for (const e of dbEmps) {
-        if (e.hourlyWage != null) wageMap.set(e.id, e.hourlyWage / 100);
+    // 2. user_accounts table — fills any gaps not covered by employees table
+    const needFromAccts = allShiftEmpIds.filter(id => !wageMap.has(id));
+    if (needFromAccts.length > 0) {
+      const dbAccts = await db
+        .select({ employeeId: userAccountsTable.employeeId, hourlyWage: userAccountsTable.hourlyWage })
+        .from(userAccountsTable)
+        .where(inArray(userAccountsTable.employeeId, needFromAccts));
+      for (const a of dbAccts) {
+        if (a.employeeId && a.hourlyWage != null) wageMap.set(a.employeeId, a.hourlyWage / 100);
+      }
+    }
+    // 3. In-memory store — last resort for users not yet persisted to DB
+    const needFromStore = allShiftEmpIds.filter(id => !wageMap.has(id));
+    for (const u of store.getAllStaffUsers()) {
+      if (u.employeeId && needFromStore.includes(u.employeeId) && u.hourlyWage != null) {
+        wageMap.set(u.employeeId, u.hourlyWage / 100);
       }
     }
   }
