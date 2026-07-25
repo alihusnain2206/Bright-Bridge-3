@@ -131,8 +131,12 @@ function empDisplayName(empId: string, names: Record<string, string>, employees:
 function deptHours(shifts: ShiftRow[], employees: Employee[]): { dept: string; hours: number; headcount: number }[] {
   const empToDept = new Map<string, string>();
   for (const e of employees) {
-    const eid = e.employeeId ?? e.employeeDisplayId ?? e.id;
-    if (eid && e.department) empToDept.set(eid, e.department);
+    if (!e.department) continue;
+    // Index every available ID variant so the shift lookup succeeds regardless of
+    // which format was stored (internal primary id, employeeId, or display id).
+    for (const eid of [e.id, e.employeeId, e.employeeDisplayId]) {
+      if (eid) empToDept.set(eid, e.department);
+    }
   }
   const deptMs = new Map<string, number>();
   const deptEmp = new Map<string, Set<string>>();
