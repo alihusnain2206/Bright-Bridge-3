@@ -1,0 +1,52 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+CONTEXT: You just added requireAuth/requireRole middleware and guarded
+POST /easyteam/hours/sync. Your audit found 10 more unguarded endpoints.
+Apply guards to ALL of them now using the SAME shared middleware — no new
+inline checks — so we publish once with the whole surface locked.
+
+APPLY THESE GUARDS (from your own audit recommendations):
+
+requireRole("super_admin", "owner"):
+- POST /easyteam/test-connection   (reveals API-key health, outbound calls)
+- GET  /easyteam/debug/shifts       (raw EasyTeam data dump)
+- GET  /easyteam/webhooks           (internal webhook event log)
+- GET  /easyteam/exports            (export event log)
+
+requireAuth (any logged-in user):
+- GET  /easyteam/company-members
+- GET  /easyteam/hours
+- GET  /easyteam/employees
+- POST /easyteam/token              (JWT generation — hardening)
+- GET  /easyteam/timesheets         (stub)
+- GET  /easyteam/status
+
+LEAVE UNCHANGED (inbound from EasyTeam, different auth model):
+- POST /easyteam/webhook
+- POST /easyteam/webhook/export
+  (but add a CODE COMMENT on webhook/export noting the HMAC mismatch
+  currently warns-and-processes; flag as pre-launch hardening to switch
+  to hard-reject.)
+
+CONSTRAINTS:
+- Use the existing requireAuth/requireRole middleware only — do NOT add
+  new inline session checks anywhere.
+- Do not change any endpoint's actual logic, just prepend the guard.
+- Preserve any userId usage inside handlers (as you did for hours/approve).
+
+TESTING (dev, before publish):
+- Anonymous → each newly guarded endpoint returns 401
+- Employee session → the four super_admin/owner endpoints return 403;
+  the requireAuth endpoints return 200
+- Owner/super_admin session → all return 200 (or their normal response)
+- Previously-working flows unchanged: dashboard sync, approvals,
+  timesheets/shifts, timesheets/trend, token generation for the iframe
+- The EasyTeam iframe still loads (it needs /easyteam/token — confirm a
+  logged-in session still gets a token)
+- tsc --noEmit clean
+
+DELIVERABLE: updated audit table (every easyteam route + final guard),
+files changed, full test matrix, confirmation the iframe token flow still
+works. Then I will publish once.
+REMINDER: nothing is live in production until Publish — do not publish
+yet; report first so I can review the final guard table before deploying.

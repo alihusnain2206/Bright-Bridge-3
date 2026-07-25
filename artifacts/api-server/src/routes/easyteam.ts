@@ -102,7 +102,7 @@ const webhookLog: Array<{
   status: string;
 }> = [];
 
-router.get("/easyteam/employees", async (req, res) => {
+router.get("/easyteam/employees", requireAuth, async (req, res) => {
   const companyId = req.query.companyId as string | undefined;
   const users = companyId
     ? store.getUsersForCompany(companyId)
@@ -130,7 +130,7 @@ router.get("/easyteam/employees", async (req, res) => {
   res.json({ employees });
 });
 
-router.get("/easyteam/status", (_req, res) => {
+router.get("/easyteam/status", requireAuth, (_req, res) => {
   const keyFirstLine = EASYTEAM_API_KEY?.split("\n")[0]?.slice(0, 40) ?? "";
   const keyLooksLikePem =
     !!EASYTEAM_API_KEY &&
@@ -149,7 +149,7 @@ router.get("/easyteam/status", (_req, res) => {
   });
 });
 
-router.post("/easyteam/token", async (req, res) => {
+router.post("/easyteam/token", requireAuth, async (req, res) => {
   const {
     employee_id,
     client_id,
@@ -264,7 +264,7 @@ router.post("/easyteam/token", async (req, res) => {
   res.json({ success: true, token: signedJwt });
 });
 
-router.get("/easyteam/timesheets", (_req, res) => {
+router.get("/easyteam/timesheets", requireAuth, (_req, res) => {
   res.json({
     success: true,
     timesheets: [],
@@ -598,7 +598,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 // ── GET /easyteam/company-members — employee names for timesheet approval panel ──
 // Returns { [employeeId]: fullName } from store staff users (covers both seeded and
 // wizard-created employees). Used by the timesheets page to show names in the approval table.
-router.get("/easyteam/company-members", (req, res) => {
+router.get("/easyteam/company-members", requireAuth, (req, res) => {
   const { companyId } = req.query as { companyId?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
   const staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
@@ -609,7 +609,7 @@ router.get("/easyteam/company-members", (req, res) => {
   res.json({ names });
 });
 
-router.get("/easyteam/hours", (req, res) => {
+router.get("/easyteam/hours", requireAuth, (req, res) => {
   const { from, to, companyId } = req.query as { from?: string; to?: string; companyId?: string };
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -1025,7 +1025,7 @@ router.post("/easyteam/hours/approve", requireAuth, async (req, res) => {
 });
 
 // Debug-only endpoint — shows raw EasyTeam REST API response for a given location
-router.get("/easyteam/debug/shifts", async (req, res) => {
+router.get("/easyteam/debug/shifts", requireRole("super_admin", "owner"), async (req, res) => {
   const locationId = (req.query.locationId as string) || "LOC-RAINBOW";
   if (!EASYTEAM_API_KEY) { res.status(500).json({ error: "No API key" }); return; }
 
@@ -1132,10 +1132,15 @@ router.post("/easyteam/webhook", (req, res) => {
   res.json({ received: true, id: entry.id });
 });
 
-router.get("/easyteam/webhooks", (_req, res) => {
+router.get("/easyteam/webhooks", requireRole("super_admin", "owner"), (_req, res) => {
   res.json({ events: webhookLog, total: webhookLog.length });
 });
 
+// PRE-LAUNCH HARDENING: This endpoint currently validates the Convoy HMAC signature
+// but only warns on mismatch — it still processes the payload regardless. Before going
+// live, change the mismatch branch to a hard reject (res.status(401).json + return) so
+// unauthenticated callers cannot inject export events. The inbound webhook itself
+// (/easyteam/webhook) uses a different auth model and is intentionally left unguarded.
 router.post("/easyteam/webhook/export", async (req, res) => {
   const rawBody = JSON.stringify(req.body);
   const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
@@ -1212,7 +1217,7 @@ router.post("/easyteam/webhook/export", async (req, res) => {
   }
 });
 
-router.get("/easyteam/exports", (_req, res) => {
+router.get("/easyteam/exports", requireRole("super_admin", "owner"), (_req, res) => {
   res.json({ exports: exportLog, total: exportLog.length });
 });
 
@@ -1393,7 +1398,7 @@ router.get("/timesheets/trend", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/easyteam/test-connection", async (req, res) => {
+router.post("/easyteam/test-connection", requireRole("super_admin", "owner"), async (req, res) => {
   const apiKeyPresent = !!EASYTEAM_API_KEY;
   const partnerIdPresent = !!EASYTEAM_PARTNER_ID;
   let jwtSigning = false;
