@@ -1,0 +1,61 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+CRITICAL BUG: 7 of 8 steps in the Rollfi employee onboarding chain do not
+check for errors. Rollfi returns HTTP 200 with {"error":{...}} in the body
+for logical failures; our code only catches axios exceptions (5xx). Failed
+steps are logged and ignored, then persistRollfiEmployee writes success
+unconditionally — producing employees who appear fully onboarded but are
+missing wage, W4, KYC, or bank account in Rollfi. Confirmed real: Gregory
+Lawson has no federal W4 because addW4Information failed silently.
+
+SCOPE BOUNDARY — do not touch: payroll import/comp-wipe, EasyTeam,
+dashboard, auth middleware, the People lifecycle work.
+
+FIX 1 — Body-error checking on EVERY step:
+Apply the existing assertNoRollfiError-style check (or a shared helper) to
+ALL onboarding steps: addUser, addUserWage, acceptTermsAndCondition,
+addKycInformation, addW4Information, addStateW4Information,
+initiateUserKyc, addUserBankAccount. One shared helper — no per-call
+inline variants.
+
+FIX 2 — Classify failures, don't blanket-abort:
+- HARD failures (block onboarding completion): addUser, addUserWage,
+  addW4Information, addUserBankAccount — the employee cannot be paid
+  without these.
+- SOFT failures (record and continue): addStateW4Information,
+  initiateUserKyc, acceptTermsAndCondition — surface as warnings.
+Report your proposed classification before implementing if you disagree.
+
+FIX 3 — Never persist a false success:
+persistRollfiEmployee must record WHICH steps succeeded and which failed.
+Add a per-employee record of failed steps (a jsonb column or reuse
+last_sync_error) and do NOT mark the employee fully Rollfi-onboarded when
+a HARD step failed.
+
+FIX 4 — Surface it to the user:
+The wizard must show a clear error when a hard step fails ("Tax withholding
+information was rejected: <message> — please correct and retry") instead of
+a success screen. Add a retry path for the failed step(s) rather than
+requiring the whole employee to be recreated.
+
+FIX 5 — W4 filing status enum mismatch:
+Our wizard sends a filing status Rollfi rejects ("W4FilingStatus is not
+valid"). Report our current dropdown options, map them to Rollfi's accepted
+values (confirmed working: "Single"; verify "Married" and "Head of
+Household" and any others by probing), and fix the mapping.
+
+FIX 6 — REPAIR EXISTING EMPLOYEES (report first, don't auto-fix):
+For every employee we've onboarded, call getUser and check what's actually
+present in Rollfi: wage, W4, state W4, KYC status, bank account. Produce a
+table of employees × missing items. Do NOT modify anything — I'll decide
+what to repair after seeing the scope.
+
+TESTING:
+- Simulate a rejected step (e.g. send an invalid W4 filing status) → wizard
+  shows the error, employee is NOT marked fully onboarded, failure recorded
+- Valid onboarding still completes normally end-to-end (regression)
+- The audit table from FIX 6 for all existing employees
+- tsc clean
+
+DELIVERABLE: shared helper, hard/soft classification, the FIX 6 audit
+table, test results. REMINDER: Publish required.
