@@ -1,6 +1,7 @@
 import axios from "axios";
 import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
+import { getRollfiConfig } from "./rollfi-config.js";
 
 const ROLLFI_BASE_URL = process.env.ROLLFI_BASE_URL ?? "https://sandbox.rollfi.xyz";
 const ROLLFI_CLIENT_ID = process.env.ROLLFI_CLIENT_ID;
@@ -52,7 +53,8 @@ export async function runEmployeeKycOnboarding(
   rollfiCompanyId: string,
   log: Logger,
   w4: W4Data = DEFAULT_W4,
-  identity: KycIdentity = {}
+  identity: KycIdentity = {},
+  bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string }
 ): Promise<void> {
   const headers = rollfiHeaders();
   const ssn = identity.ssn ?? randomNineDigits();
@@ -128,10 +130,15 @@ export async function runEmployeeKycOnboarding(
   }
 
   try {
+    const isProduction = getRollfiConfig().env === "production";
+    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
+      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
+      : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
+    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}`, maskedRouting: `****${bank.routingNumber.slice(-4)}` }, "addUserBankAccount: using bank details");
     const r = await axios.post(`${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`, {
       method: "addUserBankAccount",
       linkType: "Manual",
-      userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" },
+      userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
     }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi addUserBankAccount response");
   } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
@@ -167,6 +174,12 @@ export interface RollfiEmployeeInput {
   w4ExtraWithholding?: number;
   /** State-specific W-4 fields from the UI form — used directly if provided. */
   stateW4Fields?: Record<string, string>;
+  /** Direct deposit bank details — only present when bankSetupMethod === "manual".
+   *  In sandbox mode these are ignored and test values are used automatically. */
+  bankName?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  accountType?: string;
 }
 
 /**
@@ -333,6 +346,11 @@ export async function onboardEmployeeToRollfi(
       zipcode: emp.homeZip,
       ssn: emp.ssn,
       dateOfBirth: emp.dateOfBirth,
+    }, {
+      bankName: emp.bankName,
+      routingNumber: emp.routingNumber,
+      accountNumber: emp.accountNumber,
+      accountType: emp.accountType,
     });
 
     await persistRollfiEmployee(emp.id, {

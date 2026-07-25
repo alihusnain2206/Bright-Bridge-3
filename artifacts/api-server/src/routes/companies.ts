@@ -32,11 +32,31 @@ function assertNoRollfiError(raw: Record<string, unknown>, label: string): void 
   }
 }
 
+function maskAcct(n: string): string {
+  return `****${String(n).slice(-4)}`;
+}
+
+interface CompanyBankInput {
+  bankName?: string;
+  routingNumber?: string;
+  accountNumber?: string;
+  accountType?: string;
+}
+
+function validateBankDetails(b: CompanyBankInput): string | null {
+  if (!b.routingNumber || !/^\d{9}$/.test(b.routingNumber)) return "Routing number must be exactly 9 digits";
+  if (!b.accountNumber || !/^\d{4,17}$/.test(b.accountNumber.replace(/\D/g, ""))) return "Account number must be 4–17 digits";
+  if (!b.bankName?.trim()) return "Bank name is required";
+  if (b.accountType !== "checking" && b.accountType !== "savings") return "Account type must be checking or savings";
+  return null;
+}
+
 async function ensureFullOnboarding(
   rollfiCompanyId: string,
   ein: string,
   log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void },
   payScheduleParams?: { payFrequency: string; payBeginDate: string; payDate: string; workerType: string },
+  bankInput?: CompanyBankInput,
 ): Promise<void> {
   try {
     await axios.post(`${getBaseUrl()}/companyOnboarding#addKybInformation`, {
@@ -52,9 +72,14 @@ async function ensureFullOnboarding(
   await new Promise((r) => setTimeout(r, 2000));
 
   try {
+    const isProduction = getRollfiConfig().env === "production";
+    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
+      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: "Payroll Funding" }
+      : { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: maskAcct(bank.accountNumber), maskedRouting: maskAcct(bank.routingNumber) }, "addCompanyBankAccount: using bank details");
     await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, {
       method: "addCompanyBankAccount",
-      companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" },
+      companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
     }, { headers: rollfiHeaders() });
   } catch (e) { log.warn({ e }, "addCompanyBankAccount failed"); }
 
@@ -180,6 +205,7 @@ router.post("/companies", async (req: Request, res: Response) => {
     entityType: string; ein?: string; incorporationState: string; dateOfIncorporation: string; irsFilingForm: string;
     payrollRunThisYear: string;
     payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
+    fundingBankName?: string; fundingRoutingNumber?: string; fundingAccountNumber?: string; fundingAccountType?: string;
     stateTaxRegistrations?: Array<{
       stateCode: string; stateName: string; fieldValues: Record<string, string>;
     }>;
@@ -188,6 +214,16 @@ router.post("/companies", async (req: Request, res: Response) => {
   if (!body.companyName || !body.address1 || !body.city || !body.state || !body.zipcode) {
     res.status(400).json({ error: "Company name and address are required" });
     return;
+  }
+
+  if (getRollfiConfig().env === "production") {
+    const bankErr = validateBankDetails({
+      routingNumber: body.fundingRoutingNumber,
+      accountNumber: body.fundingAccountNumber,
+      bankName: body.fundingBankName,
+      accountType: body.fundingAccountType,
+    });
+    if (bankErr) { res.status(400).json({ error: `Company funding account: ${bankErr}` }); return; }
   }
 
   const now = new Date().toISOString();
@@ -213,6 +249,10 @@ router.post("/companies", async (req: Request, res: Response) => {
       zipcode: body.zipcode,
       locationName: body.locationName ?? body.companyName,
       ein: useEin,
+      fundingBankName: body.fundingBankName,
+      fundingRoutingNumber: body.fundingRoutingNumber,
+      fundingAccountNumber: body.fundingAccountNumber,
+      fundingAccountType: body.fundingAccountType,
       kybStatus: "not_started",
       bankAccountAdded: false,
       payScheduleAdded: false,
@@ -326,6 +366,11 @@ router.post("/companies", async (req: Request, res: Response) => {
             payBeginDate: body.payBeginDate,
             payDate: body.payDate,
             workerType: body.workerType,
+          }, {
+            bankName: body.fundingBankName,
+            routingNumber: body.fundingRoutingNumber,
+            accountNumber: body.fundingAccountNumber,
+            accountType: body.fundingAccountType,
           }).then(async () => {
             await db.update(companies).set({ bankAccountAdded: true, payScheduleAdded: true, status: "active", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
             req.log.info({ companyId }, "Rollfi full onboarding complete");
@@ -623,6 +668,10 @@ router.post("/employees", async (req: Request, res: Response) => {
         w4Dependents: body.w4Dependents,
         w4ExtraWithholding: body.w4ExtraWithholding,
         stateW4Fields: body.stateW4Fields,
+        bankName: body.bankSetupMethod === "manual" ? body.bankName : undefined,
+        routingNumber: body.bankSetupMethod === "manual" ? body.routingNumber : undefined,
+        accountNumber: body.bankSetupMethod === "manual" ? body.accountNumber : undefined,
+        accountType: body.bankSetupMethod === "manual" ? body.accountType : undefined,
       },
       req.log
     );

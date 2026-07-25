@@ -1,0 +1,211 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer fixing a critical 
+production bug in BrightBridge Assist's 
+Rollfi bank account integration.
+
+CONTEXT — THE BUG:
+Your own audit found that when we add 
+bank accounts to Rollfi, we send 
+HARDCODED SANDBOX PLACEHOLDER values 
+instead of the real bank details the 
+user entered in the wizard. This is 
+fine in sandbox but catastrophic in 
+production — real payroll would try to 
+debit and pay FAKE accounts.
+
+Specifically you identified:
+
+COMPANY funding account (companies.ts:55, 
+rollfi.ts:775 in ensureFullOnboarding, 
+rollfi.ts:1036 in retry-kyb) sends:
+  accountNumber: ein  (the EIN used as 
+    account number!)
+  routingNumber: "221982389"
+  bankName: "BrightBridge Test Bank"
+  accountType: "checking"
+  accountName: "Payroll Account"
+
+EMPLOYEE direct deposit 
+(rollfi-employee-sync.ts:131, 
+rollfi.ts:167) sends:
+  accountNumber: "9889890989"
+  routingNumber: "122238242"
+  bankName: "Chase Bank"
+  accountType: "savings"
+  accountName: "default"
+
+THE FIX:
+Send the REAL bank account details 
+that the user entered in the wizard, 
+for BOTH company and employee accounts.
+
+---
+
+SCOPE:
+Fix the bank detail flow only. Do NOT 
+change the Rollfi onboarding sequence, 
+KYC/KYB logic, payroll calculations, or 
+anything else. Preserve all existing 
+behavior except that real bank data now 
+flows through instead of placeholders.
+
+---
+
+PART 1 — AUDIT THE DATA PATH FIRST 
+(report before changing)
+
+Before editing, trace and report:
+1. In the company creation wizard, 
+   which fields collect the funding 
+   bank account (bank name, routing, 
+   account number, account type)? What 
+   are the exact field names and where 
+   are they stored when the wizard 
+   submits?
+2. In the employee wizard, same 
+   question for the employee direct 
+   deposit account.
+3. Do these values currently reach the 
+   backend functions that call Rollfi, 
+   or are they collected in the UI but 
+   never passed through? Identify 
+   exactly where the real data stops 
+   and the hardcoded values take over.
+
+Report this, then proceed to the fix.
+
+---
+
+PART 2 — FIX COMPANY FUNDING ACCOUNT
+
+Replace the hardcoded 
+companyFundingSourceEntity values with 
+the real bank details collected in the 
+company wizard, in ALL THREE locations 
+(companies.ts:55, rollfi.ts:775, 
+rollfi.ts:1036):
+
+accountNumber: <real account number 
+  from wizard>
+routingNumber: <real routing number>
+bankName: <real bank name>
+accountType: <real account type — 
+  checking/savings as selected>
+accountName: <a sensible value, e.g. 
+  the company legal name or "Payroll 
+  Funding" — not hardcoded test text>
+
+The real values must be threaded from 
+the wizard submission through to these 
+calls. If the data is not currently 
+passed to ensureFullOnboarding or 
+retry-kyb, thread it through (from the 
+stored company record if that's where 
+it lives).
+
+IMPORTANT — SANDBOX vs PRODUCTION:
+In SANDBOX, the hardcoded test values 
+were intentional (sandbox needs 
+specific test accounts). Use the 
+environment (getRollfiConfig / 
+ROLLFI_ENV) to decide:
+- In production: ALWAYS use the real 
+  user-entered bank details
+- In sandbox: keep using the known 
+  working sandbox test values (so 
+  sandbox testing still works)
+This way we don't break sandbox testing 
+while making production correct.
+
+---
+
+PART 3 — FIX EMPLOYEE DIRECT DEPOSIT
+
+Replace the hardcoded 
+userPayAccountEntity values 
+(rollfi-employee-sync.ts:131 and 
+rollfi.ts:167) with the real bank 
+details the employee/admin entered in 
+the employee wizard:
+
+accountNumber: <real>
+routingNumber: <real>
+bankName: <real>
+accountType: <real — checking/savings>
+accountName: <sensible, e.g. employee 
+  name>
+linkType: "Manual"  (keep)
+
+Same environment rule: production uses 
+real entered data; sandbox keeps the 
+working test values.
+
+---
+
+PART 4 — VALIDATION
+
+Add basic validation before sending 
+bank details to Rollfi (both company 
+and employee):
+- Routing number: 9 digits
+- Account number: present, numeric, 
+  reasonable length
+- Account type: checking or savings
+- Bank name: non-empty
+If validation fails in production, do 
+NOT send placeholder data — return a 
+clear error so the user fixes the input.
+
+---
+
+PART 5 — DO NOT MASK REAL DATA IN LOGS
+
+Ensure account numbers and routing 
+numbers are NOT logged in full. If they 
+appear in any log line, mask them (e.g. 
+****1234). Never log full bank details.
+
+---
+
+RULES:
+1. TypeScript throughout
+2. Environment-aware: real data in 
+   production, existing test values in 
+   sandbox — never send production 
+   payroll to placeholder accounts
+3. Do not change onboarding sequence, 
+   KYC/KYB, or payroll logic
+4. Thread real data through cleanly; 
+   don't duplicate collection logic
+5. Bank numbers masked in all logs
+
+TESTING CHECKLIST:
+✅ Report of where real bank data is 
+   collected and where it currently 
+   stops
+✅ In sandbox (ROLLFI_ENV=sandbox): 
+   company + employee onboarding still 
+   work with the existing test values 
+   (no regression)
+✅ In production mode: real entered 
+   bank details are what get sent to 
+   Rollfi (verify via masked logs 
+   showing the real last-4, not the 
+   hardcoded placeholders)
+✅ Validation rejects malformed routing/
+   account numbers in production
+✅ No full bank numbers in logs
+✅ Company funding fixed in all three 
+   locations (companies.ts, 
+   ensureFullOnboarding, retry-kyb)
+✅ Employee direct deposit fixed in 
+   both locations
+✅ No changes to onboarding sequence or 
+   payroll logic
+
+DELIVERABLE SUMMARY: files changed, 
+where real bank data now flows from, 
+confirmation sandbox still uses test 
+values and production uses real values, 
+confirmation bank numbers are masked in 
+logs.

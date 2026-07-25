@@ -113,6 +113,11 @@ export const companies = pgTable("companies", {
   rollfiLocationId:  text("rollfi_location_id"),
   rollfiOnboardedAt: text("rollfi_onboarded_at"),
   ein:               text("ein"),
+  // Funding bank account (env-aware: production stores real data, sandbox uses built-in test values)
+  fundingBankName:       text("funding_bank_name"),
+  fundingRoutingNumber:  text("funding_routing_number"),
+  fundingAccountNumber:  text("funding_account_number"),
+  fundingAccountType:    text("funding_account_type"),
   // Onboarding
   kybStatus:         text("kyb_status").notNull().default("not_started"),
   bankAccountAdded:  boolean("bank_account_added").notNull().default(false),

@@ -42,7 +42,12 @@ interface KycOnboardingResult {
 // Run the mandatory employee KYC onboarding steps so status moves from "Invite Sent" to active.
 // Steps run sequentially; KYC identity must succeed before initiating KYC.
 // Non-fatal errors are logged (idempotent re-runs are fine).
-async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: string, log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void }): Promise<KycOnboardingResult> {
+async function runEmployeeKycOnboarding(
+  rollfiUserId: string,
+  rollfiCompanyId: string,
+  log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void },
+  bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string }
+): Promise<KycOnboardingResult> {
   const headers = rollfiHeaders();
 
   // Look up real employee data from DB — use it if present, fall back to sandbox defaults
@@ -162,8 +167,14 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
   }
 
   // Step 5 — add employee bank account (required for Direct Deposit employees to become active)
+  // Sandbox always uses test values; production uses the real bank details from the caller.
   let bankAdded = false;
   try {
+    const isProduction = getRollfiConfig().env === "production";
+    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
+      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
+      : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
+    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}`, maskedRouting: `****${bank.routingNumber.slice(-4)}` }, "addUserBankAccount: using bank details");
     const r = await axios.post(
       `${getBaseUrl()}/userPortal#addUserBankAccount`,
       {
@@ -172,11 +183,11 @@ async function runEmployeeKycOnboarding(rollfiUserId: string, rollfiCompanyId: s
         userPayAccountEntity: {
           companyId: rollfiCompanyId,
           userId: rollfiUserId,
-          accountNumber: "9889890989",
-          routingNumber: "122238242",
-          bankName: "Chase Bank",
-          accountType: "savings",
-          accountName: "default",
+          accountNumber: bank.accountNumber,
+          routingNumber: bank.routingNumber,
+          bankName: bank.bankName,
+          accountType: bank.accountType,
+          accountName: bank.accountName,
         },
       },
       { headers }
@@ -769,19 +780,28 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // Brief pause — Rollfi sandbox may need a moment to commit KYB status before bank account check
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // 2 — Bank account (funding source for payroll; uses stable 9-digit EIN as account number)
+    // 2 — Bank account (funding source for payroll; env-aware: production reads stored bank data, sandbox uses test values)
     try {
+      const isProduction = getRollfiConfig().env === "production";
+      let bankAcct = { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+      if (isProduction) {
+        const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, localCompanyId));
+        if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
+          bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
+        }
+      }
+      req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "addCompanyBankAccount: using bank details");
       const r2 = await axios.post(
         `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
         {
           method: "addCompanyBankAccount",
           companyFundingSourceEntity: {
             companyId: rollfiCompanyId,
-            accountNumber: ein,
-            routingNumber: "221982389",
-            bankName: "BrightBridge Test Bank",
-            accountType: "checking",
-            accountName: "Payroll Account",
+            accountNumber: bankAcct.accountNumber,
+            routingNumber: bankAcct.routingNumber,
+            bankName: bankAcct.bankName,
+            accountType: bankAcct.accountType,
+            accountName: bankAcct.accountName,
           },
         },
         { headers: rollfiHeaders() }
@@ -1029,20 +1049,30 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
     steps.initiateCompanyKybError = err.response?.data ?? String(e);
   }
 
-  // Step 3 — re-add bank account (funding source) with new EIN as account number
+  // Step 3 — re-add bank account (funding source)
+  // Sandbox: use newEin as account number with test bank. Production: use stored real bank data.
   await new Promise((resolve) => setTimeout(resolve, 3000));
   try {
+    const isProduction = getRollfiConfig().env === "production";
+    let bankAcct = { accountNumber: newEin, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+    if (isProduction) {
+      const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, companyId));
+      if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
+        bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
+      }
+    }
+    req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "retry-kyb: addCompanyBankAccount details");
     const r = await axios.post(
       `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
       {
         method: "addCompanyBankAccount",
         companyFundingSourceEntity: {
           companyId: rollfiCompanyId,
-          accountNumber: newEin,
-          routingNumber: "221982389",
-          bankName: "BrightBridge Test Bank",
-          accountType: "checking",
-          accountName: "Payroll Account",
+          accountNumber: bankAcct.accountNumber,
+          routingNumber: bankAcct.routingNumber,
+          bankName: bankAcct.bankName,
+          accountType: bankAcct.accountType,
+          accountName: bankAcct.accountName,
         },
       },
       { headers }
@@ -1149,7 +1179,15 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
     return;
   }
 
-  const accountNumber = rollfiCompany.ein ?? randomNineDigits();
+  const isProduction = getRollfiConfig().env === "production";
+  let bankAcct = { accountNumber: rollfiCompany.ein ?? randomNineDigits(), routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+  if (isProduction) {
+    const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
+      bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
+    }
+  }
+  req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "onboard/bank-account: using bank details");
 
   try {
     const r = await axios.post(
@@ -1158,11 +1196,11 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
         method: "addCompanyBankAccount",
         companyFundingSourceEntity: {
           companyId: rollfiCompany.rollfiCompanyId,
-          accountNumber,
-          routingNumber: "221982389",
-          bankName: "BrightBridge Test Bank",
-          accountType: "checking",
-          accountName: "Payroll Account",
+          accountNumber: bankAcct.accountNumber,
+          routingNumber: bankAcct.routingNumber,
+          bankName: bankAcct.bankName,
+          accountType: bankAcct.accountType,
+          accountName: bankAcct.accountName,
         },
       },
       { headers: rollfiHeaders() }

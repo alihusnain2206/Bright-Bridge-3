@@ -53,6 +53,8 @@ interface FormData {
   entityType: string; ein: string; incorporationState: string; dateOfIncorporation: string; irsFilingForm: string; payrollRunThisYear: string;
   // Step 5
   payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
+  // Step 6 — funding bank account (production only; sandbox uses test values automatically)
+  fundingBankName: string; fundingRoutingNumber: string; fundingAccountNumber: string; fundingAccountType: string;
 }
 
 interface StateTaxEntry {
@@ -187,6 +189,7 @@ export default function ClientsNew() {
     ownershipPercentage: 100, isPayrollAdmin: true,
     entityType: "LLC", ein: "", incorporationState: "NJ", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
     payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
+    fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking",
   });
 
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
@@ -737,41 +740,72 @@ export default function ClientsNew() {
             </div>
 
             {!isProduction ? (
-              <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
-                <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
-                <div>
-                  <p className="font-semibold">Sandbox mode — test bank auto-configured</p>
-                  <p className="mt-0.5 text-blue-700">In production, you would enter the company's real business checking account details. For sandbox testing, BrightBridge automatically submits a test bank account when the client is created.</p>
+              <>
+                <div className="flex items-start gap-2.5 bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-800">
+                  <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-blue-500" />
+                  <div>
+                    <p className="font-semibold">Sandbox mode — test bank auto-configured</p>
+                    <p className="mt-0.5 text-blue-700">In production, you would enter the company's real business checking account details. For sandbox testing, BrightBridge automatically submits a test bank account when the client is created.</p>
+                  </div>
                 </div>
-              </div>
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-3">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
+                    <Landmark className="h-3.5 w-3.5" />Sandbox Test Account (auto-submitted)
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    {[
+                      { label: "Bank Name", value: "BrightBridge Test Bank" },
+                      { label: "Routing Number", value: "221982389" },
+                      { label: "Account Number", value: "Uses company EIN" },
+                      { label: "Account Type", value: "Business Checking" },
+                    ].map(({ label, value }) => (
+                      <div key={label} className="space-y-0.5">
+                        <p className="text-xs text-gray-400">{label}</p>
+                        <p className="font-mono font-medium text-gray-800">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
             ) : (
-              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-                <div>
-                  <p className="font-semibold">Bank account required for payroll funding</p>
-                  <p className="mt-0.5 text-amber-700">A real business checking account will be submitted to Rollfi to fund payroll and collect tax payments on behalf of this company.</p>
+              <div className="space-y-4">
+                <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                  <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                  <div>
+                    <p className="font-semibold">Enter the company's business bank account</p>
+                    <p className="mt-0.5 text-amber-700">This account will be used by Rollfi to fund payroll and collect tax payments on behalf of this company.</p>
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label>Bank Name *</Label>
+                    <Input value={form.fundingBankName} onChange={(e) => set("fundingBankName", e.target.value)} placeholder="e.g. Chase Bank" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Routing Number * (9 digits)</Label>
+                    <Input value={form.fundingRoutingNumber} onChange={(e) => set("fundingRoutingNumber", e.target.value.replace(/\D/g, ""))} placeholder="021000021" maxLength={9} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Account Number *</Label>
+                    <Input value={form.fundingAccountNumber} onChange={(e) => set("fundingAccountNumber", e.target.value)} placeholder="Your business checking account number" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Account Type *</Label>
+                    <div className="flex gap-3">
+                      {(["checking", "savings"] as const).map((t) => (
+                        <label key={t} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border cursor-pointer text-sm ${form.fundingAccountType === t ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
+                          <input type="radio" name="fundingAccountType" value={t} checked={form.fundingAccountType === t} onChange={() => set("fundingAccountType", t)} className="sr-only" />
+                          <span className={`h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 ${form.fundingAccountType === t ? "border-[#284362]" : "border-gray-300"}`}>
+                            {form.fundingAccountType === t && <span className="h-2 w-2 rounded-full bg-[#284362]" />}
+                          </span>
+                          {t.charAt(0).toUpperCase() + t.slice(1)}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
-
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 space-y-3">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide flex items-center gap-1.5">
-                <Landmark className="h-3.5 w-3.5" />{isProduction ? "Bank Account" : "Sandbox Test Account (auto-submitted)"}
-              </p>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                {[
-                  { label: "Bank Name", value: "BrightBridge Test Bank" },
-                  { label: "Routing Number", value: "221982389" },
-                  { label: "Account Number", value: "Uses company EIN" },
-                  { label: "Account Type", value: "Business Checking" },
-                ].map(({ label, value }) => (
-                  <div key={label} className="space-y-0.5">
-                    <p className="text-xs text-gray-400">{label}</p>
-                    <p className="font-mono font-medium text-gray-800">{value}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
 
             <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
