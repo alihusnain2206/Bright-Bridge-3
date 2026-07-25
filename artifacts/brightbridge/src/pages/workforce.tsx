@@ -235,6 +235,7 @@ export default function WorkforcePage() {
   // Data
   const [data,    setData]    = useState<WorkforceData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
   // ── Load clients list for super_admin selector ──
@@ -305,6 +306,23 @@ export default function WorkforcePage() {
   }, [companyId, fromDate, toDate]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
+
+  // ── Sync from EasyTeam then re-read ──────────────────────────────────────
+  const handleSync = useCallback(async () => {
+    if (!companyId) return;
+    setSyncing(true);
+    try {
+      await fetch("/api/easyteam/hours/sync", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, from: fromDate, to: toDate }),
+      });
+      await fetchAll();
+    } finally {
+      setSyncing(false);
+    }
+  }, [companyId, fromDate, toDate, fetchAll]);
 
   // ── Computed values ──────────────────────────────────────────────────────
   const shifts    = data?.shiftsData?.shifts ?? [];
@@ -503,10 +521,18 @@ export default function WorkforcePage() {
             {loading && !trend ? (
               <div className="h-48 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-white/30" /></div>
             ) : trendChartData.length === 0 ? (
-              <div className="h-48 flex flex-col items-center justify-center gap-2">
+              <div className="h-48 flex flex-col items-center justify-center gap-3">
                 <TrendingUp className="h-8 w-8 text-white/15" />
                 <p className="text-sm text-white/35">No shift data in this period</p>
-                <p className="text-xs text-white/25">Pull hours from EasyTeam to populate this chart</p>
+                <Button
+                  size="sm" variant="ghost"
+                  onClick={() => void handleSync()}
+                  disabled={syncing || loading}
+                  className="h-7 text-xs gap-1.5 border border-white/20 text-white/60 hover:text-white hover:bg-white/10"
+                >
+                  {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                  {syncing ? "Pulling from EasyTeam…" : "Pull from EasyTeam"}
+                </Button>
               </div>
             ) : (
               <ResponsiveContainer width="100%" height={200}>
@@ -601,7 +627,15 @@ export default function WorkforcePage() {
                   {entries.length === 0 ? "No timesheet data for this period" : "All timesheets approved"}
                 </p>
                 {entries.length === 0 && (
-                  <p className="text-xs text-white/30">Pull hours first, then approve via the Timesheets page</p>
+                  <Button
+                    size="sm" variant="ghost"
+                    onClick={() => void handleSync()}
+                    disabled={syncing || loading}
+                    className="h-7 text-xs gap-1.5 border border-white/20 text-white/50 hover:text-white hover:bg-white/10 mt-1"
+                  >
+                    {syncing ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                    {syncing ? "Pulling…" : "Pull from EasyTeam"}
+                  </Button>
                 )}
               </div>
             ) : (
@@ -776,8 +810,22 @@ export default function WorkforcePage() {
               <h2 className="text-sm font-semibold text-white">Quick Actions</h2>
             </div>
             <div className="grid grid-cols-2 gap-2">
+              {/* Pull Hours — triggers sync directly, no page nav required */}
+              <button
+                onClick={() => void handleSync()}
+                disabled={syncing || loading}
+                className="rounded-lg px-3 py-3 flex items-center gap-3 text-left transition-colors hover:bg-white/8 disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}
+              >
+                <span style={{ color: TEAL }}>
+                  {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                </span>
+                <div>
+                  <p className="text-xs font-medium text-white/80">{syncing ? "Syncing…" : "Pull Hours"}</p>
+                  <p className="text-xs text-white/35">Sync from EasyTeam</p>
+                </div>
+              </button>
               {[
-                { label: "Pull Hours",        sub: "Sync from EasyTeam",  link: "/timesheets",  icon: <RefreshCw  className="h-4 w-4" />, color: TEAL   },
                 { label: "Approve Timesheets",sub: "Review & sign off",   link: "/timesheets",  icon: <CheckCircle2 className="h-4 w-4" />, color: SUCCESS },
                 { label: "View Schedule",     sub: "EasyTeam schedule",   link: "/schedule",    icon: <Calendar   className="h-4 w-4" />, color: "#818cf8" },
                 { label: "Manage People",     sub: "Employee directory",  link: "/people",      icon: <Users      className="h-4 w-4" />, color: WARN   },
