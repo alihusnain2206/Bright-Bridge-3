@@ -1,0 +1,50 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+GOAL: Make employee wage a SINGLE SOURCE OF TRUTH in the employees table.
+Currently wage is duplicated in three places with no sync:
+- employees.hourly_wage (3500 = $35) — canonical, where the People module
+  writes ✓
+- user_accounts.hourly_wage (1800 = $18) — stale duplicate, read by
+  EasyTeam JWT generation
+- store.ts seed (hourlyWage: 2000 = $20) — hardcoded boot seed for test
+  employees only
+
+DO THIS IN ORDER, carefully:
+
+STEP 1 — AUDIT (report before changing): find every read of
+user_accounts.hourly_wage (especially EasyTeam JWT/token generation) and
+every read of the store's hourlyWage. List each with file/line. I want to
+see the full blast radius before anything is removed.
+
+STEP 2 — REPOINT READS: change every consumer found in Step 1 to read wage
+from employees.hourly_wage instead (via the same DB-first lookup helper we
+just established, if one exists — reuse it). EasyTeam JWT generation must
+now use the employees wage. Do NOT remove the column yet.
+
+STEP 3 — VERIFY nothing reads the duplicate: after repointing, confirm
+user_accounts.hourly_wage has zero remaining readers.
+
+STEP 4 — DROP THE DUPLICATE: only once Step 3 is clean, remove
+hourly_wage from the user_accounts table (schema + migration, dev; prod
+applies at Publish). If any writer still sets it, remove those writes too.
+
+STEP 5 — STORE: leave the store's seed as-is for now (it seeds test-only
+employees with no DB record and is the documented fallback), BUT confirm
+the DB-first lookup means a real employee's saved wage always beats the
+store seed. Add a code comment that the store wage is a last-resort
+fallback for record-less test employees only.
+
+SCOPE BOUNDARY: don't touch Rollfi flows, the dashboard, payroll import,
+or unrelated routes. Wage plumbing only.
+
+TESTING:
+- John Smith reads $35 everywhere: People profile, payroll calc,
+  Workforce labor cost, AND the EasyTeam JWT (previously $18)
+- Editing a wage in the UI is reflected in ALL those places without a
+  restart
+- No code references user_accounts.hourly_wage after the drop; tsc clean
+- A test employee with no DB record still falls back to the store wage
+  (no crash)
+
+DELIVERABLE: the Step 1 audit (all readers), files changed, migration
+confirmation, test results. REMINDER: Publish required for production.

@@ -101,11 +101,19 @@ const webhookLog: Array<{
   status: string;
 }> = [];
 
-router.get("/easyteam/employees", (req, res) => {
+router.get("/easyteam/employees", async (req, res) => {
   const companyId = req.query.companyId as string | undefined;
   const users = companyId
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
+  // Batch-fetch canonical wages from employees table (People module writes here).
+  // Store hourlyWage is a last-resort fallback for test-only employees with no DB record.
+  const empIds = users.map(u => u.employeeId).filter((id): id is string => !!id);
+  const dbWageRows = empIds.length > 0
+    ? await db.select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+        .from(employeesTable).where(inArray(employeesTable.id, empIds)).catch(() => [])
+    : [];
+  const dbWageMap = new Map(dbWageRows.map(e => [e.id, e.hourlyWage]));
   const employees = users
     .filter((u) => u.employeeId && u.role === "employee" && (!u.status || u.status === "active" || u.status === "onboarding"))
     .map((u) => ({
@@ -114,7 +122,7 @@ router.get("/easyteam/employees", (req, res) => {
       role: u.role,
       companyId: u.companyId,
       timeTrackingEnabled: true,
-      wage: u.hourlyWage ?? 1500,
+      wage: dbWageMap.get(u.employeeId!) ?? u.hourlyWage ?? 1500,
       wageType: "hourly" as const,
       status: u.status ?? "active",
     }));
@@ -181,22 +189,22 @@ router.post("/easyteam/token", async (req, res) => {
 
   let resolvedEtEmployeeId = employee_id;
   if (employee_id) {
-    // Prefer a matching staff user (seeded + dynamic logins carry role/position/wage and the
-    // canonical employeeId, so every JWT path maps to the same single EasyTeam record).
+    // Always query employees table first — it is the canonical wage source (People module
+    // writes here). Store lookup follows only for role/position/employeeId mapping.
+    const [dbEmp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employee_id)).catch(() => [undefined]);
+    if (dbEmp) {
+      resolvedRoleName = dbEmp.position;
+      resolvedAccessRole = "employee";
+      resolvedWage = (dbEmp.hourlyWage ?? 1500) / 100;
+    }
     const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === employee_id);
     if (staffUser) {
+      // Store has richer role/access info — overlay position and access_role.
+      // Wage stays from employees table above; only fall back to store if no DB record exists.
       resolvedRoleName = staffUser.position ?? resolvedRoleName;
       resolvedAccessRole = (staffUser.role === "manager" || staffUser.role === "owner") ? "manager" : "employee";
-      resolvedWage = (staffUser.hourlyWage ?? 1500) / 100;
       resolvedEtEmployeeId = staffUser.employeeId ?? employee_id;
-    } else {
-      // Fall back to the unified DB employees table for staff without a login account.
-      const [dbEmp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employee_id)).catch(() => [undefined]);
-      if (dbEmp) {
-        resolvedRoleName = dbEmp.position;
-        resolvedAccessRole = "employee";
-        resolvedWage = (dbEmp.hourlyWage ?? 1500) / 100;
-      }
+      if (!dbEmp) resolvedWage = (staffUser.hourlyWage ?? 1500) / 100;
     }
   }
 
@@ -1270,18 +1278,7 @@ router.get("/timesheets/shifts", async (req, res) => {
     for (const e of dbEmps) {
       if (e.hourlyWage != null) wageMap.set(e.id, e.hourlyWage / 100);
     }
-    // 2. user_accounts table — fills any gaps not covered by employees table
-    const needFromAccts = allShiftEmpIds.filter(id => !wageMap.has(id));
-    if (needFromAccts.length > 0) {
-      const dbAccts = await db
-        .select({ employeeId: userAccountsTable.employeeId, hourlyWage: userAccountsTable.hourlyWage })
-        .from(userAccountsTable)
-        .where(inArray(userAccountsTable.employeeId, needFromAccts));
-      for (const a of dbAccts) {
-        if (a.employeeId && a.hourlyWage != null) wageMap.set(a.employeeId, a.hourlyWage / 100);
-      }
-    }
-    // 3. In-memory store — last resort for users not yet persisted to DB
+    // 2. In-memory store — last resort for test-only employees with no DB record
     const needFromStore = allShiftEmpIds.filter(id => !wageMap.has(id));
     for (const u of store.getAllStaffUsers()) {
       if (u.employeeId && needFromStore.includes(u.employeeId) && u.hourlyWage != null) {

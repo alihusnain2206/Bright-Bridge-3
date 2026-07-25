@@ -20,7 +20,6 @@ export async function persistUserAccount(user: TestUser): Promise<void> {
       locationId: user.locationId ?? null,
       employeeId: user.employeeId ?? null,
       position:   user.position ?? null,
-      hourlyWage: user.hourlyWage ?? null,
       createdAt:  new Date().toISOString(),
     })
     .onConflictDoUpdate({
@@ -33,7 +32,6 @@ export async function persistUserAccount(user: TestUser): Promise<void> {
         locationId: user.locationId ?? null,
         employeeId: user.employeeId ?? null,
         position:   user.position ?? null,
-        hourlyWage: user.hourlyWage ?? null,
       },
     });
 }
@@ -70,7 +68,6 @@ export async function loadUserAccountsFromDb(): Promise<{ count: number }> {
       locationId: row.locationId ?? undefined,
       employeeId: row.employeeId ?? null,
       position:   row.position ?? "",
-      hourlyWage: row.hourlyWage ?? undefined,
     };
     store.addTestUser(user);
   }
@@ -117,7 +114,6 @@ export async function reconcileEmployeeLoginAccounts(): Promise<{ created: numbe
       companyId:  newUser.companyId ?? "",
       employeeId: newUser.employeeId ?? null,
       position:   newUser.position ?? null,
-      hourlyWage: newUser.hourlyWage ?? null,
       createdAt:  new Date().toISOString(),
     }).onConflictDoNothing();
 

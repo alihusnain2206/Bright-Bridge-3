@@ -3,7 +3,7 @@ import * as jwt from "jsonwebtoken";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
-import { db, companies, userAccounts } from "@workspace/db";
+import { db, companies, userAccounts, employees as employeesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 declare module "express-session" {
@@ -158,6 +158,16 @@ router.post("/auth/token-by-role", async (req, res) => {
   }
 
   let payload: Record<string, unknown>;
+
+  // Look up current wage from employees table — canonical source, always beats user_accounts.
+  // user.hourlyWage comes from user_accounts (stale); employees.hourly_wage is what the UI edits.
+  const [empWageRow] = user.employeeId
+    ? await db.select({ hourlyWage: employeesTable.hourlyWage })
+        .from(employeesTable)
+        .where(eq(employeesTable.id, user.employeeId))
+        .catch(() => [undefined])
+    : [undefined];
+  const wageCents = empWageRow?.hourlyWage ?? user.hourlyWage ?? 1500;
 
   if (user.role === "super_admin") {
     payload = {
