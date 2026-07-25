@@ -35,6 +35,7 @@ interface ShiftRow {
   easyteamLocationId: string;
   utcStartTime: string;
   utcEndTime: string | null;
+  localDate?: string | null;
   durationMs: number;
   payableDurationMs: number;
   active: boolean;
@@ -332,6 +333,32 @@ export default function WorkforcePage() {
   const employees = data?.employees ?? [];
   const names     = data?.names ?? {};
 
+  // If the EasyTeam trend API returns no days (common when their /reports endpoint
+  // is unavailable or returns 0-duration rows), compute trend from local shift data
+  // so the chart and Total Hours KPI stay accurate even without the external API.
+  const effectiveTrend = useMemo((): TrendData | null => {
+    const apiHasDays = (trend?.days.length ?? 0) > 0 && (trend?.totals.duration ?? 0) > 0;
+    if (apiHasDays) return trend!;
+    if (shifts.length === 0) return null;
+    const byDay = new Map<string, number>();
+    for (const s of shifts) {
+      const d = s.localDate ?? s.utcStartTime?.slice(0, 10);
+      if (!d) continue;
+      byDay.set(d, (byDay.get(d) ?? 0) + (s.payableDurationMs ?? 0));
+    }
+    if (byDay.size === 0) return null;
+    const totalMs  = Array.from(byDay.values()).reduce((a, b) => a + b, 0);
+    const laborCostTotal = summary?.laborCost ?? 0;
+    const days = Array.from(byDay.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, ms]) => ({
+        date,
+        duration: ms,
+        amount: totalMs > 0 ? (ms / totalMs) * laborCostTotal : 0,
+      }));
+    return { totals: { duration: totalMs, amount: laborCostTotal }, days };
+  }, [trend, shifts, summary]);
+
   const overtimeHours  = useMemo(() => computeOvertime(shifts), [shifts]);
   const deptBreakdown  = useMemo(() => deptHours(shifts, employees), [shifts, employees]);
   const alerts         = useMemo(() => buildAlerts(shifts, entries), [shifts, entries]);
@@ -350,7 +377,7 @@ export default function WorkforcePage() {
 
   const trendChartData = useMemo(() => {
     const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    return (trend?.days ?? []).map(d => {
+    return (effectiveTrend?.days ?? []).map(d => {
       const raw = (d.date ?? d.day ?? "").trim();
       // EasyTeam returns either "YYYY-MM-DD" or "YYYY-MM-DD HH:MM:SS".
       // Take the first 10 chars to isolate the date portion, then match.
@@ -451,7 +478,7 @@ export default function WorkforcePage() {
                 <KpiCard
                   icon={<Clock className="h-4 w-4" />}
                   label="Total Hours"
-                  value={trend ? fmtMs(trend.totals.duration) : (summary ? fmtHours(summary.totalPayableHours) : "—")}
+                  value={effectiveTrend ? fmtMs(effectiveTrend.totals.duration) : (summary ? fmtHours(summary.totalPayableHours) : "—")}
                   sub={summary ? `${summary.totalShifts} shifts` : undefined}
                   color={TEAL}
                 />
@@ -518,7 +545,7 @@ export default function WorkforcePage() {
               <h2 className="text-sm font-semibold text-white">Weekly Hours Trend</h2>
               <span className="text-xs text-white/40">{fmtDateLabel(fromDate, toDate)}</span>
             </div>
-            {loading && !trend ? (
+            {loading && !effectiveTrend ? (
               <div className="h-48 flex items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-white/30" /></div>
             ) : trendChartData.length === 0 ? (
               <div className="h-48 flex flex-col items-center justify-center gap-3">
