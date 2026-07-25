@@ -29,7 +29,9 @@ export interface RollfiWageFields {
 }
 
 export function getRollfiWageFields(emp: EmployeeWageInfo): RollfiWageFields {
-  const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false);
+  // Legacy 'salary_yearly' values are normalised to 'salary' at write time (companies.ts).
+  // Any remaining 'salary_yearly' records in prod are one-off data bugs; treat as salary here too.
+  const isSalary = emp.payType === "salary" || emp.payType === "salary_yearly" /* legacy — do not add new variants */;
   if (isSalary) {
     return {
       wageRate: (emp.annualSalary ?? 0) / 100,
