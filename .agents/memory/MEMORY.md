@@ -1,3 +1,5 @@
+- [Rollfi silent failure fix](rollfi-silent-failure-fix.md) — extractRollfiError helper; hard/soft classification; repair endpoint; W4 normalization
+- [FIX 6 audit July 2026](fix6-audit-july-2026.md) — 6 employees with wrong wage (cents sent as dollars); Sophia Bennett missing W4; repairs not yet done
 - [Rollfi sandbox pay period](rollfi-sandbox-payperiod.md) — use `getUnProcessedPayPeriod` not `getPayPeriod`; KYB failure blocks `initiatePayroll` in sandbox
 - [Rollfi employee onboarding flow](rollfi-employee-onboarding.md) — full 5-step KYC sequence required before employees can join payroll; bank account is the final activation gate
 - [EasyTeam environment](easyteam-production.md) — EasyTeam is PRODUCTION not sandbox; use production URLs, never revert to /sandbox/ prefix

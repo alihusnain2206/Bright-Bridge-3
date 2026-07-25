@@ -7,6 +7,7 @@ import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
+import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
 import { desc, eq, inArray, and } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
@@ -2228,6 +2229,76 @@ router.get("/rollfi/payperiod", async (req, res) => {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi pay period fetch failed");
     res.status(500).json({ error: "Failed to get pay period", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── Repair failed onboarding steps ───────────────────────────
+// POST /api/rollfi/employees/:employeeId/repair-onboarding
+// Re-runs the hard steps that failed during initial onboarding (stored in last_sync_error).
+// Returns { success, fixed, stillFailed }.
+router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const { employeeId } = req.params;
+  if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
+
+  try {
+    const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+    if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!emp.rollfiUserId) { res.status(400).json({ error: "Employee has no Rollfi user ID — cannot repair" }); return; }
+
+    const rollfiCompany = store.getRollfiCompany(emp.companyId);
+    if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+    // Parse which steps previously failed from last_sync_error
+    let previouslyFailed: string[] = [];
+    if (emp.lastSyncError) {
+      try {
+        const parsed = JSON.parse(emp.lastSyncError) as { failedSteps?: { step: string }[] };
+        previouslyFailed = (parsed.failedSteps ?? []).map((s) => s.step);
+      } catch { previouslyFailed = []; }
+    }
+
+    req.log.info({ employeeId, rollfiUserId: emp.rollfiUserId, previouslyFailed }, "repair-onboarding: starting");
+
+    // Re-run the KYC/W4/bank chain — all hard steps check for "already exists" and skip gracefully
+    const result = await runKycOnboardingNew(
+      emp.rollfiUserId,
+      rollfiCompany.rollfiCompanyId,
+      req.log,
+      {
+        filingStatus: "Single", // safe default — already-exists responses are treated as success
+        multipleJobs: false,
+        dependents: 0,
+        extraWithholding: 0,
+        homeState: emp.homeState ?? "NJ",
+      }
+    );
+
+    const fixed = previouslyFailed.filter((s) => !result.hardErrors.some((e) => e.step === s));
+    const stillFailed = result.hardErrors.map((e) => e.step);
+    const success = result.hardErrors.length === 0;
+
+    // Update DB
+    const now = new Date().toISOString();
+    if (success) {
+      await db.update(employeesTable).set({
+        rollfiOnboardedAt: now,
+        lastSyncError: null,
+        syncStatus: "synced",
+        updatedAt: now,
+      }).where(eq(employeesTable.id, employeeId));
+    } else {
+      await db.update(employeesTable).set({
+        lastSyncError: JSON.stringify({ failedSteps: result.hardErrors, softWarnings: result.softWarnings }),
+        updatedAt: now,
+      }).where(eq(employeesTable.id, employeeId));
+    }
+
+    req.log.info({ employeeId, success, fixed, stillFailed, softWarnings: result.softWarnings }, "repair-onboarding: complete");
+    res.json({ success, fixed, stillFailed, softWarnings: result.softWarnings });
+  } catch (err) {
+    req.log.error({ err, employeeId }, "repair-onboarding failed");
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
 

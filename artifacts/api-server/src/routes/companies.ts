@@ -701,15 +701,22 @@ router.post("/employees", async (req: Request, res: Response) => {
     const rollfiSynced = sync.rollfiSynced;
     const rollfiUserId = sync.rollfiUserId;
     const syncError = sync.syncError;
+    const rollfiFailedSteps = sync.rollfiFailedSteps;
+    const rollfiSoftWarnings = sync.rollfiSoftWarnings;
 
     // 3. Update DB with sync results
+    // Only mark rollfiOnboardedAt when ALL hard steps succeeded (no failed steps)
+    const hasHardFailures = rollfiFailedSteps && rollfiFailedSteps.length > 0;
     const syncStatus = easyteamSynced && rollfiSynced ? "synced" : (rollfiSynced || easyteamSynced) ? "partial" : "pending";
+    const lastSyncErrorValue = hasHardFailures
+      ? JSON.stringify({ failedSteps: rollfiFailedSteps, softWarnings: rollfiSoftWarnings ?? [] })
+      : syncError ?? null;
     await db.update(employees).set({
       easyteamSynced,
       rollfiUserId,
-      rollfiOnboardedAt: rollfiSynced ? now : undefined,
+      rollfiOnboardedAt: rollfiSynced && !hasHardFailures ? now : undefined,
       syncStatus,
-      lastSyncError: syncError,
+      lastSyncError: lastSyncErrorValue,
       updatedAt: new Date().toISOString(),
     }).where(eq(employees.id, employeeId));
 
@@ -812,7 +819,15 @@ router.post("/employees", async (req: Request, res: Response) => {
     }
 
     const [saved] = await db.select().from(employees).where(eq(employees.id, employeeId));
-    res.status(201).json({ ...saved, easyteamSynced, rollfiSynced, rollfiUserId, loginPassword: "Staff123!" });
+    res.status(201).json({
+      ...saved,
+      easyteamSynced,
+      rollfiSynced,
+      rollfiUserId,
+      loginPassword: "Staff123!",
+      rollfiFailedSteps: rollfiFailedSteps ?? [],
+      rollfiSoftWarnings: rollfiSoftWarnings ?? [],
+    });
   } catch (err) {
     req.log.error({ err }, "Failed to create employee");
     res.status(500).json({ error: "Failed to create employee" });

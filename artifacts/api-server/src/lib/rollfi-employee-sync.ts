@@ -15,14 +15,55 @@ function randomNineDigits(): string {
   return String(Math.floor(100_000_000 + Math.random() * 900_000_000));
 }
 
+// ── Shared body-error helper ─────────────────────────────────────────────────
+// Rollfi returns HTTP 200 with {"error":{...}} for logical failures.
+// extractRollfiError returns the message string, or null when the step succeeded.
+export function extractRollfiError(data: unknown): string | null {
+  if (!data || typeof data !== "object") return null;
+  const d = data as Record<string, unknown>;
+  const err = d.error;
+  if (!err) return null;
+  if (typeof err === "string") return err;
+  if (typeof err === "object") {
+    const e = err as Record<string, unknown>;
+    return typeof e.message === "string" ? e.message : JSON.stringify(e);
+  }
+  return String(err);
+}
+
+// ── Step-failure types ───────────────────────────────────────────────────────
+export interface OnboardingStepError {
+  step: string;
+  message: string;
+}
+
+// ── W4 filing status normalisation ──────────────────────────────────────────
+// Confirmed valid values (sandbox-probed): "Single", "Married", "Head of Household".
+// Legacy / mis-cased values are mapped to the nearest canonical form.
+const VALID_W4_STATUSES = ["Single", "Married", "Head of Household"] as const;
+const W4_LEGACY_MAP: Record<string, string> = {
+  "Married Filing Jointly": "Married",
+  "Married Filing Jointly or Qualifying Widow(er)": "Married",
+  "Qualifying Widow(er)": "Married",
+  "Married Filing Separately": "Single",
+  "single": "Single",
+  "married": "Married",
+  "head of household": "Head of Household",
+};
+
+export function normalizeW4FilingStatus(status: string | undefined | null): string {
+  if (!status) return "Single";
+  if ((VALID_W4_STATUSES as readonly string[]).includes(status)) return status;
+  return W4_LEGACY_MAP[status] ?? W4_LEGACY_MAP[status.toLowerCase()] ?? "Single";
+}
+
+// ── Data interfaces ──────────────────────────────────────────────────────────
 export interface W4Data {
   filingStatus: string;
   multipleJobs: boolean;
   dependents: number;
   extraWithholding: number;
   homeState: string;
-  /** State-specific W-4 field values collected from the UI via getStateW4FormFields.
-   *  When present, sent directly to addStateW4Information instead of the hardcoded fallback. */
   stateW4Fields?: Record<string, string>;
 }
 
@@ -53,6 +94,18 @@ function safeRollfiLog(data: unknown): Record<string, unknown> {
   return safe;
 }
 
+// ── KYC onboarding chain ─────────────────────────────────────────────────────
+/**
+ * Runs acceptTerms → addKyc → addW4 → addStateW4 → initiateKyc → addBank.
+ *
+ * HARD steps (employee cannot be paid without these):
+ *   addW4Information, addUserBankAccount
+ *
+ * SOFT steps (warn + continue):
+ *   acceptTermsAndCondition, addKycInformation, addStateW4Information, initiateUserKyc
+ *
+ * Returns { hardErrors, softWarnings }. Never throws.
+ */
 export async function runEmployeeKycOnboarding(
   rollfiUserId: string,
   rollfiCompanyId: string,
@@ -60,7 +113,7 @@ export async function runEmployeeKycOnboarding(
   w4: W4Data = DEFAULT_W4,
   identity: KycIdentity = {},
   bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string }
-): Promise<void> {
+): Promise<{ hardErrors: OnboardingStepError[]; softWarnings: OnboardingStepError[] }> {
   const _cfg = getRollfiConfig();
   const baseUrl = _cfg.baseUrl;
   const headers = makeRollfiHeaders(_cfg.clientId, _cfg.secretKey);
@@ -73,11 +126,20 @@ export async function runEmployeeKycOnboarding(
 
   log.info({ hasRealAddress: !!identity.address1, hasRealDob: !!identity.dateOfBirth, hasRealSsn: !!identity.ssn }, "runEmployeeKycOnboarding: identity source");
 
+  const hardErrors: OnboardingStepError[] = [];
+  const softWarnings: OnboardingStepError[] = [];
+
+  // ── acceptTermsAndCondition — SOFT ────────────────────────────────────────
   try {
     const r = await axios.put(`${baseUrl}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi acceptTermsAndCondition response");
-  } catch (e) { log.warn({ e }, "acceptTermsAndCondition failed (ignoring)"); }
+    const errMsg = extractRollfiError(r.data);
+    if (errMsg) softWarnings.push({ step: "acceptTermsAndCondition", message: errMsg });
+  } catch (e) {
+    softWarnings.push({ step: "acceptTermsAndCondition", message: e instanceof Error ? e.message : String(e) });
+  }
 
+  // ── addKycInformation — SOFT (gates initiateUserKyc) ─────────────────────
   let kycAdded = false;
   try {
     const r = await axios.post(`${baseUrl}/userOnboarding#addKycInformation`, {
@@ -86,17 +148,23 @@ export async function runEmployeeKycOnboarding(
     }, { headers });
     log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
     const raw = r.data as Record<string, unknown>;
-    const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
-    kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
-  } catch (e) { log.warn({ e }, "addKycInformation failed (ignoring)"); }
+    const errMsg = extractRollfiError(raw);
+    const isAlreadyExists = errMsg?.toLowerCase().includes("already exists") ?? false;
+    kycAdded = !errMsg || isAlreadyExists;
+    if (errMsg && !isAlreadyExists) softWarnings.push({ step: "addKycInformation", message: errMsg });
+  } catch (e) {
+    softWarnings.push({ step: "addKycInformation", message: e instanceof Error ? e.message : String(e) });
+  }
 
-  // Federal W-4 — use actual form data, not hardcoded defaults
+  // ── addW4Information — HARD ───────────────────────────────────────────────
+  const normalizedFilingStatus = normalizeW4FilingStatus(w4.filingStatus);
+  log.info({ originalStatus: w4.filingStatus, normalizedStatus: normalizedFilingStatus }, "addW4Information: normalised filing status");
   try {
     const r = await axios.post(`${baseUrl}/userOnboarding#addW4Information`, {
       method: "addW4Information",
       w4Information: {
         userId: rollfiUserId,
-        w4FilingStatus: w4.filingStatus,
+        w4FilingStatus: normalizedFilingStatus,
         haveMultipleJob: w4.multipleJobs,
         dependents: w4.dependents,
         dependentsAbove18: 0,
@@ -106,14 +174,18 @@ export async function runEmployeeKycOnboarding(
       },
     }, { headers });
     log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
-  } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
+    const errMsg = extractRollfiError(r.data);
+    if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
+      hardErrors.push({ step: "addW4Information", message: `Tax withholding rejected: ${errMsg}` });
+    }
+  } catch (e) {
+    hardErrors.push({ step: "addW4Information", message: `Tax withholding network error: ${e instanceof Error ? e.message : String(e)}` });
+  }
 
-  // State W-4 — prefer UI-collected dynamic fields (stateW4Fields from getStateW4FormFields);
-  // fall back to the hardcoded builder for states where UI data wasn't provided.
-  // States using the federal W-4 (ND, PA, UT) or with no income tax (AK, FL, NV, NH, SD, TN, TX, WA, WY) are skipped.
+  // ── addStateW4Information — SOFT ──────────────────────────────────────────
   const stateW4Payload = (w4.stateW4Fields && Object.keys(w4.stateW4Fields).length > 0)
     ? w4.stateW4Fields
-    : buildStateW4Payload(w4.homeState, w4.filingStatus, w4.dependents, w4.extraWithholding);
+    : buildStateW4Payload(w4.homeState, normalizedFilingStatus, w4.dependents, w4.extraWithholding);
   if (stateW4Payload) {
     try {
       const r = await axios.post(`${baseUrl}/userOnboarding#addStateW4Information`, {
@@ -122,20 +194,33 @@ export async function runEmployeeKycOnboarding(
         stateW4Information: stateW4Payload,
       }, { headers });
       log.info({ rollfiResponse: r.data, homeState: w4.homeState, source: w4.stateW4Fields ? "ui-form" : "fallback" }, "Rollfi addStateW4Information response");
-    } catch (e) { log.warn({ e }, "addStateW4Information failed (ignoring)"); }
+      const errMsg = extractRollfiError(r.data);
+      if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
+        softWarnings.push({ step: "addStateW4Information", message: errMsg });
+      }
+    } catch (e) {
+      softWarnings.push({ step: "addStateW4Information", message: e instanceof Error ? e.message : String(e) });
+    }
   } else {
     log.info({ homeState: w4.homeState }, "Skipping addStateW4Information — state uses federal W-4 or has no income tax");
   }
 
+  // ── initiateUserKyc — SOFT ────────────────────────────────────────────────
   if (!kycAdded) {
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
+    softWarnings.push({ step: "initiateUserKyc", message: "Skipped — KYC information was not accepted" });
   } else {
     try {
       const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
       log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
-    } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
+      const errMsg = extractRollfiError(r.data);
+      if (errMsg) softWarnings.push({ step: "initiateUserKyc", message: errMsg });
+    } catch (e) {
+      softWarnings.push({ step: "initiateUserKyc", message: e instanceof Error ? e.message : String(e) });
+    }
   }
 
+  // ── addUserBankAccount — HARD ─────────────────────────────────────────────
   const isProduction = _cfg.env === "production";
   if (isProduction && !bankInput?.accountNumber) {
     log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping bank step");
@@ -151,102 +236,52 @@ export async function runEmployeeKycOnboarding(
         userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
       }, { headers });
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addUserBankAccount response");
-    } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+      const errMsg = extractRollfiError(r.data);
+      if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
+        hardErrors.push({ step: "addUserBankAccount", message: `Bank account rejected: ${errMsg}` });
+      }
+    } catch (e) {
+      hardErrors.push({ step: "addUserBankAccount", message: `Bank account network error: ${e instanceof Error ? e.message : String(e)}` });
+    }
   }
+
+  return { hardErrors, softWarnings };
 }
 
+// ── Main onboarding entry point ──────────────────────────────────────────────
 export interface OnboardResult {
   success: boolean;
   rollfiUserId?: string;
   rollfiWageId?: string;
   error?: string;
+  hardErrors?: OnboardingStepError[];
+  softWarnings?: OnboardingStepError[];
 }
 
 export interface RollfiEmployeeInput {
   id: string;
   name: string;
-  email?: string;
+  email: string;
   roleName: string;
-  /** Hourly wage in dollars (used when payType = 'hourly' or payType is absent). */
   wage: number;
-  /** Pay type: 'hourly' | 'salary'. When absent defaults to 'hourly'. */
-  payType?: string | null;
-  /** Annual salary in CENTS — only used when payType = 'salary'. */
+  payType?: string;
   annualSalaryCents?: number | null;
-  /** Whether the employee qualifies for overtime pay (affects Rollfi userType for salary). */
-  overtimeEligible?: boolean | null;
-  /** Employee's home state — drives which state W-4 fields are submitted. Defaults to "NJ". */
+  overtimeEligible?: boolean;
   homeState?: string;
-  /** Real home address — sent to Rollfi addKycInformation instead of the dummy fallback. */
   homeAddress?: string;
   homeCity?: string;
   homeZip?: string;
-  /** Raw 9-digit SSN (no dashes). If omitted a random one is generated for the sandbox. */
   ssn?: string;
-  /** ISO date YYYY-MM-DD. Defaults to 1990-01-15 if omitted. */
   dateOfBirth?: string;
   w4FilingStatus?: string;
   w4MultipleJobs?: boolean;
   w4Dependents?: number;
   w4ExtraWithholding?: number;
-  /** State-specific W-4 fields from the UI form — used directly if provided. */
   stateW4Fields?: Record<string, string>;
-  /** Direct deposit bank details — only present when bankSetupMethod === "manual".
-   *  In sandbox mode these are ignored and test values are used automatically. */
   bankName?: string;
   routingNumber?: string;
   accountNumber?: string;
   accountType?: string;
-}
-
-/**
- * States that issue their own employee withholding certificate (state W-4).
- * All other states either have no income tax or instruct employees to use
- * the federal W-4 — for those, addStateW4Information must NOT be called.
- *
- * No income tax (skip): AK, FL, NV, NH, SD, TN, TX, WA, WY
- * Use federal W-4 (skip): ND, PA, UT
- */
-const STATES_WITH_OWN_W4 = new Set([
-  "AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "GA", "HI",
-  "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA",
-  "MI", "MN", "MS", "MO", "MT", "NE", "NJ", "NM", "NY", "NC",
-  "OH", "OK", "OR", "RI", "SC", "VT", "VA", "WI",
-]);
-
-/**
- * Build the stateW4Information payload for addStateW4Information.
- * Returns null when the state uses the federal W-4 or has no income tax
- * — the caller must skip the API call in that case.
- * Field names match the labels on the actual state W-4 form.
- */
-function buildStateW4Payload(
-  homeState: string,
-  filingStatus: string,
-  dependents: number,
-  additionalWithholding: number
-): Record<string, string> | null {
-  if (!STATES_WITH_OWN_W4.has(homeState.toUpperCase())) return null;
-
-  // Field name for allowances differs by state — confirmed via getStateW4FormFields.
-  // For production, call getStateW4FormFields dynamically to get the correct field names.
-  const allowancesField: Record<string, string> = {
-    NJ: "Total Allowances",   // NJ-W4 line 4
-    NY: "Withholding Allowance", // NY IT-2104 Box 1
-  };
-  const allowancesKey = allowancesField[homeState.toUpperCase()] ?? "Withholding Allowance";
-
-  const fields: Record<string, string> = {
-    "Filing Status": filingStatus,
-    [allowancesKey]: String(dependents),
-    "Additional Withholding": additionalWithholding.toFixed(2),
-  };
-  // NY residents in NYC / Yonkers have extra local-tax fields — confirmed via getStateW4FormFields.
-  if (homeState === "NY") {
-    fields["NYC Withholding Allowance"] = "0";
-    fields["NYC Additional Withholding"] = "0.00";
-  }
-  return fields;
 }
 
 export async function onboardEmployeeToRollfi(
@@ -255,31 +290,22 @@ export async function onboardEmployeeToRollfi(
   log: Logger
 ): Promise<OnboardResult> {
   const _cfg = getRollfiConfig();
-  if (!_cfg.credentialsPresent) {
-    return { success: false, error: "Rollfi credentials not configured" };
-  }
   const baseUrl = _cfg.baseUrl;
   const headers = makeRollfiHeaders(_cfg.clientId, _cfg.secretKey);
 
-  const existing = store.getRollfiEmployee(emp.id);
-  if (existing) {
-    return { success: true, rollfiUserId: existing.rollfiUserId, rollfiWageId: existing.rollfiWageId };
-  }
-
-  const nameParts = emp.name.trim().split(/\s+/).filter(Boolean);
+  const nameParts = emp.name.trim().split(/\s+/);
   const firstName = nameParts[0] ?? "";
   const lastName = nameParts.slice(1).join(" ") || "Staff";
 
   try {
     let rollfiUserId: string | undefined;
 
+    // ── addUser ───────────────────────────────────────────────────────────────
     const addUserResp = await axios.post(`${baseUrl}/adminPortal#addUser`, {
       method: "addUser",
       user: {
         companyId: rollfiCompany.rollfiCompanyId,
-        firstName,
-        middleName: "",
-        lastName,
+        firstName, middleName: "", lastName,
         email: emp.email ?? `${emp.id}@brightbridge.sandbox`,
         phoneNumber: "9733330001",
         dateOfJoin: "2024-01-01",
@@ -292,17 +318,11 @@ export async function onboardEmployeeToRollfi(
     }, { headers });
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
-
-    // Check if Rollfi says the email is already in use — look up the existing user
-    const errMsg = ((addUserRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
-    if (errMsg.toLowerCase().includes("email already in use") || errMsg.toLowerCase().includes("already in use")) {
+    const addUserErr = ((addUserRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+    if (addUserErr.toLowerCase().includes("email already in use") || addUserErr.toLowerCase().includes("already in use")) {
       log.warn({ empId: emp.id, email: emp.email }, "Rollfi email already in use — looking up existing user");
       try {
-        const getUsersResp = await axios.post(
-          `${baseUrl}/reports#getUsers`,
-          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
-          { headers }
-        );
+        const getUsersResp = await axios.post(`${baseUrl}/reports#getUsers`, { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId }, { headers });
         type RollfiUser = { userId: string; firstName?: string; lastName?: string; email?: string };
         const users = ((getUsersResp.data as { users?: RollfiUser[] }).users ?? []);
         const targetEmail = (emp.email ?? "").toLowerCase();
@@ -311,28 +331,19 @@ export async function onboardEmployeeToRollfi(
           (u.email && u.email.toLowerCase() === targetEmail) ||
           (`${u.firstName ?? ""} ${u.lastName ?? ""}`.trim().toLowerCase() === targetName)
         );
-        if (match) {
-          rollfiUserId = match.userId;
-          log.info({ rollfiUserId, empId: emp.id }, "Resolved existing Rollfi user for re-sync");
-        }
-      } catch (lookupErr) {
-        log.warn({ lookupErr }, "getUsers lookup failed");
-      }
-      if (!rollfiUserId) {
-        return { success: false, error: `Rollfi email already in use and could not resolve existing user` };
-      }
+        if (match) { rollfiUserId = match.userId; log.info({ rollfiUserId, empId: emp.id }, "Resolved existing Rollfi user for re-sync"); }
+      } catch (lookupErr) { log.warn({ lookupErr }, "getUsers lookup failed"); }
+      if (!rollfiUserId) return { success: false, error: `Rollfi email already in use and could not resolve existing user` };
     } else {
       const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
       rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
-      if (!rollfiUserId) {
-        return { success: false, error: `Rollfi addUser returned unexpected shape: ${JSON.stringify(addUserRaw).slice(0, 200)}` };
-      }
+      if (!rollfiUserId) return { success: false, error: `Rollfi addUser returned unexpected shape: ${JSON.stringify(addUserRaw).slice(0, 200)}` };
     }
 
-    // Add wage BEFORE initiating KYC — Rollfi requires wage info to exist first
+    // ── addUserWage — HARD ────────────────────────────────────────────────────
     const wageFields = getRollfiWageFields({
       payType: emp.payType,
-      hourlyWage: Math.round(emp.wage * 100), // wage is dollars → convert to cents for resolver
+      hourlyWage: Math.round(emp.wage * 100),
       annualSalary: emp.annualSalaryCents ?? null,
       overtimeEligible: emp.overtimeEligible,
     });
@@ -355,10 +366,12 @@ export async function onboardEmployeeToRollfi(
     log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
+    const wageErrMsg = extractRollfiError(addWageRaw);
     const wageObj = (addWageRaw.userWage ?? addWageRaw) as Record<string, unknown>;
-    const rollfiWageId = (wageObj.userWageId ?? wageObj.id) as string | undefined;
+    const rollfiWageId = wageErrMsg ? undefined : ((wageObj.userWageId ?? wageObj.id) as string | undefined);
 
-    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
+    // ── KYC / W4 / bank chain ─────────────────────────────────────────────────
+    const kycResult = await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
       filingStatus: emp.w4FilingStatus ?? DEFAULT_W4.filingStatus,
       multipleJobs: emp.w4MultipleJobs ?? DEFAULT_W4.multipleJobs,
       dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
@@ -366,27 +379,65 @@ export async function onboardEmployeeToRollfi(
       homeState: emp.homeState ?? DEFAULT_W4.homeState,
       stateW4Fields: emp.stateW4Fields,
     }, {
-      address1: emp.homeAddress,
-      city: emp.homeCity,
-      state: emp.homeState,
-      zipcode: emp.homeZip,
-      ssn: emp.ssn,
-      dateOfBirth: emp.dateOfBirth,
+      address1: emp.homeAddress, city: emp.homeCity, state: emp.homeState,
+      zipcode: emp.homeZip, ssn: emp.ssn, dateOfBirth: emp.dateOfBirth,
     }, {
-      bankName: emp.bankName,
-      accountType: emp.accountType,
+      bankName: emp.bankName, routingNumber: emp.routingNumber,
+      accountNumber: emp.accountNumber, accountType: emp.accountType,
     });
 
-    await persistRollfiEmployee(emp.id, {
-      rollfiUserId,
-      rollfiWageId,
-      onboardedAt: new Date().toISOString(),
-    });
+    // Always persist rollfiUserId so repair routes can find the user later
+    await persistRollfiEmployee(emp.id, { rollfiUserId, rollfiWageId, onboardedAt: new Date().toISOString() });
 
-    return { success: true, rollfiUserId, rollfiWageId };
+    // ── Aggregate hard failures ───────────────────────────────────────────────
+    const allHardErrors: OnboardingStepError[] = [
+      ...(wageErrMsg ? [{ step: "addUserWage", message: `Wage rejected: ${wageErrMsg}` }] : []),
+      ...kycResult.hardErrors,
+    ];
+
+    if (allHardErrors.length > 0) {
+      log.error({ hardErrors: allHardErrors, softWarnings: kycResult.softWarnings, employeeId: emp.id }, "Rollfi onboarding completed with hard failures");
+      return {
+        success: false,
+        rollfiUserId, rollfiWageId,
+        error: allHardErrors.map((e) => `${e.step}: ${e.message}`).join("; "),
+        hardErrors: allHardErrors,
+        softWarnings: kycResult.softWarnings,
+      };
+    }
+
+    if (kycResult.softWarnings.length > 0) {
+      log.warn({ softWarnings: kycResult.softWarnings, employeeId: emp.id }, "Rollfi onboarding completed with soft warnings");
+    }
+    return { success: true, rollfiUserId, rollfiWageId, softWarnings: kycResult.softWarnings };
+
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     log.error({ err, employeeId: emp.id }, "Rollfi employee onboard failed");
     return { success: false, error: msg };
+  }
+}
+
+// ── State W-4 payload builder ────────────────────────────────────────────────
+export interface StateW4Payload { [key: string]: string | number | boolean; }
+
+const STATES_USING_FEDERAL_W4 = new Set(["ND", "PA", "UT"]);
+const STATES_NO_INCOME_TAX   = new Set(["AK", "FL", "NV", "NH", "SD", "TN", "TX", "WA", "WY"]);
+
+export function buildStateW4Payload(
+  state: string,
+  filingStatus: string,
+  dependents: number,
+  extraWithholding: number
+): StateW4Payload | null {
+  if (!state || STATES_USING_FEDERAL_W4.has(state) || STATES_NO_INCOME_TAX.has(state)) return null;
+  const base = { state, filingStatus, dependents, extraWithholding };
+  switch (state) {
+    case "NJ": return { ...base, "Filing Status": filingStatus === "Married" ? "Married" : "Single", "Total Allowances": String(dependents), "Additional Withholding": String(extraWithholding) };
+    case "NY": return { ...base, "Filing Status": filingStatus === "Married" ? "Married" : "Single", "Withholding Allowance": String(dependents), "Additional Withholding": String(extraWithholding) };
+    case "CA": return { ...base, "Filing Status": filingStatus, "Withholding Allowances": String(dependents), "Additional Withholding": String(extraWithholding) };
+    case "MD": return { ...base, "Filing Status": filingStatus, "Total Exemptions": String(dependents), "Additional Withholding": String(extraWithholding) };
+    case "VA": return { ...base, "Filing Status": filingStatus, "Total Exemptions": String(dependents), "Additional Withholding": String(extraWithholding) };
+    default:   return { ...base, "Filing Status": filingStatus, "Total Allowances": String(dependents), "Additional Withholding": String(extraWithholding) };
   }
 }

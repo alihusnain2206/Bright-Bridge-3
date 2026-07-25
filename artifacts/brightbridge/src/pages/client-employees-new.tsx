@@ -177,7 +177,14 @@ export default function ClientEmployeesNew() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
-  const [created, setCreated] = useState<{ id: string; firstName: string; lastName: string; easyteamSynced?: boolean; rollfiSynced?: boolean; loginPassword?: string } | null>(null);
+  const [created, setCreated] = useState<{
+    id: string; firstName: string; lastName: string;
+    easyteamSynced?: boolean; rollfiSynced?: boolean; loginPassword?: string;
+    rollfiFailedSteps?: { step: string; message: string }[];
+    rollfiSoftWarnings?: { step: string; message: string }[];
+  } | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const { data: companyData } = useQuery<Company>({
     queryKey: ["/api/companies", companyId],
@@ -336,26 +343,99 @@ export default function ClientEmployeesNew() {
 
   // ── Success screen ───────────────────────────────────────────
   if (created) {
+    const hasHardFailures = (created.rollfiFailedSteps?.length ?? 0) > 0;
+
+    const handleRetry = async () => {
+      if (!created.id || retrying) return;
+      setRetrying(true);
+      setRetryResult(null);
+      try {
+        const r = await fetch(`/api/rollfi/employees/${created.id}/repair-onboarding`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+        const d = await r.json() as { success?: boolean; fixed?: string[]; stillFailed?: string[]; error?: string };
+        if (r.ok && d.success) {
+          setRetryResult({ success: true, message: `Repaired: ${(d.fixed ?? []).join(", ") || "all steps"}` });
+          setCreated((c) => c ? { ...c, rollfiSynced: true, rollfiFailedSteps: [], rollfiSoftWarnings: [] } : c);
+        } else {
+          const stillFailed = d.stillFailed?.length ? ` Still failing: ${d.stillFailed.join(", ")}` : "";
+          setRetryResult({ success: false, message: (d.error ?? "Retry did not fully succeed.") + stillFailed });
+        }
+      } catch {
+        setRetryResult({ success: false, message: "Network error during retry." });
+      } finally {
+        setRetrying(false);
+      }
+    };
+
     return (
       <div className="max-w-xl mx-auto">
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
-          <div className="px-8 py-8 text-center border-b">
-            <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto mb-3" />
-            <h2 className="text-xl font-bold text-gray-900">{created.firstName} {created.lastName} has been added!</h2>
-            <p className="text-sm text-gray-500 mt-1">Here's what was set up</p>
+          <div className={`px-8 py-8 text-center border-b ${hasHardFailures ? "bg-red-50" : ""}`}>
+            {hasHardFailures
+              ? <AlertTriangle className="h-12 w-12 text-red-500 mx-auto mb-3" />
+              : <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto mb-3" />}
+            <h2 className="text-xl font-bold text-gray-900">
+              {hasHardFailures
+                ? `${created.firstName} ${created.lastName} — Payroll setup incomplete`
+                : `${created.firstName} ${created.lastName} has been added!`}
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {hasHardFailures ? "Profile created, but some payroll steps failed and need attention." : "Here's what was set up"}
+            </p>
           </div>
+
+          {/* Hard failures panel */}
+          {hasHardFailures && (
+            <div className="px-8 py-5 bg-red-50 border-b border-red-100 space-y-3">
+              <p className="text-sm font-semibold text-red-800">Payroll steps that failed:</p>
+              {created.rollfiFailedSteps!.map((f) => (
+                <div key={f.step} className="flex items-start gap-2 text-sm text-red-700">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-medium">{f.step}:</span> {f.message}
+                  </div>
+                </div>
+              ))}
+              {retryResult && (
+                <div className={`mt-2 text-sm rounded-lg px-3 py-2 ${retryResult.success ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+                  {retryResult.message}
+                </div>
+              )}
+              <Button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="mt-1 w-full text-white border-0 text-sm"
+                style={{ background: "#dc2626" }}
+              >
+                {retrying ? "Retrying failed steps…" : "Retry Failed Steps"}
+              </Button>
+            </div>
+          )}
+
+          {/* Soft warnings */}
+          {(created.rollfiSoftWarnings?.length ?? 0) > 0 && !hasHardFailures && (
+            <div className="px-8 py-3 bg-amber-50 border-b border-amber-100">
+              <p className="text-xs font-semibold text-amber-700 mb-1">Non-critical warnings (onboarding still complete):</p>
+              {created.rollfiSoftWarnings!.map((w) => (
+                <p key={w.step} className="text-xs text-amber-600">• {w.step}: {w.message}</p>
+              ))}
+            </div>
+          )}
+
           <div className="px-8 py-5 space-y-2.5">
             {[
               { done: true, label: "BrightBridge profile created" },
-              { done: !!created.rollfiSynced, label: created.rollfiSynced ? "Rollfi payroll account created" : "Rollfi: pending (company may need onboarding first)" },
+              { done: !hasHardFailures, label: hasHardFailures ? "Rollfi payroll setup: incomplete (see errors above)" : "Rollfi payroll account created" },
               { done: true, label: "Identity verification submitted" },
               { done: true, label: form.payType === "salary"
                   ? `Salary set: $${form.wageAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr`
                   : `Wage set: $${form.wageAmount.toFixed(2)}/hr` },
-              { done: true, label: "W4 tax withholding configured" },
+              { done: !hasHardFailures || !(created.rollfiFailedSteps ?? []).some(f => f.step === "addW4Information"), label: "W4 tax withholding configured" },
               { done: created.easyteamSynced, label: created.easyteamSynced ? "EasyTeam time clock ready — can clock in immediately!" : "EasyTeam: will sync on first Time Clock use" },
             ].map(({ done, label }) => (
-              <div key={label} className={`flex items-center gap-2.5 text-sm ${done ? "text-emerald-700" : "text-amber-600"}`}>
+              <div key={label} className={`flex items-center gap-2.5 text-sm ${done ? "text-emerald-700" : "text-red-600"}`}>
                 {done ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
                 {label}
               </div>
@@ -368,7 +448,7 @@ export default function ClientEmployeesNew() {
             {created.loginPassword && <p>→ Login created: {form.email} / {created.loginPassword}</p>}
           </div>
           <div className="px-8 py-4 flex gap-3">
-            <Button onClick={() => { setCreated(null); setStep(1); setForm((f) => ({ ...f, firstName: "", lastName: "", email: "", phone: "" })); }} variant="outline" className="flex-1">Add Another</Button>
+            <Button onClick={() => { setCreated(null); setStep(1); setRetryResult(null); setForm((f) => ({ ...f, firstName: "", lastName: "", email: "", phone: "" })); }} variant="outline" className="flex-1">Add Another</Button>
             <Button onClick={() => navigate(`/clients/${companyId}`)} className="flex-1 text-white border-0" style={{ background: ORANGE }}>View All Employees →</Button>
           </div>
         </div>

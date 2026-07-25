@@ -49,6 +49,10 @@ export interface EmployeeSyncResult {
   rollfiSynced: boolean;
   rollfiUserId?: string;
   syncError?: string;
+  /** Hard-failure onboarding steps — employee cannot be paid until resolved. */
+  rollfiFailedSteps?: { step: string; message: string }[];
+  /** Soft-failure warnings — logged but onboarding continues. */
+  rollfiSoftWarnings?: { step: string; message: string }[];
 }
 
 /**
@@ -98,7 +102,8 @@ export async function syncEmployeeToIntegrations(
         w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
         w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
         stateW4Fields: emp.stateW4Fields,
-        bankName: emp.bankName, accountType: emp.accountType,
+        bankName: emp.bankName, routingNumber: emp.routingNumber,
+        accountNumber: emp.accountNumber, accountType: emp.accountType,
       },
       rollfiCompany,
       log
@@ -106,6 +111,14 @@ export async function syncEmployeeToIntegrations(
     rollfiSynced = r.success;
     rollfiUserId = r.rollfiUserId;
     syncError = r.error;
+    return {
+      easyteamSynced: etResult.success,
+      rollfiSynced,
+      rollfiUserId,
+      syncError,
+      rollfiFailedSteps: r.hardErrors,
+      rollfiSoftWarnings: r.softWarnings,
+    };
   } else {
     syncError = "Company not yet onboarded to Rollfi";
   }
