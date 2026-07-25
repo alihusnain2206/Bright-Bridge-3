@@ -238,10 +238,11 @@ export default function WorkforcePage() {
   const [toDate,   setToDate]   = useState(week.to);
 
   // Data
-  const [data,    setData]    = useState<WorkforceData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
+  const [data,             setData]             = useState<WorkforceData | null>(null);
+  const [loading,          setLoading]          = useState(false);
+  const [syncing,          setSyncing]          = useState(false);
+  const [error,            setError]            = useState<string | null>(null);
+  const [payPeriodSettled, setPayPeriodSettled] = useState(false);
 
   // ── Load clients list for super_admin selector ──
   useEffect(() => {
@@ -260,12 +261,14 @@ export default function WorkforcePage() {
   // ── Load pay period once per company ──
   useEffect(() => {
     if (!companyId) return;
+    setPayPeriodSettled(false);
     void (async () => {
       try {
         const r = await fetch(`/api/companies/${encodeURIComponent(companyId)}/pay-period`, { credentials: "include" });
         const d = await r.json() as { from?: string; to?: string };
         if (d.from && d.to) { setFromDate(d.from); setToDate(d.to); }
       } catch { /* keep current week */ }
+      finally { setPayPeriodSettled(true); }
     })();
   }, [companyId]);
 
@@ -317,9 +320,9 @@ export default function WorkforcePage() {
   // If the user manually changes the date range they can still use Pull Hours.
   const autoSyncedForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!companyId || !fromDate || !toDate) return;
-    // Key includes the date range so a re-sync fires when the pay period
-    // corrects the default "current week" dates to the Rollfi pay period.
+    // Wait for the pay period fetch to finish so we sync with the correct
+    // dates (not the default "current week"), preventing a double-sync flicker.
+    if (!companyId || !fromDate || !toDate || !payPeriodSettled) return;
     const key = `${companyId}/${fromDate}/${toDate}`;
     if (autoSyncedForRef.current === key) return;
     autoSyncedForRef.current = key;
@@ -337,7 +340,7 @@ export default function WorkforcePage() {
         setSyncing(false);
       }
     })();
-  }, [companyId, fromDate, toDate, fetchAll]);
+  }, [companyId, fromDate, toDate, payPeriodSettled, fetchAll]);
 
   // ── Sync from EasyTeam then re-read ──────────────────────────────────────
   const handleSync = useCallback(async () => {
