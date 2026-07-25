@@ -1,0 +1,47 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+GOAL: Add auth to POST /api/easyteam/hours/sync (currently anonymous —
+confirmed triggerable via unauthenticated curl). Access: super_admin,
+owner, manager. AND consolidate the scattered inline auth checks into one
+reusable helper so no future route silently ships unguarded.
+
+CONTEXT: Auth is currently enforced by copy-pasted inline
+`if (!req.session.userId) res.status(401)` checks per route. hours/sync
+was missed because there's no central guard. Some routes check auth, some
+check role, some check nothing.
+
+DO THIS:
+1. AUDIT (report first): list every easyteam.ts + related route and its
+   current guard (none / session-only / role check). I want the full
+   picture before changes.
+2. Create ONE shared middleware, e.g. requireAuth (session required) and
+   requireRole(...roles), in a shared location. Reuse across routes.
+3. Apply requireRole("super_admin","owner","manager") to
+   POST /easyteam/hours/sync. Server-side is the source of truth.
+4. Replace the existing inline session checks on hours/approve and
+   timesheets/shifts + timesheets/trend with requireAuth (behavior
+   unchanged — just centralized, so they're consistent).
+5. For OTHER unguarded write/diagnostic endpoints found in the audit
+   (e.g. test-connection), LIST them with a recommended role set but do
+   NOT change them yet — I'll confirm each. Leave the two webhook
+   endpoints alone (they're inbound from EasyTeam, different auth model —
+   note the HMAC-mismatch-warns-but-processes behavior as a pre-launch
+   item to tighten).
+6. Manager scope: a manager should only sync THEIR OWN company. If
+   company-scoping isn't trivially available at this route, apply the
+   role gate now and flag company-scoping as a TODO — do not half-build
+   it.
+
+DO NOT TOUCH: sync logic, Rollfi flows, dashboard, wage lookup.
+
+TESTING (on production after publish):
+- Anonymous POST /easyteam/hours/sync → 401/403 (was 200)
+- Employee session → 403; owner/manager/super_admin → works
+- Dashboard's own sync still works as owner
+- hours/approve + timesheets endpoints still work (unchanged behavior)
+- tsc clean
+
+DELIVERABLE: audit table, shared helper created, files changed, the
+list of other unguarded endpoints + recommended roles, test results.
+REMINDER: Publish required; the endpoint is only truly guarded once
+production has it.

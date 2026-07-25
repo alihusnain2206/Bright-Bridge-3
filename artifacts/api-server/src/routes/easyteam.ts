@@ -10,6 +10,7 @@ import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
+import { requireAuth, requireRole } from "../lib/auth-middleware.js";
 
 const router: IRouter = Router();
 
@@ -343,7 +344,10 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
 
 // ── Sync EasyTeam hours → Rollfi bridge ──────────────────────
 
-router.post("/easyteam/hours/sync", async (req, res) => {
+// TODO(manager-scope): managers should only be able to sync their own company.
+// The role gate is applied now; company-scoping should be enforced once the
+// actorSync pattern is extended to reject cross-company requests for managers.
+router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { from, to, companyId } = req.body as { from?: string; to?: string; companyId?: string };
   const toDate   = to   ? new Date(to + "T23:59:59.999Z") : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -822,9 +826,8 @@ async function fetchEasyTeamShiftsForLocation(
   }
 }
 
-router.post("/easyteam/hours/approve", async (req, res) => {
-  const userId = req.session?.userId;
-  if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/easyteam/hours/approve", requireAuth, async (req, res) => {
+  const userId = req.session.userId!;
 
   const body = req.body as {
     from?: string; to?: string; companyId?: string;
@@ -1221,12 +1224,7 @@ const SHIFT_THRESHOLDS = {
 } as const;
 
 // ── GET /api/timesheets/shifts — company-scoped shift store with computed flags ──
-router.get("/timesheets/shifts", async (req, res) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const user = store.getUserById(req.session.userId);
-  if (!user || (user.role !== "super_admin" && user.role !== "owner" && user.role !== "manager")) {
-    res.status(403).json({ error: "Insufficient role" }); return;
-  }
+router.get("/timesheets/shifts", requireRole("super_admin", "owner", "manager"), async (req, res) => {
 
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
@@ -1308,8 +1306,7 @@ router.get("/timesheets/shifts", async (req, res) => {
 });
 
 // ── GET /api/timesheets/trend — proxy EasyTeam /timesheets/reports for trend chart ──
-router.get("/timesheets/trend", async (req, res) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/timesheets/trend", requireAuth, async (req, res) => {
 
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
