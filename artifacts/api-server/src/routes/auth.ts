@@ -195,8 +195,8 @@ router.post("/auth/token-by-role", async (req, res) => {
         name: "manager",
         permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
       },
-      role: { name: user.position, hourlyWage: (user.hourlyWage ?? 2500) / 100 },
-      wage: (user.hourlyWage ?? 2500) / 100,
+      role: { name: user.position, hourlyWage: wageCents / 100 },
+      wage: wageCents / 100,
       wageType: "hourly",
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
@@ -212,8 +212,8 @@ router.post("/auth/token-by-role", async (req, res) => {
         name: "manager",
         permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
       },
-      role: { name: user.position, hourlyWage: (user.hourlyWage ?? 2500) / 100 },
-      wage: (user.hourlyWage ?? 2500) / 100,
+      role: { name: user.position, hourlyWage: wageCents / 100 },
+      wage: wageCents / 100,
       wageType: "hourly",
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
@@ -232,8 +232,8 @@ router.post("/auth/token-by-role", async (req, res) => {
         name: "employee",
         permissions: ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE"],
       },
-      role: { name: user.position, hourlyWage: (user.hourlyWage ?? 1500) / 100 },
-      wage: (user.hourlyWage ?? 1500) / 100,
+      role: { name: user.position, hourlyWage: wageCents / 100 },
+      wage: wageCents / 100,
       wageType: "hourly",
       features: { geolocation: false, shiftNotes: false },
     };

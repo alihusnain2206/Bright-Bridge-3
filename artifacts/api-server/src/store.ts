@@ -234,6 +234,10 @@ const testUsers: TestUser[] = [
   { id: "USER-001", name: "Joanne Indiviglio", email: "joanne@brightbridgeassist.com", password: "Admin123!", role: "super_admin", companyId: "ORG-BRIGHTBRIDGE", employeeId: "ADMIN-JOANNE", position: "Super Admin" },
   { id: "USER-002", name: "Susan Manager", email: "manager@sunshine.com", password: "Manager123!", role: "owner", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "MGR-SUNSHINE-001", position: "Daycare Manager" },
   { id: "USER-003", name: "Mike Manager", email: "manager@rainbow.com", password: "Manager123!", role: "owner", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "MGR-RAINBOW-001", position: "Daycare Manager" },
+  // NOTE: hourlyWage here is a LAST-RESORT FALLBACK only.
+  // For any employee that has a DB record in the `employees` table, the DB wage always wins.
+  // These values are only used if the employee has no `employees` row at all (e.g. during
+  // the very first boot before the seed write, or for record-less test employees).
   { id: "USER-004", name: "John Smith", email: "john@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-001", position: "Teacher", hourlyWage: 2000 },
   { id: "USER-005", name: "Mary Johnson", email: "mary@sunshine.com", password: "Staff123!", role: "employee", companyId: "ORG-SUNSHINE", locationId: "LOC-SUNSHINE", employeeId: "EMP-SUNSHINE-002", position: "Assistant", hourlyWage: 1500 },
   { id: "USER-006", name: "Tom Wilson", email: "tom@rainbow.com", password: "Staff123!", role: "employee", companyId: "ORG-RAINBOW", locationId: "LOC-RAINBOW", employeeId: "EMP-RAINBOW-001", position: "Teacher", hourlyWage: 1800 },
