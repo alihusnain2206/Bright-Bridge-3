@@ -318,8 +318,11 @@ export default function WorkforcePage() {
   const autoSyncedForRef = useRef<string | null>(null);
   useEffect(() => {
     if (!companyId || !fromDate || !toDate) return;
-    if (autoSyncedForRef.current === companyId) return;
-    autoSyncedForRef.current = companyId;
+    // Key includes the date range so a re-sync fires when the pay period
+    // corrects the default "current week" dates to the Rollfi pay period.
+    const key = `${companyId}/${fromDate}/${toDate}`;
+    if (autoSyncedForRef.current === key) return;
+    autoSyncedForRef.current = key;
     void (async () => {
       setSyncing(true);
       try {
