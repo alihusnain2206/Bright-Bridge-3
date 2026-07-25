@@ -726,9 +726,9 @@ export default function ClientEmployeesNew() {
                   )}
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1.5"><Label>Bank Name *</Label><Input value={form.bankName} onChange={(e) => set("bankName", e.target.value)} placeholder="Chase Bank" /></div>
-                  <div className="space-y-1.5"><Label>Routing Number * (9 digits)</Label><Input value={form.routingNumber} onChange={(e) => set("routingNumber", e.target.value)} placeholder="122238242" maxLength={9} /></div>
-                  <div className="space-y-1.5"><Label>Account Number *</Label><Input value={form.accountNumber} onChange={(e) => set("accountNumber", e.target.value)} placeholder="9889890989" /></div>
+                  <div className="space-y-1.5"><Label>Bank Name *</Label><Input value={form.bankName} onChange={(e) => set("bankName", e.target.value)} placeholder="e.g. Chase Bank" /></div>
+                  <div className="space-y-1.5"><Label>Routing Number * (9 digits)</Label><Input value={form.routingNumber} onChange={(e) => set("routingNumber", e.target.value.replace(/\D/g, ""))} placeholder="9-digit ABA routing number" maxLength={9} /></div>
+                  <div className="space-y-1.5"><Label>Account Number *</Label><Input value={form.accountNumber} onChange={(e) => set("accountNumber", e.target.value)} placeholder="Employee's account number" /></div>
                   <div className="space-y-1.5">
                     <Label>Account Type</Label>
                     <div className="flex gap-4 pt-1">

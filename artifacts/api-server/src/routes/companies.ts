@@ -594,6 +594,17 @@ router.post("/employees", async (req: Request, res: Response) => {
     return;
   }
 
+  // Validate employee bank details in production when manually entered
+  if (getRollfiConfig().env === "production" && body.bankSetupMethod === "manual") {
+    const bankErr = validateBankDetails({
+      routingNumber: body.routingNumber,
+      accountNumber: body.accountNumber,
+      bankName: body.bankName,
+      accountType: body.accountType,
+    });
+    if (bankErr) { res.status(400).json({ error: `Employee bank account: ${bankErr}` }); return; }
+  }
+
   if (caller.role === "manager" && caller.companyId !== body.companyId) {
     res.status(403).json({ error: "Managers can only add employees to their own company" }); return;
   }
@@ -638,6 +649,10 @@ router.post("/employees", async (req: Request, res: Response) => {
       department: body.department ?? null,
       managerId: body.managerId ?? null,
       managerName: body.managerName ?? null,
+      bankName: body.bankSetupMethod === "manual" ? (body.bankName ?? null) : null,
+      routingNumber: body.bankSetupMethod === "manual" ? (body.routingNumber ?? null) : null,
+      accountNumber: body.bankSetupMethod === "manual" ? (body.accountNumber ?? null) : null,
+      accountType: body.bankSetupMethod === "manual" ? (body.accountType ?? null) : null,
       status: "onboarding",
       kycStatus: "not_started",
       bankAccountAdded: body.bankSetupMethod === "manual",

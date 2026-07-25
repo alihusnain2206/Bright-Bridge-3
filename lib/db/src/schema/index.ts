@@ -167,6 +167,10 @@ export const employees = pgTable("employees", {
   kycStatus:         text("kyc_status").default("not_started"),
   rollfiAccountStatus: text("rollfi_account_status"),
   bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
+  bankName:          text("bank_name"),
+  routingNumber:     text("routing_number"),
+  accountNumber:     text("account_number"),
+  accountType:       text("account_type"),
   w4Submitted:       boolean("w4_submitted").notNull().default(false),
   // EasyTeam
   easyteamId:        text("easyteam_id"),
