@@ -816,7 +816,7 @@ export default function ManagerPayrollSubmit() {
                                 {importResult.lineItems.map((item, idx) => {
                                   const uid = (item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined;
                                   const pe = preview?.employees.find((e) => e.rollfiUserId?.toUpperCase() === uid?.toUpperCase());
-                                  const empName = pe?.name ?? uid ?? `Employee ${idx + 1}`;
+                                  const empName = pe?.name ?? (item.userName as string | undefined) ?? uid ?? `Employee ${idx + 1}`;
                                   const empPos  = pe?.position ?? "";
                                   const grossPay    = Number(item.grossTotal ?? 0);
                                   const netPay      = Number(item.netTotal ?? 0);
