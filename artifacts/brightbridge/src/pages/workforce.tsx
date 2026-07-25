@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import {
@@ -311,6 +311,30 @@ export default function WorkforcePage() {
   }, [companyId, fromDate, toDate]);
 
   useEffect(() => { void fetchAll(); }, [fetchAll]);
+
+  // ── Auto-sync on page load so Workforce is always current ─────────────────
+  // Fires once per companyId (tracked by ref) after the date range is settled.
+  // If the user manually changes the date range they can still use Pull Hours.
+  const autoSyncedForRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!companyId || !fromDate || !toDate) return;
+    if (autoSyncedForRef.current === companyId) return;
+    autoSyncedForRef.current = companyId;
+    void (async () => {
+      setSyncing(true);
+      try {
+        await fetch("/api/easyteam/hours/sync", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ companyId, from: fromDate, to: toDate }),
+        });
+        await fetchAll();
+      } finally {
+        setSyncing(false);
+      }
+    })();
+  }, [companyId, fromDate, toDate, fetchAll]);
 
   // ── Sync from EasyTeam then re-read ──────────────────────────────────────
   const handleSync = useCallback(async () => {
