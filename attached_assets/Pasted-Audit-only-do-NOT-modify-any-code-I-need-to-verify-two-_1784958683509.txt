@@ -1,0 +1,71 @@
+Audit-only — do NOT modify any code. 
+I need to verify two things about our 
+Rollfi integration before we run the 
+first production payroll.
+
+QUESTION 1 — initiateUserKyc:
+
+Rollfi's employee onboarding 
+documentation lists these steps:
+addUser → addUserWage → 
+acceptTermsAndCondition → 
+addKycInformation → addW4Information → 
+addStateW4Information → initiateUserKyc 
+→ addUserBankAccount
+
+The docs state: "initiateUserKyc — 
+Start the KYC verification process. 
+Only verified users can access payroll 
+and financial features."
+
+Please check our employee onboarding 
+code (rollfi-employee-sync.ts and 
+anywhere else the employee Rollfi chain 
+runs):
+- Do we call initiateUserKyc at any 
+  point?
+- If yes, where in the sequence, and 
+  with what parameters?
+- If NO, that means we collect KYC 
+  information but never trigger the 
+  verification — which could leave 
+  employees in an unverified state that 
+  blocks payroll. Confirm whether this 
+  is the case.
+- Also confirm: do we call the 
+  equivalent company-level initiateKyb 
+  during company onboarding?
+
+QUESTION 2 — Bank account verification 
+method:
+
+Rollfi supports two ways to add bank 
+accounts: (a) Manual Entry with 
+microdeposit verification, or (b) Plaid 
+integration for instant verification. 
+The docs state "Only verified bank 
+accounts are eligible for payroll 
+disbursement."
+
+Please check how our app currently adds 
+bank accounts for BOTH the company 
+funding account and employee direct 
+deposit accounts:
+- Which method are we using — manual 
+  entry or Plaid?
+- If manual entry: do we do anything to 
+  handle or confirm the microdeposit 
+  verification, or do we just submit the 
+  account details and assume it's done?
+- Is there any code that checks or 
+  displays the bank account verification 
+  STATUS (pending vs verified)?
+- What endpoint/fields are we using to 
+  add bank accounts currently?
+
+Please report findings for both 
+questions with the specific files, 
+functions, and API calls involved. Do 
+not change anything — I just need to 
+know the current state before deciding 
+next steps.
