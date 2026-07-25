@@ -1,0 +1,52 @@
+Run the repair in two phases, reporting between them.
+
+IMPORTANT — DO NOT TOUCH: Maple Grove employees (Gregory Lawson, Hannah
+Price, Leila Hassan). Their Rollfi wage records are already correct
+(verified visually: Gregory $60,000/Per Year, Hannah $17.25/Per Hour).
+Leave them completely alone in both phases.
+
+Also do not touch: payroll periods, payroll submission, comp-wipe logic,
+EasyTeam sync, dashboard.
+
+=== PHASE 1 — WAGE REPAIR (report first, wait for my approval) ===
+These employees have wrong wageRate in Rollfi from the pre-fix cents-as-
+dollars bug: Marcus Webb, Elena Vasquez, Mary Johnson, John Smith,
+Alex Thompson, Kevin Roberts.
+
+1. Produce a table BEFORE changing anything:
+   employee | company | our DB (pay_type, hourly_wage, annual_salary) |
+   current Rollfi (wageRate, wageBasis, userType) | what we WILL send
+2. Derive the target values using the getRollfiWageFields resolver (the
+   one built for salary support) — no ad-hoc math, so repaired employees
+   match how new ones are created.
+3. Flag anything suspicious rather than guessing: employees whose DB value
+   itself looks wrong, missing wage data, or a pay_type that doesn't match
+   what Rollfi has.
+4. STOP after the table. Wait for my approval before calling updateUserWage.
+5. After I approve: apply via updateUserWage, then verify each with getUser
+   and report before/after per employee.
+
+=== PHASE 2 — ONBOARDING REPAIR (after Phase 1 completes) ===
+These employees have incomplete Rollfi onboarding from the silent-failure
+bug:
+  - Sophia Bennett — missing W4 + state W4
+  - Alex Thompson, Kevin Roberts, Olivia Grant, Victor Osei — KYC not
+    initiated, no bank account
+
+Use the repair-onboarding endpoint you just built (dogfood it — if it
+doesn't work here it won't work for users). For each employee report:
+which steps ran, each step's result, and their state in Rollfi afterwards
+(W4Informations, kycStatus, bank accounts, userStatus).
+
+NOTE: employees at userStatus "Invite Sent" may be limited in what can be
+repaired programmatically — report clearly what the repair CAN and CANNOT
+fix for them, rather than working around it.
+
+If the repair endpoint itself fails or behaves unexpectedly, report that
+as a finding — it's a bug in the new code we need to know about before
+users hit it.
+
+DELIVERABLE: Phase 1 table (then wait), Phase 1 before/after after
+approval, Phase 2 per-employee results, and a final summary of what's
+still broken and why.
+REMINDER: Publish required for production.
