@@ -32,6 +32,16 @@ function formatSsn(n: string): string {
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
+function safeRollfiLog(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object") return {};
+  const d = data as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  for (const k of ["status", "success", "message", "error", "code", "id", "userId", "companyId", "referenceId", "taskId", "result"]) {
+    if (k in d) safe[k] = d[k];
+  }
+  return safe;
+}
+
 interface KycOnboardingResult {
   kycInitiated: boolean;
   kycBlockedByKyb: boolean;
@@ -113,7 +123,7 @@ async function runEmployeeKycOnboarding(
       },
       { headers }
     );
-    log.info({ rollfiResponse: r.data }, "Rollfi addKycInformation response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
     const raw = r.data as Record<string, unknown>;
     const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
     // "already exists" means KYC was submitted in a previous run — treat as success
@@ -166,36 +176,43 @@ async function runEmployeeKycOnboarding(
     } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
   }
 
-  // Step 5 — add employee bank account (required for Direct Deposit employees to become active)
-  // Sandbox always uses test values; production uses the real bank details from the caller.
+  // Step 5 — add employee bank account (first-time only: full numbers come from wizard in memory).
+  // Production: submit only if bankInput has full account number (first-time wizard flow);
+  //   skip on retry — Rollfi already holds the account after first submission.
+  // Sandbox: always use hardcoded test values.
   let bankAdded = false;
-  try {
-    const isProduction = getRollfiConfig().env === "production";
-    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
-      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
-      : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
-    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}`, maskedRouting: `****${bank.routingNumber.slice(-4)}` }, "addUserBankAccount: using bank details");
-    const r = await axios.post(
-      `${getBaseUrl()}/userPortal#addUserBankAccount`,
-      {
-        method: "addUserBankAccount",
-        linkType: "Manual",
-        userPayAccountEntity: {
-          companyId: rollfiCompanyId,
-          userId: rollfiUserId,
-          accountNumber: bank.accountNumber,
-          routingNumber: bank.routingNumber,
-          bankName: bank.bankName,
-          accountType: bank.accountType,
-          accountName: bank.accountName,
+  const isProduction = getRollfiConfig().env === "production";
+  if (isProduction && !bankInput?.accountNumber) {
+    log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping");
+    bankAdded = true;
+  } else {
+    try {
+      const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
+        ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
+        : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
+      log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
+      const r = await axios.post(
+        `${getBaseUrl()}/userPortal#addUserBankAccount`,
+        {
+          method: "addUserBankAccount",
+          linkType: "Manual",
+          userPayAccountEntity: {
+            companyId: rollfiCompanyId,
+            userId: rollfiUserId,
+            accountNumber: bank.accountNumber,
+            routingNumber: bank.routingNumber,
+            bankName: bank.bankName,
+            accountType: bank.accountType,
+            accountName: bank.accountName,
+          },
         },
-      },
-      { headers }
-    );
-    log.info({ rollfiResponse: r.data }, "Rollfi addUserBankAccount response");
-    const raw = r.data as Record<string, unknown>;
-    if (!raw.error) bankAdded = true;
-  } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+        { headers }
+      );
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addUserBankAccount response");
+      const raw = r.data as Record<string, unknown>;
+      if (!raw.error) bankAdded = true;
+    } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+  }
 
   return { kycInitiated, kycBlockedByKyb, bankAdded };
 }
@@ -764,7 +781,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
         },
         { headers: rollfiHeaders() }
       );
-      req.log.info({ rollfiResponse: r0.data }, "Rollfi addKybInformation response");
+      req.log.info({ rollfiResult: safeRollfiLog(r0.data) }, "Rollfi addKybInformation response");
     } catch (e) { req.log.warn({ e }, "addKybInformation failed (ignoring)"); }
 
     // 1 — Initiate KYB verification
@@ -780,34 +797,33 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // Brief pause — Rollfi sandbox may need a moment to commit KYB status before bank account check
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // 2 — Bank account (funding source for payroll; env-aware: production reads stored bank data, sandbox uses test values)
-    try {
-      const isProduction = getRollfiConfig().env === "production";
-      let bankAcct = { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
-      if (isProduction) {
-        const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, localCompanyId));
-        if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
-          bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
-        }
-      }
-      req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "addCompanyBankAccount: using bank details");
-      const r2 = await axios.post(
-        `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
-        {
-          method: "addCompanyBankAccount",
-          companyFundingSourceEntity: {
-            companyId: rollfiCompanyId,
-            accountNumber: bankAcct.accountNumber,
-            routingNumber: bankAcct.routingNumber,
-            bankName: bankAcct.bankName,
-            accountType: bankAcct.accountType,
-            accountName: bankAcct.accountName,
+    // 2 — Bank account: sandbox uses test values; production skips — Rollfi holds the real account
+    //     after first-time submission. To re-add in production use POST /rollfi/onboard/bank-account
+    //     with full bank details in the request body.
+    if (getRollfiConfig().env !== "production") {
+      try {
+        const bankAcct = { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+        req.log.info({ bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}` }, "addCompanyBankAccount: sandbox test values");
+        const r2 = await axios.post(
+          `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
+          {
+            method: "addCompanyBankAccount",
+            companyFundingSourceEntity: {
+              companyId: rollfiCompanyId,
+              accountNumber: bankAcct.accountNumber,
+              routingNumber: bankAcct.routingNumber,
+              bankName: bankAcct.bankName,
+              accountType: bankAcct.accountType,
+              accountName: bankAcct.accountName,
+            },
           },
-        },
-        { headers: rollfiHeaders() }
-      );
-      req.log.info({ rollfiResponse: r2.data }, "Rollfi addCompanyBankAccount response");
-    } catch (e) { req.log.warn({ e }, "addCompanyBankAccount failed (ignoring)"); }
+          { headers: rollfiHeaders() }
+        );
+        req.log.info({ rollfiResult: safeRollfiLog(r2.data) }, "Rollfi addCompanyBankAccount response");
+      } catch (e) { req.log.warn({ e }, "addCompanyBankAccount failed (ignoring)"); }
+    } else {
+      req.log.info({ companyId: localCompanyId }, "addCompanyBankAccount: production — Rollfi already holds bank account, skipping");
+    }
 
     // 3 — Pay schedule (BiWeekly W2, starting 2 weeks ago so a period exists now)
     try {
@@ -1026,7 +1042,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
       },
       { headers }
     );
-    req.log.info({ rollfiResponse: r.data }, "retry-kyb: addKybInformation response");
+    req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "retry-kyb: addKybInformation response");
     steps.addKybInformation = r.data;
   } catch (e) {
     const err = e as { response?: { data: unknown } };
@@ -1050,39 +1066,38 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
   }
 
   // Step 3 — re-add bank account (funding source)
-  // Sandbox: use newEin as account number with test bank. Production: use stored real bank data.
+  // Sandbox: re-submit with newEin as account number (test bank).
+  // Production: skip — Rollfi holds the real account; use POST /rollfi/onboard/bank-account to update.
   await new Promise((resolve) => setTimeout(resolve, 3000));
-  try {
-    const isProduction = getRollfiConfig().env === "production";
-    let bankAcct = { accountNumber: newEin, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
-    if (isProduction) {
-      const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, companyId));
-      if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
-        bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
-      }
-    }
-    req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "retry-kyb: addCompanyBankAccount details");
-    const r = await axios.post(
-      `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
-      {
-        method: "addCompanyBankAccount",
-        companyFundingSourceEntity: {
-          companyId: rollfiCompanyId,
-          accountNumber: bankAcct.accountNumber,
-          routingNumber: bankAcct.routingNumber,
-          bankName: bankAcct.bankName,
-          accountType: bankAcct.accountType,
-          accountName: bankAcct.accountName,
+  if (getRollfiConfig().env !== "production") {
+    try {
+      const bankAcct = { accountNumber: newEin, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+      req.log.info({ bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}` }, "retry-kyb: addCompanyBankAccount sandbox details");
+      const r = await axios.post(
+        `${getBaseUrl()}/adminPortal#addCompanyBankAccount`,
+        {
+          method: "addCompanyBankAccount",
+          companyFundingSourceEntity: {
+            companyId: rollfiCompanyId,
+            accountNumber: bankAcct.accountNumber,
+            routingNumber: bankAcct.routingNumber,
+            bankName: bankAcct.bankName,
+            accountType: bankAcct.accountType,
+            accountName: bankAcct.accountName,
+          },
         },
-      },
-      { headers }
-    );
-    req.log.info({ rollfiResponse: r.data }, "retry-kyb: addCompanyBankAccount response");
-    steps.addCompanyBankAccount = r.data;
-  } catch (e) {
-    const err = e as { response?: { data: unknown } };
-    req.log.warn({ e }, "retry-kyb: addCompanyBankAccount failed");
-    steps.addCompanyBankAccountError = err.response?.data ?? String(e);
+        { headers }
+      );
+      req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "retry-kyb: addCompanyBankAccount response");
+      steps.addCompanyBankAccount = r.data;
+    } catch (e) {
+      const err = e as { response?: { data: unknown } };
+      req.log.warn({ e }, "retry-kyb: addCompanyBankAccount failed");
+      steps.addCompanyBankAccountError = err.response?.data ?? String(e);
+    }
+  } else {
+    req.log.info({ companyId }, "retry-kyb: production — Rollfi already holds bank account, skipping bank step");
+    steps.addCompanyBankAccount = { skipped: true, reason: "production: Rollfi holds account" };
   }
 
   // Persist the new EIN + SSN so future retries don't reuse the same values
@@ -1180,14 +1195,20 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
   }
 
   const isProduction = getRollfiConfig().env === "production";
-  let bankAcct = { accountNumber: rollfiCompany.ein ?? randomNineDigits(), routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+  const { bankName: bodyBankName, routingNumber: bodyRouting, accountNumber: bodyAccount, accountType: bodyAccountType } =
+    req.body as { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string };
+
+  let bankAcct: { accountNumber: string; routingNumber: string; bankName: string; accountType: string; accountName: string };
   if (isProduction) {
-    const [co] = await db.select({ fundingBankName: companiesTable.fundingBankName, fundingRoutingNumber: companiesTable.fundingRoutingNumber, fundingAccountNumber: companiesTable.fundingAccountNumber, fundingAccountType: companiesTable.fundingAccountType }).from(companiesTable).where(eq(companiesTable.id, companyId));
-    if (co?.fundingRoutingNumber && co?.fundingAccountNumber) {
-      bankAcct = { accountNumber: co.fundingAccountNumber, routingNumber: co.fundingRoutingNumber, bankName: co.fundingBankName ?? "Payroll Funding", accountType: co.fundingAccountType ?? "checking", accountName: "Payroll Funding" };
+    if (!bodyRouting || !bodyAccount || !bodyBankName) {
+      res.status(400).json({ error: "Production requires bankName, routingNumber, and accountNumber in the request body. Full numbers are never stored — provide them on each call." });
+      return;
     }
+    bankAcct = { accountNumber: bodyAccount, routingNumber: bodyRouting, bankName: bodyBankName, accountType: bodyAccountType ?? "checking", accountName: "Payroll Funding" };
+  } else {
+    bankAcct = { accountNumber: rollfiCompany.ein ?? randomNineDigits(), routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
   }
-  req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}`, maskedRouting: `****${bankAcct.routingNumber.slice(-4)}` }, "onboard/bank-account: using bank details");
+  req.log.info({ env: getRollfiConfig().env, bankName: bankAcct.bankName, maskedAcct: `****${bankAcct.accountNumber.slice(-4)}` }, "onboard/bank-account: using bank details");
 
   try {
     const r = await axios.post(
@@ -1205,7 +1226,7 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
       },
       { headers: rollfiHeaders() }
     );
-    req.log.info({ rollfiResponse: r.data }, "Rollfi addCompanyBankAccount response");
+    req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addCompanyBankAccount response");
     const raw = r.data as Record<string, unknown>;
     // Rollfi returns 200 with error body when bank already linked — treat as success
     const isAlreadyLinked = JSON.stringify(raw).toLowerCase().includes("already");

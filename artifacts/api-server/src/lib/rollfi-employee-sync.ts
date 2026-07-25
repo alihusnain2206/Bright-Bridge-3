@@ -48,6 +48,16 @@ interface KycIdentity {
   dateOfBirth?: string;
 }
 
+function safeRollfiLog(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== "object") return {};
+  const d = data as Record<string, unknown>;
+  const safe: Record<string, unknown> = {};
+  for (const k of ["status", "success", "message", "error", "code", "id", "userId", "companyId", "referenceId", "taskId", "result"]) {
+    if (k in d) safe[k] = d[k];
+  }
+  return safe;
+}
+
 export async function runEmployeeKycOnboarding(
   rollfiUserId: string,
   rollfiCompanyId: string,
@@ -77,7 +87,7 @@ export async function runEmployeeKycOnboarding(
       method: "addKycInformation",
       kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
     }, { headers });
-    log.info({ rollfiResponse: r.data }, "Rollfi addKycInformation response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
     const raw = r.data as Record<string, unknown>;
     const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
     kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
@@ -129,19 +139,23 @@ export async function runEmployeeKycOnboarding(
     } catch (e) { log.warn({ e }, "initiateUserKyc failed (ignoring)"); }
   }
 
-  try {
-    const isProduction = getRollfiConfig().env === "production";
-    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
-      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
-      : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
-    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}`, maskedRouting: `****${bank.routingNumber.slice(-4)}` }, "addUserBankAccount: using bank details");
-    const r = await axios.post(`${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`, {
-      method: "addUserBankAccount",
-      linkType: "Manual",
-      userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
-    }, { headers });
-    log.info({ rollfiResponse: r.data }, "Rollfi addUserBankAccount response");
-  } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+  const isProduction = getRollfiConfig().env === "production";
+  if (isProduction && !bankInput?.accountNumber) {
+    log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping bank step");
+  } else {
+    try {
+      const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
+        ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
+        : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
+      log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
+      const r = await axios.post(`${ROLLFI_BASE_URL}/userPortal#addUserBankAccount`, {
+        method: "addUserBankAccount",
+        linkType: "Manual",
+        userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
+      }, { headers });
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addUserBankAccount response");
+    } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
+  }
 }
 
 export interface OnboardResult {
@@ -348,8 +362,6 @@ export async function onboardEmployeeToRollfi(
       dateOfBirth: emp.dateOfBirth,
     }, {
       bankName: emp.bankName,
-      routingNumber: emp.routingNumber,
-      accountNumber: emp.accountNumber,
       accountType: emp.accountType,
     });
 

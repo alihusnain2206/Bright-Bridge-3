@@ -1,0 +1,66 @@
+Two targeted security fixes before 
+we run real payroll. Audit each 
+briefly, then implement.
+
+FIX 1 — Stop storing full bank 
+numbers:
+Rollfi is the system of record for 
+bank accounts. We do not need to 
+persist full account/routing numbers 
+in our database.
+
+- For BOTH employee bank columns and 
+  company funding columns: store only 
+  the LAST 4 DIGITS of the account 
+  number (e.g. "1234") for display 
+  purposes, and do NOT store the full 
+  account number or the full routing 
+  number at all going forward.
+- Keep bank_name and account_type 
+  (not sensitive).
+- On the rare retry/re-sync path that 
+  previously read the full number from 
+  the DB: since Rollfi already holds 
+  the account after first submission, 
+  do NOT re-submit the bank step from 
+  stored data. If a retry genuinely 
+  needs the full number, require the 
+  admin to re-enter it via the existing 
+  manual bank form. Never fall back to 
+  sandbox placeholder values in 
+  production.
+- Migrate: for any existing rows, null 
+  out stored full account/routing 
+  numbers, keeping last-4 where 
+  derivable. Show me the affected row 
+  count before applying.
+- Confirm the first-time onboarding 
+  still sends the real full number 
+  straight through to Rollfi (from the 
+  wizard input in memory) without 
+  persisting it.
+
+FIX 2 — Stop logging raw Rollfi 
+responses that may echo PII:
+At the addKycInformation and 
+addKybInformation calls, we currently 
+log the full Rollfi response 
+(log.info({ rollfiResponse: r.data })). 
+Rollfi's response could echo the SSN or 
+bank details. Change these to log only 
+non-sensitive fields (status, success 
+flag, any reference IDs) — never the 
+full response body. Check every place 
+we log a Rollfi response for KYC/KYB/
+bank endpoints and apply the same.
+
+Do NOT change the onboarding sequence, 
+payroll logic, or what we send TO Rollfi 
+— only what we STORE and LOG. Report 
+files changed and the migration row 
+count before modifying data.
+
+Leave SSN field-level encryption for a 
+separate later task — just report which 
+tables/columns still hold plved SSN so I 
+can plan that pass.

@@ -115,8 +115,7 @@ export const companies = pgTable("companies", {
   ein:               text("ein"),
   // Funding bank account (env-aware: production stores real data, sandbox uses built-in test values)
   fundingBankName:       text("funding_bank_name"),
-  fundingRoutingNumber:  text("funding_routing_number"),
-  fundingAccountNumber:  text("funding_account_number"),
+  fundingAccountLast4:   text("funding_account_last4"),
   fundingAccountType:    text("funding_account_type"),
   // Onboarding
   kybStatus:         text("kyb_status").notNull().default("not_started"),
@@ -168,8 +167,7 @@ export const employees = pgTable("employees", {
   rollfiAccountStatus: text("rollfi_account_status"),
   bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
   bankName:          text("bank_name"),
-  routingNumber:     text("routing_number"),
-  accountNumber:     text("account_number"),
+  accountLast4:      text("account_last4"),
   accountType:       text("account_type"),
   w4Submitted:       boolean("w4_submitted").notNull().default(false),
   // EasyTeam
