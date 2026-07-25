@@ -1,0 +1,41 @@
+New approach — use Maple Grove Early Learning + Hannah Price instead of
+Sunshine. Rationale: Hannah is Active + KYC passed (confirmed in our status
+seed), Maple Grove's KYB was approved by Rollfi, it was created through our
+wizard so rollfi_wage_id should be stored, and it has no payroll history to
+disturb (Sunshine is our working test company — leave it alone).
+
+PRE-FLIGHT (report before proceeding, stop if any fail):
+a. Hannah Price — confirm userStatus "Active" and kycStatus "passed" via
+   getUser.
+b. Do we have her rollfi_wage_id stored in rollfi_employee_records? Report
+   it. If missing, check other Maple Grove employees.
+c. Does Maple Grove have a pay schedule and an open pay period? Report the
+   payPeriodId, dates, frequency, and whether Hannah appears in
+   getPayPeriodDetails' enrolled list.
+If any of a/b/c fails, STOP and report which — don't improvise.
+
+THEN THE EXPERIMENT (only if pre-flight passes):
+STEP 0 — Record Hannah's exact current wage (wageRate, wageBasis, userType,
+employmentStatus, paymentMethod) for restoration.
+STEP 1 — updateUserWage using the stored wageId: wageRate 52000,
+wageBasis "Per Year", userType "Salary/No overtime", other fields
+unchanged. Verify via getUser that it stored.
+STATE THE EXPECTED per-period gross before reading anything (52000 ÷ number
+of periods for Maple Grove's frequency).
+STEP 2 — BASELINE: getPayPeriodDetails with NO import. Does Hannah's
+grossTotal show the salary amount, or $0? ← the key reading.
+STEP 3 — Import Hannah alone, basicPay: {payHours: 0}. Re-read gross.
+STEP 4 — Import Hannah alone, basicPay: {payHours: 80}. Re-read gross.
+STEP 4b — Import Hannah alone, basicPay key ABSENT. Re-read gross.
+STEP 5 — Import excluding Hannah. Re-read her line item.
+STEP 6 — RESTORE: put her wage back to Step 0 values AND re-import her with
+her original hours (0 unless Step 0 shows otherwise), so her pay period is
+clean. Verify both and report.
+
+Also still pending from last time: the Sunshine CLEANUP (Bilal B040CD34 is
+sitting on 80 imported hours from the previous experiment — re-import him
+with payHours: 0 and confirm gross returns to $0), and the payroll.tsx
+line 1824 filter question (does it affect the import payload or only a UI
+list?).
+
+Do NOT call initiatePayroll or submit payroll. Report the results table.
