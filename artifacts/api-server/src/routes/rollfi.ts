@@ -315,6 +315,118 @@ async function wipeAdditionalCompensations(
   return { wiped, warnings };
 }
 
+type SalariedCompEntry = {
+  rollfiUserId: string;
+  name?: string;
+  additionalCompensation: { description: string; amount: number }[];
+  overTime: { type: string; noOfHours: number; multiplier: number }[];
+};
+type SalariedCompResult = {
+  injected: string[];
+  wiped: string[];
+  warnings: { userId: string; message: string }[];
+};
+
+/**
+ * Post-import salaried compensation handler — shared by initiate, import, and run-all.
+ *
+ * Two responsibilities per salaried employee:
+ *   1. Wipe any stale comp (idempotent; no-op if none). Always runs, even when new comp will
+ *      be injected, to prevent accumulation when the comp description changes across runs.
+ *   2. If comp is present for this period, inject it via importRegularPayrollData with
+ *      overwriteExistingLineItems: FALSE.
+ *
+ * WHY overwriteExistingLineItems must be FALSE here (and TRUE in the main hourly import):
+ *   TRUE  → Rollfi replaces the entire line item; even without basicPay, its absence sets
+ *           payHours=0 and zeroes the Per Year auto-computed baseTotal.
+ *           Confirmed in sandbox testing 2026-07-26.
+ *   FALSE → Rollfi merges only the supplied fields; auto-computed baseTotal is untouched.
+ *
+ * The main hourly import MUST stay TRUE to prevent comp accumulation (explicit [] does not
+ * clear stale comp when overwrite=false). Salaried employees must be excluded from that call.
+ */
+async function injectSalariedCompensations(
+  companyId: string,
+  payPeriodId: string,
+  entries: SalariedCompEntry[],
+  log: BasicLog
+): Promise<SalariedCompResult> {
+  const injected: string[] = [];
+  const wiped: string[] = [];
+  const warnings: { userId: string; message: string }[] = [];
+  if (entries.length === 0) return { injected, wiped, warnings };
+
+  for (const { rollfiUserId: userId, name, additionalCompensation, overTime } of entries) {
+    const hasComp = (additionalCompensation?.length ?? 0) > 0 || (overTime?.length ?? 0) > 0;
+
+    // ── Step 1: always wipe stale comp ─────────────────────────────────────
+    // Runs even when new comp will be injected — descriptions may change across runs.
+    try {
+      const wipeR = await axios.post(
+        `${getBaseUrl()}/payroll#removeAdditionalCompensations`,
+        { method: "removeAdditionalCompensations", companyId, payPeriodId, userId },
+        { headers: rollfiHeaders() }
+      );
+      const wipeRaw = wipeR.data as Record<string, unknown>;
+      const wipeErr = String((wipeRaw.error as Record<string, unknown> | undefined)?.message ?? "");
+      const isNone = /no additional comp|nothing to remove|not found|no comp|does not exist|no payroll data/i.test(wipeErr);
+      if (wipeRaw.error && !isNone) {
+        log.warn({ userId, name, response: wipeRaw }, "injectSalaryComp: wipe error (continuing)");
+        warnings.push({ userId, message: wipeErr || JSON.stringify(wipeRaw.error) });
+      } else if (!wipeRaw.error) {
+        wiped.push(userId);
+        log.info({ userId, name }, "injectSalaryComp: stale comp wiped");
+      } else {
+        log.info({ userId, name }, "injectSalaryComp: no stale comp (normal)");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.warn({ userId, name, err: e }, "injectSalaryComp: wipe HTTP error (continuing)");
+      warnings.push({ userId, message: msg });
+    }
+
+    if (!hasComp) {
+      log.info({ userId, name }, "injectSalaryComp: no comp this period — wipe only");
+      continue;
+    }
+
+    // ── Step 2: inject comp — overwriteExistingLineItems MUST be false ─────
+    // See function-level comment. No basicPay key — overwrite=false leaves
+    // Rollfi's auto-computed baseTotal intact.
+    try {
+      const injectBody = {
+        method: "importRegularPayrollData",
+        companyId,
+        payPeriodId,
+        overwriteExistingLineItems: false,
+        payrollData: [{ userId, additionalCompensation, overTime }],
+      };
+      log.info({ userId, name, additionalCompensation, overTime,
+        outgoing: JSON.stringify(injectBody) }, "injectSalaryComp: injecting (overwriteExistingLineItems=false)");
+      const injectR = await axios.post(
+        `${getBaseUrl()}/payroll#importRegularPayrollData`,
+        injectBody,
+        { headers: rollfiHeaders() }
+      );
+      const injectRaw = injectR.data as Record<string, unknown>;
+      const injectErr = extractRollfiError(injectRaw);
+      if (injectErr) {
+        log.warn({ userId, name, response: injectRaw }, "injectSalaryComp: inject error");
+        warnings.push({ userId, message: injectErr });
+      } else {
+        injected.push(userId);
+        log.info({ userId, name }, "injectSalaryComp: comp injected successfully");
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.warn({ userId, name, err: e }, "injectSalaryComp: inject HTTP error");
+      warnings.push({ userId, message: msg });
+    }
+  }
+
+  return { injected, wiped, warnings };
+}
+
 // ── FIX 1b helper: enrol mid-period hires absent from Rollfi's pay-period roster ─────────────
 // Rollfi snapshots its pay-period roster at PERIOD CREATION TIME; employees hired after the
 // snapshot (or not yet enrolled when it ran) are absent. This helper detects and enrolls them.
@@ -444,32 +556,29 @@ async function enrollMissingEmployeesInPeriod(
 }
 
 /**
- * FIX 2 — Recovery: salaried employees stuck at payHours=0 from a prior broken import.
+ * Recovery: salaried employees stuck at payHours=0 (freshly enrolled in a new period or
+ * zeroed by a prior broken import that used overwriteExistingLineItems:true).
  *
- * Once a salaried employee is explicitly included in importRegularPayrollData without a
- * basicPay key, Rollfi sets their payHours=0.  Subsequent imports that OMIT them preserve
- * that zeroed state — the auto-prorated hours do NOT restore automatically.
+ * Rollfi auto-computes Per Year salary only when an employee is ABSENT from
+ * importRegularPayrollData. Once their line item is explicitly included — even with a
+ * correct basicPay.payHours — the auto-computation is suppressed. The only way to
+ * re-activate it is remove + re-add (confirmed in sandbox 2026-07-26).
  *
- * Solution: removeUsersFromRegularPayPeriod + addUsersToRegularPayPeriod forces Rollfi
- * to recompute the hours from the Per Year wage record (confirmed in sandbox: 0→48 hours).
+ * Triggered for every salaried employee reporting payHours=0 in the enrolled roster,
+ * regardless of whether they have comp adjustments (no longer restricted to adj employees).
  *
- * Only triggered for salaried employees that:
- *   (a) have active adjustments in this payload (will be explicitly included), AND
- *   (b) currently report payHours=0 in Rollfi's enrolled items.
- *
- * Returns the refreshed enrolledItems so FIX 1 sees the restored payHours.
+ * Returns the refreshed enrolledItems after recovery.
  */
 async function recoverZeroedSalariedEmployees(
   rollfiCompanyId: string,
   payPeriodId: string,
   enrolledItems: Array<Record<string, unknown>>,
   salariedRollfiUids: Set<string>,
-  adjRollfiUids: Set<string>,
   log: BasicLog
 ): Promise<Array<Record<string, unknown>>> {
   const toRecover = enrolledItems.filter((item) => {
     const uid = String(item.userId ?? item.userID ?? "").toUpperCase();
-    return salariedRollfiUids.has(uid) && adjRollfiUids.has(uid) && Number(item.payHours ?? 0) === 0;
+    return salariedRollfiUids.has(uid) && Number(item.payHours ?? 0) === 0;
   });
   if (toRecover.length === 0) return enrolledItems;
 
@@ -2996,27 +3105,34 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       if (emp?.rollfiUserId) rollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
     }
 
-    // FIX 3: Batch-fetch payType from DB to detect salaried employees.
-    // DB is the source of truth; the store carries payType as a fallback but DB wins.
-    const staffEmpIds = staffUsers.map((u) => u.employeeId).filter((id): id is string => !!id);
-    const dbPayTypeRowsInit = staffEmpIds.length > 0
-      ? await db.select({ id: employeesTable.id, payType: employeesTable.payType }).from(employeesTable).where(inArray(employeesTable.id, staffEmpIds))
-      : [];
+    // Batch-fetch payType + rollfi_user_id from DB for ALL employees in this company.
+    // Using employees.rollfiUserId directly is restart-safe: store.getRollfiEmployee() loses
+    // data on server restart for employees not persisted in rollfi_employee_records.
+    const dbPayTypeRowsInit = await db
+      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId })
+      .from(employeesTable).where(eq(employeesTable.companyId, companyId));
     const dbPayTypeByEmpId = new Map(dbPayTypeRowsInit.map((r) => [r.id, r.payType ?? "hourly"]));
+    // Extend rollfiIdToUser with DB employees not covered by testUsers, using the DB column directly.
+    for (const dbEmp of dbPayTypeRowsInit) {
+      if (!dbEmp.rollfiUserId) continue;
+      const uid = dbEmp.rollfiUserId.toUpperCase();
+      if (!rollfiIdToUser.has(uid)) {
+        rollfiIdToUser.set(uid, { id: dbEmp.id, name: "", email: "", role: "employee" as const,
+          companyId, employeeId: dbEmp.id, position: "" } as typeof staffUsers[0]);
+      }
+    }
 
-    // FIX 2: Recover salaried employees whose payHours were zeroed by a prior broken import.
-    // Build the salaried + adj UID sets first, then call the recovery helper before the main loop.
+    // Build the salaried UID set: cover both testUsers (via employeeId→payType) AND DB employees
+    // identified directly by employees.rollfiUserId (restart-safe, no store dependency).
     const salariedRollfiUids = new Set<string>();
     for (const [uid, su] of rollfiIdToUser) {
       if (su.employeeId && dbPayTypeByEmpId.get(su.employeeId) === "salary") salariedRollfiUids.add(uid);
     }
-    const adjRollfiUids = new Set<string>(
-      (adjustments as AdjInput[])
-        .filter((a) => (a.additionalCompensation?.length ?? 0) > 0 || (a.overTime?.length ?? 0) > 0)
-        .map((a) => a.rollfiUserId.toUpperCase())
-    );
+    for (const r of dbPayTypeRowsInit) {
+      if (r.payType === "salary" && r.rollfiUserId) salariedRollfiUids.add(r.rollfiUserId.toUpperCase());
+    }
     enrolledItems = await recoverZeroedSalariedEmployees(
-      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUids, adjRollfiUids, req.log
+      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUids, req.log
     );
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
@@ -3064,27 +3180,18 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       const isSalariedEmp = storeUser?.employeeId
         ? (dbPayTypeByEmpId.get(storeUser.employeeId) === "salary")
         : false;
-      const hasActiveAdj = (adj?.additionalCompensation?.length ?? 0) > 0 || (adj?.overTime?.length ?? 0) > 0;
-      if (isSalariedEmp && !hasActiveAdj) {
-        // Salaried, no adjustments → omit entirely (no-op; Rollfi salary values persist)
-        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Initiate: salaried employee, no adjustments — omitting from payload (Rollfi auto-computes salary)");
+      if (isSalariedEmp) {
+        // Salaried employees are ALWAYS omitted from the main import — comp is handled by
+        // injectSalariedCompensations (called below, after the main import). Including them
+        // here — even with a correct basicPay.payHours — suppresses Rollfi's Per Year
+        // auto-computation and zeroes baseTotal (confirmed sandbox 2026-07-26).
+        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Initiate: salaried employee — omitted from main import (comp injected separately)");
         continue;
       }
       const entry: Record<string, unknown> = { userId: rollfiUid };
-      if (!isSalariedEmp) {
-        // Hourly: send payHours as usual
-        entry.basicPay = { payHours: payHoursRounded };
-      } else {
-        // FIX 1: Salaried + active adjustments — echo Rollfi's own auto-prorated payHours so
-        // the base salary component is preserved alongside the comp adjustment.
-        // Without basicPay, Rollfi interprets the entry as 0 hours and zeroes the base salary.
-        // (Recovery via recoverZeroedSalariedEmployees above ensures item.payHours is non-zero.)
-        const rollfiPayHours = Number(item.payHours ?? 0);
-        entry.basicPay = { payHours: rollfiPayHours };
-        req.log.info({ rollfiUserId: rollfiUid, rollfiPayHours, name: storeUser?.name },
-          "Initiate: salaried + adj — echoing Rollfi payHours to preserve base salary");
-      }
-      // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
+      // Hourly employee: always send payHours and explicit comp/OT arrays.
+      // Explicit [] clears stale comp only when overwriteExistingLineItems:true (see import body).
+      entry.basicPay = { payHours: payHoursRounded };
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
       payrollData.push(entry);
@@ -3098,11 +3205,13 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     }, "Rollfi importRegularPayrollData request (initiate)");
 
     const initiateImportBody = {
-      // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
-      // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
-      // clear them. This flag erases all existing line items for every employee included in this
-      // import and replaces them with exactly what we send, making each import a complete,
-      // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
+      // overwriteExistingLineItems: true — required for hourly employees to prevent comp
+      // accumulation: explicit [] clears stale additionalCompensation/overTime only when this
+      // flag is true. Decision confirmed with Rollfi 2026-07-22.
+      // IMPORTANT — salaried employees must NOT be in this payrollData array. Sending them
+      // here (even with correct basicPay.payHours) suppresses Rollfi's Per Year salary
+      // auto-computation and zeroes baseTotal. Their comp is handled by the separate
+      // injectSalariedCompensations call below, which uses overwriteExistingLineItems:false.
       method: "importRegularPayrollData",
       companyId: rollfiCompany.rollfiCompanyId,
       payPeriodId,
@@ -3132,6 +3241,26 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     if (validationWarning) {
       req.log.warn({ validationWarning }, "importRegularPayrollData returned validationWarning (initiate)");
     }
+
+    // Post-import: inject comp for salaried employees and wipe any stale comp.
+    // Salaried employees were excluded from the main import above to preserve Rollfi's Per Year
+    // auto-computation. Their comp is added here via overwriteExistingLineItems:false.
+    const salariedEntriesInit: SalariedCompEntry[] = [];
+    for (const item of enrolledItems) {
+      const uid = String(item.userId ?? item.userID ?? "");
+      if (!salariedRollfiUids.has(uid.toUpperCase())) continue;
+      const su = rollfiIdToUser.get(uid.toUpperCase());
+      const a = (adjustments as AdjInput[]).find((x) => x.rollfiUserId?.toUpperCase() === uid.toUpperCase());
+      salariedEntriesInit.push({
+        rollfiUserId: uid,
+        name: su?.name,
+        additionalCompensation: a?.additionalCompensation ?? [],
+        overTime: a?.overTime ?? [],
+      });
+    }
+    const { warnings: salariedCompWarnings } = await injectSalariedCompensations(
+      rollfiCompany.rollfiCompanyId, payPeriodId, salariedEntriesInit, req.log
+    );
 
     // Step 2: initiatePayroll
     const response = await axios.post(
@@ -3166,7 +3295,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       actorName: actor2?.name,
       actorRole: actor2?.role,
     });
-    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...raw });
+    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...(salariedCompWarnings.length > 0 ? { salariedCompWarnings } : {}), ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
@@ -3245,26 +3374,34 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       if (emp?.rollfiUserId) rollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
     }
 
-    // FIX 3: Batch-fetch payType from DB to detect salaried employees.
-    // DB is the source of truth; store.payType is a fallback but DB wins.
-    const staffEmpIdsImport = staffUsers.map((u) => u.employeeId).filter((id): id is string => !!id);
-    const dbPayTypeRowsImport = staffEmpIdsImport.length > 0
-      ? await db.select({ id: employeesTable.id, payType: employeesTable.payType }).from(employeesTable).where(inArray(employeesTable.id, staffEmpIdsImport))
-      : [];
+    // Batch-fetch payType + rollfi_user_id from DB for ALL employees in this company.
+    // Using employees.rollfiUserId directly is restart-safe: store.getRollfiEmployee() loses
+    // data on server restart for employees not persisted in rollfi_employee_records.
+    const dbPayTypeRowsImport = await db
+      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId })
+      .from(employeesTable).where(eq(employeesTable.companyId, companyId));
     const dbPayTypeByEmpIdImport = new Map(dbPayTypeRowsImport.map((r) => [r.id, r.payType ?? "hourly"]));
+    // Extend rollfiIdToUser with DB employees not covered by testUsers, using the DB column directly.
+    for (const dbEmp of dbPayTypeRowsImport) {
+      if (!dbEmp.rollfiUserId) continue;
+      const uid = dbEmp.rollfiUserId.toUpperCase();
+      if (!rollfiIdToUser.has(uid)) {
+        rollfiIdToUser.set(uid, { id: dbEmp.id, name: "", email: "", role: "employee" as const,
+          companyId, employeeId: dbEmp.id, position: "" } as typeof staffUsers[0]);
+      }
+    }
 
-    // FIX 2: Recover salaried employees whose payHours were zeroed by a prior broken import.
+    // Build the salaried UID set: cover both testUsers (via employeeId→payType) AND DB employees
+    // identified directly by employees.rollfiUserId (restart-safe, no store dependency).
     const salariedRollfiUidsImport = new Set<string>();
     for (const [uid, su] of rollfiIdToUser) {
       if (su.employeeId && dbPayTypeByEmpIdImport.get(su.employeeId) === "salary") salariedRollfiUidsImport.add(uid);
     }
-    const adjRollfiUidsImport = new Set<string>(
-      (adjustments as AdjInput[])
-        .filter((a) => (a.additionalCompensation?.length ?? 0) > 0 || (a.overTime?.length ?? 0) > 0)
-        .map((a) => a.rollfiUserId.toUpperCase())
-    );
+    for (const r of dbPayTypeRowsImport) {
+      if (r.payType === "salary" && r.rollfiUserId) salariedRollfiUidsImport.add(r.rollfiUserId.toUpperCase());
+    }
     enrolledItems = await recoverZeroedSalariedEmployees(
-      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUidsImport, adjRollfiUidsImport, req.log
+      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUidsImport, req.log
     );
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
@@ -3310,27 +3447,18 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       const isSalariedEmpImport = storeUser?.employeeId
         ? (dbPayTypeByEmpIdImport.get(storeUser.employeeId) === "salary")
         : false;
-      const hasActiveAdjImport = (adj?.additionalCompensation?.length ?? 0) > 0 || (adj?.overTime?.length ?? 0) > 0;
-      if (isSalariedEmpImport && !hasActiveAdjImport) {
-        // Salaried, no adjustments → omit entirely (no-op; Rollfi salary values persist)
-        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Import: salaried employee, no adjustments — omitting from payload (Rollfi auto-computes salary)");
+      if (isSalariedEmpImport) {
+        // Salaried employees are ALWAYS omitted from the main import — comp is handled by
+        // injectSalariedCompensations (called below, after the main import). Including them
+        // here — even with a correct basicPay.payHours — suppresses Rollfi's Per Year
+        // auto-computation and zeroes baseTotal (confirmed sandbox 2026-07-26).
+        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Import: salaried employee — omitted from main import (comp injected separately)");
         continue;
       }
       const entry: Record<string, unknown> = { userId: rollfiUid };
-      if (!isSalariedEmpImport) {
-        // Hourly: send payHours as usual
-        entry.basicPay = { payHours: payHoursRounded };
-      } else {
-        // FIX 1: Salaried + active adjustments — echo Rollfi's own auto-prorated payHours so
-        // the base salary component is preserved alongside the comp adjustment.
-        // Without basicPay, Rollfi interprets the entry as 0 hours and zeroes the base salary.
-        // (Recovery via recoverZeroedSalariedEmployees above ensures item.payHours is non-zero.)
-        const rollfiPayHoursImport = Number(item.payHours ?? 0);
-        entry.basicPay = { payHours: rollfiPayHoursImport };
-        req.log.info({ rollfiUserId: rollfiUid, rollfiPayHoursImport, name: storeUser?.name },
-          "Import: salaried + adj — echoing Rollfi payHours to preserve base salary");
-      }
-      // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
+      // Hourly employee: always send payHours and explicit comp/OT arrays.
+      // Explicit [] clears stale comp only when overwriteExistingLineItems:true (see import body).
+      entry.basicPay = { payHours: payHoursRounded };
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
       payrollData.push(entry);
@@ -3344,11 +3472,13 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     }, "Rollfi importRegularPayrollData request (import)");
 
     const importBody = {
-      // overwriteExistingLineItems: true — Rollfi persists additionalCompensation, overTime,
-      // deductions, reimbursements, and retro across imports by design; an explicit [] does NOT
-      // clear them. This flag erases all existing line items for every employee included in this
-      // import and replaces them with exactly what we send, making each import a complete,
-      // authoritative snapshot. Decision confirmed with Rollfi 2026-07-22.
+      // overwriteExistingLineItems: true — required for hourly employees to prevent comp
+      // accumulation: explicit [] clears stale additionalCompensation/overTime only when this
+      // flag is true. Decision confirmed with Rollfi 2026-07-22.
+      // IMPORTANT — salaried employees must NOT be in this payrollData array. Sending them
+      // here (even with correct basicPay.payHours) suppresses Rollfi's Per Year salary
+      // auto-computation and zeroes baseTotal. Their comp is handled by the separate
+      // injectSalariedCompensations call below, which uses overwriteExistingLineItems:false.
       method: "importRegularPayrollData",
       companyId: rollfiCompany.rollfiCompanyId,
       payPeriodId,
@@ -3377,6 +3507,26 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     if (validationWarning) {
       req.log.warn({ validationWarning }, "importRegularPayrollData returned validationWarning (import)");
     }
+
+    // Post-import: inject comp for salaried employees and wipe any stale comp.
+    // Salaried employees were excluded from the main import above to preserve Rollfi's Per Year
+    // auto-computation. Their comp is added here via overwriteExistingLineItems:false.
+    const salariedEntriesImport: SalariedCompEntry[] = [];
+    for (const item of enrolledItems) {
+      const uid = String(item.userId ?? item.userID ?? "");
+      if (!salariedRollfiUidsImport.has(uid.toUpperCase())) continue;
+      const su = rollfiIdToUser.get(uid.toUpperCase());
+      const a = (adjustments as AdjInput[]).find((x) => x.rollfiUserId?.toUpperCase() === uid.toUpperCase());
+      salariedEntriesImport.push({
+        rollfiUserId: uid,
+        name: su?.name,
+        additionalCompensation: a?.additionalCompensation ?? [],
+        overTime: a?.overTime ?? [],
+      });
+    }
+    const { warnings: salariedCompWarningsImport } = await injectSalariedCompensations(
+      rollfiCompany.rollfiCompanyId, payPeriodId, salariedEntriesImport, req.log
+    );
 
     // ── Post-import verification ─────────────────────────────────────────────
     // overwriteExistingLineItems:true makes Rollfi process asynchronously
@@ -3486,7 +3636,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log.warn({ verifyErr }, "Post-import verification failed — realTotals unavailable");
     }
 
-    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...(salariedCompWarningsImport.length > 0 ? { salariedCompWarnings: salariedCompWarningsImport } : {}) });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");
@@ -3702,7 +3852,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       const pdRaw = ppDetailsResp.data as Record<string, unknown>;
       const pdArr = (pdRaw.payPeriod ?? []) as Array<Record<string, unknown>>;
       const pdPeriod = pdArr[0] as Record<string, unknown> | undefined;
-      const enrolledForRunAll = pdPeriod ? (pdPeriod.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
+      let enrolledForRunAll = pdPeriod ? (pdPeriod.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
 
       const runAllPeriodKey = `${String(period.payBeginDate ?? "")}/${String(period.payEndDate ?? "")}`;
       const runAllRollfiIdToUser = new Map<string, typeof onboarded[0]>();
@@ -3711,22 +3861,56 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
         if (emp?.rollfiUserId) runAllRollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
       }
 
+      // Identify salaried employees — must be excluded from the main import.
+      // Using employees.rollfiUserId directly is restart-safe (no store dependency).
+      const runAllDbPayTypeRows = await db
+        .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId })
+        .from(employeesTable).where(eq(employeesTable.companyId, company.id));
+      const runAllDbPayTypeByEmpId = new Map(runAllDbPayTypeRows.map((r) => [r.id, r.payType ?? "hourly"]));
+      // Extend runAllRollfiIdToUser with DB employees not in testUsers, using DB column directly.
+      for (const dbEmp of runAllDbPayTypeRows) {
+        if (!dbEmp.rollfiUserId) continue;
+        const uid = dbEmp.rollfiUserId.toUpperCase();
+        if (!runAllRollfiIdToUser.has(uid)) {
+          runAllRollfiIdToUser.set(uid, { id: dbEmp.id, name: "", email: "", role: "employee" as const,
+            companyId: company.id, employeeId: dbEmp.id, position: "" } as typeof onboarded[0]);
+        }
+      }
+      const runAllSalariedUids = new Set<string>();
+      for (const [uid, su] of runAllRollfiIdToUser) {
+        if (su.employeeId && runAllDbPayTypeByEmpId.get(su.employeeId) === "salary") runAllSalariedUids.add(uid);
+      }
+      for (const r of runAllDbPayTypeRows) {
+        if (r.payType === "salary" && r.rollfiUserId) runAllSalariedUids.add(r.rollfiUserId.toUpperCase());
+      }
+
+      // Recovery: salaried employees at payHours=0 (freshly enrolled or previously zeroed).
+      enrolledForRunAll = await recoverZeroedSalariedEmployees(
+        rollfiCompany.rollfiCompanyId, payPeriodId, enrolledForRunAll, runAllSalariedUids, req.log
+      );
+
       const runAllImportBody = {
-        // overwriteExistingLineItems: true — same as the per-company import endpoints;
-        // erases all existing line items per employee and replaces with this snapshot.
+        // overwriteExistingLineItems: true — required for hourly employees to prevent comp
+        // accumulation: explicit [] clears stale comp only when this flag is true.
         // Decision confirmed with Rollfi 2026-07-22.
+        // IMPORTANT — salaried employees must NOT be in this payrollData array. Their stale
+        // comp is cleared by injectSalariedCompensations below (which uses overwrite=false).
         method: "importRegularPayrollData",
         companyId: rollfiCompany.rollfiCompanyId,
         payPeriodId,
         overwriteExistingLineItems: true,
-        payrollData: enrolledForRunAll.map((item) => {
-          const uid = ((item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined) ?? "";
-          const storeUser = runAllRollfiIdToUser.get(uid.toUpperCase());
-          const synced = storeUser?.employeeId ? store.getTimesheetEntry(storeUser.employeeId, runAllPeriodKey) : null;
-          const payHours = Math.round((synced?.approvedHours ?? 0) * 10000) / 10000;
-          // Explicit empty arrays — run-all carries no adjustments; omitting them preserves stale comp
-          return { userId: uid, basicPay: { payHours }, additionalCompensation: [], overTime: [] };
-        }),
+        payrollData: enrolledForRunAll
+          .filter((item) => {
+            const uid = String(item.userId ?? item.userID ?? item.employeeId ?? item.id ?? "").toUpperCase();
+            return !runAllSalariedUids.has(uid);
+          })
+          .map((item) => {
+            const uid = ((item.userId ?? item.userID ?? item.employeeId ?? item.id) as string | undefined) ?? "";
+            const storeUser = runAllRollfiIdToUser.get(uid.toUpperCase());
+            const synced = storeUser?.employeeId ? store.getTimesheetEntry(storeUser.employeeId, runAllPeriodKey) : null;
+            const payHours = Math.round((synced?.approvedHours ?? 0) * 10000) / 10000;
+            return { userId: uid, basicPay: { payHours }, additionalCompensation: [], overTime: [] };
+          }),
       };
       req.log.info({ fullRollfiRequestBody: JSON.stringify(runAllImportBody) }, "outgoing importRegularPayrollData (run-all)");
       if (runAllImportBody.overwriteExistingLineItems !== true) {
@@ -3745,6 +3929,19 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       );
       assertNoRollfiError(importResp.data as Record<string, unknown>, "importRegularPayrollData");
 
+      // Salaried comp injection: run-all carries no adjustments, so only stale-comp wipe fires.
+      const runAllSalariedEntries: SalariedCompEntry[] = enrolledForRunAll
+        .filter((item) => runAllSalariedUids.has(String(item.userId ?? item.userID ?? "").toUpperCase()))
+        .map((item) => ({
+          rollfiUserId: String(item.userId ?? item.userID ?? ""),
+          name: String(item.userName ?? ""),
+          additionalCompensation: [] as { description: string; amount: number }[],
+          overTime: [] as { type: string; noOfHours: number; multiplier: number }[],
+        }));
+      const { warnings: salariedCompWarnings } = await injectSalariedCompensations(
+        rollfiCompany.rollfiCompanyId, payPeriodId, runAllSalariedEntries, req.log
+      );
+
       // Initiate
       const initiateResp = await axios.post(
         `${getBaseUrl()}/payroll#initiatePayroll`,
@@ -3753,7 +3950,7 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
       );
       assertNoRollfiError(initiateResp.data as Record<string, unknown>, "initiatePayroll");
 
-      results.push({ companyId: company.id, companyName: company.name, success: true, payPeriodId, payPeriod: period, ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
+      results.push({ companyId: company.id, companyName: company.name, success: true, payPeriodId, payPeriod: period, ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...(salariedCompWarnings.length > 0 ? { salariedCompWarnings } : {}) });
     } catch (err) {
       results.push({ companyId: company.id, companyName: company.name, success: false, error: err instanceof Error ? err.message : String(err) });
     }
