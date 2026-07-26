@@ -373,7 +373,6 @@ export default function ManagerPayrollSubmit() {
                 <DollarSign className="h-5 w-5 text-white" />
               </div>
               <h1 className="text-2xl font-bold text-white">Submit Payroll</h1>
-              <span className="text-xs px-2 py-0.5 rounded-full font-semibold text-white/70 border border-white/20">Powered by Rollfi</span>
             </div>
             <p className="text-white/50 text-sm ml-12">Review employee hours and submit payroll to Rollfi</p>
           </div>
@@ -435,10 +434,6 @@ export default function ManagerPayrollSubmit() {
         {preview && !previewLoading && (
           <>
             <div className="mb-2 flex items-center justify-between">
-              <p className="text-white/40 text-xs">
-                Period: {preview.period.from} → {preview.period.to}
-                {preview.period.workdays != null ? ` (${preview.period.workdays} workdays)` : ""}
-              </p>
               {!preview.allOnboarded && (
                 <div className="flex items-center gap-1.5 text-amber-400 text-xs">
                   <AlertTriangle className="h-3.5 w-3.5" /> Some employees not yet onboarded

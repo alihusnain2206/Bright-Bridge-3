@@ -397,14 +397,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          {/* EasyTeam live indicator */}
-          <div className="px-4 pb-3 shrink-0">
-            <div className="flex items-center gap-1.5 text-xs border border-[#E8622A]/30 rounded-full px-3 py-1.5 text-[#E8622A] font-semibold">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#E8622A] animate-pulse" />
-              EasyTeam Live
-            </div>
-          </div>
-
           {/* User + Logout */}
           <div className="px-4 pt-3 pb-5 border-t border-gray-100 shrink-0">
             {user && (
