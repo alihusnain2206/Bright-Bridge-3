@@ -174,6 +174,7 @@ export default function ClientEmployeesNew() {
   const [, navigate] = useLocation();
   const [step, setStep] = useState(1);
   const [showSsn, setShowSsn] = useState(false);
+  const [step3Attempted, setStep3Attempted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
@@ -721,11 +722,22 @@ export default function ClientEmployeesNew() {
               <div className="space-y-1.5">
                 <Label>SSN *</Label>
                 <div className="relative">
-                  <Input value={form.ssn} onChange={(e) => set("ssn", e.target.value)} placeholder="XXX-XX-XXXX" type={showSsn ? "text" : "password"} className="pr-9" />
+                  <Input
+                    value={form.ssn}
+                    onChange={(e) => { set("ssn", e.target.value); if (step3Attempted) setStep3Attempted(false); }}
+                    placeholder="XXX-XX-XXXX"
+                    type={showSsn ? "text" : "password"}
+                    className={`pr-9 ${step3Attempted && !form.ssn.replace(/\D/g, "") ? "border-red-500 focus-visible:ring-red-400" : ""}`}
+                  />
                   <button type="button" onClick={() => setShowSsn(!showSsn)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
                     {showSsn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                {step3Attempted && !form.ssn.replace(/\D/g, "") && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />SSN is required for payroll setup
+                  </p>
+                )}
               </div>
               <div className="space-y-1.5"><Label>Date of Birth *</Label><Input value={form.dateOfBirth} onChange={(e) => set("dateOfBirth", e.target.value)} type="date" /></div>
             </div>
@@ -853,8 +865,19 @@ export default function ClientEmployeesNew() {
             <ChevronLeft className="h-4 w-4" />{step > 1 ? "Back" : "Cancel"}
           </Button>
           {step < 4 ? (
-            <Button onClick={() => setStep(step + 1)} className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
-              disabled={(step === 1 && (!form.firstName || !form.lastName || !form.email || !form.position)) || (step === 2 && form.wageAmount <= 0)}>
+            <Button
+              onClick={() => {
+                if (step === 3 && !form.ssn.replace(/\D/g, "")) {
+                  setStep3Attempted(true);
+                  return;
+                }
+                setStep(step + 1);
+              }}
+              className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
+              disabled={
+                (step === 1 && (!form.firstName || !form.lastName || !form.email || !form.position)) ||
+                (step === 2 && form.wageAmount <= 0)
+              }>
               Next <ChevronRight className="h-4 w-4" />
             </Button>
           ) : (

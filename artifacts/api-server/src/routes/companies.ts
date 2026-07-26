@@ -637,7 +637,19 @@ router.post("/employees", async (req: Request, res: Response) => {
     return;
   }
 
-  const ssn = body.ssn?.replace(/\D/g, "") ?? randomNineDigits();
+  // SSN — required in production; sandbox-only fallback for test runs.
+  const isProductionEnv = getRollfiConfig().env === "production";
+  const rawSsn = (body.ssn ?? "").replace(/\D/g, "");
+  if (!rawSsn) {
+    if (isProductionEnv) {
+      res.status(400).json({ error: "SSN is required. Collect the employee's Social Security Number before proceeding." });
+      return;
+    }
+    // Sandbox only — generate a random test value so the Rollfi sandbox KYC call has something
+    // to process. This branch is unreachable in production (returned 400 above).
+    req.log.warn({ companyId: body.companyId }, "SSN not provided — generating random test value (SANDBOX ONLY, never accepted in production)");
+  }
+  const ssn = rawSsn || randomNineDigits(); // randomNineDigits() reachable only in sandbox
   const dob = body.dateOfBirth?.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") ?? "1990-01-15";
 
   try {
