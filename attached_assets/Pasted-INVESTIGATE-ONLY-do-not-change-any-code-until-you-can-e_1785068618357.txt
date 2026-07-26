@@ -1,0 +1,49 @@
+INVESTIGATE ONLY — do not change any code until you can explain what
+happened. Report findings and a proposed fix first.
+
+PROBLEM: adding a bonus to a salaried employee destroys their base salary.
+The fix you shipped has not resolved it, and the failure now looks
+different than before.
+
+Diane Whitfield (Sunshine, salaried $58,000/yr) history:
+  1. Import with no comp        → base $1,338.46 ✓ correct (Rollfi's
+     auto-prorated 48 hours)
+  2. Import with a $1,550 bonus → base $0, additional comp $1,550 ✗
+  3. Import with a $200 bonus   → BASE PAY $200.00, additional comp
+     $0.00 ✗
+
+Note that run 3 differs from run 2: previously the bonus at least landed
+under Additional Comp; now the bonus amount is sitting in BASE PAY and
+her salary is gone entirely. Something changed between those runs —
+presumably the recovery step (remove + re-add) you added.
+
+TRACE the most recent import (run 3) and report:
+1. Did recoverZeroedSalariedEmployees run for Diane? What were her
+   payHours immediately BEFORE and immediately AFTER it?
+2. Her exact entry in the outgoing payrollData — was basicPay included,
+   and with what payHours value? Was additionalCompensation included, and
+   with what contents?
+3. Rollfi's response to that import.
+4. Her line item from getPayPeriodDetails RIGHT NOW: payHours, payRate,
+   baseTotal, grossTotal, and the full additionalCompensations array.
+5. Explain specifically why $200 appears as BASE PAY rather than as
+   additional comp.
+
+A hypothesis to CHECK against the logs — do not accept it without
+evidence: the recovery and the import may be interfering. Either the
+import reads payHours from enrolledItems that were fetched BEFORE the
+recovery ran (so it sends a stale 0), or the remove+re-add wipes the comp
+and the following write lands in the wrong field. Confirm or refute from
+the actual sequence and timestamps.
+
+TESTING PROTOCOL: tell me when you start and finish your sandbox tests so
+I stay off the app. Rollfi imports are last-write-wins and we have
+already had one test invalidated by a collision.
+
+Report before implementing. We have had three attempts at this bug and
+each produced a different wrong result, which suggests our model of what
+Rollfi does with a salaried line item is still incomplete. I would rather
+understand one failure completely than patch a fourth variant.
+
+Note: I have added test employees (Natalie Reed, Gerald Foster) since
+your last test, so the roster has changed.
