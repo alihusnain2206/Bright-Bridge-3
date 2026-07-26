@@ -279,11 +279,6 @@ function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (
   const pendingTasks = tasks.filter(t => t.status !== "completed" && t.status !== "skipped" && t.isRequired).slice(0, 3);
   const activity = actData?.entries ?? [];
 
-  const _isSalary = emp.payType === "salary" || emp.payType?.startsWith("salary_");
-  const wageDisplay = _isSalary
-    ? (emp.annualSalary != null ? `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr` : null)
-    : (emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null);
-
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {/* Key Info */}
@@ -384,6 +379,8 @@ function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: strin
   const wageDisplay = _isSalary
     ? (emp.annualSalary != null ? `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr` : null)
     : (emp.hourlyWage != null ? `$${(emp.hourlyWage / 100).toFixed(2)}/hr` : null);
+  // Salary employee with no annualSalary set — show a visible warning instead of blank "—"
+  const wageMissing = _isSalary && emp.annualSalary == null;
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Card title="Position">
@@ -395,7 +392,13 @@ function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: strin
         <InfoRow label="Start Date" value={fmtDate(emp.startDate)} icon={<Calendar className="h-3.5 w-3.5" />} />
       </Card>
       <Card title="Compensation">
-        <InfoRow label="Pay Rate" value={wageDisplay} icon={<DollarSign className="h-3.5 w-3.5" />} />
+        <InfoRow
+          label="Pay Rate"
+          value={wageMissing
+            ? <span className="flex items-center gap-1 text-amber-600 text-xs font-medium"><AlertCircle className="h-3 w-3 shrink-0" />Not set — use Edit to add annual salary</span>
+            : wageDisplay}
+          icon={<DollarSign className="h-3.5 w-3.5" />}
+        />
         <InfoRow label="Pay Type" value={emp.payType} />
         <InfoRow label="Payment Method" value={emp.paymentMethod} />
         <InfoRow label="Overtime Eligible" value={emp.overtimeEligible === true ? "Yes" : emp.overtimeEligible === false ? "No" : null} />

@@ -681,6 +681,20 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
     const [existing] = await db.select().from(employees).where(eq(employees.id, id));
     if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }
 
+    // ── Pay-type-switch guard ─────────────────────────────────────────────────────
+    // Switching to salary without also providing annualSalary leaves a blank Pay Rate.
+    // Compute the salary that will be active after the update and reject if it's missing.
+    if (dbUpdates.payType === "salary") {
+      const finalSalary = pendingSalary !== undefined ? pendingSalary : existing.annualSalary;
+      if (finalSalary == null || finalSalary === 0) {
+        res.status(400).json({
+          error: "Cannot switch pay type to 'salary' without providing annualSalary. " +
+                 "Include annualSalary (in cents, e.g. 6500000 for $65,000/yr) in the same PATCH request.",
+        });
+        return;
+      }
+    }
+
     await db.update(employees).set(dbUpdates).where(eq(employees.id, id));
 
     // Re-fetch updated employee
