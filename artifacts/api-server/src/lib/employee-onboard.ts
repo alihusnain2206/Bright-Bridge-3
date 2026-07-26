@@ -1,6 +1,6 @@
 import { store } from "../store.js";
 import { registerEmployeeInEasyTeam } from "./easyteam-employee-sync.js";
-import { onboardEmployeeToRollfi } from "./rollfi-employee-sync.js";
+import { onboardEmployeeToRollfi, enrollEmployeeInNewPayPeriods } from "./rollfi-employee-sync.js";
 import { resolveCompanyLocationId } from "./location.js";
 import type { Logger } from "pino";
 
@@ -116,6 +116,22 @@ export async function syncEmployeeToIntegrations(
     rollfiSynced = r.success;
     rollfiUserId = r.rollfiUserId;
     syncError = r.error;
+    // FIX 1a: Enrol the new employee into any open "new" pay periods immediately after onboarding.
+    // Rollfi snapshots its pay-period roster at PERIOD CREATION TIME; employees added after
+    // that moment are absent and must be enrolled via addUsersToRegularPayPeriod.
+    // Best-effort: a failure here is non-fatal — the import-time safety net (FIX 1b) will catch it.
+    if (rollfiSynced && rollfiUserId) {
+      try {
+        const enrolResult = await enrollEmployeeInNewPayPeriods(
+          rollfiCompany.rollfiCompanyId,
+          rollfiUserId,
+          log
+        );
+        log.info({ empId: emp.id, rollfiUserId, ...enrolResult }, "Post-onboard: pay period enrollment complete");
+      } catch (enrolErr) {
+        log.warn({ empId: emp.id, rollfiUserId, enrolErr }, "Post-onboard: pay period enrollment failed — import-time safety net will catch this");
+      }
+    }
     return {
       easyteamSynced: etResult.success,
       rollfiSynced,

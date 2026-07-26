@@ -15,6 +15,8 @@ export interface TestUser {
   employeeId: string | null;
   position: string;
   hourlyWage?: number;
+  /** 'hourly' | 'salary' — carried from wizard so preview works before the DB is consulted. */
+  payType?: string;
   status?: EmployeeStatus;
   onLeaveReason?: string;
   onLeaveDate?: string;

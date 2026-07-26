@@ -455,6 +455,71 @@ export async function onboardEmployeeToRollfi(
   }
 }
 
+// ── FIX 1a helper: enrol a newly-onboarded employee into open pay periods ────
+// Rollfi snapshots its pay-period roster at PERIOD CREATION TIME. Any employee
+// added afterwards is absent and must be explicitly enrolled via
+// addUsersToRegularPayPeriod. (Rollfi support confirmed this is the intended API.)
+//
+// Guardrails (spec):
+//   1. NEVER call blindly — caller has confirmed the employee is absent from the roster.
+//   2. Treat "already has a payroll line item" as SUCCESS (desired state reached; log INFO).
+//   3. Only enrol into "new" periods; never submitted, inProcess, processed, cancelled, failed.
+export async function enrollEmployeeInNewPayPeriods(
+  rollfiCompanyId: string,
+  rollfiUserId: string,
+  log: Logger
+): Promise<{ enrolled: number; periodsChecked: number }> {
+  const cfg = getRollfiConfig();
+  const headers = makeRollfiHeaders(cfg.clientId, cfg.secretKey);
+
+  let periods: Array<Record<string, unknown>> = [];
+  try {
+    const resp = await axios.post(
+      `${cfg.baseUrl}/reports#getUnProcessedPayPeriod`,
+      { method: "getUnProcessedPayPeriod", companyId: rollfiCompanyId, workerType: "W2" },
+      { headers }
+    );
+    const raw = resp.data as Record<string, unknown>;
+    periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+  } catch (err) {
+    log.warn({ rollfiCompanyId, rollfiUserId, err }, "enrollEmployeeInNewPayPeriods: could not fetch pay periods — skipping enrollment");
+    return { enrolled: 0, periodsChecked: 0 };
+  }
+
+  // Guardrail 3: only "new" periods
+  const newPeriods = periods.filter((p) => String(p.payPeriodStatus ?? "").toLowerCase() === "new");
+  log.info({ rollfiUserId, totalPeriods: periods.length, newPeriods: newPeriods.length }, "enrollEmployeeInNewPayPeriods: periods available");
+
+  let enrolled = 0;
+  for (const period of newPeriods) {
+    const payPeriodId = period.payPeriodId as string;
+    if (!payPeriodId) continue;
+    try {
+      const enrollResp = await axios.post(
+        `${cfg.baseUrl}/payroll#addUsersToRegularPayPeriod`,
+        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId, userIds: [rollfiUserId] },
+        { headers }
+      );
+      const enrollRaw = enrollResp.data as Record<string, unknown>;
+      const errMsg = extractRollfiError(enrollRaw);
+      if (errMsg && errMsg.toLowerCase().includes("already has a payroll line item")) {
+        // Guardrail 2: race — desired state already reached
+        log.info({ rollfiUserId, payPeriodId }, "enrollEmployeeInNewPayPeriods: already enrolled (desired state — success)");
+        enrolled++;
+      } else if (errMsg) {
+        log.warn({ rollfiUserId, payPeriodId, errMsg }, "enrollEmployeeInNewPayPeriods: enrollment returned error (non-fatal)");
+      } else {
+        log.info({ rollfiUserId, payPeriodId, response: JSON.stringify(enrollResp.data) }, "enrollEmployeeInNewPayPeriods: enrolled successfully");
+        enrolled++;
+      }
+    } catch (err) {
+      log.warn({ rollfiUserId, payPeriodId, err }, "enrollEmployeeInNewPayPeriods: request failed (non-fatal)");
+    }
+  }
+
+  return { enrolled, periodsChecked: newPeriods.length };
+}
+
 // ── State W-4 payload builder ────────────────────────────────────────────────
 export interface StateW4Payload { [key: string]: string | number | boolean; }
 

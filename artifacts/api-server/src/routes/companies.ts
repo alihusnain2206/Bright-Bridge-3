@@ -765,6 +765,8 @@ router.post("/employees", async (req: Request, res: Response) => {
         employeeId,
         position: body.position,
         hourlyWage: hourlyWageCents,
+        /** FIX 2: carry payType so payroll preview works even when the DB lookup hasn't run yet. */
+        payType: payTypeNormalized,
       };
       store.addTestUser(newLoginUser);
       // Persist so login survives server restarts

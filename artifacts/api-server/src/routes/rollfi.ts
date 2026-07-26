@@ -5,7 +5,7 @@ import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persi
 import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByCompany } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { db, rollfiWebhookEvents, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
 import { desc, eq, inArray, and } from "drizzle-orm";
@@ -313,6 +313,104 @@ async function wipeAdditionalCompensations(
     );
   }
   return { wiped, warnings };
+}
+
+// ── FIX 1b helper: enrol mid-period hires absent from Rollfi's pay-period roster ─────────────
+// Rollfi snapshots its pay-period roster at PERIOD CREATION TIME; employees hired after the
+// snapshot (or not yet enrolld when it ran) are absent. This helper detects and enrolls them.
+//
+// Guardrails (spec):
+//   1. NEVER call blindly — only for employees confirmed ABSENT from the current roster.
+//   2. Treat "already has a payroll line item" as SUCCESS (desired state reached; log INFO).
+//   3. Only enrol into "new" periods; never submitted, inProcess, processed, cancelled, failed.
+type BasicLog = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
+async function enrollMissingEmployeesInPeriod(
+  rollfiCompanyId: string,
+  payPeriodId: string,
+  /** Lower-cased PayPeriodStatus / payPeriodStatus from getPayPeriodDetails response. */
+  periodStatus: string,
+  enrolledItems: Array<Record<string, unknown>>,
+  companyId: string,
+  log: BasicLog
+): Promise<{ newlyEnrolled: number; updatedItems: Array<Record<string, unknown>> | null }> {
+  // Guardrail 3: only "new" periods
+  if (periodStatus !== "new") {
+    log.info({ payPeriodId, periodStatus }, "Safety net: skipping enrollment — period is not 'new'");
+    return { newlyEnrolled: 0, updatedItems: null };
+  }
+
+  const enrolledUids = new Set(
+    enrolledItems
+      .map((item) => String(item.userId ?? item.userID ?? item.employeeId ?? "").toUpperCase())
+      .filter(Boolean)
+  );
+
+  // Join rollfi_employee_records → employees to filter by our internal companyId
+  const companyRollfiEmps = await db
+    .select({ rollfiUserId: rollfiEmployeeRecords.rollfiUserId })
+    .from(rollfiEmployeeRecords)
+    .innerJoin(employeesTable, eq(rollfiEmployeeRecords.employeeId, employeesTable.id))
+    .where(eq(employeesTable.companyId, companyId));
+
+  // Guardrail 1: only employees ABSENT from the current roster
+  const missingUids = companyRollfiEmps
+    .map((r) => r.rollfiUserId)
+    .filter((uid): uid is string => !!uid && !enrolledUids.has(uid.toUpperCase()));
+
+  if (missingUids.length === 0) {
+    log.info({ payPeriodId, companyId }, "Safety net: all Rollfi employees already present in roster");
+    return { newlyEnrolled: 0, updatedItems: null };
+  }
+
+  log.info(
+    { payPeriodId, companyId, missingCount: missingUids.length, missingUids },
+    "Safety net: enrolling mid-period hires absent from Rollfi roster"
+  );
+
+  let newlyEnrolled = 0;
+  for (const uid of missingUids) {
+    try {
+      const enrollResp = await axios.post(
+        `${getBaseUrl()}/payroll#addUsersToRegularPayPeriod`,
+        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId, userIds: [uid] },
+        { headers: rollfiHeaders() }
+      );
+      const enrollRaw = enrollResp.data as Record<string, unknown>;
+      const errMsg = extractRollfiError(enrollRaw);
+      if (errMsg && errMsg.toLowerCase().includes("already has a payroll line item")) {
+        // Guardrail 2: race — desired state already reached
+        log.info({ uid, payPeriodId }, "Safety net: already enrolled (desired state — success)");
+        newlyEnrolled++;
+      } else if (errMsg) {
+        log.warn({ uid, payPeriodId, errMsg }, "Safety net: enrollment returned error (non-fatal — skipping)");
+      } else {
+        log.info({ uid, payPeriodId, response: JSON.stringify(enrollResp.data) }, "Safety net: enrolled successfully");
+        newlyEnrolled++;
+      }
+    } catch (enrollErr) {
+      log.warn({ uid, payPeriodId, enrollErr }, "Safety net: enrollment request failed (non-fatal — skipping)");
+    }
+  }
+
+  if (newlyEnrolled === 0) {
+    return { newlyEnrolled: 0, updatedItems: null };
+  }
+
+  // Re-fetch roster so newly enrolled employees appear in the import payload
+  const refreshResp = await axios.post(
+    `${getBaseUrl()}/reports#getPayPeriodDetails`,
+    { method: "getPayPeriodDetails", companyId: rollfiCompanyId, payPeriodId },
+    { headers: rollfiHeaders() }
+  );
+  const refreshRaw = refreshResp.data as Record<string, unknown>;
+  const refreshArr = (refreshRaw.payPeriod ?? []) as Array<Record<string, unknown>>;
+  const refreshPd = refreshArr[0] as Record<string, unknown> | undefined;
+  const updatedItems = (refreshPd?.payrollLineItems ?? []) as Array<Record<string, unknown>>;
+  log.info(
+    { newlyEnrolled, newRosterCount: updatedItems.length, payPeriodId },
+    "Safety net: re-fetched roster after mid-period hire enrollment"
+  );
+  return { newlyEnrolled, updatedItems };
 }
 
 // ── Status ───────────────────────────────────────────────────
@@ -2569,7 +2667,10 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     const dbRow = dbWageByEmpId.get(u.employeeId ?? "");
     const hourlyRateCents = dbRow?.hourlyWage ?? u.hourlyWage ?? 1500;
     const hourlyRate = hourlyRateCents / 100; // convert cents to dollars for display & calculation
-    const payType = dbRow?.payType ?? "hourly";
+    // FIX 2: fall back to store's payType (set at wizard creation) if the DB lookup failed.
+    // This keeps salaried employees visible in the preview even on a warm-cache hit before
+    // the DB round-trip resolves. DB value always takes priority when present.
+    const payType = dbRow?.payType ?? u.payType ?? "hourly";
     const annualSalaryCents = dbRow?.annualSalary ?? null;
     // Salaried employees have no clocked hours; grossPay = 0 here; payType flag signals the UI
     const grossPay = payType === "salary" || payType?.startsWith("salary_")
@@ -2697,12 +2798,28 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     const rosterRaw = rosterResp.data as Record<string, unknown>;
     const rosterPeriodArr = (rosterRaw.payPeriod ?? []) as Array<Record<string, unknown>>;
     const rosterPd = rosterPeriodArr[0] as Record<string, unknown> | undefined;
-    const enrolledItems = rosterPd ? (rosterPd.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
+    // FIX 1b: must be `let` so the safety net can replace it with a refreshed roster.
+    let enrolledItems = rosterPd ? (rosterPd.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
     req.log.info({ enrolledCount: enrolledItems.length, sampleItem: JSON.stringify(enrolledItems[0]) }, "getPayPeriodDetails enrolled employees (initiate)");
 
     if (enrolledItems.length === 0) {
       res.status(400).json({ error: "No employees enrolled in this Rollfi pay period. Ensure employees are active with a start date before the period." });
       return;
+    }
+
+    // FIX 1b: Safety net — enrol any mid-period hires absent from Rollfi's roster snapshot.
+    // Must run BEFORE building payrollData so newly enrolled employees appear in the payload.
+    const periodStatus = String(rosterPd?.PayPeriodStatus ?? rosterPd?.payPeriodStatus ?? "").toLowerCase();
+    let newlyEnrolled = 0;
+    {
+      const safetyNet = await enrollMissingEmployeesInPeriod(
+        rollfiCompany.rollfiCompanyId, payPeriodId, periodStatus, enrolledItems, companyId, req.log
+      );
+      newlyEnrolled = safetyNet.newlyEnrolled;
+      if (safetyNet.newlyEnrolled > 0 && safetyNet.updatedItems) {
+        enrolledItems = safetyNet.updatedItems;
+        req.log.info({ newlyEnrolled, newRosterCount: enrolledItems.length }, "Initiate: roster refreshed after mid-period hire enrollment");
+      }
     }
 
     // Build a reverse-lookup: rollfiUserId (uppercase) → store user (for hours resolution)
@@ -2713,6 +2830,14 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       const emp = store.getRollfiEmployee(u.employeeId!);
       if (emp?.rollfiUserId) rollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
     }
+
+    // FIX 3: Batch-fetch payType from DB to detect salaried employees.
+    // DB is the source of truth; the store carries payType as a fallback but DB wins.
+    const staffEmpIds = staffUsers.map((u) => u.employeeId).filter((id): id is string => !!id);
+    const dbPayTypeRowsInit = staffEmpIds.length > 0
+      ? await db.select({ id: employeesTable.id, payType: employeesTable.payType }).from(employeesTable).where(inArray(employeesTable.id, staffEmpIds))
+      : [];
+    const dbPayTypeByEmpId = new Map(dbPayTypeRowsInit.map((r) => [r.id, r.payType ?? "hourly"]));
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
     const dbApprovals1 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
@@ -2750,7 +2875,27 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       }
 
       const payHoursRounded = Math.round(payHours * 10000) / 10000;
-      const entry: Record<string, unknown> = { userId: rollfiUid, basicPay: { payHours: payHoursRounded } };
+      // FIX 3: Salaried employees — Rollfi auto-computes pay from the Per Year wage record,
+      // prorated by workdays in the period. Sending basicPay.payHours overrides that calculation
+      // and zeroes their gross pay. Salaried employees must be omitted (no adjustments) or sent
+      // with adjustment arrays but NO basicPay key.
+      // IMPORTANT: to reduce a salaried employee's pay for unpaid leave, use Rollfi's
+      // unPaidLeave field — NEVER by manipulating hours.
+      const isSalariedEmp = storeUser?.employeeId
+        ? (dbPayTypeByEmpId.get(storeUser.employeeId) === "salary")
+        : false;
+      const hasActiveAdj = (adj?.additionalCompensation?.length ?? 0) > 0 || (adj?.overTime?.length ?? 0) > 0;
+      if (isSalariedEmp && !hasActiveAdj) {
+        // Salaried, no adjustments → omit entirely (no-op; Rollfi salary values persist)
+        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Initiate: salaried employee, no adjustments — omitting from payload (Rollfi auto-computes salary)");
+        continue;
+      }
+      const entry: Record<string, unknown> = { userId: rollfiUid };
+      if (!isSalariedEmp) {
+        // Hourly: send payHours as usual
+        entry.basicPay = { payHours: payHoursRounded };
+      }
+      // Salaried with active adjustments: include adjustment arrays but NO basicPay key
       // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
@@ -2877,12 +3022,28 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     const rosterRaw = rosterResp.data as Record<string, unknown>;
     const rosterPeriodArr = (rosterRaw.payPeriod ?? []) as Array<Record<string, unknown>>;
     const rosterPd = rosterPeriodArr[0] as Record<string, unknown> | undefined;
-    const enrolledItems = rosterPd ? (rosterPd.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
+    // FIX 1b: must be `let` so the safety net can replace it with a refreshed roster.
+    let enrolledItems = rosterPd ? (rosterPd.payrollLineItems ?? []) as Array<Record<string, unknown>> : [];
     req.log.info({ enrolledCount: enrolledItems.length, sampleItem: JSON.stringify(enrolledItems[0]) }, "getPayPeriodDetails enrolled employees (import)");
 
     if (enrolledItems.length === 0) {
       res.status(400).json({ error: "No employees enrolled in this Rollfi pay period." });
       return;
+    }
+
+    // FIX 1b: Safety net — enrol any mid-period hires absent from Rollfi's roster snapshot.
+    // Must run BEFORE building payrollData so newly enrolled employees appear in the payload.
+    const importPeriodStatus = String(rosterPd?.PayPeriodStatus ?? rosterPd?.payPeriodStatus ?? "").toLowerCase();
+    let newlyEnrolled = 0;
+    {
+      const safetyNet = await enrollMissingEmployeesInPeriod(
+        rollfiCompany.rollfiCompanyId, payPeriodId, importPeriodStatus, enrolledItems, companyId, req.log
+      );
+      newlyEnrolled = safetyNet.newlyEnrolled;
+      if (safetyNet.newlyEnrolled > 0 && safetyNet.updatedItems) {
+        enrolledItems = safetyNet.updatedItems;
+        req.log.info({ newlyEnrolled, newRosterCount: enrolledItems.length }, "Import: roster refreshed after mid-period hire enrollment");
+      }
     }
 
     // Build a reverse-lookup: rollfiUserId (uppercase) → store user (for hours resolution)
@@ -2893,6 +3054,14 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       const emp = store.getRollfiEmployee(u.employeeId!);
       if (emp?.rollfiUserId) rollfiIdToUser.set(emp.rollfiUserId.toUpperCase(), u);
     }
+
+    // FIX 3: Batch-fetch payType from DB to detect salaried employees.
+    // DB is the source of truth; store.payType is a fallback but DB wins.
+    const staffEmpIdsImport = staffUsers.map((u) => u.employeeId).filter((id): id is string => !!id);
+    const dbPayTypeRowsImport = staffEmpIdsImport.length > 0
+      ? await db.select({ id: employeesTable.id, payType: employeesTable.payType }).from(employeesTable).where(inArray(employeesTable.id, staffEmpIdsImport))
+      : [];
+    const dbPayTypeByEmpIdImport = new Map(dbPayTypeRowsImport.map((r) => [r.id, r.payType ?? "hourly"]));
 
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
     const dbApprovals2 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
@@ -2930,7 +3099,25 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       }
 
       const payHoursRounded = Math.round(payHours * 10000) / 10000;
-      const entry: Record<string, unknown> = { userId: rollfiUid, basicPay: { payHours: payHoursRounded } };
+      // FIX 3: Salaried employees — Rollfi auto-computes pay from the Per Year wage record.
+      // Sending basicPay.payHours for a salaried employee overrides that and zeroes their gross.
+      // IMPORTANT: to reduce a salaried employee's pay for unpaid leave, use Rollfi's
+      // unPaidLeave field — NEVER by manipulating hours.
+      const isSalariedEmpImport = storeUser?.employeeId
+        ? (dbPayTypeByEmpIdImport.get(storeUser.employeeId) === "salary")
+        : false;
+      const hasActiveAdjImport = (adj?.additionalCompensation?.length ?? 0) > 0 || (adj?.overTime?.length ?? 0) > 0;
+      if (isSalariedEmpImport && !hasActiveAdjImport) {
+        // Salaried, no adjustments → omit entirely (no-op; Rollfi salary values persist)
+        req.log.info({ rollfiUserId: rollfiUid, name: storeUser?.name }, "Import: salaried employee, no adjustments — omitting from payload (Rollfi auto-computes salary)");
+        continue;
+      }
+      const entry: Record<string, unknown> = { userId: rollfiUid };
+      if (!isSalariedEmpImport) {
+        // Hourly: send payHours as usual
+        entry.basicPay = { payHours: payHoursRounded };
+      }
+      // Salaried with active adjustments: include adjustment arrays but NO basicPay key
       // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
@@ -2994,11 +3181,16 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     const verifyMismatches: Array<{ rollfiUserId: string; sent: number; received: number }> = [];
     let lineItems: Array<Record<string, unknown>> = [];
     try {
+      // FIX 3: filter out salaried entries (no basicPay key) before building the hours sentMap.
+      // Salaried employees are intentionally omitted or sent without basicPay — attempting to
+      // read e.basicPay.payHours on those entries would throw or produce NaN.
       const sentMap = new Map<string, number>(
-        payrollData.map((e) => [
-          (e.userId as string).toUpperCase(),
-          Math.round(((e.basicPay as { payHours: number }).payHours ?? 0) * 10000) / 10000,
-        ])
+        payrollData
+          .filter((e) => e.basicPay !== undefined)
+          .map((e) => [
+            (e.userId as string).toUpperCase(),
+            Math.round(((e.basicPay as { payHours: number }).payHours ?? 0) * 10000) / 10000,
+          ])
       );
       // Track sent compensation so we can detect if Rollfi ignores an explicit empty array (STEP 4)
       const sentCompMap = new Map<string, Array<unknown>>(
@@ -3082,7 +3274,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log.warn({ verifyErr }, "Post-import verification failed — realTotals unavailable");
     }
 
-    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");

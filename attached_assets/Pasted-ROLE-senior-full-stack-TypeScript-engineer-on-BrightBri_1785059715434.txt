@@ -1,0 +1,101 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+Three related fixes so salaried employees and mid-period hires work
+correctly. All evidence below is confirmed from live sandbox testing —
+do not re-investigate, implement.
+
+=== FIX 1: Mid-period hires are never enrolled in the pay period ===
+
+CONFIRMED: Rollfi enrols employees into a pay period at the moment the
+PERIOD IS CREATED — a point-in-time snapshot. Anyone created afterwards is
+never added. Proof: Sunshine period 338FA4C5 (Jul 21–Aug 3) contains 6
+employees, ALL with dateOfJoin 2024-01-01; every employee created today
+(2026-07-26) is absent — including Diane Whitfield, who is fully Active,
+KYC passed, with a valid $58,000 Per Year wage.
+
+This was hidden until today: we used to hardcode dateOfJoin to 2024-01-01,
+making everyone look pre-existing. Fixing the start date revealed the gap.
+Real-world impact: a daycare hires someone mid-period and they silently
+miss that payroll.
+
+THE FIX — reconcile against Rollfi's roster, in TWO places:
+
+(a) AT HIRE: after onboardEmployeeToRollfi succeeds, enrol the new
+    employee into the company's open pay period(s).
+(b) AT IMPORT (the safety net — this is the important one): before
+    building the import payload, compare our payroll-eligible employees
+    against Rollfi's getPayPeriodDetails roster. For anyone active and
+    missing, enrol them, then re-fetch the roster before importing.
+
+USE addUsersToRegularPayPeriod — the same call we removed months ago. It
+previously threw "Employee X already has a payroll line item for this pay
+period" because we called it blindly for EVERY employee on EVERY run.
+Rollfi support told us it should be used "if they do not appear in
+getPayPeriodDetails after the new pay period is inserted" — which is
+exactly this case. THREE MANDATORY GUARDRAILS so that error cannot recur:
+  1. NEVER call it blindly. Only for employees confirmed ABSENT from the
+     current getPayPeriodDetails roster.
+  2. Treat "already has a payroll line item" as SUCCESS (log at info,
+     continue) — a race just means the desired state was reached. Only
+     other errors are real errors.
+  3. Only enrol into periods with status "new". Never into submitted,
+     inProcess, processed, cancelled, or failed periods.
+Awaited and error-checked (check nested body errors, not just HTTP status).
+Report enrolled count in the import response.
+
+=== FIX 2: Salaried employees show "$0.00/hr" and "Excluded" ===
+
+Diane's production DB row is correct (pay_type "salary", annual_salary
+5,800,000 = $58,000). But the payroll preview shows her as $0.00/hr and
+"Excluded". Cause: the preview reads from the in-memory store, which
+doesn't carry payType, so isSalary resolves false and it falls back to
+displaying hourlyWage (0) as an hourly rate.
+
+FIX: the preview must read pay type and salary from the DATABASE (source
+of truth), not the store. For salaried employees:
+  - Rate column: show "Salaried" (or the annual amount), never $0.00/hr
+  - Never show the "Excluded" badge — they're SUPPOSED to have no hours
+  - Exclude them from the "N employees have no hours" warning
+  - Show their expected pay from Rollfi's line item where available
+Also fix the underlying store/DB inconsistency if straightforward, and
+report it if not.
+
+=== FIX 3: Stop sending hours for salaried employees ===
+
+CONFIRMED: Rollfi computes salaried pay ITSELF from the wage record,
+prorated by workdays. Proof: Gregory Lawson ($60,000/yr) received
+$1,149.43 for a 5-workday supplemental period = $60,000 ÷ 261 workdays
+× 5 days, with NO hours supplied. Our import sending payHours: 0 (salaried
+staff never clock in) overwrites that calculation and zeroes their pay.
+
+THE FIX — in the import payload construction:
+  - HOURLY employee → basicPay: { payHours: X } exactly as now
+  - SALARIED with NO adjustments → OMIT them from payrollData entirely
+    (proven: omitting an employee is a no-op; their Rollfi values persist)
+  - SALARIED WITH adjustments (bonus/deduction/reimbursement) → include
+    them WITH the adjustment arrays but NO basicPay key at all (proven:
+    omitting basicPay is a no-op for hours)
+  - NEVER send payHours for a salaried employee under any circumstance
+Add a code comment: reducing a salaried employee's pay (e.g. unpaid leave)
+must use Rollfi's unPaidLeave field — never by manipulating hours.
+
+SCOPE BOUNDARY — do not touch: the payroll submit/initiate failure
+handling shipped today, the wage resolver, auth middleware, EasyTeam sync,
+onboarding field mapping.
+
+TESTING:
+- Diane appears in Rollfi's roster for Sunshine's open period after an
+  import (Fix 1b enrols her); report the enrolled count
+- Running the import twice does NOT produce "already has a payroll line
+  item" errors (guardrail 1 works)
+- Diane displays as "Salaried", not $0.00/hr, and has no Excluded badge
+- The import payload contains NO basicPay for Diane; verify by logging
+  the outgoing body
+- Hourly employees completely unchanged (regression check on John Smith)
+- A salaried employee with a bonus is included, with the bonus and no
+  basicPay
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, the outgoing import payload showing a salaried
+employee's entry, enrolment results, and each test outcome.
+REMINDER: Publish required for bright-bridge-3.replit.app.
