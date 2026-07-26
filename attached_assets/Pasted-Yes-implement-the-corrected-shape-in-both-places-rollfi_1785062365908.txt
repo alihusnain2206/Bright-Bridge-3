@@ -1,0 +1,38 @@
+Yes — implement the corrected shape in both places (rollfi.ts and
+rollfi-employee-sync.ts):
+  userIds: [uid]
+  → payrollLineItems: [{ userId: uid, paymentMethod: "Direct Deposit" }]
+
+Keep all existing guardrails: only enrol employees confirmed absent from
+the roster; "already has a payroll line item" = success; periods in
+"new" or "cancelled" only; awaited and error-checked including nested
+body errors.
+
+ONE ADDITION — handle the new error class properly. Your test surfaced:
+"Employee validation failed for user X: Employee has an invalid status
+that prevents payroll processing." That means the employee isn't
+payroll-eligible (not fully onboarded/Active). Treat it as a per-employee
+SKIP, not a failure of the whole import: log at warn with the employee's
+name and reason, continue with the others, and return them in the import
+response as e.g. notEnrolled: [{ employeeId, name, reason }] so the UI
+can eventually tell the owner "these employees could not be included."
+Do not let one ineligible employee block everyone else.
+
+TESTING on production after publish (Sunshine, period 338FA4C5):
+- Import → enrollment attempted with the new shape; report
+  newlyEnrolledMidPeriod and any notEnrolled entries with reasons
+- Diane Whitfield (Active, KYC passed) should enrol successfully;
+  Raymond Holt may be rejected if his bank/status isn't eligible — report
+  which, and the exact reason for each
+- After enrolment, the outgoing payload must show Diane (and Raymond if
+  enrolled) with NO basicPay key, hourly employees keeping theirs — paste it
+- Diane displays "Salaried", not $0.00/hr, no Excluded badge; paste the
+  payType resolution log for her (expect dbPayType "salary", source "db")
+- Rollfi computes her gross ≈ $58,000 ÷ 261 × workdays
+- Import twice → no "already has a payroll line item" errors
+- John Smith and Mary Johnson hours unchanged (0.1667 / 1.9833)
+- tsc clean
+
+DELIVERABLE: enrolment results with per-employee outcomes, the payload,
+Diane's payType log, and each test result.
+REMINDER: Publish required.

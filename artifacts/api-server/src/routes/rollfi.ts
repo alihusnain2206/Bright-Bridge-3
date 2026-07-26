@@ -337,12 +337,12 @@ async function enrollMissingEmployeesInPeriod(
   enrolledItems: Array<Record<string, unknown>>,
   companyId: string,
   log: BasicLog
-): Promise<{ newlyEnrolled: number; updatedItems: Array<Record<string, unknown>> | null }> {
+): Promise<{ newlyEnrolled: number; updatedItems: Array<Record<string, unknown>> | null; notEnrolled: Array<{ rollfiUserId: string; employeeId: string; name: string; reason: string }> }> {
   // Guardrail 3: only "new" or "cancelled" periods (both are Rollfi editable states)
   const ENROLLABLE_STATUSES = ["new", "cancelled"];
   if (!ENROLLABLE_STATUSES.includes(periodStatus)) {
     log.info({ payPeriodId, periodStatus }, "Safety net: skipping enrollment — period is not in an editable state (new/cancelled)");
-    return { newlyEnrolled: 0, updatedItems: null };
+    return { newlyEnrolled: 0, updatedItems: null, notEnrolled: [] };
   }
 
   const enrolledUids = new Set(
@@ -353,10 +353,22 @@ async function enrollMissingEmployeesInPeriod(
 
   // Join rollfi_employee_records → employees to filter by our internal companyId
   const companyRollfiEmps = await db
-    .select({ rollfiUserId: rollfiEmployeeRecords.rollfiUserId })
+    .select({
+      rollfiUserId: rollfiEmployeeRecords.rollfiUserId,
+      employeeId:   rollfiEmployeeRecords.employeeId,
+      firstName:    employeesTable.firstName,
+      lastName:     employeesTable.lastName,
+    })
     .from(rollfiEmployeeRecords)
     .innerJoin(employeesTable, eq(rollfiEmployeeRecords.employeeId, employeesTable.id))
     .where(eq(employeesTable.companyId, companyId));
+
+  // Build uid → { employeeId, name } for per-employee error reporting
+  const empInfoByUid = new Map(
+    companyRollfiEmps
+      .filter((r): r is typeof r & { rollfiUserId: string } => !!r.rollfiUserId)
+      .map((r) => [r.rollfiUserId.toUpperCase(), { employeeId: r.employeeId, name: `${r.firstName} ${r.lastName}` }])
+  );
 
   // Guardrail 1: only employees ABSENT from the current roster
   const missingUids = companyRollfiEmps
@@ -365,7 +377,7 @@ async function enrollMissingEmployeesInPeriod(
 
   if (missingUids.length === 0) {
     log.info({ payPeriodId, companyId }, "Safety net: all Rollfi employees already present in roster");
-    return { newlyEnrolled: 0, updatedItems: null };
+    return { newlyEnrolled: 0, updatedItems: null, notEnrolled: [] };
   }
 
   log.info(
@@ -374,32 +386,44 @@ async function enrollMissingEmployeesInPeriod(
   );
 
   let newlyEnrolled = 0;
+  const notEnrolled: Array<{ rollfiUserId: string; employeeId: string; name: string; reason: string }> = [];
   for (const uid of missingUids) {
+    const empInfo = empInfoByUid.get(uid.toUpperCase());
     try {
       const enrollResp = await axios.post(
         `${getBaseUrl()}/payroll#addUsersToRegularPayPeriod`,
-        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId, userIds: [uid] },
+        {
+          method: "addUsersToRegularPayPeriod",
+          companyId: rollfiCompanyId,
+          payPeriodId,
+          payrollLineItems: [{ userId: uid, paymentMethod: "Direct Deposit" }],
+        },
         { headers: rollfiHeaders() }
       );
       const enrollRaw = enrollResp.data as Record<string, unknown>;
       const errMsg = extractRollfiError(enrollRaw);
-      if (errMsg && errMsg.toLowerCase().includes("already has a payroll line item")) {
+      if (!errMsg) {
+        log.info({ uid, name: empInfo?.name, payPeriodId, response: JSON.stringify(enrollResp.data) }, "Safety net: enrolled successfully");
+        newlyEnrolled++;
+      } else if (errMsg.toLowerCase().includes("already has a payroll line item")) {
         // Guardrail 2: race — desired state already reached
-        log.info({ uid, payPeriodId }, "Safety net: already enrolled (desired state — success)");
+        log.info({ uid, name: empInfo?.name, payPeriodId }, "Safety net: already enrolled (desired state — success)");
         newlyEnrolled++;
-      } else if (errMsg) {
-        log.warn({ uid, payPeriodId, errMsg }, "Safety net: enrollment returned error (non-fatal — skipping)");
+      } else if (errMsg.toLowerCase().includes("invalid status") || errMsg.toLowerCase().includes("employee validation failed")) {
+        // Per-employee ineligibility — not fully onboarded / not yet Active in Rollfi.
+        // Skip this employee; do not block the others.
+        log.warn({ uid, name: empInfo?.name, payPeriodId, reason: errMsg }, "Safety net: employee not payroll-eligible — skipping (notEnrolled)");
+        notEnrolled.push({ rollfiUserId: uid, employeeId: empInfo?.employeeId ?? uid, name: empInfo?.name ?? uid, reason: errMsg });
       } else {
-        log.info({ uid, payPeriodId, response: JSON.stringify(enrollResp.data) }, "Safety net: enrolled successfully");
-        newlyEnrolled++;
+        log.warn({ uid, name: empInfo?.name, payPeriodId, errMsg }, "Safety net: enrollment returned error (non-fatal — skipping)");
       }
     } catch (enrollErr) {
-      log.warn({ uid, payPeriodId, enrollErr }, "Safety net: enrollment request failed (non-fatal — skipping)");
+      log.warn({ uid, name: empInfo?.name, payPeriodId, enrollErr }, "Safety net: enrollment request failed (non-fatal — skipping)");
     }
   }
 
   if (newlyEnrolled === 0) {
-    return { newlyEnrolled: 0, updatedItems: null };
+    return { newlyEnrolled: 0, updatedItems: null, notEnrolled };
   }
 
   // Re-fetch roster so newly enrolled employees appear in the import payload
@@ -416,7 +440,7 @@ async function enrollMissingEmployeesInPeriod(
     { newlyEnrolled, newRosterCount: updatedItems.length, payPeriodId },
     "Safety net: re-fetched roster after mid-period hire enrollment"
   );
-  return { newlyEnrolled, updatedItems };
+  return { newlyEnrolled, updatedItems, notEnrolled };
 }
 
 // ── Status ───────────────────────────────────────────────────
@@ -2826,11 +2850,13 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     // Must run BEFORE building payrollData so newly enrolled employees appear in the payload.
     const periodStatus = String(rosterPd?.PayPeriodStatus ?? rosterPd?.payPeriodStatus ?? "").toLowerCase();
     let newlyEnrolled = 0;
+    let notEnrolledEmployees: Array<{ rollfiUserId: string; employeeId: string; name: string; reason: string }> = [];
     {
       const safetyNet = await enrollMissingEmployeesInPeriod(
         rollfiCompany.rollfiCompanyId, payPeriodId, periodStatus, enrolledItems, companyId, req.log
       );
       newlyEnrolled = safetyNet.newlyEnrolled;
+      notEnrolledEmployees = safetyNet.notEnrolled;
       if (safetyNet.newlyEnrolled > 0 && safetyNet.updatedItems) {
         enrolledItems = safetyNet.updatedItems;
         req.log.info({ newlyEnrolled, newRosterCount: enrolledItems.length }, "Initiate: roster refreshed after mid-period hire enrollment");
@@ -2993,7 +3019,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       actorName: actor2?.name,
       actorRole: actor2?.role,
     });
-    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(validationWarning ? { warning: validationWarning } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...raw });
+    res.json({ success: true, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}), ...raw });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi initiatePayroll failed");
@@ -3050,11 +3076,13 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     // Must run BEFORE building payrollData so newly enrolled employees appear in the payload.
     const importPeriodStatus = String(rosterPd?.PayPeriodStatus ?? rosterPd?.payPeriodStatus ?? "").toLowerCase();
     let newlyEnrolled = 0;
+    let notEnrolledEmployees: Array<{ rollfiUserId: string; employeeId: string; name: string; reason: string }> = [];
     {
       const safetyNet = await enrollMissingEmployeesInPeriod(
         rollfiCompany.rollfiCompanyId, payPeriodId, importPeriodStatus, enrolledItems, companyId, req.log
       );
       newlyEnrolled = safetyNet.newlyEnrolled;
+      notEnrolledEmployees = safetyNet.notEnrolled;
       if (safetyNet.newlyEnrolled > 0 && safetyNet.updatedItems) {
         enrolledItems = safetyNet.updatedItems;
         req.log.info({ newlyEnrolled, newRosterCount: enrolledItems.length }, "Import: roster refreshed after mid-period hire enrollment");
@@ -3289,7 +3317,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       req.log.warn({ verifyErr }, "Post-import verification failed — realTotals unavailable");
     }
 
-    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
+    res.json({ success: true, payPeriodId, importResult: importRaw, skippedEmployees: skippedEmployees.length > 0 ? skippedEmployees : undefined, realTotals, lineItems, ...(newlyEnrolled > 0 ? { newlyEnrolledMidPeriod: newlyEnrolled } : {}), ...(notEnrolledEmployees.length > 0 ? { notEnrolled: notEnrolledEmployees } : {}), ...(validationWarning ? { warning: validationWarning } : {}), ...(verifyMismatches.length > 0 ? { verifyMismatches } : {}), ...(compWipeWarnings.length > 0 ? { compWipeWarnings } : {}) });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi import step failed");

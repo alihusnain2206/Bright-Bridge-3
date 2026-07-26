@@ -501,20 +501,28 @@ export async function enrollEmployeeInNewPayPeriods(
     try {
       const enrollResp = await axios.post(
         `${cfg.baseUrl}/payroll#addUsersToRegularPayPeriod`,
-        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId, userIds: [rollfiUserId] },
+        {
+          method: "addUsersToRegularPayPeriod",
+          companyId: rollfiCompanyId,
+          payPeriodId,
+          payrollLineItems: [{ userId: rollfiUserId, paymentMethod: "Direct Deposit" }],
+        },
         { headers }
       );
       const enrollRaw = enrollResp.data as Record<string, unknown>;
       const errMsg = extractRollfiError(enrollRaw);
-      if (errMsg && errMsg.toLowerCase().includes("already has a payroll line item")) {
+      if (!errMsg) {
+        log.info({ rollfiUserId, payPeriodId, response: JSON.stringify(enrollResp.data) }, "enrollEmployeeInNewPayPeriods: enrolled successfully");
+        enrolled++;
+      } else if (errMsg.toLowerCase().includes("already has a payroll line item")) {
         // Guardrail 2: race — desired state already reached
         log.info({ rollfiUserId, payPeriodId }, "enrollEmployeeInNewPayPeriods: already enrolled (desired state — success)");
         enrolled++;
-      } else if (errMsg) {
-        log.warn({ rollfiUserId, payPeriodId, errMsg }, "enrollEmployeeInNewPayPeriods: enrollment returned error (non-fatal)");
+      } else if (errMsg.toLowerCase().includes("invalid status") || errMsg.toLowerCase().includes("employee validation failed")) {
+        // Employee not yet payroll-eligible (not fully onboarded / Active) — non-fatal.
+        log.warn({ rollfiUserId, payPeriodId, reason: errMsg }, "enrollEmployeeInNewPayPeriods: employee not payroll-eligible — skipping");
       } else {
-        log.info({ rollfiUserId, payPeriodId, response: JSON.stringify(enrollResp.data) }, "enrollEmployeeInNewPayPeriods: enrolled successfully");
-        enrolled++;
+        log.warn({ rollfiUserId, payPeriodId, errMsg }, "enrollEmployeeInNewPayPeriods: enrollment returned error (non-fatal)");
       }
     } catch (err) {
       log.warn({ rollfiUserId, payPeriodId, err }, "enrollEmployeeInNewPayPeriods: request failed (non-fatal)");
