@@ -3645,6 +3645,46 @@ router.post("/rollfi/payroll/import", async (req, res) => {
   }
 });
 
+// ── Cancel payroll submission ─────────────────────────────────
+// Calls Rollfi cancelPayrollSubmission so the period can be resubmitted.
+// Rollfi's dashboard cancellation does not always clear the API-level submitted flag.
+
+router.post("/rollfi/payroll/cancel-submission", async (req, res) => {
+  if (!getRollfiConfig().credentialsPresent) {
+    res.status(400).json({ error: "Rollfi credentials not configured" });
+    return;
+  }
+  const { companyId, payPeriodId } = req.body as { companyId: string; payPeriodId: string };
+  const rollfiCompany = store.getRollfiCompany(companyId);
+  if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+  try {
+    const response = await axios.post(
+      `${getBaseUrl()}/payroll#cancelPayrollSubmission`,
+      { method: "cancelPayrollSubmission", companyId: rollfiCompany.rollfiCompanyId, payPeriodId },
+      { headers: rollfiHeaders() }
+    );
+    req.log.info({ rollfiResponse: response.data }, "Rollfi cancelPayrollSubmission response");
+    const raw = response.data as Record<string, unknown>;
+    // Rollfi may return success in body even on HTTP 200 errors; check for error fields
+    try { assertNoRollfiError(raw, "cancelPayrollSubmission"); } catch (assertErr) {
+      const msg = assertErr instanceof Error ? assertErr.message : String(assertErr);
+      req.log.warn({ msg, raw }, "cancelPayrollSubmission returned an error body");
+      // Only surface as an error if message doesn't include "already cancelled" / "not submitted"
+      if (!msg.toLowerCase().includes("not submitted") && !msg.toLowerCase().includes("not initiated")) {
+        res.status(422).json({ error: msg });
+        return;
+      }
+      // Otherwise treat as success — period is already in a cancellable state
+    }
+    res.json({ success: true, ...raw });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status: number } };
+    req.log.error({ err, rollfiErrorBody: e.response?.data }, "cancelPayrollSubmission failed");
+    const rollfiMessage = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: rollfiMessage, details: e.response?.data });
+  }
+});
+
 // ── Submit payroll (Step 2 of 2-step payroll flow) ───────────
 
 router.post("/rollfi/payroll/submit", async (req, res) => {

@@ -224,7 +224,7 @@ function PayPeriodStatusBadge({ status }: { status: string }) {
 
 // ── Payroll result card ───────────────────────────────────────
 
-function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }: { result: PayrollResult; onReset: () => void; onVerifyBank?: () => void; verifyBankPending?: boolean }) {
+function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending, onCancelAndResubmit, cancelAndResubmitPending }: { result: PayrollResult; onReset: () => void; onVerifyBank?: () => void; verifyBankPending?: boolean; onCancelAndResubmit?: () => void; cancelAndResubmitPending?: boolean }) {
   // Defence-in-depth: also catch Rollfi's nested-body failure pattern where the backend
   // returned success:true but payPeriod.status is not "Success". Fix A in the backend
   // should catch this first (returns 422), but this guard ensures the green panel never
@@ -235,6 +235,9 @@ function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }:
       ? (result.payPeriod!.message ?? "Payroll initiation failed")
       : result.error;
     const isBankPending = errorMsg?.toLowerCase().includes("microdeposit") || errorMsg?.toLowerCase().includes("funding source") || errorMsg?.toLowerCase().includes("not ready");
+    // Rollfi returns this error when the pay period was submitted (even if later cancelled via the
+    // Rollfi dashboard, the API-level flag persists). The fix: call cancelPayrollSubmission first.
+    const isAlreadySubmitted = errorMsg?.toLowerCase().includes("already submitted");
     return (
       <div className="mt-4 p-5 rounded-xl bg-red-500/10 border border-red-500/30">
         <div className="flex items-center gap-2 mb-2">
@@ -242,6 +245,23 @@ function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }:
           <p className="text-red-300 font-semibold">Payroll submission failed</p>
         </div>
         <p className="text-red-300/70 text-sm ml-7">{errorMsg}</p>
+        {isAlreadySubmitted && onCancelAndResubmit && (
+          <div className="mt-3 ml-7 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <p className="text-amber-300/80 text-xs mb-2">
+              Rollfi still has this pay period marked as submitted at the API level — cancelling via the Rollfi dashboard doesn't always clear it.
+              Click below to cancel the prior submission and resubmit automatically.
+            </p>
+            <button
+              onClick={onCancelAndResubmit}
+              disabled={cancelAndResubmitPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-amber-500/30 hover:bg-amber-500/50 text-amber-200 border border-amber-500/30 disabled:opacity-50 transition-colors"
+            >
+              {cancelAndResubmitPending
+                ? <><Loader2 className="h-3 w-3 animate-spin" />Cancelling &amp; Resubmitting…</>
+                : <><Play className="h-3 w-3" />Cancel Prior Submission &amp; Resubmit</>}
+            </button>
+          </div>
+        )}
         {isBankPending && onVerifyBank && (
           <div className="mt-3 ml-7 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <p className="text-amber-300/80 text-xs mb-2">The company bank account needs micro-deposit verification before payroll can be submitted.</p>
@@ -968,6 +988,23 @@ export default function Payroll() {
   const submitPayroll = useMutation({
     mutationFn: ({ companyId, payPeriodId }: { companyId: string; payPeriodId: string }) =>
       api.post<PayrollResult>("/rollfi/payroll/submit", { companyId, payPeriodId }),
+    onSuccess: (data) => {
+      setPayrollResult(data);
+      setImportResult(null);
+      setIsPolling(true);
+      setTimeout(() => { void fetchPayPeriod(selectedCompanyId); }, 1500);
+      void refetchOverview();
+    },
+    onError: (e) => { setPayrollResult({ success: false, error: (e as Error).message }); },
+  });
+
+  // Cancel a prior Rollfi submission then resubmit. Needed when Rollfi's dashboard cancel
+  // doesn't clear the API-level submitted flag, causing the next submit to fail with 400.
+  const cancelAndResubmit = useMutation({
+    mutationFn: async ({ companyId, payPeriodId }: { companyId: string; payPeriodId: string }) => {
+      await api.post("/rollfi/payroll/cancel-submission", { companyId, payPeriodId });
+      return api.post<PayrollResult>("/rollfi/payroll/submit", { companyId, payPeriodId });
+    },
     onSuccess: (data) => {
       setPayrollResult(data);
       setImportResult(null);
@@ -2031,6 +2068,12 @@ export default function Payroll() {
                     onReset={() => setPayrollResult(null)}
                     onVerifyBank={selectedCompanyId !== "all" ? () => verifyBank.mutate(selectedCompanyId) : undefined}
                     verifyBankPending={verifyBank.isPending}
+                    onCancelAndResubmit={
+                      selectedCompanyId !== "all" && payPeriod
+                        ? () => cancelAndResubmit.mutate({ companyId: selectedCompanyId, payPeriodId: payPeriod.payPeriodId })
+                        : undefined
+                    }
+                    cancelAndResubmitPending={cancelAndResubmit.isPending}
                   />
                 )}
 
