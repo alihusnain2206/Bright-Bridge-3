@@ -317,12 +317,17 @@ async function wipeAdditionalCompensations(
 
 // ── FIX 1b helper: enrol mid-period hires absent from Rollfi's pay-period roster ─────────────
 // Rollfi snapshots its pay-period roster at PERIOD CREATION TIME; employees hired after the
-// snapshot (or not yet enrolld when it ran) are absent. This helper detects and enrolls them.
+// snapshot (or not yet enrolled when it ran) are absent. This helper detects and enrolls them.
 //
 // Guardrails (spec):
 //   1. NEVER call blindly — only for employees confirmed ABSENT from the current roster.
 //   2. Treat "already has a payroll line item" as SUCCESS (desired state reached; log INFO).
-//   3. Only enrol into "new" periods; never submitted, inProcess, processed, cancelled, failed.
+//   3. Only enrol into "new" OR "cancelled" periods (both are editable states in Rollfi).
+//      "cancelled" means a previously-submitted payroll was cancelled to allow corrections —
+//      imports already succeed against it, and enrollment is expected to behave the same.
+//      EXCLUDED: submitted, inProcess, processed, failed — those are locked states.
+//      If Rollfi rejects addUsersToRegularPayPeriod for a cancelled period, the exact error
+//      body is logged as WARN rather than swallowed.
 type BasicLog = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
 async function enrollMissingEmployeesInPeriod(
   rollfiCompanyId: string,
@@ -333,9 +338,10 @@ async function enrollMissingEmployeesInPeriod(
   companyId: string,
   log: BasicLog
 ): Promise<{ newlyEnrolled: number; updatedItems: Array<Record<string, unknown>> | null }> {
-  // Guardrail 3: only "new" periods
-  if (periodStatus !== "new") {
-    log.info({ payPeriodId, periodStatus }, "Safety net: skipping enrollment — period is not 'new'");
+  // Guardrail 3: only "new" or "cancelled" periods (both are Rollfi editable states)
+  const ENROLLABLE_STATUSES = ["new", "cancelled"];
+  if (!ENROLLABLE_STATUSES.includes(periodStatus)) {
+    log.info({ payPeriodId, periodStatus }, "Safety net: skipping enrollment — period is not in an editable state (new/cancelled)");
     return { newlyEnrolled: 0, updatedItems: null };
   }
 
@@ -2671,6 +2677,15 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     // This keeps salaried employees visible in the preview even on a warm-cache hit before
     // the DB round-trip resolves. DB value always takes priority when present.
     const payType = dbRow?.payType ?? u.payType ?? "hourly";
+    // FIX 2 observability: log per-employee payType resolution so we can confirm source
+    req.log.info({
+      employeeId:      u.employeeId,
+      dbRowFound:      !!dbRow,
+      dbPayType:       dbRow?.payType ?? null,
+      storePayType:    (u as { payType?: string }).payType ?? null,
+      resolvedPayType: payType,
+      source:          dbRow?.payType ? "db" : ((u as { payType?: string }).payType ? "store" : "default"),
+    }, "preview: payType resolution");
     const annualSalaryCents = dbRow?.annualSalary ?? null;
     // Salaried employees have no clocked hours; grossPay = 0 here; payType flag signals the UI
     const grossPay = payType === "salary" || payType?.startsWith("salary_")

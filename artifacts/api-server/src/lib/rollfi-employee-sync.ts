@@ -463,7 +463,9 @@ export async function onboardEmployeeToRollfi(
 // Guardrails (spec):
 //   1. NEVER call blindly — caller has confirmed the employee is absent from the roster.
 //   2. Treat "already has a payroll line item" as SUCCESS (desired state reached; log INFO).
-//   3. Only enrol into "new" periods; never submitted, inProcess, processed, cancelled, failed.
+//   3. Only enrol into "new" or "cancelled" periods (both are Rollfi editable states).
+//      "cancelled" = a submitted payroll cancelled to allow corrections; imports succeed against it.
+//      EXCLUDED: submitted, inProcess, processed, failed — those are locked states.
 export async function enrollEmployeeInNewPayPeriods(
   rollfiCompanyId: string,
   rollfiUserId: string,
@@ -487,8 +489,10 @@ export async function enrollEmployeeInNewPayPeriods(
   }
 
   // Guardrail 3: only "new" periods
-  const newPeriods = periods.filter((p) => String(p.payPeriodStatus ?? "").toLowerCase() === "new");
-  log.info({ rollfiUserId, totalPeriods: periods.length, newPeriods: newPeriods.length }, "enrollEmployeeInNewPayPeriods: periods available");
+  // "new" = freshly opened period; "cancelled" = editable state (submitted payroll cancelled for corrections)
+  const ENROLLABLE_STATUSES = ["new", "cancelled"];
+  const newPeriods = periods.filter((p) => ENROLLABLE_STATUSES.includes(String(p.payPeriodStatus ?? "").toLowerCase()));
+  log.info({ rollfiUserId, totalPeriods: periods.length, enrollablePeriods: newPeriods.length }, "enrollEmployeeInNewPayPeriods: periods available");
 
   let enrolled = 0;
   for (const period of newPeriods) {
