@@ -38,8 +38,12 @@ export interface OnboardingStepError {
 }
 
 // ── W4 filing status normalisation ──────────────────────────────────────────
-// Confirmed valid values (sandbox-probed): "Single", "Married", "Head of Household".
+// Rollfi-accepted values (confirmed by live rejection when submitting unknown values):
+//   "Single" | "Married" | "Head of Household"
 // Legacy / mis-cased values are mapped to the nearest canonical form.
+// IMPORTANT: if a value is unrecognised it is passed through AS-IS so Rollfi surfaces an
+// explicit rejection — we do NOT silently fall back to "Single".  A silent fallback would
+// attach the wrong filing status to an employee's tax record without any visible error.
 const VALID_W4_STATUSES = ["Single", "Married", "Head of Household"] as const;
 const W4_LEGACY_MAP: Record<string, string> = {
   "Married Filing Jointly": "Married",
@@ -54,7 +58,12 @@ const W4_LEGACY_MAP: Record<string, string> = {
 export function normalizeW4FilingStatus(status: string | undefined | null): string {
   if (!status) return "Single";
   if ((VALID_W4_STATUSES as readonly string[]).includes(status)) return status;
-  return W4_LEGACY_MAP[status] ?? W4_LEGACY_MAP[status.toLowerCase()] ?? "Single";
+  // Mapped legacy variant → canonical value (e.g. "Married Filing Jointly" → "Married")
+  const mapped = W4_LEGACY_MAP[status] ?? W4_LEGACY_MAP[status.toLowerCase()];
+  if (mapped) return mapped;
+  // Unrecognised value: pass through so Rollfi rejects it explicitly.
+  // Never silently substitute "Single" — that would corrupt the employee's tax record.
+  return status;
 }
 
 // ── Data interfaces ──────────────────────────────────────────────────────────

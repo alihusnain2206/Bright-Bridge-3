@@ -657,6 +657,26 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: "No updatable fields provided" }); return;
   }
 
+  // ── Wage sanity guard (edit) ──────────────────────────────────────────────────
+  // hourlyWage and annualSalary are stored in CENTS. Guard catches cents-as-dollars.
+  // Allows 0 (clearing a field) but rejects any positive value below the floor.
+  const pendingHourly = dbUpdates.hourlyWage as number | null | undefined;
+  const pendingSalary = dbUpdates.annualSalary as number | null | undefined;
+  if (pendingHourly !== undefined && pendingHourly !== null && pendingHourly > 0 && pendingHourly < 100) {
+    res.status(400).json({
+      error: `hourlyWage is stored in cents and must be ≥ 100 (=$1.00/hr) or 0/null. ` +
+             `Received: ${pendingHourly}. Example: 1850 for $18.50/hr.`,
+    });
+    return;
+  }
+  if (pendingSalary !== undefined && pendingSalary !== null && pendingSalary > 0 && pendingSalary < 100_000) {
+    res.status(400).json({
+      error: `annualSalary is stored in cents and must be ≥ 100,000 (=$1,000/yr) or 0/null. ` +
+             `Received: ${pendingSalary}. Example: 6000000 for $60,000/yr.`,
+    });
+    return;
+  }
+
   try {
     const [existing] = await db.select().from(employees).where(eq(employees.id, id));
     if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }

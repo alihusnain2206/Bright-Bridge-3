@@ -619,6 +619,24 @@ router.post("/employees", async (req: Request, res: Response) => {
   // hourlyWage is 0 for salaried employees — annualSalary carries the real amount
   const hourlyWageCents   = isSalary ? 0 : Math.round((body.wageAmount ?? 18) * 100);
   const annualSalaryCents = isSalary ? Math.round((body.wageAmount ?? 0) * 100) : null;
+
+  // ── Wage sanity guard (creation) ─────────────────────────────────────────────
+  // wageAmount is supplied in dollars; guard catches the classic cents-as-dollars mistake.
+  if (isSalary && (annualSalaryCents == null || annualSalaryCents < 100_000)) {
+    res.status(400).json({
+      error: "Annual salary must be at least $1,000/yr. Provide wageAmount in dollars (e.g. 52000 for $52,000/yr). " +
+             "Received: " + (body.wageAmount ?? "missing"),
+    });
+    return;
+  }
+  if (!isSalary && hourlyWageCents < 100) {
+    res.status(400).json({
+      error: "Hourly wage must be at least $1.00/hr. Provide wageAmount in dollars (e.g. 18.50 for $18.50/hr). " +
+             "Received: " + (body.wageAmount ?? "missing"),
+    });
+    return;
+  }
+
   const ssn = body.ssn?.replace(/\D/g, "") ?? randomNineDigits();
   const dob = body.dateOfBirth?.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") ?? "1990-01-15";
 
@@ -842,6 +860,27 @@ router.put("/employees/:employeeId", async (req: Request, res: Response) => {
   if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin access required" }); return; }
   const employeeId = String(req.params.employeeId);
   const updates = req.body as Partial<typeof employees.$inferInsert>;
+
+  // ── Wage sanity guard (edit) ──────────────────────────────────────────────────
+  // The edit body uses DB column values: hourlyWage and annualSalary are stored in CENTS.
+  // Guard catches the classic cents-as-dollars mistake on direct column updates.
+  const editHourly = updates.hourlyWage;
+  const editSalary = updates.annualSalary;
+  if (editHourly !== undefined && editHourly !== null && Number(editHourly) < 100) {
+    res.status(400).json({
+      error: "hourlyWage is stored in cents and must be ≥ 100 (=$1.00/hr). " +
+             "Received: " + editHourly + ". Example: 1850 for $18.50/hr.",
+    });
+    return;
+  }
+  if (editSalary !== undefined && editSalary !== null && Number(editSalary) < 100_000) {
+    res.status(400).json({
+      error: "annualSalary is stored in cents and must be ≥ 100,000 (=$1,000/yr). " +
+             "Received: " + editSalary + ". Example: 6000000 for $60,000/yr.",
+    });
+    return;
+  }
+
   try {
     await db.update(employees).set({ ...updates, updatedAt: new Date().toISOString() }).where(eq(employees.id, employeeId));
     const [updated] = await db.select().from(employees).where(eq(employees.id, employeeId));
