@@ -1584,21 +1584,28 @@ export default function Payroll() {
                               </td>
                               <td className="px-4 py-3">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-white/70">{emp.hoursWorked}h</span>
-                                  {isZeroHours
-                                    ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25">⚠ Will be excluded</span>
+                                  {isSalary
+                                    ? <span className="text-white/20 text-xs italic">—</span>
                                     : <>
-                                        {(emp.hoursSource === "easyteam_sync") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                        {(emp.hoursSource === "manager_edit") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
-                                        {(emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                        {(emp.hoursSource === "seeded") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                        {(emp.hoursSource === "pending_approval") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending Approval</span>}
-                                        {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                        <span className="text-white/70">{emp.hoursWorked}h</span>
+                                        {isZeroHours
+                                          ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25">⚠ Will be excluded</span>
+                                          : <>
+                                              {(emp.hoursSource === "easyteam_sync") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                              {(emp.hoursSource === "manager_edit") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
+                                              {(emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                              {(emp.hoursSource === "seeded") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                              {(emp.hoursSource === "pending_approval") && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending Approval</span>}
+                                              {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                            </>
+                                        }
                                       </>
                                   }
                                 </div>
                               </td>
-                              <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
+                              <td className="px-4 py-3 text-white font-semibold">
+                                {isSalary ? <span className="text-white/20 text-xs">—</span> : `${emp.netPayableHours}h`}
+                              </td>
                               <td className="px-4 py-3 text-white/70">
                                 {isSalary
                                   ? <span className="text-white/40 italic text-xs">Salaried</span>
