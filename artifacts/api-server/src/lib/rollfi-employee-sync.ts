@@ -126,14 +126,29 @@ export async function runEmployeeKycOnboarding(
   const _cfg = getRollfiConfig();
   const baseUrl = _cfg.baseUrl;
   const headers = makeRollfiHeaders(_cfg.clientId, _cfg.secretKey);
-  const ssn = identity.ssn ?? randomNineDigits();
+  const isProduction = _cfg.env === "production";
+
+  // SSN: use the real value when provided.
+  // In production, fabricating an SSN is never acceptable — surfaces as a hard error so
+  // the employee is NOT submitted to Rollfi with false identity data.
+  // In sandbox, a random 9-digit placeholder is used for testing (never reaches a real payroll system).
+  const ssn: string | null = (() => {
+    if (identity.ssn) return identity.ssn;
+    if (isProduction) {
+      log.error({ rollfiUserId }, "SSN required for production onboarding but was not provided — KYC will be skipped");
+      return null;
+    }
+    log.warn({ rollfiUserId }, "SSN not provided — using random test value (SANDBOX ONLY, never sent to production Rollfi)");
+    return randomNineDigits();
+  })();
+
   const dateOfBirth = identity.dateOfBirth ?? "1990-01-15";
   const address1 = identity.address1 ?? "123 Main St";
   const city = identity.city ?? "Newark";
   const state = identity.state ?? "NJ";
   const zipcode = identity.zipcode ?? "07101";
 
-  log.info({ hasRealAddress: !!identity.address1, hasRealDob: !!identity.dateOfBirth, hasRealSsn: !!identity.ssn }, "runEmployeeKycOnboarding: identity source");
+  log.info({ hasRealAddress: !!identity.address1, hasRealDob: !!identity.dateOfBirth, hasRealSsn: !!identity.ssn, isSandboxSsn: !identity.ssn && !isProduction }, "runEmployeeKycOnboarding: identity source");
 
   const hardErrors: OnboardingStepError[] = [];
   const softWarnings: OnboardingStepError[] = [];
@@ -150,19 +165,25 @@ export async function runEmployeeKycOnboarding(
 
   // ── addKycInformation — SOFT (gates initiateUserKyc) ─────────────────────
   let kycAdded = false;
-  try {
-    const r = await axios.post(`${baseUrl}/userOnboarding#addKycInformation`, {
-      method: "addKycInformation",
-      kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
-    }, { headers });
-    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
-    const raw = r.data as Record<string, unknown>;
-    const errMsg = extractRollfiError(raw);
-    const isAlreadyExists = errMsg?.toLowerCase().includes("already exists") ?? false;
-    kycAdded = !errMsg || isAlreadyExists;
-    if (errMsg && !isAlreadyExists) softWarnings.push({ step: "addKycInformation", message: errMsg });
-  } catch (e) {
-    softWarnings.push({ step: "addKycInformation", message: e instanceof Error ? e.message : String(e) });
+  if (!ssn) {
+    // Production guard: SSN was not provided — push a hard error, skip KYC entirely.
+    // The employee will NOT be marked onboarded until SSN is collected and re-submitted.
+    hardErrors.push({ step: "addKycInformation", message: "SSN is required for onboarding and was not collected for this employee. Gather the SSN before retrying." });
+  } else {
+    try {
+      const r = await axios.post(`${baseUrl}/userOnboarding#addKycInformation`, {
+        method: "addKycInformation",
+        kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
+      }, { headers });
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
+      const raw = r.data as Record<string, unknown>;
+      const errMsg = extractRollfiError(raw);
+      const isAlreadyExists = errMsg?.toLowerCase().includes("already exists") ?? false;
+      kycAdded = !errMsg || isAlreadyExists;
+      if (errMsg && !isAlreadyExists) softWarnings.push({ step: "addKycInformation", message: errMsg });
+    } catch (e) {
+      softWarnings.push({ step: "addKycInformation", message: e instanceof Error ? e.message : String(e) });
+    }
   }
 
   // ── addW4Information — HARD ───────────────────────────────────────────────
@@ -230,7 +251,6 @@ export async function runEmployeeKycOnboarding(
   }
 
   // ── addUserBankAccount — HARD ─────────────────────────────────────────────
-  const isProduction = _cfg.env === "production";
   if (isProduction && !bankInput?.accountNumber) {
     log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping bank step");
   } else {
@@ -242,7 +262,7 @@ export async function runEmployeeKycOnboarding(
       const r = await axios.post(`${baseUrl}/userPortal#addUserBankAccount`, {
         method: "addUserBankAccount",
         linkType: "Manual",
-        userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
+        userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName, payPercentage: 100, isPrimary: true },
       }, { headers });
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addUserBankAccount response");
       const errMsg = extractRollfiError(r.data);
@@ -329,7 +349,7 @@ export async function onboardEmployeeToRollfi(
         workerType: "W2",
         jobTitle: emp.roleName,
         companyLocationCategory: "Office",
-        stateCode: "NJ",
+        stateCode: emp.homeState ?? "NJ",
         companyLocationId: rollfiCompany.rollfiLocationId,
       },
     }, { headers });

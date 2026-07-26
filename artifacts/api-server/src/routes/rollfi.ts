@@ -68,8 +68,10 @@ async function runEmployeeKycOnboarding(
   let empState = "NJ";
   let empZipcode = "07101";
   let empDateOfBirth = "1990-01-15";
-  // Rollfi expects raw 9 digits (no dashes); use real SSN if stored, else generate random
-  let ssn = randomNineDigits();
+  // SSN: never fabricate in production — use null so KYC is skipped with a clear log entry.
+  // In sandbox, fall back to a random 9-digit test value (never reaches real payroll systems).
+  const isProductionEnv = getRollfiConfig().env === "production";
+  let ssn: string | null = isProductionEnv ? null : randomNineDigits();
   try {
     const [emp] = await db.select({
       homeAddress: employeesTable.homeAddress,
@@ -88,9 +90,13 @@ async function runEmployeeKycOnboarding(
       if (emp.ssn) {
         const digits = emp.ssn.replace(/\D/g, "");
         if (digits.length === 9) ssn = digits;
+      } else if (isProductionEnv) {
+        log.warn({ rollfiUserId }, "KYC: SSN not stored for this employee — production KYC will be skipped (PRODUCTION: hard stop)");
+      } else {
+        log.warn({ rollfiUserId }, "KYC: SSN not stored — using random test value (SANDBOX ONLY)");
       }
     }
-    log.info({ rollfiUserId, hasRealAddress: !!emp?.homeAddress, hasRealDob: !!emp?.dateOfBirth }, "KYC: resolved employee identity data");
+    log.info({ rollfiUserId, hasRealAddress: !!emp?.homeAddress, hasRealDob: !!emp?.dateOfBirth, hasRealSsn: !!ssn }, "KYC: resolved employee identity data");
   } catch (e) {
     log.warn({ e }, "KYC: failed to look up employee data from DB — using defaults");
   }
@@ -107,30 +113,34 @@ async function runEmployeeKycOnboarding(
 
   // Step 2 — KYC identity information (must succeed before initiateUserKyc)
   let kycAdded = false;
-  try {
-    const r = await axios.post(
-      `${getBaseUrl()}/userOnboarding#addKycInformation`,
-      {
-        method: "addKycInformation",
-        kycInformation: {
-          userId: rollfiUserId,
-          ssn,
-          dateOfBirth: empDateOfBirth,
-          address1: empAddress1,
-          address2: "",
-          city: empCity,
-          state: empState,
-          zipcode: empZipcode,
+  if (!ssn) {
+    log.warn({ rollfiUserId, isProductionEnv }, "KYC: skipping addKycInformation — SSN not available (production: hard stop; sandbox: should not reach here)");
+  } else {
+    try {
+      const r = await axios.post(
+        `${getBaseUrl()}/userOnboarding#addKycInformation`,
+        {
+          method: "addKycInformation",
+          kycInformation: {
+            userId: rollfiUserId,
+            ssn,
+            dateOfBirth: empDateOfBirth,
+            address1: empAddress1,
+            address2: "",
+            city: empCity,
+            state: empState,
+            zipcode: empZipcode,
+          },
         },
-      },
-      { headers }
-    );
-    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
-    const raw = r.data as Record<string, unknown>;
-    const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
-    // "already exists" means KYC was submitted in a previous run — treat as success
-    kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
-  } catch (e) { log.warn({ e }, "addKycInformation failed (ignoring)"); }
+        { headers }
+      );
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
+      const raw = r.data as Record<string, unknown>;
+      const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+      // "already exists" means KYC was submitted in a previous run — treat as success
+      kycAdded = !raw.error || errMsg.toLowerCase().includes("already exists");
+    } catch (e) { log.warn({ e }, "addKycInformation failed (ignoring)"); }
+  }
 
   // Step 3 — W4 federal tax withholding (independent of KYC)
   try {
@@ -206,6 +216,8 @@ async function runEmployeeKycOnboarding(
             bankName: bank.bankName,
             accountType: bank.accountType,
             accountName: bank.accountName,
+            payPercentage: 100,
+            isPrimary: true,
           },
         },
         { headers }
@@ -1552,6 +1564,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     overtimeEligible: employeesTable.overtimeEligible,
     phone:           employeesTable.phone,
     startDate:       employeesTable.startDate,
+    homeState:       employeesTable.homeState,
   }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [] as never[]);
 
   // If location ID is missing (e.g. company was recovered via getCompanies), fetch it now
@@ -1597,7 +1610,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           workerType: "W2",
           jobTitle: staffUser.position,
           companyLocationCategory: "Office",
-          stateCode: "NJ",
+          stateCode: dbPayInfo?.homeState ?? "NJ",
           companyLocationId: rollfiCompany.rollfiLocationId,
         },
       },
