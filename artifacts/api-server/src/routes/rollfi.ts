@@ -2738,6 +2738,10 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const totalGrossPay = entries.reduce((s, e) => s + e.grossPay, 0);
 
+  // Prevent HTTP-level caching — browsers must always send a fresh request so payType,
+  // annualSalaryCents, and onboardedToRollfi reflect the latest DB state.
+  // React Query handles client-side caching with explicit invalidateQueries() calls.
+  res.setHeader("Cache-Control", "no-store");
   res.json({
     companyId: companyId ?? "all",
     period: {

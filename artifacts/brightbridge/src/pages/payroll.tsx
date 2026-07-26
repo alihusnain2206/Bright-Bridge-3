@@ -55,6 +55,10 @@ interface ImportResult {
   payPeriodId: string;
   skippedEmployees?: { rollfiUserId: string; name?: string; type?: string; reason: string }[];
   realTotals?: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null;
+  /** Post-import Rollfi roster; each item includes userId and grossTotal */
+  lineItems?: Record<string, unknown>[];
+  notEnrolled?: { rollfiUserId: string; employeeId: string; name: string; reason: string }[];
+  newlyEnrolledMidPeriod?: number;
   error?: string;
 }
 interface EmpRollfiStatus { rollfiUserId: string; userStatus: string; kycStatus: string; }
@@ -952,7 +956,12 @@ export default function Payroll() {
   const importHours = useMutation({
     mutationFn: ({ companyId, payPeriodId, payBeginDate, payEndDate, adjs, employeeHours }: { companyId: string; payPeriodId: string; payBeginDate?: string; payEndDate?: string; adjs?: { rollfiUserId: string; additionalCompensation?: { description: string; amount: number }[]; overTime?: { type: string; noOfHours: number; multiplier: number }[] }[]; employeeHours?: { rollfiUserId: string; hours: number }[] }) =>
       api.post<ImportResult>("/rollfi/payroll/import", { companyId, payPeriodId, payBeginDate, payEndDate, adjustments: adjs, employeeHours }),
-    onSuccess: (data) => { setImportResult(data); },
+    onSuccess: (data) => {
+      setImportResult(data);
+      // Invalidate the preview so newly-enrolled employees (and their payType) are fetched fresh
+      // instead of the browser serving a stale cached copy.
+      void qc.invalidateQueries({ queryKey: ["rollfi-preview"] });
+    },
     onError: (e) => { setImportResult({ success: false, payPeriodId: "", error: (e as Error).message }); },
   });
 
@@ -1544,8 +1553,20 @@ export default function Payroll() {
                         const er  = calcErTax(emp.grossPay);
                         const key = emp.employeeId ?? emp.name;
                         const isExpanded = expandedEmp === key;
-                        const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false);
+                        // Defensive: also treat as salaried when annualSalaryCents is set,
+                        // so a stale/null payType from a cached response never shows "$0.00/hr".
+                        const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
+                          || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
                         const isZeroHours = !isSalary && emp.hoursWorked === 0 && emp.grossPay === 0;
+                        // After import, look up this employee's Rollfi-computed gross from lineItems
+                        // so salaried employees show their actual amount rather than "auto (Rollfi)".
+                        const rollfiLineItem = importResult?.lineItems?.find(
+                          (li) => li["userId"] != null &&
+                            String(li["userId"]).toUpperCase() === emp.rollfiUserId?.toUpperCase()
+                        );
+                        const rollfiGross = isSalary && typeof rollfiLineItem?.["grossTotal"] === "number"
+                          ? (rollfiLineItem["grossTotal"] as number)
+                          : null;
                         return (
                           <React.Fragment key={key}>
                             <tr
@@ -1585,7 +1606,9 @@ export default function Payroll() {
                               </td>
                               <td className="px-4 py-3 text-emerald-400 font-bold">
                                 {isSalary
-                                  ? <span className="text-white/30 text-xs italic">auto (Rollfi)</span>
+                                  ? rollfiGross != null
+                                    ? fmtD(rollfiGross)
+                                    : <span className="text-white/30 text-xs italic">auto (Rollfi)</span>
                                   : isZeroHours ? <span className="text-white/20 text-xs">—</span> : fmtD(emp.grossPay)}
                               </td>
                               <td className="px-4 py-3 text-red-300/80 text-xs">{isSalary || isZeroHours ? <span className="text-white/20">—</span> : `~${fmtD(tax.total)}`}</td>
