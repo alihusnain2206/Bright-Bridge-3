@@ -130,6 +130,20 @@ const api = {
 function r2(n: number) { return Math.round(n * 100) / 100; }
 function fmtD(n: number) { return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 
+/** Returns a rate string appropriate for the employee's pay type.
+ *  Salaried employees show their annual salary (or "Salaried"), never an hourly rate.
+ *  Use this everywhere a rate label is rendered — it's the single source of truth. */
+function formatEmployeeRate(emp: { hourlyRate: number; payType?: string | null; annualSalaryCents?: number | null }): string {
+  const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
+    || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
+  if (isSalary) {
+    return emp.annualSalaryCents && emp.annualSalaryCents > 0
+      ? `${fmtD(emp.annualSalaryCents / 100)} / year`
+      : "Salaried";
+  }
+  return `$${emp.hourlyRate.toFixed(2)}/hr`;
+}
+
 function calcEmpTax(gross: number) {
   const federal  = r2(gross * 0.12);
   const state    = r2(gross * 0.05);
@@ -1819,7 +1833,7 @@ export default function Payroll() {
                               <div className="flex items-center justify-between">
                                 <div>
                                   <div className="text-white text-sm font-medium">{emp.name}</div>
-                                  <div className="text-white/40 text-xs">{emp.position}{(emp.payType === "salary" || emp.payType?.startsWith("salary_")) ? " · Salaried" : ` · $${emp.hourlyRate.toFixed(2)}/hr`}</div>
+                                  <div className="text-white/40 text-xs">{emp.position} · {formatEmployeeRate(emp)}</div>
                                 </div>
                                 {hasAdj && (
                                   <button

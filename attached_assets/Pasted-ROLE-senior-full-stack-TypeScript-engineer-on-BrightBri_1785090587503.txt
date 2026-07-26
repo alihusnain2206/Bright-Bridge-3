@@ -1,0 +1,79 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+UI/display work on the Submit Payroll page (manager-payroll-submit.tsx and
+payroll.tsx as applicable). Brand navy #1B3A6B / teal #0EA5C9.
+
+There are TWO separate tables on this page and each needs a different fix.
+Do not confuse them.
+
+════════════════════════════════════════════════════════════════
+FIX 1 — THE TOP TABLE (the pre-import employee list, columns:
+Employee / Worked / Net Hrs / Rate)
+════════════════════════════════════════════════════════════════
+
+PROBLEM: salaried employees appear in this table with "0h", "Net Hrs 0h",
+"$0.00/hr" and a "⚠ Excluded" badge (see Diane Whitfield, Raymond Holt,
+Gerald Foster). Every one of those is wrong for a salaried employee:
+they legitimately have no clocked hours, they have no hourly rate, and
+"Excluded" wrongly implies they won't be paid — Gerald is actually
+receiving $2,384.62.
+
+SOLUTION — split this into TWO tables, hourly first, salaried second:
+
+  TABLE A — "Hourly Employees" (shown first)
+    Columns: Employee | Worked | Net Hrs | Rate
+    Exactly as today, unchanged. Keep the "Excluded" badge here — for an
+    hourly employee, zero hours genuinely does mean no pay.
+
+  TABLE B — "Salaried Employees" (shown below)
+    Columns: Employee | Annual Salary
+    - Annual salary formatted as e.g. "$62,000.00 / year"
+    - NO Worked column, NO Net Hrs column, NO hourly rate
+    - NEVER show the "Excluded" badge in this table
+    - Beneath the table, one line of muted helper text:
+      "Salaried pay is calculated automatically and prorated by start date."
+
+  If either group is empty, hide that table entirely (don't render an
+  empty shell).
+
+Grouping is by the employee's pay type from the DATABASE (pay_type /
+annualSalary), same source the payroll logic already uses — not the
+in-memory store.
+
+ALSO: the "N employees have no hours" warning must count only HOURLY
+employees. Salaried staff having no hours is expected, not a warning.
+
+════════════════════════════════════════════════════════════════
+FIX 2 — THE BOTTOM TABLE ("Hours Imported — Rollfi Computed Totals",
+columns: Employee / Base Pay / Employer Tax / Additional Comp /
+Deductions / Subtotal)
+════════════════════════════════════════════════════════════════
+
+PROBLEM: a column-mapping bug. When Gerald Foster had a $1,000 bonus, this
+table showed BASE PAY $3,384.62 and ADDITIONAL COMP $0.00. Rollfi's actual
+line item has base $2,384.62 and additional comp $1,000.00 — we verified
+this directly against getPayPeriodDetails. So we are lumping comp into the
+base pay column instead of reading the separate fields.
+
+FIX: read each column from the correct field of Rollfi's line item —
+base/baseTotal, employer tax, additionalCompensations total, deductions,
+and the subtotal/grossTotal. Report which field names you map to which
+column, and verify with a real import that a salaried employee with a
+bonus shows base and comp SEPARATELY and that they sum to the subtotal.
+
+Keep this table as ONE table (do not split it) — it's Rollfi's computed
+output and the columns are meaningful for both employee types.
+
+════════════════════════════════════════════════════════════════
+ALSO — PAYROLL ADJUSTMENTS SECTION
+════════════════════════════════════════════════════════════════
+Below the tables, each employee's label still reads e.g. "Diane Whitfield
+/ Program Coordinator · $0.00/hr". Salaried employees must show their
+annual salary (or "Salaried"), never an hourly rate. Use ONE shared helper
+(e.g. formatEmployeeRate(emp)) here and everywhere else a rate is
+rendered — this bug has recurred several times because the rate string is
+built in multiple places. Report every location that now uses the helper.
+
+════════════════════════════════════════════════════════════════
+SCOPE BOUNDARY — do not touch: the payroll import/submit logic, the
+salaried comp injection, enrollment, the wage resolver, or anything in
+rollfi.ts beyond reading fields for display.

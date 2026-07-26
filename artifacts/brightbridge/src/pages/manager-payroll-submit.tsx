@@ -20,6 +20,10 @@ interface PreviewEmployee {
   rollfiUserId: string | null; hoursWorked: number; netPayableHours: number;
   hourlyRate: number; grossPay: number; onboardedToRollfi: boolean;
   hoursSource?: "easyteam" | "seeded" | "estimated" | "easyteam_sync" | "manager_edit" | "pending_approval";
+  /** 'hourly' | 'salary' — from DB pay_type column */
+  payType?: string | null;
+  /** Annual salary in cents (DB annual_salary) — only meaningful when payType = 'salary' */
+  annualSalaryCents?: number | null;
 }
 interface PayrollPreview {
   period: { from: string; to: string; workdays?: number };
@@ -67,6 +71,20 @@ function fmtDate(s?: string) {
   if (!s) return "—";
   const d = new Date(s.includes("T") ? s : s + "T12:00:00");
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
+/** Returns a rate string appropriate for the employee's pay type.
+ *  Salaried employees show their annual salary (or "Salaried"), never an hourly rate.
+ *  Use this everywhere a rate label is rendered so the fix stays in one place. */
+function formatEmployeeRate(emp: { hourlyRate: number; payType?: string | null; annualSalaryCents?: number | null }): string {
+  const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
+    || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
+  if (isSalary) {
+    return emp.annualSalaryCents && emp.annualSalaryCents > 0
+      ? `${fmtD(emp.annualSalaryCents / 100)} / year`
+      : "Salaried";
+  }
+  return `$${emp.hourlyRate.toFixed(2)}/hr`;
 }
 
 function calcEmpTax(gross: number) {
@@ -429,100 +447,156 @@ export default function ManagerPayrollSubmit() {
             </div>
 
 
-            {/* Employee table */}
-            <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr style={{ background: "rgba(255,255,255,0.06)" }}>
-                    {["Employee", "Worked", "Net Hrs", "Rate"].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-white/50 font-semibold text-xs">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {preview.employees.map((emp) => {
-                    const tax = calcEmpTax(emp.grossPay);
-                    const er  = calcErTax(emp.grossPay);
-                    const key = emp.employeeId ?? emp.name;
-                    const isExpanded  = expandedEmp === key;
-                    const isZeroHours = emp.hoursWorked === 0 && emp.grossPay === 0;
-                    return (
-                      <React.Fragment key={key}>
-                        <tr
-                          className={`hover:bg-white/5 transition-colors cursor-pointer select-none ${isZeroHours ? "opacity-45" : ""}`}
-                          onClick={() => setExpandedEmp(isExpanded ? null : key)}
-                        >
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-white/30 text-[10px] w-3">{isExpanded ? "▲" : "▼"}</span>
-                              <div>
-                                <div className="text-white font-medium">{emp.name}</div>
-                                <div className="text-white/40 text-xs">{emp.position}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-white/70">{emp.hoursWorked}h</span>
-                              {isZeroHours
-                                ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25">⚠ Excluded</span>
-                                : <>
-                                    {(emp.hoursSource === "easyteam_sync" || emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                    {emp.hoursSource === "manager_edit" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
-                                    {emp.hoursSource === "seeded" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
-                                    {emp.hoursSource === "pending_approval" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending</span>}
-                                    {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
-                                  </>
-                              }
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
-                          <td className="px-4 py-3 text-white/70">${emp.hourlyRate.toFixed(2)}/hr</td>
-                        </tr>
+            {/* Employee tables — hourly first, salaried below */}
+            {(() => {
+              const isSalariedEmp = (e: PreviewEmployee) =>
+                e.payType === "salary" || (e.payType?.startsWith("salary_") ?? false)
+                || (!!e.annualSalaryCents && e.annualSalaryCents > 0);
+              const hourlyEmps   = preview.employees.filter((e) => !isSalariedEmp(e));
+              const salariedEmps = preview.employees.filter(isSalariedEmp);
+              return (
+                <>
+                  {hourlyEmps.length > 0 && (
+                    <>
+                      {salariedEmps.length > 0 && (
+                        <p className="text-white/30 text-[10px] font-bold uppercase tracking-wide mb-1.5 mt-1">Hourly Employees</p>
+                      )}
+                      <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr style={{ background: "rgba(255,255,255,0.06)" }}>
+                              {["Employee", "Worked", "Net Hrs", "Rate"].map((h) => (
+                                <th key={h} className="text-left px-4 py-3 text-white/50 font-semibold text-xs">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {hourlyEmps.map((emp) => {
+                              const tax = calcEmpTax(emp.grossPay);
+                              const er  = calcErTax(emp.grossPay);
+                              const key = emp.employeeId ?? emp.name;
+                              const isExpanded  = expandedEmp === key;
+                              const isZeroHours = emp.hoursWorked === 0 && emp.grossPay === 0;
+                              return (
+                                <React.Fragment key={key}>
+                                  <tr
+                                    className={`hover:bg-white/5 transition-colors cursor-pointer select-none ${isZeroHours ? "opacity-45" : ""}`}
+                                    onClick={() => setExpandedEmp(isExpanded ? null : key)}
+                                  >
+                                    <td className="px-4 py-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-white/30 text-[10px] w-3">{isExpanded ? "▲" : "▼"}</span>
+                                        <div>
+                                          <div className="text-white font-medium">{emp.name}</div>
+                                          <div className="text-white/40 text-xs">{emp.position}</div>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="text-white/70">{emp.hoursWorked}h</span>
+                                        {isZeroHours
+                                          ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/25">⚠ Excluded</span>
+                                          : <>
+                                              {(emp.hoursSource === "easyteam_sync" || emp.hoursSource === "easyteam") && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                              {emp.hoursSource === "manager_edit" && <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/20">Mgr Edited</span>}
+                                              {emp.hoursSource === "seeded" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/20">Approved</span>}
+                                              {emp.hoursSource === "pending_approval" && <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 border border-amber-500/20">Pending</span>}
+                                              {(!emp.hoursSource || emp.hoursSource === "estimated") && <span className="text-[10px] px-1 py-0.5 rounded text-white/20">est.</span>}
+                                            </>
+                                        }
+                                      </div>
+                                    </td>
+                                    <td className="px-4 py-3 text-white font-semibold">{emp.netPayableHours}h</td>
+                                    <td className="px-4 py-3 text-white/70">{formatEmployeeRate(emp)}</td>
+                                  </tr>
 
-                        {isExpanded && (
-                          <tr key={`${key}-exp`}>
-                            <td colSpan={4} className="px-4 py-0">
-                              <div className="my-3 rounded-lg border border-white/10 overflow-hidden text-xs" style={{ background: "rgba(20,40,65,0.7)" }}>
-                                <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between">
-                                  <span className="font-semibold text-white/80">{emp.name} — Full Pay Breakdown</span>
-                                  <span className="text-white/30 text-[10px]">{emp.position}</span>
-                                </div>
-                                <div className="px-4 py-3 grid grid-cols-2 gap-6">
-                                  <div className="space-y-0.5">
-                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Earnings</p>
-                                    <div className="flex justify-between py-1"><span className="text-white/50">Regular: {emp.netPayableHours}h × ${emp.hourlyRate.toFixed(2)}</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
-                                    <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Gross Pay</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
-                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mt-3 mb-2">Employee Deductions (estimated)</p>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Income Tax (12%)</span><span className="text-red-300">−{fmtD(tax.federal)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Tax (5%)</span><span className="text-red-300">−{fmtD(tax.state)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Social Security (6.2%)</span><span className="text-red-300">−{fmtD(tax.ss)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Medicare (1.45%)</span><span className="text-red-300">−{fmtD(tax.medicare)}</span></div>
-                                    <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Deductions</span><span className="text-red-400">−{fmtD(tax.total)}</span></div>
-                                    <div className="flex justify-between py-1 border-t border-white/10 font-bold"><span className="text-white">Net Pay (estimated)</span><span className="text-white">{fmtD(tax.net)}</span></div>
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employer Costs</p>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(er.ss)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(er.medicare)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(er.futa)}</span></div>
-                                    <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(er.njSui)}</span></div>
-                                    <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Employer Burden</span><span className="text-amber-300">+{fmtD(er.total)}</span></div>
-                                    <div className="mt-3 pt-3 border-t border-white/10">
-                                      <div className="flex justify-between font-bold"><span className="text-white">Total Cost (This Employee)</span><span className="text-white">{fmtD(r2(emp.grossPay + er.total))}</span></div>
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                                  {isExpanded && (
+                                    <tr key={`${key}-exp`}>
+                                      <td colSpan={4} className="px-4 py-0">
+                                        <div className="my-3 rounded-lg border border-white/10 overflow-hidden text-xs" style={{ background: "rgba(20,40,65,0.7)" }}>
+                                          <div className="px-4 py-2.5 border-b border-white/10 flex items-center justify-between">
+                                            <span className="font-semibold text-white/80">{emp.name} — Full Pay Breakdown</span>
+                                            <span className="text-white/30 text-[10px]">{emp.position}</span>
+                                          </div>
+                                          <div className="px-4 py-3 grid grid-cols-2 gap-6">
+                                            <div className="space-y-0.5">
+                                              <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Earnings</p>
+                                              <div className="flex justify-between py-1"><span className="text-white/50">Regular: {emp.netPayableHours}h × ${emp.hourlyRate.toFixed(2)}</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                              <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Gross Pay</span><span className="text-emerald-400">{fmtD(emp.grossPay)}</span></div>
+                                              <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mt-3 mb-2">Employee Deductions (estimated)</p>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Income Tax (12%)</span><span className="text-red-300">−{fmtD(tax.federal)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Tax (5%)</span><span className="text-red-300">−{fmtD(tax.state)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Social Security (6.2%)</span><span className="text-red-300">−{fmtD(tax.ss)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Medicare (1.45%)</span><span className="text-red-300">−{fmtD(tax.medicare)}</span></div>
+                                              <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Deductions</span><span className="text-red-400">−{fmtD(tax.total)}</span></div>
+                                              <div className="flex justify-between py-1 border-t border-white/10 font-bold"><span className="text-white">Net Pay (estimated)</span><span className="text-white">{fmtD(tax.net)}</span></div>
+                                            </div>
+                                            <div className="space-y-0.5">
+                                              <p className="text-white/40 text-[10px] font-bold uppercase tracking-wide mb-2">Employer Costs</p>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Employer SS (6.2%)</span><span className="text-amber-300">+{fmtD(er.ss)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Employer Medicare (1.45%)</span><span className="text-amber-300">+{fmtD(er.medicare)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">Federal Unemployment (0.6%)</span><span className="text-amber-300">+{fmtD(er.futa)}</span></div>
+                                              <div className="flex justify-between py-0.5"><span className="text-white/50">NJ State Unemployment (0.5%)</span><span className="text-amber-300">+{fmtD(er.njSui)}</span></div>
+                                              <div className="flex justify-between py-1 border-t border-white/10 font-semibold"><span className="text-white/70">Total Employer Burden</span><span className="text-amber-300">+{fmtD(er.total)}</span></div>
+                                              <div className="mt-3 pt-3 border-t border-white/10">
+                                                <div className="flex justify-between font-bold"><span className="text-white">Total Cost (This Employee)</span><span className="text-white">{fmtD(r2(emp.grossPay + er.total))}</span></div>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+
+                  {salariedEmps.length > 0 && (
+                    <>
+                      <p className="text-white/30 text-[10px] font-bold uppercase tracking-wide mb-1.5 mt-1">Salaried Employees</p>
+                      <div className="rounded-xl border border-white/10 overflow-hidden mb-4">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr style={{ background: "rgba(255,255,255,0.06)" }}>
+                              {["Employee", "Annual Salary"].map((h) => (
+                                <th key={h} className="text-left px-4 py-3 text-white/50 font-semibold text-xs">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-white/5">
+                            {salariedEmps.map((emp) => {
+                              const key = emp.employeeId ?? emp.name;
+                              return (
+                                <tr key={key} className="hover:bg-white/5 transition-colors">
+                                  <td className="px-4 py-3">
+                                    <div className="text-white font-medium">{emp.name}</div>
+                                    <div className="text-white/40 text-xs">{emp.position}</div>
+                                  </td>
+                                  <td className="px-4 py-3 text-emerald-400 font-semibold">
+                                    {emp.annualSalaryCents && emp.annualSalaryCents > 0
+                                      ? `${fmtD(emp.annualSalaryCents / 100)} / year`
+                                      : <span className="text-white/40 italic text-xs">Salaried</span>}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        <div className="px-4 py-2 border-t border-white/10 text-[11px] text-white/30 italic">
+                          Salaried pay is calculated automatically and prorated by start date.
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </>
+              );
+            })()}
 
 
 
@@ -554,7 +628,7 @@ export default function ManagerPayrollSubmit() {
                             <div className="flex items-center justify-between">
                               <div>
                                 <div className="text-white text-sm font-medium">{emp.name}</div>
-                                <div className="text-white/40 text-xs">{emp.position} · ${emp.hourlyRate.toFixed(2)}/hr</div>
+                                <div className="text-white/40 text-xs">{emp.position} · {formatEmployeeRate(emp)}</div>
                               </div>
                               {hasAdj && (
                                 <button
@@ -675,9 +749,11 @@ export default function ManagerPayrollSubmit() {
                     const selName = selectedImportEmp.name;
                     const selPos = selectedImportEmp.position;
                     const selPrev = selectedImportEmp.previewEmp;
-                    const grossPay     = Number(item.grossTotal ?? 0);
+                    const grossTotal   = Number(item.grossTotal ?? 0);
                     const netPay       = Number(item.netTotal ?? 0);
                     const addComp      = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                    // basePay = base wages only; grossTotal already includes additional comp
+                    const basePay      = Number(item.baseTotal ?? item.base ?? (grossTotal - addComp));
                     const hours        = selPrev?.netPayableHours ?? selPrev?.hoursWorked ?? 0;
                     const empTaxes     = (item.employeeTaxDetails ?? item.employeeTaxes ?? item.taxBreakdown ?? []) as Array<Record<string, unknown>>;
                     const erTaxes      = (item.employerTaxDetails ?? item.employerTaxes ?? item.employerTaxBreakdown ?? []) as Array<Record<string, unknown>>;
@@ -717,11 +793,11 @@ export default function ManagerPayrollSubmit() {
                           <div className="grid grid-cols-3 gap-4 mb-4">
                             <div className="bg-gray-50 rounded-lg p-3">
                               <div className="text-xs text-gray-500 mb-0.5">Base Earnings</div>
-                              <div className="text-xl font-bold text-gray-900">{fmtD(grossPay - addComp)}</div>
+                              <div className="text-xl font-bold text-gray-900">{fmtD(basePay)}</div>
                             </div>
                             <div className="bg-gray-50 rounded-lg p-3">
                               <div className="text-xs text-gray-500 mb-0.5">Gross Earnings</div>
-                              <div className="text-xl font-bold text-gray-900">{fmtD(grossPay + addComp)}</div>
+                              <div className="text-xl font-bold text-gray-900">{fmtD(grossTotal)}</div>
                             </div>
                             <div className="bg-gray-50 rounded-lg p-3">
                               <div className="text-xs text-gray-500 mb-0.5">Net Earnings</div>
@@ -818,12 +894,15 @@ export default function ManagerPayrollSubmit() {
                                   const pe = preview?.employees.find((e) => e.rollfiUserId?.toUpperCase() === uid?.toUpperCase());
                                   const empName = pe?.name ?? (item.userName as string | undefined) ?? uid ?? `Employee ${idx + 1}`;
                                   const empPos  = pe?.position ?? "";
-                                  const grossPay    = Number(item.grossTotal ?? 0);
+                                  const grossTotal  = Number(item.grossTotal ?? 0);
                                   const netPay      = Number(item.netTotal ?? 0);
                                   const erTax       = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
                                   const addComp     = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                                  // basePay = base wages only; Rollfi's grossTotal already includes addComp
+                                  const basePay     = Number(item.baseTotal ?? item.base ?? (grossTotal - addComp));
                                   const empDed      = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
-                                  const subtotal    = Number(item.subtotal ?? item.grossTotal ?? 0);
+                                  // subtotal = total gross (base + comp), same as Rollfi's grossTotal
+                                  const subtotal    = grossTotal;
                                   return (
                                     <tr
                                       key={uid ?? idx}
@@ -835,7 +914,7 @@ export default function ManagerPayrollSubmit() {
                                         {empPos && <div className="text-white/40 text-[10px]">{empPos}</div>}
                                       </td>
                                       <td className="px-4 py-3">
-                                        {grossPay > 0 ? <span className="text-emerald-400 font-semibold">{fmtD(grossPay)}</span> : <span className="text-white/30">$0.00</span>}
+                                        {basePay > 0 ? <span className="text-emerald-400 font-semibold">{fmtD(basePay)}</span> : <span className="text-white/30">$0.00</span>}
                                       </td>
                                       <td className="px-4 py-3">
                                         {erTax > 0 ? <span className="text-amber-300">+{fmtD(erTax)}</span> : <span className="text-white/30">$0.00</span>}
