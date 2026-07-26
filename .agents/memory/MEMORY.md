@@ -1,4 +1,5 @@
 - [Rollfi silent failure fix](rollfi-silent-failure-fix.md) — extractRollfiError helper; hard/soft classification; repair endpoint; W4 normalization
+- [Rollfi salaried comp fix](rollfi-salaried-comp-fix.md) — FIX1: echo item.payHours in basicPay for salaried+adj; FIX2: remove+re-add to recover zeroed payHours; remove API uses payrollLineItems not userIds
 - [FIX 6 audit July 2026](fix6-audit-july-2026.md) — 6 employees with wrong wage (cents sent as dollars); Sophia Bennett missing W4; repairs not yet done
 - [Rollfi sandbox pay period](rollfi-sandbox-payperiod.md) — use `getUnProcessedPayPeriod` not `getPayPeriod`; KYB failure blocks `initiatePayroll` in sandbox
 - [Rollfi employee onboarding flow](rollfi-employee-onboarding.md) — full 5-step KYC sequence required before employees can join payroll; bank account is the final activation gate

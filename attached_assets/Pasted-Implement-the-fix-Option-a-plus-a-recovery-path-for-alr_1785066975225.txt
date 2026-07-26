@@ -1,0 +1,40 @@
+Implement the fix — Option (a), plus a recovery path for already-zeroed
+employees.
+
+FIX 1 — preserve hours when a salaried employee has adjustments:
+In BOTH the initiate and import endpoints, when isSalariedEmp &&
+hasActiveAdj, include basicPay with Rollfi's own current value:
+  entry.basicPay = { payHours: Number(enrolledItem?.payHours ?? 0) }
+read from the enrolledItems you already fetch via getPayPeriodDetails
+before building the payload. This tells Rollfi "keep the hours you
+computed, add the bonus on top."
+Keep the existing behaviour for salaried WITHOUT adjustments: omit them
+entirely (proven safe — Test C).
+
+FIX 2 — RECOVERY for employees already zeroed (this is now required —
+Diane is stuck at 0 hours and re-importing without comp does NOT restore
+her, because omission preserves the zeroed state):
+If a salaried employee's enrolledItem.payHours is 0, we cannot just send
+0 back. INVESTIGATE the cleanest way to make Rollfi recompute their
+auto-prorated hours, and report before implementing:
+  Option A: removeUsersFromRegularPayPeriod then addUsersToRegularPayPeriod
+    for that employee — does Rollfi repopulate the auto hours (e.g. 48)?
+    TEST THIS on Diane in sandbox and report the resulting payHours.
+  Option B: compute the hours ourselves (period workdays × 8, prorated by
+    start date) and send them. Riskier — we'd be reproducing Rollfi's
+    proration logic, including holidays and mid-period hires.
+  Prefer A if it works; report the test result before choosing.
+
+FIX 3 — the display bug is still outstanding: Diane shows "$0.00/hr" +
+"Excluded" on the Submit Payroll page. Report the raw preview JSON the
+production endpoint returns for her right now (payType,
+annualSalaryCents, hourlyRate) so we can tell whether it's a server or
+frontend problem.
+
+TESTING:
+- Diane with a bonus → Rollfi shows her prorated hours AND the bonus;
+  gross = base + bonus
+- Diane without a bonus → unchanged, hours preserved
+- Diane currently at 0 hours → recovery restores her auto-computed hours
+- Hourly employees unchanged
+- tsc clean

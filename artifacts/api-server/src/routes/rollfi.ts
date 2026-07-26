@@ -328,7 +328,7 @@ async function wipeAdditionalCompensations(
 //      EXCLUDED: submitted, inProcess, processed, failed — those are locked states.
 //      If Rollfi rejects addUsersToRegularPayPeriod for a cancelled period, the exact error
 //      body is logged as WARN rather than swallowed.
-type BasicLog = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void };
+type BasicLog = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 async function enrollMissingEmployeesInPeriod(
   rollfiCompanyId: string,
   payPeriodId: string,
@@ -441,6 +441,75 @@ async function enrollMissingEmployeesInPeriod(
     "Safety net: re-fetched roster after mid-period hire enrollment"
   );
   return { newlyEnrolled, updatedItems, notEnrolled };
+}
+
+/**
+ * FIX 2 — Recovery: salaried employees stuck at payHours=0 from a prior broken import.
+ *
+ * Once a salaried employee is explicitly included in importRegularPayrollData without a
+ * basicPay key, Rollfi sets their payHours=0.  Subsequent imports that OMIT them preserve
+ * that zeroed state — the auto-prorated hours do NOT restore automatically.
+ *
+ * Solution: removeUsersFromRegularPayPeriod + addUsersToRegularPayPeriod forces Rollfi
+ * to recompute the hours from the Per Year wage record (confirmed in sandbox: 0→48 hours).
+ *
+ * Only triggered for salaried employees that:
+ *   (a) have active adjustments in this payload (will be explicitly included), AND
+ *   (b) currently report payHours=0 in Rollfi's enrolled items.
+ *
+ * Returns the refreshed enrolledItems so FIX 1 sees the restored payHours.
+ */
+async function recoverZeroedSalariedEmployees(
+  rollfiCompanyId: string,
+  payPeriodId: string,
+  enrolledItems: Array<Record<string, unknown>>,
+  salariedRollfiUids: Set<string>,
+  adjRollfiUids: Set<string>,
+  log: BasicLog
+): Promise<Array<Record<string, unknown>>> {
+  const toRecover = enrolledItems.filter((item) => {
+    const uid = String(item.userId ?? item.userID ?? "").toUpperCase();
+    return salariedRollfiUids.has(uid) && adjRollfiUids.has(uid) && Number(item.payHours ?? 0) === 0;
+  });
+  if (toRecover.length === 0) return enrolledItems;
+
+  log.warn({ count: toRecover.length, uids: toRecover.map((i) => i.userId ?? i.userID) },
+    "Salaried employees stuck at payHours=0 — recovering via remove+re-add");
+
+  for (const item of toRecover) {
+    const uid = String(item.userId ?? item.userID ?? "");
+    try {
+      await axios.post(
+        `${getBaseUrl()}/payroll#removeUsersFromRegularPayPeriod`,
+        { method: "removeUsersFromRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId,
+          payrollLineItems: [{ userId: uid }] },
+        { headers: rollfiHeaders() }
+      );
+      await axios.post(
+        `${getBaseUrl()}/payroll#addUsersToRegularPayPeriod`,
+        { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId,
+          payrollLineItems: [{ userId: uid, paymentMethod: "Direct Deposit" }] },
+        { headers: rollfiHeaders() }
+      );
+      log.info({ rollfiUserId: uid }, "Salaried recovery: remove+re-add succeeded");
+    } catch (err) {
+      log.error({ rollfiUserId: uid, err }, "Salaried recovery: remove+re-add failed — payHours may still be 0");
+    }
+  }
+
+  // Re-fetch enrolledItems so FIX 1 sees the restored payHours
+  const refreshResp = await axios.post(
+    `${getBaseUrl()}/reports#getPayPeriodDetails`,
+    { method: "getPayPeriodDetails", companyId: rollfiCompanyId, payPeriodId },
+    { headers: rollfiHeaders() }
+  );
+  const refreshRaw = refreshResp.data as Record<string, unknown>;
+  const refreshArr = (refreshRaw.payPeriod ?? []) as Array<Record<string, unknown>>;
+  const refreshPd = refreshArr[0] as Record<string, unknown> | undefined;
+  const refreshed = (refreshPd?.payrollLineItems ?? []) as Array<Record<string, unknown>>;
+  log.info({ recoveredCount: toRecover.length, newItemCount: refreshed.length },
+    "Salaried recovery: enrolledItems refreshed after remove+re-add");
+  return refreshed;
 }
 
 // ── Status ───────────────────────────────────────────────────
@@ -2935,6 +3004,21 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       : [];
     const dbPayTypeByEmpId = new Map(dbPayTypeRowsInit.map((r) => [r.id, r.payType ?? "hourly"]));
 
+    // FIX 2: Recover salaried employees whose payHours were zeroed by a prior broken import.
+    // Build the salaried + adj UID sets first, then call the recovery helper before the main loop.
+    const salariedRollfiUids = new Set<string>();
+    for (const [uid, su] of rollfiIdToUser) {
+      if (su.employeeId && dbPayTypeByEmpId.get(su.employeeId) === "salary") salariedRollfiUids.add(uid);
+    }
+    const adjRollfiUids = new Set<string>(
+      (adjustments as AdjInput[])
+        .filter((a) => (a.additionalCompensation?.length ?? 0) > 0 || (a.overTime?.length ?? 0) > 0)
+        .map((a) => a.rollfiUserId.toUpperCase())
+    );
+    enrolledItems = await recoverZeroedSalariedEmployees(
+      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUids, adjRollfiUids, req.log
+    );
+
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
     const dbApprovals1 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
     const approvalsByEmpId = new Map(dbApprovals1.map((a) => [a.employeeId, a]));
@@ -2990,8 +3074,16 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
       if (!isSalariedEmp) {
         // Hourly: send payHours as usual
         entry.basicPay = { payHours: payHoursRounded };
+      } else {
+        // FIX 1: Salaried + active adjustments — echo Rollfi's own auto-prorated payHours so
+        // the base salary component is preserved alongside the comp adjustment.
+        // Without basicPay, Rollfi interprets the entry as 0 hours and zeroes the base salary.
+        // (Recovery via recoverZeroedSalariedEmployees above ensures item.payHours is non-zero.)
+        const rollfiPayHours = Number(item.payHours ?? 0);
+        entry.basicPay = { payHours: rollfiPayHours };
+        req.log.info({ rollfiUserId: rollfiUid, rollfiPayHours, name: storeUser?.name },
+          "Initiate: salaried + adj — echoing Rollfi payHours to preserve base salary");
       }
-      // Salaried with active adjustments: include adjustment arrays but NO basicPay key
       // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
@@ -3161,6 +3253,20 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       : [];
     const dbPayTypeByEmpIdImport = new Map(dbPayTypeRowsImport.map((r) => [r.id, r.payType ?? "hourly"]));
 
+    // FIX 2: Recover salaried employees whose payHours were zeroed by a prior broken import.
+    const salariedRollfiUidsImport = new Set<string>();
+    for (const [uid, su] of rollfiIdToUser) {
+      if (su.employeeId && dbPayTypeByEmpIdImport.get(su.employeeId) === "salary") salariedRollfiUidsImport.add(uid);
+    }
+    const adjRollfiUidsImport = new Set<string>(
+      (adjustments as AdjInput[])
+        .filter((a) => (a.additionalCompensation?.length ?? 0) > 0 || (a.overTime?.length ?? 0) > 0)
+        .map((a) => a.rollfiUserId.toUpperCase())
+    );
+    enrolledItems = await recoverZeroedSalariedEmployees(
+      rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUidsImport, adjRollfiUidsImport, req.log
+    );
+
     const periodKey = payBeginDate && payEndDate ? `${payBeginDate}/${payEndDate}` : null;
     const dbApprovals2 = periodKey ? await getTimesheetApprovalsByCompanyPeriod(companyId, periodKey) : [];
     const approvalsByEmpId2 = new Map(dbApprovals2.map((a) => [a.employeeId, a]));
@@ -3214,8 +3320,16 @@ router.post("/rollfi/payroll/import", async (req, res) => {
       if (!isSalariedEmpImport) {
         // Hourly: send payHours as usual
         entry.basicPay = { payHours: payHoursRounded };
+      } else {
+        // FIX 1: Salaried + active adjustments — echo Rollfi's own auto-prorated payHours so
+        // the base salary component is preserved alongside the comp adjustment.
+        // Without basicPay, Rollfi interprets the entry as 0 hours and zeroes the base salary.
+        // (Recovery via recoverZeroedSalariedEmployees above ensures item.payHours is non-zero.)
+        const rollfiPayHoursImport = Number(item.payHours ?? 0);
+        entry.basicPay = { payHours: rollfiPayHoursImport };
+        req.log.info({ rollfiUserId: rollfiUid, rollfiPayHoursImport, name: storeUser?.name },
+          "Import: salaried + adj — echoing Rollfi payHours to preserve base salary");
       }
-      // Salaried with active adjustments: include adjustment arrays but NO basicPay key
       // Always send explicit arrays — omission preserves Rollfi's previous period state (stale-comp bug)
       entry.additionalCompensation = adj?.additionalCompensation ?? [];
       entry.overTime = adj?.overTime ?? [];
