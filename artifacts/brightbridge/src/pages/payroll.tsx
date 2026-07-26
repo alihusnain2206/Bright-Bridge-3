@@ -221,15 +221,23 @@ function PayPeriodStatusBadge({ status }: { status: string }) {
 // ── Payroll result card ───────────────────────────────────────
 
 function PayrollResultCard({ result, onReset, onVerifyBank, verifyBankPending }: { result: PayrollResult; onReset: () => void; onVerifyBank?: () => void; verifyBankPending?: boolean }) {
-  if (!result.success) {
-    const isBankPending = result.error?.toLowerCase().includes("microdeposit") || result.error?.toLowerCase().includes("funding source") || result.error?.toLowerCase().includes("not ready");
+  // Defence-in-depth: also catch Rollfi's nested-body failure pattern where the backend
+  // returned success:true but payPeriod.status is not "Success". Fix A in the backend
+  // should catch this first (returns 422), but this guard ensures the green panel never
+  // shows for a failed initiation regardless of the response path.
+  const payPeriodInitFailed = result.payPeriod != null && result.payPeriod.status !== "Success";
+  if (!result.success || payPeriodInitFailed) {
+    const errorMsg = payPeriodInitFailed
+      ? (result.payPeriod!.message ?? "Payroll initiation failed")
+      : result.error;
+    const isBankPending = errorMsg?.toLowerCase().includes("microdeposit") || errorMsg?.toLowerCase().includes("funding source") || errorMsg?.toLowerCase().includes("not ready");
     return (
       <div className="mt-4 p-5 rounded-xl bg-red-500/10 border border-red-500/30">
         <div className="flex items-center gap-2 mb-2">
           <XCircle className="h-5 w-5 text-red-400 shrink-0" />
           <p className="text-red-300 font-semibold">Payroll submission failed</p>
         </div>
-        <p className="text-red-300/70 text-sm ml-7">{result.error}</p>
+        <p className="text-red-300/70 text-sm ml-7">{errorMsg}</p>
         {isBankPending && onVerifyBank && (
           <div className="mt-3 ml-7 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
             <p className="text-amber-300/80 text-xs mb-2">The company bank account needs micro-deposit verification before payroll can be submitted.</p>
@@ -1011,6 +1019,33 @@ export default function Payroll() {
   // this list (submitted, processed, returned, skipped) means it's already done.
   const submittableStatuses = ["new", "preprocess", "inprocess", "cancelled", "failed"];
   const periodSubmittable = !payPeriod || submittableStatuses.includes(payPeriod.payPeriodStatus.toLowerCase());
+
+  // Deadline guard — Rollfi's cutoff is 12:00 PM America/New_York on deadLineToRunPayroll.
+  const { deadlinePassed, deadlineNear, deadlineCutoffStr } = (() => {
+    const dlStr = payPeriod?.deadLineToRunPayroll;
+    if (!dlStr) return { deadlinePassed: false, deadlineNear: false, deadlineCutoffStr: "" };
+    try {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dlStr);
+      if (!m) return { deadlinePassed: false, deadlineNear: false, deadlineCutoffStr: dlStr };
+      // America/New_York: EDT (UTC-4) Mar–Nov, EST (UTC-5) Dec–Feb
+      const month = parseInt(m[2]);
+      const offsetH = month >= 3 && month <= 11 ? 4 : 5;
+      const cutoff = new Date(`${dlStr}T${String(12 + offsetH).padStart(2, "0")}:00:00Z`);
+      const now = Date.now();
+      const msUntil = cutoff.getTime() - now;
+      const displayDate = new Date(dlStr + "T12:00:00Z").toLocaleDateString("en-US", {
+        month: "short", day: "numeric", year: "numeric", timeZone: "UTC",
+      });
+      return {
+        deadlinePassed: now >= cutoff.getTime(),
+        deadlineNear: msUntil > 0 && msUntil < 48 * 60 * 60 * 1000,
+        deadlineCutoffStr: `${displayDate} at 12:00 PM ET`,
+      };
+    } catch {
+      return { deadlinePassed: false, deadlineNear: false, deadlineCutoffStr: "" };
+    }
+  })();
+
   const getRollfiStatus = (companyId: string, rollfiUserId: string | undefined) =>
     rollfiUserId ? (empStatuses[companyId]?.find((s) => s.rollfiUserId.toUpperCase() === rollfiUserId.toUpperCase()) ?? null) : null;
 
@@ -1852,7 +1887,19 @@ export default function Payroll() {
                     <p className="text-amber-400/70 text-xs">No pay period found — <button className="underline" onClick={() => void fetchPayPeriod(selectedCompanyId)}>retry</button></p>
                   )}
                   {!payPeriod && !payPeriodFetching && !payPeriodFetchFailed && <p className="text-white/30 text-xs">Fetching pay period…</p>}
-                  {payPeriod && !periodSubmittable && (
+                  {payPeriod && payPeriod.payPeriodStatus.toLowerCase() === "failed" && (
+                    <div className="mt-2 p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-2">
+                      <XCircle className="h-4 w-4 text-red-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-red-300 text-sm font-semibold">This period did not run</p>
+                        <p className="text-red-300/60 text-xs mt-0.5">
+                          Payroll submission failed — funds were not disbursed. You can pay affected employees through an{" "}
+                          <a href="/manager-payroll?tab=offcycle" className="underline text-red-300/80 hover:text-red-200">off-cycle payment</a>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  {payPeriod && !periodSubmittable && payPeriod.payPeriodStatus.toLowerCase() !== "failed" && (
                     <div className="flex items-center gap-1.5"><PayPeriodStatusBadge status={payPeriod.payPeriodStatus} /><p className="text-white/30 text-xs">— already submitted</p></div>
                   )}
                   {payPeriod && periodSubmittable && !preview.allOnboarded && <p className="text-white/30 text-xs">All employees must be onboarded first</p>}
@@ -1903,14 +1950,23 @@ export default function Payroll() {
                           {importResult.skippedEmployees && importResult.skippedEmployees.length > 0 && (
                             <p className="text-amber-400/70 text-xs">⚠ Excluded: {importResult.skippedEmployees.map((e) => e.name ?? e.rollfiUserId).join(", ")}</p>
                           )}
-                          <div className="pt-1">
+                          <div className="pt-1 space-y-2">
+                            {deadlineNear && (
+                              <div className="p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+                                <Clock className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                                <p className="text-amber-300 text-xs">Deadline approaching — submit before <strong>{deadlineCutoffStr}</strong> or payroll cannot be processed for this period.</p>
+                              </div>
+                            )}
                             <Button
-                              disabled={submitPayroll.isPending}
+                              disabled={submitPayroll.isPending || deadlinePassed}
                               onClick={() => { setConfirmOpen(true); setRunInput(""); }}
                               className="w-full gap-2 text-white font-semibold"
-                              style={{ background: ORANGE }}>
+                              style={{ background: deadlinePassed ? undefined : ORANGE }}>
                               {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting Payroll…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
                             </Button>
+                            {deadlinePassed && (
+                              <p className="text-red-400/80 text-xs text-center">This period's deadline was {deadlineCutoffStr} — payroll can no longer be submitted for it. You can pay these employees through an <a href="/manager-payroll?tab=offcycle" className="underline hover:text-red-300">off-cycle payment</a>.</p>
+                            )}
                           </div>
                         </div>
                       );
@@ -1918,13 +1974,22 @@ export default function Payroll() {
                     {importResult.success && !importResult.realTotals && (
                       <div className="px-5 py-4">
                         <p className="text-white/50 text-sm mb-4">Hours imported successfully. Real totals not yet available — review the preview above and confirm to continue.</p>
+                        {deadlineNear && (
+                          <div className="mb-2 p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+                            <Clock className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                            <p className="text-amber-300 text-xs">Deadline approaching — submit before <strong>{deadlineCutoffStr}</strong> or payroll cannot be processed for this period.</p>
+                          </div>
+                        )}
                         <Button
-                          disabled={submitPayroll.isPending}
+                          disabled={submitPayroll.isPending || deadlinePassed}
                           onClick={() => { setConfirmOpen(true); setRunInput(""); }}
                           className="w-full gap-2 text-white font-semibold"
-                          style={{ background: ORANGE }}>
+                          style={{ background: deadlinePassed ? undefined : ORANGE }}>
                           {submitPayroll.isPending ? <><Loader2 className="h-4 w-4 animate-spin" /> Submitting…</> : <><Play className="h-4 w-4" /> Confirm & Submit Payroll</>}
                         </Button>
+                        {deadlinePassed && (
+                          <p className="text-red-400/80 text-xs text-center mt-2">This period's deadline was {deadlineCutoffStr} — payroll can no longer be submitted for it. You can pay these employees through an <a href="/manager-payroll?tab=offcycle" className="underline hover:text-red-300">off-cycle payment</a>.</p>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1939,7 +2004,7 @@ export default function Payroll() {
                   />
                 )}
 
-                {payPeriod && !periodSubmittable && (
+                {payPeriod && !periodSubmittable && payPeriod.payPeriodStatus.toLowerCase() !== "failed" && (
                   <div className="mt-4 p-3 rounded-lg bg-white/5 border border-white/10 flex items-center gap-3">
                     <ArrowRight className="h-4 w-4 text-white/30 shrink-0" />
                     <p className="text-white/40 text-xs">

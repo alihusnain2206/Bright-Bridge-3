@@ -1,0 +1,57 @@
+Approved — implement Fixes A, B, and C as you proposed, plus three additions.
+
+FIX A (backend) — apply the payPeriod.status check to BOTH
+/rollfi/payroll/submit AND /rollfi/payroll/initiate. Return 422 with the
+reason from payPeriod.message. ALSO: generalise the lesson — if Rollfi
+reports failures in nested body fields, assertNoRollfiError misses them.
+AUDIT which other Rollfi calls in our integration could return HTTP 200
+with a nested failure status, and report the list (do NOT fix them yet).
+This is the third time this pattern has bitten us (onboarding steps,
+comp import, now payroll submit).
+
+FIX B (frontend) — show the red panel whenever success is false OR
+payPeriod.status !== "Success". Never display "Funds will be disbursed"
+unless initiation genuinely succeeded.
+
+FIX C (failed-period state) — a distinct red state for payPeriodStatus
+"failed"; never show "— already submitted" for a failed period.
+
+ADDITION 1 — PRE-SUBMIT GUARD (would have prevented this entirely):
+before the Submit button, compare deadLineToRunPayroll against now. If the
+deadline has passed, DISABLE the button and show:
+"This period's deadline was {date} — payroll can no longer be submitted
+for it. You can pay these employees through an off-cycle payment."
+Per Rollfi's Payroll Processing guide the real cutoff is 12:00 PM EST on
+the deadline date — use that, not end-of-day.
+
+ADDITION 2 — DEADLINE WARNING while still valid: when the deadline is
+within 48 hours, show a prominent (non-red) warning stating the exact
+cutoff time. A daycare owner running payroll fortnightly needs to see this
+before it lapses.
+
+ADDITION 3 — POINT TO THE RECOVERY PATH: Fix C's failed-period message
+must offer a real next step, not just "contact support". Rollfi supports
+supplemental pay periods via addSupplementalPayPeriod with
+payPeriodType "Missing" — documented as "pay periods not recorded in the
+system due to cancellations or processing errors", i.e. exactly this case.
+Word it: "This period did not run. You can pay these employees through an
+off-cycle payment." and link it to our existing Off-Cycle Payrolls page.
+Do NOT build the supplemental payroll feature in this prompt — just the
+message and link.
+
+SCOPE BOUNDARY — do not touch: the import/comp-wipe logic, EasyTeam sync,
+wage resolver, auth middleware, onboarding chain.
+
+TESTING:
+- Sunshine's valid period (deadline Aug 3) → submit still succeeds, green
+  panel, "initiated successfully"
+- A past-deadline period → Submit button disabled with the explanation;
+  if forced via direct API call, backend returns 422 and the UI shows RED
+- Harbor Point's failed period (F47887A3) → shows the failed state with
+  the off-cycle guidance, NOT "already submitted"
+- Deadline within 48h → warning appears with the correct cutoff
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, the nested-failure audit list from Fix A, and
+each testing result.
+REMINDER: Publish required for bright-bridge-3.replit.app.

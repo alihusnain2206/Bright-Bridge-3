@@ -2797,6 +2797,14 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
+    // Guard: Rollfi returns HTTP 200 even for failures; check the nested payPeriod.status field.
+    const ppResult2 = raw.payPeriod as { status?: string; message?: string } | undefined;
+    if (ppResult2?.status && ppResult2.status !== "Success") {
+      const reason2 = ppResult2.message ?? `Rollfi payPeriod status: ${ppResult2.status}`;
+      req.log.error({ raw, reason: reason2 }, "initiatePayroll (initiate): non-Success payPeriod status — payroll did not run");
+      res.status(422).json({ error: reason2, payPeriod: ppResult2, importResult: importRaw });
+      return;
+    }
 
     const actor2 = req.session.userId ? store.getUserById(req.session.userId) : undefined;
     store.logActivity({
@@ -3083,6 +3091,14 @@ router.post("/rollfi/payroll/submit", async (req, res) => {
     req.log.info({ rollfiResponse: response.data }, "Rollfi initiatePayroll (submit step)");
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "initiatePayroll");
+    // Guard: Rollfi returns HTTP 200 even for failures; check the nested payPeriod.status field.
+    const ppResult = raw.payPeriod as { status?: string; message?: string } | undefined;
+    if (ppResult?.status && ppResult.status !== "Success") {
+      const reason = ppResult.message ?? `Rollfi payPeriod status: ${ppResult.status}`;
+      req.log.error({ raw, reason }, "initiatePayroll (submit): non-Success payPeriod status — payroll did not run");
+      res.status(422).json({ error: reason, payPeriod: ppResult });
+      return;
+    }
     const actorSub = req.session.userId ? store.getUserById(req.session.userId) : undefined;
     store.logActivity({
       companyId,
