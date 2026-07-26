@@ -36,6 +36,10 @@ export interface EmployeeSyncInput {
   /** State-specific W-4 field values from the UI form (built via getStateW4FormFields).
    *  When provided, used directly in addStateW4Information instead of the hardcoded fallback. */
   stateW4Fields?: Record<string, string>;
+  /** Employee phone number as entered in the wizard (e.g. "(973) 555-0142"). Forwarded to Rollfi; digits stripped there. */
+  phone?: string;
+  /** Employee start date ISO YYYY-MM-DD. Sent to Rollfi addUser.dateOfJoin and addUserWage.startDate. */
+  startDate?: string;
   /** Direct deposit bank details — only present when bankSetupMethod === "manual".
    *  In sandbox, test values are substituted automatically regardless of these fields. */
   bankName?: string;
@@ -102,6 +106,7 @@ export async function syncEmployeeToIntegrations(
         w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
         w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
         stateW4Fields: emp.stateW4Fields,
+        phone: emp.phone, startDate: emp.startDate,
         bankName: emp.bankName, routingNumber: emp.routingNumber,
         accountNumber: emp.accountNumber, accountType: emp.accountType,
       },

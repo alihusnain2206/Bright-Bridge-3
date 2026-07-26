@@ -276,6 +276,10 @@ export interface RollfiEmployeeInput {
   payType?: string;
   annualSalaryCents?: number | null;
   overtimeEligible?: boolean;
+  /** Employee phone number as stored in DB (e.g. "(973) 555-0142"). Digits are stripped before sending to Rollfi. */
+  phone?: string;
+  /** ISO start date YYYY-MM-DD sent to Rollfi addUser.dateOfJoin and addUserWage.startDate. */
+  startDate?: string;
   homeState?: string;
   homeAddress?: string;
   homeCity?: string;
@@ -316,8 +320,12 @@ export async function onboardEmployeeToRollfi(
         companyId: rollfiCompany.rollfiCompanyId,
         firstName, middleName: "", lastName,
         email: emp.email ?? `${emp.id}@brightbridge.sandbox`,
-        phoneNumber: "9733330001",
-        dateOfJoin: "2024-01-01",
+        phoneNumber: (() => {
+          // Rollfi expects raw 10 digits (no dashes/parens/spaces)
+          const digits = (emp.phone ?? "").replace(/\D/g, "");
+          return digits.length >= 10 ? digits.slice(-10) : "9733330001";
+        })(),
+        dateOfJoin: emp.startDate ?? new Date().toISOString().slice(0, 10),
         workerType: "W2",
         jobTitle: emp.roleName,
         companyLocationCategory: "Office",
@@ -368,7 +376,7 @@ export async function onboardEmployeeToRollfi(
         userType: wageFields.userType,
         employmentStatus: "Full Time (30+ Hours per week)",
         userRefTaxExempt: "No, this employee is not tax exempt",
-        startDate: "2024-01-01",
+        startDate: emp.startDate ?? new Date().toISOString().slice(0, 10),
         paymentMethod: "Direct Deposit",
       },
     }, { headers });

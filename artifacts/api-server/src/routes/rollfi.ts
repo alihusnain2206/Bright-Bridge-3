@@ -1550,6 +1550,8 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     hourlyWage:      employeesTable.hourlyWage,
     annualSalary:    employeesTable.annualSalary,
     overtimeEligible: employeesTable.overtimeEligible,
+    phone:           employeesTable.phone,
+    startDate:       employeesTable.startDate,
   }).from(employeesTable).where(eq(employeesTable.id, employeeId)).catch(() => [] as never[]);
 
   // If location ID is missing (e.g. company was recovered via getCompanies), fetch it now
@@ -1586,8 +1588,12 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           middleName: "",
           lastName,
           email: staffUser.email,
-          phoneNumber: "9733330001",
-          dateOfJoin: "2024-01-01",
+          phoneNumber: (() => {
+            // Strip formatting — Rollfi expects raw 10 digits (no dashes/parens/spaces)
+            const digits = (dbPayInfo?.phone ?? "").replace(/\D/g, "");
+            return digits.length >= 10 ? digits.slice(-10) : "9733330001";
+          })(),
+          dateOfJoin: dbPayInfo?.startDate ?? new Date().toISOString().slice(0, 10),
           workerType: "W2",
           jobTitle: staffUser.position,
           companyLocationCategory: "Office",
@@ -1637,7 +1643,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           userType: _wf1.userType,
           employmentStatus: "Full Time (30+ Hours per week)",
           userRefTaxExempt: "No, this employee is not tax exempt",
-          startDate: "2024-01-01",
+          startDate: dbPayInfo?.startDate ?? new Date().toISOString().slice(0, 10),
           paymentMethod: "Direct Deposit",
         },
       },
@@ -1720,7 +1726,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
                   userType: _wf2.userType,
                   employmentStatus: "Full Time (30+ Hours per week)",
                   userRefTaxExempt: "No, this employee is not tax exempt",
-                  startDate: "2024-01-01",
+                  startDate: dbPayInfo?.startDate ?? new Date().toISOString().slice(0, 10),
                   paymentMethod: "Direct Deposit",
                 },
               },

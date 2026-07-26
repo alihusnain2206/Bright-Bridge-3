@@ -1,0 +1,58 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist.
+
+Three onboarding data bugs found during a payroll dry run. All in the
+employee-creation → Rollfi path.
+
+CONFIRMED EVIDENCE (Daniel Reyes, Harbor Point, created via wizard):
+  entered phone (973) 555-0142  → Rollfi has (973) 333-0001   ✗ hardcoded
+  entered start date Jul 26 2026 → Rollfi has 01/01/2024      ✗ hardcoded
+  entered DOB 02/01/1994         → Rollfi has 02/01/1994      ✓ correct
+  entered address 218 Maple Ave  → Rollfi has 218 Maple Ave   ✓ correct
+(Every Rollfi employee we've inspected shows start date 01/01/2024 —
+Gregory, Hannah, Leila — so it's a constant, not random.)
+
+STEP 0 — AUDIT FIRST, report before changing:
+List EVERY field we send to Rollfi during employee onboarding (addUser,
+addKycInformation, addUserWage, addW4Information, addUserBankAccount),
+marking each as REAL (from wizard input) or HARDCODED (constant in code),
+with file/line for each hardcoded value. I want the full picture — phone
+and start date are the two we found, there may be more.
+
+FIX 1 — PHONE: send the phone number entered in the wizard. If the wizard
+doesn't collect it or we don't store it, say so and report what's needed.
+
+FIX 2 — START DATE: send the start date entered in the wizard, not
+01/01/2024. Note this affects payroll eligibility and proration for
+partial periods, so it must be the real date.
+
+FIX 3 — BANK ACCOUNT / ACTIVATION (investigate, then propose — don't
+implement blind):
+Our wizard submits bank details via addUserBankAccount and the employee
+stays userStatus "Invite Sent". When the SAME details are entered through
+Rollfi's employer portal ("Connect Direct Deposit Account"), the employee
+immediately becomes "Active".
+  a. Compare our addUserBankAccount payload field-by-field against what
+     Rollfi's docs specify — are we missing anything (account type,
+     payPercentage, isPrimary, verification flag)?
+  b. Does our call succeed? Check whether it returns a nested failure we
+     don't inspect (the same pattern as the payroll bug).
+  c. Report why the portal flow activates and ours doesn't, and propose a
+     fix. If it genuinely can't be done via API, say so — that becomes a
+     question for Rollfi support.
+  Note: submitting bank details twice (wizard + portal) creates TWO bank
+  accounts on the employee, one at 0% payPercentage. Our fix should avoid
+  producing duplicates.
+
+SCOPE BOUNDARY: don't touch payroll import/submit logic, the wage
+resolver, EasyTeam, or the fixes just shipped.
+
+TESTING:
+- Create a new test employee with a distinctive phone and today's start
+  date → getUser in Rollfi shows BOTH correctly
+- Existing employees unaffected
+- Report the employee's userStatus after creation (Invite Sent or Active)
+- tsc --noEmit clean
+
+DELIVERABLE: the Step 0 field audit (REAL vs HARDCODED), files changed,
+the Fix 3 findings + proposal, and the getUser output for the new test
+employee. REMINDER: Publish required.

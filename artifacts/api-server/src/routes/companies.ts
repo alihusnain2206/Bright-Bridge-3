@@ -708,6 +708,8 @@ router.post("/employees", async (req: Request, res: Response) => {
         w4Dependents: body.w4Dependents,
         w4ExtraWithholding: body.w4ExtraWithholding,
         stateW4Fields: body.stateW4Fields,
+        phone: body.phone ?? "",
+        startDate: body.startDate,
         bankName: body.bankSetupMethod === "manual" ? body.bankName : undefined,
         routingNumber: body.bankSetupMethod === "manual" ? body.routingNumber : undefined,
         accountNumber: body.bankSetupMethod === "manual" ? body.accountNumber : undefined,
