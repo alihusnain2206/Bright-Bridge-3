@@ -1761,9 +1761,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       return;
     }
 
-    // Run KYC onboarding flow to move employee from "Invite Sent" → active status
-    await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, req.log);
-
+    // addUserWage FIRST — Rollfi rejects initiateUserKyc when no wage record exists yet.
     const _wf1 = getRollfiWageFields({
       payType:         dbPayInfo?.payType,
       hourlyWage:      dbPayInfo?.hourlyWage ?? wage,
@@ -1804,13 +1802,38 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       onboardedAt: new Date().toISOString(),
     });
 
+    // KYC runs AFTER wage — use structured runKycOnboardingNew so hard/soft classification
+    // is consistent with the repair-onboarding endpoint; result is never discarded.
+    const kycResult = await runKycOnboardingNew(
+      rollfiUserId,
+      rollfiCompany.rollfiCompanyId,
+      req.log,
+      { filingStatus: "Single", multipleJobs: false, dependents: 0, extraWithholding: 0, homeState: dbPayInfo?.homeState ?? "NJ" }
+    );
+
+    const nowISO = new Date().toISOString();
+    if (kycResult.hardErrors.length > 0) {
+      await db.update(employeesTable).set({
+        lastSyncError: JSON.stringify({ failedSteps: kycResult.hardErrors, softWarnings: kycResult.softWarnings }),
+        syncStatus: "error",
+        updatedAt: nowISO,
+      }).where(eq(employeesTable.id, employeeId));
+      req.log.warn({ employeeId, rollfiUserId, hardErrors: kycResult.hardErrors }, "KYC onboarding completed with hard failures — employee is payroll-ineligible until repaired");
+    } else {
+      await db.update(employeesTable).set({ lastSyncError: null, syncStatus: "synced", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId));
+    }
+
     res.json({
       success: true,
       rollfiUserId,
       rollfiWageId: rollfiWageId ?? "",
+      rollfiFailedSteps: kycResult.hardErrors,
+      rollfiSoftWarnings: kycResult.softWarnings,
       userStatus: userObj.status as string | undefined,
       wageStatus: wageObj.status as string | undefined,
-      message: userObj.message as string | undefined,
+      message: kycResult.hardErrors.length > 0
+        ? "Payroll account created but identity verification could not be started — this employee cannot be paid until it completes"
+        : (userObj.message as string | undefined),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1841,10 +1864,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           });
           req.log.info({ rollfiUserId: found.userId }, "Recovered existing Rollfi employee via getUsers");
 
-          // Run KYC onboarding to move "Invite Sent" → active (idempotent — safe to re-run)
-          await runEmployeeKycOnboarding(found.userId, rollfiCompany.rollfiCompanyId, req.log);
-
-          // Ensure wage is set — may have been skipped on a previous recovery
+          // Ensure wage is set FIRST — Rollfi rejects initiateUserKyc when no wage record exists
           let rollfiWageId = "";
           try {
             const _wf2 = getRollfiWageFields({
@@ -1886,7 +1906,38 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
             rollfiWageId,
             onboardedAt: new Date().toISOString(),
           });
-          res.json({ success: true, recovered: true, rollfiUserId: found.userId, rollfiWageId });
+
+          // KYC runs AFTER wage — use structured runKycOnboardingNew for consistent classification
+          const recoveryKycResult = await runKycOnboardingNew(
+            found.userId,
+            rollfiCompany.rollfiCompanyId,
+            req.log,
+            { filingStatus: "Single", multipleJobs: false, dependents: 0, extraWithholding: 0, homeState: dbPayInfo?.homeState ?? "NJ" }
+          );
+
+          const recoveryNowISO = new Date().toISOString();
+          if (recoveryKycResult.hardErrors.length > 0) {
+            await db.update(employeesTable).set({
+              lastSyncError: JSON.stringify({ failedSteps: recoveryKycResult.hardErrors, softWarnings: recoveryKycResult.softWarnings }),
+              syncStatus: "error",
+              updatedAt: recoveryNowISO,
+            }).where(eq(employeesTable.id, employeeId));
+            req.log.warn({ employeeId, rollfiUserId: found.userId, hardErrors: recoveryKycResult.hardErrors }, "KYC onboarding (recovery) completed with hard failures — employee is payroll-ineligible until repaired");
+          } else {
+            await db.update(employeesTable).set({ lastSyncError: null, syncStatus: "synced", updatedAt: recoveryNowISO }).where(eq(employeesTable.id, employeeId));
+          }
+
+          res.json({
+            success: true,
+            recovered: true,
+            rollfiUserId: found.userId,
+            rollfiWageId,
+            rollfiFailedSteps: recoveryKycResult.hardErrors,
+            rollfiSoftWarnings: recoveryKycResult.softWarnings,
+            message: recoveryKycResult.hardErrors.length > 0
+              ? "Payroll account recovered but identity verification could not be started — this employee cannot be paid until it completes"
+              : undefined,
+          });
           return;
         }
 

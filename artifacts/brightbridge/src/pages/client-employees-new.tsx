@@ -429,7 +429,7 @@ export default function ClientEmployeesNew() {
             {[
               { done: true, label: "BrightBridge profile created" },
               { done: !hasHardFailures, label: hasHardFailures ? "Rollfi payroll setup: incomplete (see errors above)" : "Rollfi payroll account created" },
-              { done: true, label: "Identity verification submitted" },
+              { done: !(created.rollfiFailedSteps ?? []).some(f => f.step === "initiateUserKyc" || f.step === "addKycInformation"), label: (created.rollfiFailedSteps ?? []).some(f => f.step === "initiateUserKyc" || f.step === "addKycInformation") ? "Identity verification could not be started — this employee cannot be paid until it completes" : "Identity verification submitted" },
               { done: true, label: form.payType === "salary"
                   ? `Salary set: $${form.wageAmount.toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr`
                   : `Wage set: $${form.wageAmount.toFixed(2)}/hr` },

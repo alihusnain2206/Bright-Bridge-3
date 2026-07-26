@@ -235,18 +235,21 @@ export async function runEmployeeKycOnboarding(
     log.info({ homeState: w4.homeState }, "Skipping addStateW4Information — state uses federal W-4 or has no income tax");
   }
 
-  // ── initiateUserKyc — SOFT ────────────────────────────────────────────────
+  // ── initiateUserKyc — HARD ────────────────────────────────────────────────
+  // KYC initiation is a payroll gate: Rollfi rejects an employee with "invalid status" at
+  // import time if KYC was never initiated. Classify as hardError so the wizard surfaces the
+  // warning, records it in last_sync_error, and the Retry Failed Steps path can repair it.
   if (!kycAdded) {
     log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
-    softWarnings.push({ step: "initiateUserKyc", message: "Skipped — KYC information was not accepted" });
+    hardErrors.push({ step: "initiateUserKyc", message: "Identity verification could not be started — this employee cannot be paid until KYC information is accepted and verification is initiated" });
   } else {
     try {
       const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
       log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
       const errMsg = extractRollfiError(r.data);
-      if (errMsg) softWarnings.push({ step: "initiateUserKyc", message: errMsg });
+      if (errMsg) hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${errMsg}. This employee cannot be paid until verification completes` });
     } catch (e) {
-      softWarnings.push({ step: "initiateUserKyc", message: e instanceof Error ? e.message : String(e) });
+      hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${e instanceof Error ? e.message : String(e)}. This employee cannot be paid until verification completes` });
     }
   }
 

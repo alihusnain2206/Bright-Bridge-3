@@ -9,5 +9,5 @@
 - [EasyTeam JWT wage units](easyteam-jwt-wage-units.md) — JWT `wage` claim must be DOLLARS (cents/100); we store cents internally; 3 JWT paths must stay consistent
 - [Rollfi state registration fields](rollfi-state-fields.md) — field names in companyStateRegistration are state-specific; Rollfi returns 200+error-body on failure (not HTTP 4xx); mapping in lib/rollfi-state-fields.ts
 - [Rollfi state W-4 field names](rollfi-state-w4-fields.md) — allowances field name differs by state; NJ="Total Allowances", NY="Withholding Allowance"; use getStateW4FormFields at /reports not /userOnboarding
-- [KYC before wage — silent failure](kyc-order-silent-failure.md) — wizard calls KYC before wage (line ~1765 before ~1773); initiateUserKyc fails silently; employee shows onboarded but is payroll-ineligible
+- [KYC order fix](kyc-order-silent-failure.md) — initiateUserKyc now HARD; rollfi.ts routes restructured (wage before KYC); result never discarded; wizard surfaces failure in panel
 - [People Hub API shapes](people-hub-api-shapes.md) — /api/employees returns `{ employees: [] }` (wrapped); /api/companies returns `{ companies: [] }` (wrapped); /api/documents uses `?employeeId=` not nested `/employees/:id/documents`
