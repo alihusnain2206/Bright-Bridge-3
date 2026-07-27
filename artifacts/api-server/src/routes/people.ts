@@ -500,7 +500,7 @@ export async function backfillPeopleModule(): Promise<void> {
 
 // ─── Rollfi sync helper ────────────────────────────────────────
 
-interface RollfiCallResult { success: boolean; error?: string; status?: number }
+interface RollfiCallResult { success: boolean; error?: string; status?: number; blockedReason?: string }
 interface RollfiSyncResult {
   skipped?: boolean; reason?: string;
   updateUser?: RollfiCallResult | null;
@@ -544,23 +544,32 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
   }
 
   // updateKycInformation — syncs: address1, city, state, zipcode, phoneNumber
+  // GUARD: updateKycInformation is an *update* endpoint — it only works when Rollfi already
+  // has an initiated KYC record for this user.  Imported employees (kycStatus = "kyc not
+  // initiated" or null) never had addKycInformation + initiateUserKyc run through our wizard,
+  // so calling this endpoint against them is a silent no-op.  Detect and surface clearly.
   const kycFields = ["homeAddress","homeCity","homeState","homeZip","phone"];
   if (kycFields.some(f => changed.has(f))) {
-    try {
-      const kycInfo: Record<string, unknown> = { userId: rollfiUserId };
-      if (changed.has("homeAddress")) kycInfo.address1     = emp.homeAddress;
-      if (changed.has("homeCity"))    kycInfo.city         = emp.homeCity;
-      if (changed.has("homeState"))   kycInfo.state        = emp.homeState;
-      if (changed.has("homeZip"))     kycInfo.zipcode      = emp.homeZip;
-      if (changed.has("phone"))       kycInfo.phoneNumber  = emp.phone;
-      const r = await axios.put(
-        `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
-        { method: "updateKycInformation", kycInformation: kycInfo },
-        { headers: rollfiHeaders() },
-      );
-      result.updateKycInfo = { success: true, status: r.status as number };
-    } catch (e) {
-      result.updateKycInfo = { success: false, error: String(e) };
+    const kycInitiated = !!emp.kycStatus && emp.kycStatus !== "kyc not initiated";
+    if (!kycInitiated) {
+      result.updateKycInfo = { success: false, blockedReason: "kyc_not_initiated" };
+    } else {
+      try {
+        const kycInfo: Record<string, unknown> = { userId: rollfiUserId };
+        if (changed.has("homeAddress")) kycInfo.address1     = emp.homeAddress;
+        if (changed.has("homeCity"))    kycInfo.city         = emp.homeCity;
+        if (changed.has("homeState"))   kycInfo.state        = emp.homeState;
+        if (changed.has("homeZip"))     kycInfo.zipcode      = emp.homeZip;
+        if (changed.has("phone"))       kycInfo.phoneNumber  = emp.phone;
+        const r = await axios.put(
+          `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
+          { method: "updateKycInformation", kycInformation: kycInfo },
+          { headers: rollfiHeaders() },
+        );
+        result.updateKycInfo = { success: true, status: r.status as number };
+      } catch (e) {
+        result.updateKycInfo = { success: false, error: String(e) };
+      }
     }
   }
 
@@ -574,31 +583,38 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       const rollfiCompanyId = companyRec?.rollfiCompanyId ?? storeRollfiCo?.rollfiCompanyId;
       const rollfiWageId    = empRec?.rollfiWageId        ?? storeRollfiEmp?.rollfiWageId ?? "";
       if (rollfiCompanyId) {
-        const { wageRate, wageBasis, userType } = getRollfiWageFields({
-          payType:         emp.payType,
-          hourlyWage:      emp.hourlyWage,
-          annualSalary:    emp.annualSalary,
-          overtimeEligible: emp.overtimeEligible,
-        });
-        const r = await axios.post(
-          `${rollfiCfg.baseUrl}/adminPortal#updateUserWage`,
-          {
-            method: "updateUserWage",
-            userWage: {
-              companyId: rollfiCompanyId,
-              userId: rollfiUserId,
-              userWageId: rollfiWageId,
-              wageRate,
-              paymentType: "Regular",
-              wageBasis,
-              userType,
-              workerType: emp.workerType ?? "W2",
-              paymentMethod: emp.paymentMethod ?? "Direct Deposit",
+        // GUARD: updateUserWage requires an existing wage record in Rollfi (rollfiWageId).
+        // Imported employees had addUserWage run externally — our DB has no rollfiWageId for
+        // them, so this call would fire with userWageId:"" and silently do nothing.
+        if (!rollfiWageId) {
+          result.updateWage = { success: false, blockedReason: "no_wage_record" };
+        } else {
+          const { wageRate, wageBasis, userType } = getRollfiWageFields({
+            payType:         emp.payType,
+            hourlyWage:      emp.hourlyWage,
+            annualSalary:    emp.annualSalary,
+            overtimeEligible: emp.overtimeEligible,
+          });
+          const r = await axios.post(
+            `${rollfiCfg.baseUrl}/adminPortal#updateUserWage`,
+            {
+              method: "updateUserWage",
+              userWage: {
+                companyId: rollfiCompanyId,
+                userId: rollfiUserId,
+                userWageId: rollfiWageId,
+                wageRate,
+                paymentType: "Regular",
+                wageBasis,
+                userType,
+                workerType: emp.workerType ?? "W2",
+                paymentMethod: emp.paymentMethod ?? "Direct Deposit",
+              },
             },
-          },
-          { headers: rollfiHeaders() },
-        );
-        result.updateWage = { success: true, status: r.status as number };
+            { headers: rollfiHeaders() },
+          );
+          result.updateWage = { success: true, status: r.status as number };
+        }
       } else {
         result.updateWage = { success: false, error: "Missing Rollfi company or wage record" };
       }

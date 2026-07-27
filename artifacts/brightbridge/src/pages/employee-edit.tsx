@@ -27,7 +27,7 @@ interface EmployeeDetail {
   rollfiUserId?: string|null; notes?: string|null;
 }
 
-interface RollfiSyncCall { success: boolean; error?: string; status?: number }
+interface RollfiSyncCall { success: boolean; error?: string; status?: number; blockedReason?: string }
 interface RollfiSyncResult {
   skipped?: boolean; reason?: string;
   updateUser?: RollfiSyncCall | null;
@@ -85,6 +85,19 @@ function Sel({ value, onChange, options, placeholder }: { value: string; onChang
 
 function SyncBadge({ call, label }: { call?: RollfiSyncCall | null; label: string }) {
   if (!call) return null;
+  if (call.blockedReason) {
+    const msg = call.blockedReason === "kyc_not_initiated"
+      ? "not sent — KYC not started"
+      : call.blockedReason === "no_wage_record"
+      ? "not sent — no wage record in Rollfi"
+      : call.blockedReason;
+    return (
+      <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span><strong>{label}:</strong> {msg}</span>
+      </div>
+    );
+  }
   return (
     <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-lg ${call.success ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-600"}`}>
       {call.success ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
@@ -104,8 +117,24 @@ function SyncResultCard({ result }: { result: RollfiSyncResult }) {
   }
   const calls = [result.updateUser, result.updateKycInfo, result.updateWage].filter(Boolean);
   if (calls.length === 0) return null;
+
+  const kycBlocked  = result.updateKycInfo?.blockedReason === "kyc_not_initiated";
+  const wageBlocked = result.updateWage?.blockedReason    === "no_wage_record";
+
   return (
     <div className="space-y-1.5">
+      {/* Prominent warning for any blocked sync — DB save succeeded but Rollfi was not reached */}
+      {(kycBlocked || wageBlocked) && (
+        <div className="flex items-start gap-2 text-xs bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5 text-amber-800">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+          <span>
+            Saved locally.{" "}
+            {kycBlocked && "This employee\u2019s details could not be sent to the payroll provider \u2014 identity verification hasn\u2019t been started for them yet."}
+            {kycBlocked && wageBlocked && " "}
+            {wageBlocked && "Wage changes could not be sent to the payroll provider \u2014 no wage record exists in Rollfi for this employee yet."}
+          </span>
+        </div>
+      )}
       <p className="text-xs font-medium text-gray-500 flex items-center gap-1.5"><RefreshCw className="h-3 w-3" /> Rollfi Sync</p>
       <SyncBadge call={result.updateUser} label="Profile" />
       <SyncBadge call={result.updateKycInfo} label="KYC / Address" />
