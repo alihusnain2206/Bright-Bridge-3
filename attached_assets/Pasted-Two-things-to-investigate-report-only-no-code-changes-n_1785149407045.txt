@@ -1,0 +1,39 @@
+Two things to investigate — report only, no code changes, no coverage
+work yet.
+
+1. TIMEZONE — the iframe stamps Asia/Karachi regardless of the location's
+   country/state patch. Your earlier conclusion that UI-created shifts
+   would inherit the corrected timezone was wrong; all three recreated
+   shifts still show Asia/Karachi, utcOffset 300.
+   a. Where does the timezone come from at shift-creation time? Check
+      what our JWT/launcher passes — do we send a timezone or offset
+      anywhere in the token payload or the locations array?
+   b. Check EasyTeam's docs for how the embedded component determines
+      timezone: is it a launcher option, a JWT claim, a location field we
+      haven't set, or the partner account default?
+   c. ⚠️ CRITICAL — does this affect TIME TRACKING too? If the iframe
+      carries a Karachi timezone, are clock-in/clock-out timestamps also
+      being stamped wrong? Check the shifts we've already imported from
+      timesheets (John Smith 1.9833h, Mary Johnson 0.1667h) — what
+      timezone/offset do those carry, and do the punch times land on the
+      correct day and hour in Eastern? This matters far more than
+      scheduling, because those hours have already been imported to
+      payroll.
+   d. Report the fix, and whether it's on our side or needs EasyTeam
+      support.
+
+2. EMPLOYEE EXTERNAL ID — just the data, no fix.
+   Bilal's EasyTeam externalId is "emp-mqt5wnur-adx9ey" while John's is
+   "EMP-SUNSHINE-001". Both are seeded employees, so this inconsistency
+   is unexpected.
+   a. For every Sunshine employee, list side by side: our DB employee id
+      and the externalId EasyTeam holds. How many match our format, how
+      many don't?
+   b. When we import timesheet hours from EasyTeam and match them to our
+      employees, WHICH key does that matching use — employeeExternalId,
+      the EasyTeam internal UUID, or something else? If timesheet
+      matching works reliably for all employees today, then this
+      inconsistency only affects scheduling and can wait.
+
+Report both. If 1c shows time tracking is affected, that becomes the
+priority over everything else.

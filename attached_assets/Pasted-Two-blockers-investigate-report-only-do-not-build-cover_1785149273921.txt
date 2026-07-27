@@ -1,0 +1,36 @@
+Two blockers — investigate, report only, do not build coverage.
+
+1. TIMEZONE — the iframe stamps Asia/Karachi regardless of the location's
+   country/state patch. Your earlier conclusion that UI-created shifts
+   would inherit the corrected timezone was wrong; all three recreated
+   shifts are still Karachi.
+   a. Where does the timezone come from at shift-creation time? Check
+      what our JWT/launcher passes — do we send a timezone or offset
+      anywhere in the token payload or the locations array?
+   b. Check EasyTeam's docs for how the embedded component determines
+      timezone: is it a launcher option, a JWT claim, a location field we
+      haven't set, or the partner account default?
+   c. ⚠️ CRITICAL — does this affect TIME TRACKING too? If the iframe
+      carries a Karachi timezone, are clock-in/clock-out timestamps also
+      being stamped wrong? Check the shifts we've already imported from
+      timesheets (John Smith 1.9833h etc) — what timezone/offset do those
+      carry, and are the punch times correct in Eastern? This matters far
+      more than scheduling.
+   d. Report the fix, and whether it's on our side or needs EasyTeam
+      support.
+
+2. EMPLOYEE EXTERNAL ID MISMATCH — Bilal's EasyTeam externalId is
+   "emp-mqt5wnur-adx9ey" (wizard-generated) while John's is
+   "EMP-SUNSHINE-001" (seeded). Two ID formats coexist.
+   a. Report, for EVERY Sunshine employee: our DB employee id, and the
+      externalId EasyTeam holds for them. How many match, how many don't?
+   b. Where does the externalId get set during employee registration —
+      why do wizard-created employees get a different format?
+   c. Is this ONLY a scheduling problem, or does it also affect how we
+      match imported timesheet hours to employees? If timesheet matching
+      uses a different key, say so.
+   d. Report options: fix registration going forward, repair existing
+      records, or resolve via the internal-UUID mapping table.
+
+Report both before any coverage work. If 1c shows time tracking is also
+affected, that becomes the priority over everything else.
