@@ -84,9 +84,7 @@ export async function syncEmployeeToIntegrations(
     locationId,
     log
   );
-  if (etResult.easyteamEmployeeId) {
-    store.setEasyTeamUuidMapping(etResult.easyteamEmployeeId, emp.id);
-  }
+  // UUID mapping + DB persist now happen inside registerEmployeeInEasyTeam itself.
 
   // Rollfi onboarding — only when the company has completed Rollfi onboarding.
   let rollfiSynced = false;

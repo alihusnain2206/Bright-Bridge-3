@@ -176,6 +176,7 @@ export const employees = pgTable("employees", {
   // EasyTeam
   easyteamId:        text("easyteam_id"),
   easyteamSynced:    boolean("easyteam_synced").notNull().default(false),
+  easyteamUuid:      text("easyteam_uuid"),
   // Sync
   syncStatus:        text("sync_status").notNull().default("pending"),
   lastSyncError:     text("last_sync_error"),

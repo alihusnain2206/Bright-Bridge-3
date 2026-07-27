@@ -1,6 +1,8 @@
 import axios from "axios";
 import jwt from "jsonwebtoken";
+import { eq } from "drizzle-orm";
 import { store } from "../store.js";
+import { db, employees } from "@workspace/db";
 import type { Logger } from "pino";
 
 function normalizePemKey(raw: string | undefined): string | undefined {
@@ -26,6 +28,13 @@ export interface EasyTeamRegistrationResult {
  * own employee-level JWT. EasyTeam creates (or looks up) the employee record
  * the moment their JWT is exchanged — there is no separate "create employee"
  * endpoint in the embed API. This is the canonical registration path.
+ *
+ * On success this function ALWAYS:
+ *   1. Updates the in-memory etUuidToEmployeeId map (store.setEasyTeamUuidMapping)
+ *   2. Persists easyteam_uuid to the DB employees row (non-fatal if no row exists)
+ *
+ * Callers do NOT need to call setEasyTeamUuidMapping themselves — it happens here
+ * so no call-site can forget it.
  */
 export async function registerEmployeeInEasyTeam(
   employee: { id: string; name: string; email?: string; roleName: string; wage: number; wageType: string },
@@ -92,6 +101,27 @@ export async function registerEmployeeInEasyTeam(
       { clientEmployeeId: employee.id, etEmployeeId, name: employee.name, easyteamEmployeeId },
       "Employee registered in EasyTeam via token exchange"
     );
+
+    if (easyteamEmployeeId) {
+      // ── ONE PLACE, THREE DOORS ──────────────────────────────────────────────
+      // Always update the in-memory UUID map immediately so the current process
+      // can resolve shifts for this employee without waiting for a restart.
+      store.setEasyTeamUuidMapping(easyteamEmployeeId, employee.id);
+
+      // Persist to DB so every future server restart can repopulate the map
+      // from the DB column (fast, no API calls). Non-fatal: if no DB row exists
+      // for this employee (e.g. store-only employees created via quick-add),
+      // the UPDATE affects 0 rows and is harmlessly ignored.
+      try {
+        await db
+          .update(employees)
+          .set({ easyteamUuid: easyteamEmployeeId, easyteamSynced: true })
+          .where(eq(employees.id, employee.id));
+      } catch (dbErr) {
+        log?.warn({ employeeId: employee.id, dbErr }, "EasyTeam UUID: DB persist failed (non-fatal — mapping still active in memory)");
+      }
+      // ── END ONE PLACE ───────────────────────────────────────────────────────
+    }
 
     return { success: true, easyteamEmployeeId };
   } catch (err) {

@@ -779,8 +779,11 @@ router.post("/rollfi/employees", async (req, res) => {
   // Register the new employee with EasyTeam immediately so they can clock in/out.
   // EasyTeam creates the employee record on token exchange — without this step,
   // the employee is in our store but unknown to EasyTeam and shifts are silently dropped.
+  // Awaited (not fire-and-forget) so the UUID is mapped before we respond: the caller
+  // gets a 201 only after the employee is registered and etUuidToEmployeeId is updated.
+  // registerEmployeeInEasyTeam handles setEasyTeamUuidMapping + DB persist internally.
   const resolvedEtLocationId = etLocationId ?? "LOC-SUNSHINE";
-  void registerEmployeeInEasyTeam(
+  const etResult = await registerEmployeeInEasyTeam(
     {
       id: user.employeeId!,
       name: user.name,
@@ -791,7 +794,13 @@ router.post("/rollfi/employees", async (req, res) => {
     },
     resolvedEtLocationId,
     req.log
-  ).catch((err: unknown) => req.log.warn({ err }, "EasyTeam registration failed for new employee — will retry on first login"));
+  );
+  if (!etResult.success) {
+    req.log.warn(
+      { employeeId: user.employeeId, reason: etResult.error },
+      "EasyTeam registration failed for new employee — hours will not import until next server restart"
+    );
+  }
 
   const actor = req.session.userId ? store.getUserById(req.session.userId) : undefined;
   store.logActivity({

@@ -9,7 +9,7 @@ import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
 import { db, companies, employees } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, isNull, isNotNull, and } from "drizzle-orm";
 
 /**
  * connect-pg-simple's `createTableIfMissing` reads a `table.sql` file from disk.
@@ -143,17 +143,115 @@ async function bootSeedEmployees() {
 }
 
 /**
- * Register every active DB employee in EasyTeam (token exchange upserts the employee)
- * and map the returned EasyTeam UUID back to our canonical employee id. Operates over
- * the unified employees table, so both seeded staff and wizard-created employees are covered.
+ * Known EasyTeam UUID → internal employee ID pairs sourced from boot-sync logs.
+ * Written to the DB once (WHERE easyteam_uuid IS NULL) so subsequent restarts
+ * can skip the EasyTeam API call for these employees entirely.
+ */
+const KNOWN_EASYTEAM_UUIDS: Array<{ empId: string; uuid: string }> = [
+  // ── Sunshine Daycare ──────────────────────────────────────────────────
+  { empId: "EMP-SUNSHINE-001",        uuid: "f765647e-0a5c-495b-9c14-984f7ae4d0e5" }, // John Smith
+  { empId: "EMP-MS1JLSXM-3TOPI7",    uuid: "245d3a22-4746-415c-998d-cbcb8882b06a" }, // Diane Whitfield ← backfill target
+  { empId: "EMP-MRRHGO5L-EHDBJT",    uuid: "ad0f22b2-844e-4af7-b8f5-a7eabf11c745" },
+  { empId: "EMP-MRRHXI99-50CHVE",    uuid: "456a78a8-7f72-446c-922f-2537404b7801" },
+  { empId: "EMP-MRRHG3RE-3I7B4E",    uuid: "6c89a2e5-d9f4-419b-9aaf-b6c11f437870" },
+  { empId: "EMP-MS0P5SKC-8D36M7",    uuid: "6f12162f-e815-49ca-8e6c-8059f81876dc" },
+  // ── Rainbow Kids Daycare ──────────────────────────────────────────────
+  { empId: "EMP-RAINBOW-001",         uuid: "ad989af3-6bff-42c9-a619-53ca102f0324" },
+  { empId: "EMP-RAINBOW-002",         uuid: "a9a0b3ff-03b5-49fb-a2dd-e010ea9c7d93" },
+  { empId: "EMP-RAINBOW-003",         uuid: "2639c543-0cbc-4c5c-9398-3ff2de95e8dd" },
+  { empId: "EMP-RAINBOW-004",         uuid: "5520ec5b-2adc-479d-ab86-df2483095316" },
+  // ── Wizard-created (other companies) — from prod boot-sync log ────────
+  { empId: "EMP-MR37SQ41-GMTXD2",    uuid: "607de703-7a8a-4dc0-a21e-dd80d3fcb4c4" },
+  { empId: "EMP-MR3D1EE5-7D23YX",    uuid: "1a018728-1cb9-46c8-9cb0-5d0c013171af" },
+  { empId: "EMP-MQUXH3H3-L41PLP",    uuid: "9a18f330-54f2-4e6b-8522-ac8e864268b6" },
+  { empId: "EMP-MRXFP6YL-LXKTVA",    uuid: "d8475b33-ee79-4115-8a15-4b18041d7ca7" },
+  { empId: "EMP-MRXAETS3-MU0A06",    uuid: "8cb041e1-ed7c-43c0-92e8-3b8d9b458e8b" },
+  { empId: "EMP-MR2CVXEL-5JVF6Y",    uuid: "7a9ec195-cf85-43ae-b782-6ef075001b6e" },
+  { empId: "EMP-MRXRDKEX-VEO5R3",    uuid: "3b202e3a-6295-49dd-8841-65367dcf2d1f" },
+  { empId: "EMP-MRXGBY5V-TIF7R9",    uuid: "a7383351-b9e1-4a17-a512-568c5afc59c6" },
+  { empId: "EMP-MRYMS1FF-SV5N88",    uuid: "5655327a-978f-48b9-935d-932a9cd3d171" },
+];
+
+/**
+ * One-time write of historically known UUID→employeeId pairs sourced from boot-sync
+ * logs. Only updates rows whose easyteam_uuid column is currently null so it never
+ * overwrites a fresher value from a live token exchange. Idempotent.
+ */
+async function bootBackfillKnownEasyTeamUuids(): Promise<{ written: number; skipped: number }> {
+  let written = 0;
+  let skipped = 0;
+  for (const { empId, uuid } of KNOWN_EASYTEAM_UUIDS) {
+    try {
+      const result = await db
+        .update(employees)
+        .set({ easyteamUuid: uuid, easyteamSynced: true })
+        .where(and(eq(employees.id, empId), isNull(employees.easyteamUuid)))
+        .returning({ id: employees.id });
+      if (result.length > 0) {
+        written++;
+        logger.info({ empId, uuid }, "Boot backfill: wrote known EasyTeam UUID to DB");
+      } else {
+        skipped++; // row missing from this DB, or UUID already set
+      }
+    } catch (err) {
+      logger.warn({ empId, err }, "Boot backfill: DB write failed (non-fatal)");
+    }
+  }
+  return { written, skipped };
+}
+
+/**
+ * Two-phase EasyTeam boot sync:
+ *
+ * Phase 0 — backfill historically known UUIDs into DB (idempotent, non-fatal).
+ *
+ * Phase 1 — read from DB (instant, no EasyTeam API calls):
+ *   SELECT id, easyteam_uuid FROM employees WHERE easyteam_uuid IS NOT NULL
+ *   Populates the in-memory map for ALL employees whose UUID is already stored.
+ *   No status filter — onboarding employees who can clock in deserve matched hours.
+ *
+ * Phase 2 — API registration for employees with no UUID yet:
+ *   Token-exchanges every employee whose easyteam_uuid column is null.
+ *   registerEmployeeInEasyTeam persists the UUID to DB and updates the map internally.
+ *   No status filter — an "onboarding" employee can clock in and must be matched.
  */
 async function bootEasyTeamSync() {
-  const allEmployees = await db.select().from(employees).catch(() => []);
-  let registered = 0;
-  let skipped = 0;
+  // ── Phase 0: backfill known UUIDs ──────────────────────────────────────
+  const { written: backfilled, skipped: backfillSkipped } = await bootBackfillKnownEasyTeamUuids();
+  if (backfilled > 0 || backfillSkipped > 0) {
+    logger.info({ backfilled, backfillSkipped }, "Boot sync: backfill of known EasyTeam UUIDs complete");
+  }
 
-  for (const emp of allEmployees) {
-    if (emp.status !== "active") { skipped++; continue; }
+  // ── Phase 1: populate map from DB (no API calls) ───────────────────────
+  const knownRows = await db
+    .select({ id: employees.id, easyteamUuid: employees.easyteamUuid })
+    .from(employees)
+    .where(isNotNull(employees.easyteamUuid))
+    .catch(() => []);
+
+  let fromDb = 0;
+  for (const row of knownRows) {
+    if (row.easyteamUuid) {
+      store.setEasyTeamUuidMapping(row.easyteamUuid, row.id);
+      fromDb++;
+    }
+  }
+  if (fromDb > 0) {
+    logger.info({ fromDb }, "Boot sync: populated EasyTeam UUID map from DB — no API calls needed");
+  }
+
+  // ── Phase 2: register employees with no UUID yet ───────────────────────
+  const unregistered = await db
+    .select()
+    .from(employees)
+    .where(isNull(employees.easyteamUuid))
+    .catch(() => []);
+
+  let registered = 0;
+  let failed = 0;
+
+  for (const emp of unregistered) {
+    // No status filter: an onboarding employee who can clock in must be matched.
     const locationId = await resolveCompanyLocationId(emp.companyId);
     const result = await registerEmployeeInEasyTeam(
       {
@@ -167,17 +265,23 @@ async function bootEasyTeamSync() {
       locationId,
       logger
     );
+    // registerEmployeeInEasyTeam handles store.setEasyTeamUuidMapping + DB persist internally.
     if (result.success && result.easyteamEmployeeId) {
-      store.setEasyTeamUuidMapping(result.easyteamEmployeeId, emp.id);
       registered++;
-      logger.info({ employeeId: emp.id, companyId: emp.companyId, easyteamUuid: result.easyteamEmployeeId }, "Boot sync: employee registered in EasyTeam");
+      logger.info(
+        { employeeId: emp.id, companyId: emp.companyId, status: emp.status, easyteamUuid: result.easyteamEmployeeId },
+        "Boot sync: employee registered in EasyTeam"
+      );
     } else {
-      skipped++;
-      logger.warn({ employeeId: emp.id, reason: result.error }, "Boot sync: EasyTeam registration pending — employee will appear after first Time Clock use");
+      failed++;
+      logger.warn(
+        { employeeId: emp.id, status: emp.status, reason: result.error },
+        "Boot sync: EasyTeam registration failed — will retry on next restart"
+      );
     }
   }
 
-  logger.info({ registered, skipped }, "Boot EasyTeam sync complete");
+  logger.info({ fromDb, registered, failed }, "Boot EasyTeam sync complete");
 }
 
 /**
