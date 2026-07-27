@@ -881,7 +881,7 @@ export default function ManagerPayrollSubmit() {
                             <table className="w-full text-xs">
                               <thead>
                                 <tr style={{ background: "rgba(255,255,255,0.06)" }}>
-                                  {["Employee", "Base Pay", "Employer Tax", "Additional Comp", "Deductions", "Subtotal"].map((h) => (
+                                  {["Employee", "Base Pay", "Additional Comp", "Deductions", "Subtotal"].map((h) => (
                                     <th key={h} className="text-left px-4 py-2.5 text-white/40 font-semibold text-[10px] uppercase tracking-wide">{h}</th>
                                   ))}
                                 </tr>
@@ -916,9 +916,6 @@ export default function ManagerPayrollSubmit() {
                                       </td>
                                       <td className="px-4 py-3">
                                         {basePay > 0 ? <span className="text-emerald-400 font-semibold">{fmtD(basePay)}</span> : <span className="text-white/30">$0.00</span>}
-                                      </td>
-                                      <td className="px-4 py-3">
-                                        {erTax > 0 ? <span className="text-amber-300">+{fmtD(erTax)}</span> : <span className="text-white/30">$0.00</span>}
                                       </td>
                                       <td className="px-4 py-3">
                                         {addComp > 0 ? <span className="text-white/70">{fmtD(addComp)}</span> : <span className="text-white/30">$0.00</span>}
