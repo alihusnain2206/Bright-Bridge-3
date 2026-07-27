@@ -1517,6 +1517,105 @@ async function ensureLocationTimezone(
   }
 }
 
+// ── Ensure a time-off policy exists for the organisation ──────────────────────────────────────
+// Without at least one policy, EasyTeam's "Time off" panel leaves the policy dropdown empty and
+// disables the Save button. This function creates a default policy if none exist yet. Idempotent.
+async function ensureTimeOffPolicy(
+  locationId: string,
+  opts: { policyName?: string } = {},
+): Promise<{ ok: boolean; detail?: string }> {
+  if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
+
+  const policyName = opts.policyName ?? "Standard Time Off";
+
+  // Reuse a manager/owner under this location to sign the admin JWT.
+  let managerUser = store.getAllStaffUsers().find(
+    (u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")
+  );
+  if (!managerUser?.employeeId) {
+    managerUser = store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+  }
+  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${locationId}` };
+
+  try {
+    const adminJwt = jwt.sign(
+      {
+        employeeId: managerUser.employeeId,
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: {
+          name: "manager",
+          permissions: ["LOCATION_ADMIN", "LOCATION_READ", "ORGANIZATION_ADMIN", "SHIFT_READ", "SHIFT_WRITE"],
+        },
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 25 },
+        wage: 25, wageType: "hourly",
+        features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256", expiresIn: "1h" }
+    );
+
+    const exchangeResp = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    const accessToken = exchangeResp.data.accessToken;
+
+    // Decode the access token to get EasyTeam's internal org UUID.
+    let internalOrgId = "ORG-BRIGHTBRIDGE";
+    try {
+      const parts = accessToken.split(".");
+      if (parts.length === 3) {
+        const p = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+        if (typeof p.organizationId === "string") internalOrgId = p.organizationId;
+      }
+    } catch { /* keep defaults */ }
+
+    const headers = { Authorization: `Bearer ${accessToken}` };
+
+    // Check whether any policies already exist.
+    const listUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/time-off-policies`;
+    let existing: unknown[] = [];
+    try {
+      const listResp = await axios.get<unknown>(listUrl, { headers, timeout: 8000 });
+      const data = listResp.data as { data?: unknown[]; policies?: unknown[] } | unknown[];
+      if (Array.isArray(data)) existing = data;
+      else if (data && typeof data === "object") {
+        const obj = data as Record<string, unknown>;
+        existing = (Array.isArray(obj.data) ? obj.data : Array.isArray(obj.policies) ? obj.policies : []) as unknown[];
+      }
+    } catch (e) {
+      const axErr = e as { response?: { status?: number } };
+      // 404 means the endpoint exists but returned no results — treat as empty, proceed to create.
+      if (axErr.response?.status !== 404) throw e;
+    }
+
+    if (existing.length > 0) {
+      logger.info({ locationId, internalOrgId, count: existing.length }, "ensureTimeOffPolicy: policies already exist, skipping");
+      return { ok: true, detail: "already exists" };
+    }
+
+    // Create a minimal default policy.
+    await axios.post(
+      listUrl,
+      { name: policyName, isActive: true, type: "custom", accrualType: "unlimited" },
+      { headers, timeout: 8000 }
+    );
+
+    logger.info({ locationId, internalOrgId, policyName }, "ensureTimeOffPolicy: created default policy");
+    return { ok: true };
+  } catch (err) {
+    const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
+    const detail = axErr.response
+      ? `HTTP ${axErr.response.status}: ${JSON.stringify(axErr.response.data)}`
+      : (axErr.message ?? "Unknown");
+    logger.warn({ locationId, detail }, "ensureTimeOffPolicy: failed (non-fatal)");
+    return { ok: false, detail };
+  }
+}
+
 // At startup, patch country+state for all seeded locations whose EasyTeam record may have no
 // location data (causing EasyTeam to default to the partner account's timezone). Idempotent.
 // Runs after a short delay so the server is fully up before making outbound calls.
@@ -1528,6 +1627,8 @@ setTimeout(() => {
   ];
   for (const { locationId, country, state } of seedLocations) {
     ensureLocationTimezone(locationId, { country, state }).catch(() => { /* already logged inside */ });
+    // Also ensure at least one time-off policy exists so the Save button is enabled in the SDK.
+    ensureTimeOffPolicy(locationId).catch(() => { /* already logged inside */ });
   }
 }, 5000);
 
