@@ -24,7 +24,8 @@ export default function Schedule() {
   const isOwner = user?.role === "owner";
 
   // Owners are locked to their own company; admins/managers get the full picker.
-  const [clientId, setClientId] = useState(isOwner ? (user?.companyId ?? urlClientId) : urlClientId);
+  // clientId starts empty and is set once auth resolves (owner) or via URL param / dropdown (others).
+  const [clientId, setClientId] = useState(urlClientId);
   const [employeeId, setEmployeeId] = useState(urlEmployeeId);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [events, setEvents] = useState<EasyTeamEvent[]>([]);
@@ -36,6 +37,13 @@ export default function Schedule() {
   const { data: clientsData } = useListClients();
   const { data: employeesData } = useListClientEmployees(clientId);
   const generateToken = useGenerateEasyTeamToken();
+
+  // Once auth resolves for an owner, lock clientId to their own company.
+  useEffect(() => {
+    if (isOwner && user?.companyId) {
+      setClientId(user.companyId);
+    }
+  }, [isOwner, user?.companyId]);
 
   const handleEvent = useCallback((event: EasyTeamEvent) => {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
@@ -81,17 +89,19 @@ export default function Schedule() {
     }
   }, [clientId, employeeId, employees, clientsData, generateToken, launch]);
 
-  // Auto-launch: owner fires as soon as their employee data is ready;
-  // URL deep-link mode (super admin) also auto-launches.
+  // Auto-launch: wait for BOTH employeesData AND clientsData so the `client` lookup inside
+  // handleLaunch always finds a match (without clientsData, `client` is undefined and launch()
+  // is skipped while accessToken still gets set — leaving an empty grid with "Relaunch" button).
   useEffect(() => {
-    if (isOwner && clientId && employeesData && !autoLaunched.current) {
+    if (autoLaunched.current) return;
+    if (isOwner && clientId && employeesData && clientsData) {
       autoLaunched.current = true;
       handleLaunch(clientId, urlEmployeeId, employeesData.employees ?? []);
-    } else if (!isOwner && urlClientId && employeesData && !autoLaunched.current) {
+    } else if (!isOwner && urlClientId && employeesData && clientsData) {
       autoLaunched.current = true;
       handleLaunch(urlClientId, urlEmployeeId, employeesData.employees ?? []);
     }
-  }, [isOwner, clientId, urlClientId, urlEmployeeId, employeesData, handleLaunch]);
+  }, [isOwner, clientId, urlClientId, urlEmployeeId, employeesData, clientsData, handleLaunch]);
 
   return (
     <div className="space-y-4">
