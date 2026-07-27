@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   CalendarDays, Key, Play, Activity, AlertCircle, Users, User, RefreshCw, Building2,
-  ThumbsUp, Download, CheckCircle2, AlertTriangle, Loader2, Clock,
+  ThumbsUp, Download, CheckCircle2, AlertTriangle, Loader2, Clock, Info,
 } from "lucide-react";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import { TimesheetIllustration } from "@/components/daycare-illustrations";
@@ -70,7 +70,7 @@ const ALL_STATIC_LOCATIONS = [
 interface ApiEmployee {
   id?: string; employeeId?: string; employeeDisplayId?: string;
   firstName?: string; lastName?: string; name?: string;
-  position?: string; hourlyWage?: number;
+  position?: string; hourlyWage?: number; payType?: string;
 }
 
 export default function Timesheets() {
@@ -118,6 +118,7 @@ export default function Timesheets() {
   const [tokenError,    setTokenError]    = useState("");
   const [syncWarning,   setSyncWarning]   = useState<string | null>(null);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
+  const [payTypeMap,    setPayTypeMap]    = useState<Record<string, string>>({});
 
   const handleEvent = useCallback((event: EasyTeamEvent) => {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
@@ -154,25 +155,40 @@ export default function Timesheets() {
     })();
   }, [isScoped, user?.companyId]);
 
-  // ── Employee name lookup (owner/manager) ──────────────────────
+  // ── Employee name + payType lookup (owner/manager) ────────────
   const fetchCompanyEmployees = useCallback(async () => {
     if (!user?.companyId) return;
     try {
-      // Primary: store-based employee names (covers both seeded and wizard-created staff).
-      // This uses the in-memory store which always has the canonical employeeId → name mapping.
-      const r = await fetch(`/api/easyteam/company-members?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" });
-      const d = await r.json() as { names?: Record<string, string> };
-      if (d.names && Object.keys(d.names).length > 0) {
-        setEmployeeNames(d.names);
+      // Fetch store-based names AND DB payTypes in parallel.
+      // Names come from company-members (covers seeded + wizard staff).
+      // payType comes from the DB employees endpoint (the only source that has it).
+      const [namesRes, empRes] = await Promise.all([
+        fetch(`/api/easyteam/company-members?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" }),
+        fetch(`/api/employees?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" }),
+      ]);
+      const namesData = await namesRes.json() as { names?: Record<string, string> };
+      const empData   = await empRes.json()   as { employees?: ApiEmployee[] };
+
+      // Build payType map keyed by every ID variant the employee might appear as in timesheet entries
+      const ptMap: Record<string, string> = {};
+      (empData.employees ?? []).forEach(e => {
+        if (e.payType) {
+          if (e.id)                ptMap[e.id]                = e.payType;
+          if (e.employeeDisplayId) ptMap[e.employeeDisplayId] = e.payType;
+        }
+      });
+      setPayTypeMap(ptMap);
+
+      // Use store names if available (covers seeded staff with friendly names)
+      if (namesData.names && Object.keys(namesData.names).length > 0) {
+        setEmployeeNames(namesData.names);
         return;
       }
-      // Fallback: DB employees (wizard-created companies without store staff users)
-      const r2 = await fetch(`/api/employees?companyId=${encodeURIComponent(user.companyId)}`, { credentials: "include" });
-      const d2 = await r2.json() as { employees?: ApiEmployee[] };
+      // Fallback: build names from DB employees (wizard-created companies)
       const names: Record<string, string> = {};
-      (d2.employees ?? []).forEach(e => {
+      (empData.employees ?? []).forEach(e => {
         const fullName = e.name ?? [e.firstName, e.lastName].filter(Boolean).join(" ").trim();
-        if (e.id) names[e.id] = fullName;
+        if (e.id)                names[e.id]                = fullName;
         if (e.employeeDisplayId) names[e.employeeDisplayId] = fullName;
       });
       setEmployeeNames(names);
@@ -460,6 +476,27 @@ export default function Timesheets() {
                 <button onClick={() => setSyncWarning(null)} className="text-white/30 hover:text-white/50 text-xs shrink-0">✕</button>
               </div>
             )}
+            {/* Salaried employee notice — shown whenever hours are visible (after pull and after approve) */}
+            {hours.length > 0 && (() => {
+              const salaried = hours.filter(e => payTypeMap[e.employeeId] === "salary");
+              if (salaried.length === 0) return null;
+              const names = salaried.map(e => employeeNames[e.employeeId] ?? e.employeeId);
+              const nameStr = names.length === 1
+                ? names[0]!
+                : names.length === 2
+                ? `${names[0]} and ${names[1]}`
+                : `${names[0]} and ${names.length - 1} others`;
+              const verb = salaried.length === 1 ? "does" : "do";
+              return (
+                <div className="mb-4 flex items-start gap-3 bg-blue-500/10 border border-blue-500/20 rounded-xl px-4 py-3">
+                  <Info className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+                  <p className="text-blue-300 text-sm">
+                    <span className="font-semibold">{nameStr}</span>{" "}
+                    {verb} not apply for hourly-based wage — hours worked will not qualify for the payroll you submit.
+                  </p>
+                </div>
+              );
+            })()}
             {approvalDone && (
               <div className="mb-5 flex items-start gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
                 <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />
