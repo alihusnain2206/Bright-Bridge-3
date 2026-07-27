@@ -5,11 +5,13 @@ import {
   Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  Bell, Search, BarChart2, AlertTriangle,
+  BarChart2, AlertTriangle,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
+import { GlobalSearch } from "@/components/GlobalSearch";
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface NavSubItem {
   href: string;
@@ -280,20 +282,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="flex-1" />
 
         {/* Search bar */}
-        <div className="relative hidden md:block w-72">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search employees, documents, policies…"
-            className="w-full pl-9 pr-4 h-9 rounded-lg border border-gray-200 bg-gray-50 text-sm text-gray-700 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#E8622A]/20 focus:border-[#E8622A]/50 transition-colors"
-          />
-          <kbd className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-300 font-mono hidden xl:block">⌘ K</kbd>
-        </div>
+        <GlobalSearch />
 
         {/* Bell */}
-        <button className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-500 transition-colors shrink-0">
-          <Bell className="h-[18px] w-[18px]" />
-        </button>
+        <NotificationBell />
 
         {/* Company + EIN + Avatar */}
         {companyName && (
