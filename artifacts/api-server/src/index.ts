@@ -340,6 +340,15 @@ function assertEnvCoherence() {
       "Warning: sandbox Rollfi is pointed at a database that looks like production. Confirm DATABASE_ENV is correct.",
     );
   }
+
+  if (process.env.NODE_ENV === "production" && !rollfiIsProd) {
+    logger.warn(
+      { rollfiEnv: cfg.env || "unset", nodeEnv: "production" },
+      "Warning: NODE_ENV=production but ROLLFI_ENV is not set to 'production'. " +
+      "All Rollfi calls will hit the sandbox. " +
+      "Set ROLLFI_ENV=production in the production environment if this deployment should use real payroll.",
+    );
+  }
 }
 
 // Start listening immediately so the healthcheck always responds during boot.
