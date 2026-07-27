@@ -28,7 +28,7 @@ const DUPLICATE_IDS = [
 
 const REQUIRED_CONFIRM = "DELETE_DUPLICATE_EMPLOYEES";
 
-router.post("/api/admin/cleanup-duplicate-employees", async (req: Request, res: Response) => {
+router.post("/admin/cleanup-duplicate-employees", async (req: Request, res: Response) => {
   // ── Guard 1: bearer token ────────────────────────────────────────────────
   const secret = process.env.IMPORT_ADMIN_SECRET;
   if (!secret) {
