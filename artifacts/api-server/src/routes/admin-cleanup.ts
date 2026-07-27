@@ -1,8 +1,8 @@
 /**
  * ONE-TIME cleanup endpoint — removes the 4 duplicate ORG-BRIGHTBRIDGE
- * employee rows that were created by an accidental second import run.
+ * employee rows created by an accidental second import run.
  *
- * DELETE after the single use; never re-deploy.
+ * DELETE this file after the single use; never re-deploy.
  */
 import { Router, type Request, type Response, type IRouter } from "express";
 import {
@@ -18,7 +18,7 @@ import { inArray, and, eq, sql } from "drizzle-orm";
 
 const router: IRouter = Router();
 
-// ─── Hard-coded duplicate IDs — the ONLY rows this endpoint can touch ──────
+// Hard-coded duplicate IDs — the ONLY rows this endpoint can ever touch.
 const DUPLICATE_IDS = [
   "EMP-MS3JQD3D-8UFKD1",
   "EMP-MS3JQD3E-5ROJ6P",
@@ -39,7 +39,7 @@ router.post("/api/admin/cleanup-duplicate-employees", async (req: Request, res: 
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
-  // ── Guard 2: explicit confirmation flag in body ──────────────────────────
+  // ── Guard 2: explicit confirmation flag — wrong/missing → 400, nothing deleted
   const { confirm } = req.body ?? {};
   if (confirm !== REQUIRED_CONFIRM) {
     return res.status(400).json({
@@ -48,7 +48,7 @@ router.post("/api/admin/cleanup-duplicate-employees", async (req: Request, res: 
     });
   }
 
-  // ── Pre-flight SELECT: verify exactly 4 duplicate rows exist ─────────────
+  // ── Pre-flight SELECT (outside transaction) — abort if count ≠ 4 ─────────
   const foundEmployees = await db
     .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
     .from(employees)
@@ -57,20 +57,19 @@ router.post("/api/admin/cleanup-duplicate-employees", async (req: Request, res: 
   if (foundEmployees.length !== 4) {
     return res.status(409).json({
       ok: false,
-      error: `Pre-flight check failed: expected 4 duplicate employee rows, found ${foundEmployees.length}. Aborting — no rows deleted.`,
+      error: `Pre-flight failed: expected 4 duplicate employee rows, found ${foundEmployees.length}. Nothing deleted.`,
       found: foundEmployees,
     });
   }
 
+  // Pre-flight counts (preview — also outside transaction)
   const [palCount] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(peopleActivityLogTable)
-    .where(
-      and(
-        eq(peopleActivityLogTable.companyId, "ORG-BRIGHTBRIDGE"),
-        inArray(peopleActivityLogTable.employeeId, [...DUPLICATE_IDS])
-      )
-    );
+    .where(and(
+      eq(peopleActivityLogTable.companyId, "ORG-BRIGHTBRIDGE"),
+      inArray(peopleActivityLogTable.employeeId, [...DUPLICATE_IDS])
+    ));
 
   const [taskCount] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -92,63 +91,70 @@ router.post("/api/admin/cleanup-duplicate-employees", async (req: Request, res: 
     .from(userAccounts)
     .where(inArray(userAccounts.employeeId, [...DUPLICATE_IDS]));
 
-  const preview = {
-    employees:             foundEmployees.length,
-    people_activity_log:   palCount?.count ?? 0,
-    onboarding_tasks:      taskCount?.count ?? 0,
-    compliance_items:      compCount?.count ?? 0,
-    rollfi_employee_records: rollfiCount?.count ?? 0,
-    user_accounts:         uaCount?.count ?? 0,
-  };
-
-  // ── Deletes — dependency order (children first, employees last) ──────────
-  const palDeleted = await db
-    .delete(peopleActivityLogTable)
-    .where(
-      and(
+  // ── Transactional deletes — strictly sequential, children before employees.
+  // Any failure rolls back the entire transaction; no orphaned rows.
+  const deleted = await db.transaction(async (tx) => {
+    // 1. people_activity_log
+    const palDel = await tx
+      .delete(peopleActivityLogTable)
+      .where(and(
         eq(peopleActivityLogTable.companyId, "ORG-BRIGHTBRIDGE"),
         inArray(peopleActivityLogTable.employeeId, [...DUPLICATE_IDS])
-      )
-    )
-    .returning({ id: peopleActivityLogTable.id });
+      ))
+      .returning({ id: peopleActivityLogTable.id });
 
-  const tasksDeleted = await db
-    .delete(onboardingTasksTable)
-    .where(inArray(onboardingTasksTable.employeeId, [...DUPLICATE_IDS]))
-    .returning({ id: onboardingTasksTable.id });
+    // 2. onboarding_tasks
+    const tasksDel = await tx
+      .delete(onboardingTasksTable)
+      .where(inArray(onboardingTasksTable.employeeId, [...DUPLICATE_IDS]))
+      .returning({ id: onboardingTasksTable.id });
 
-  const compDeleted = await db
-    .delete(complianceItemsTable)
-    .where(inArray(complianceItemsTable.employeeId, [...DUPLICATE_IDS]))
-    .returning({ id: complianceItemsTable.id });
+    // 3. compliance_items
+    const compDel = await tx
+      .delete(complianceItemsTable)
+      .where(inArray(complianceItemsTable.employeeId, [...DUPLICATE_IDS]))
+      .returning({ id: complianceItemsTable.id });
 
-  const rollfiDeleted = await db
-    .delete(rollfiEmployeeRecords)
-    .where(inArray(rollfiEmployeeRecords.employeeId, [...DUPLICATE_IDS]))
-    .returning({ employeeId: rollfiEmployeeRecords.employeeId });
+    // 4. rollfi_employee_records
+    const rollfiDel = await tx
+      .delete(rollfiEmployeeRecords)
+      .where(inArray(rollfiEmployeeRecords.employeeId, [...DUPLICATE_IDS]))
+      .returning({ employeeId: rollfiEmployeeRecords.employeeId });
 
-  const uaDeleted = await db
-    .delete(userAccounts)
-    .where(inArray(userAccounts.employeeId, [...DUPLICATE_IDS]))
-    .returning({ id: userAccounts.id });
+    // 5. user_accounts
+    const uaDel = await tx
+      .delete(userAccounts)
+      .where(inArray(userAccounts.employeeId, [...DUPLICATE_IDS]))
+      .returning({ id: userAccounts.id });
 
-  const empDeleted = await db
-    .delete(employees)
-    .where(inArray(employees.id, [...DUPLICATE_IDS]))
-    .returning({ id: employees.id });
+    // 6. employees — last, after all children are gone
+    const empDel = await tx
+      .delete(employees)
+      .where(inArray(employees.id, [...DUPLICATE_IDS]))
+      .returning({ id: employees.id });
+
+    return {
+      people_activity_log:     palDel.length,
+      onboarding_tasks:        tasksDel.length,
+      compliance_items:        compDel.length,
+      rollfi_employee_records: rollfiDel.length,
+      user_accounts:           uaDel.length,
+      employees:               empDel.length,
+    };
+  });
 
   return res.json({
     ok: true,
     message: "Duplicate employee rows deleted successfully.",
-    preview,
-    deleted: {
-      employees:               empDeleted.length,
-      people_activity_log:     palDeleted.length,
-      onboarding_tasks:        tasksDeleted.length,
-      compliance_items:        compDeleted.length,
-      rollfi_employee_records: rollfiDeleted.length,
-      user_accounts:           uaDeleted.length,
+    preview: {
+      employees:               foundEmployees.length,
+      people_activity_log:     palCount?.count ?? 0,
+      onboarding_tasks:        taskCount?.count ?? 0,
+      compliance_items:        compCount?.count ?? 0,
+      rollfi_employee_records: rollfiCount?.count ?? 0,
+      user_accounts:           uaCount?.count ?? 0,
     },
+    deleted,
     duplicateIds: DUPLICATE_IDS,
   });
 });
