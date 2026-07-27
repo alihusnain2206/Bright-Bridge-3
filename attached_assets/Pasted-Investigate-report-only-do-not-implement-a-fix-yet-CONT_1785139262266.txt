@@ -1,0 +1,49 @@
+Investigate, report only — do not implement a fix yet.
+
+CONTEXT: Your last report concluded the empty Role dropdown is caused by
+staff not being linked to org-level roleId UUIDs. Treat that as a
+HYPOTHESIS, not established fact — the docs I have don't state it.
+
+There is a competing explanation, and it IS documented. From EasyTeam's
+multi-location scheduling docs:
+  "Each employee must be assigned to a location in order to appear in
+   that location's schedule."
+and the component signature is:
+  <WeeklySchedule start="2025-02-09" location="location-id-external-1" />
+
+In our app, the schedule component's location selector reads "Select
+Location" and I never selected one. So the simpler explanation may be
+that no location is set, or that our employees aren't assigned to a
+location in EasyTeam.
+
+INVESTIGATE:
+
+1. How do we render the WeeklySchedule component — do we pass a
+   `location` prop at all? Show the code. If we don't, that alone may
+   explain the empty grid.
+
+2. What does the location selector in the component offer? Query
+   EasyTeam for the locations available to our token/JWT and report them.
+
+3. For Sunshine's employees, query EasyTeam's staff records and report
+   for each: their id, name, the role field as EasyTeam stores it
+   (name string vs roleId UUID), and their assigned location(s).
+   This is the decisive evidence — if employees have no location, that's
+   the cause; if they have a location but a freeform role, your
+   hypothesis holds.
+
+4. Only then: state which explanation the evidence supports, and what
+   the correct fix is. If it turns out our employee sync (the JWT
+   exchange) doesn't establish location and/or roleId properly, describe
+   what would need to change — I want to understand whether this is a
+   small payload fix or a structural change to how we register employees
+   with EasyTeam.
+
+5. Also report: the shift we created came back with
+   timezone "Asia/Karachi", utcOffset 300 — EasyTeam used the partner
+   account's timezone, not the location's (New York). Where is timezone
+   set when we register a location or exchange the JWT, and can we set it
+   correctly?
+
+Report findings and options. Do not change code — I want to decide
+whether this needs a redesign before anything is built.
