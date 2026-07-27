@@ -369,8 +369,9 @@ function buildEmployeeRows(
   // Derive status: active only when KYC passed
   const status = kycStatus === "passed" ? "active" : "onboarding";
 
-  // Wage in cents
-  const hourlyWage   = payType === "hourly"  ? Math.round(wageRate * 100) : 1500;
+  // Wage in cents.  Salaried employees get hourlyWage=0 (hourly_wage is NOT NULL
+  // in the schema, but 0 makes any UI fallback visibly wrong rather than plausible).
+  const hourlyWage   = payType === "hourly"  ? Math.round(wageRate * 100) : 0;
   const annualSalary = payType === "salary"  ? Math.round(wageRate * 100) : null;
 
   const w4 = detail.W4Informations?.[0];
@@ -431,7 +432,7 @@ function buildEmployeeRows(
     workLocation: detail.companyLocationCategory?.companyLocationCategory ?? null,
     // ── Compliance readiness (computed from flags) ──
     complianceScore:   0,  // updated after compliance items inserted
-    i9Status:          kycStatus === "passed" ? "completed" : "not_started",
+    i9Status:          kycStatus === "verified" ? "completed" : "not_started",
     backgroundCheckStatus: "not_started",
     onboardingProgress: 0,
     onboardingStartedAt: NOW,
