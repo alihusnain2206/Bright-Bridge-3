@@ -64,7 +64,7 @@ export interface RollfiConfig {
 
 export function getRollfiConfig(): RollfiConfig {
   if (_isProduction) {
-    const baseUrl   = process.env.ROLLFI_PROD_API_URL?.trim()   ?? "";
+    const baseUrl   = (process.env.ROLLFI_PROD_API_URL?.trim()   ?? "").replace(/\/+$/, "");
     const clientId  = process.env.ROLLFI_PROD_CLIENT_ID?.trim() || undefined;
     const secretKey = process.env.ROLLFI_PROD_SECRET_KEY?.trim() || undefined;
     return {
@@ -81,7 +81,7 @@ export function getRollfiConfig(): RollfiConfig {
     process.env.ROLLFI_SANDBOX_API_URL?.trim() ??
     process.env.ROLLFI_BASE_URL?.trim() ??
     "https://sandbox.rollfi.xyz"
-  );
+  ).replace(/\/+$/, "");
   const clientId  = (process.env.ROLLFI_SANDBOX_CLIENT_ID?.trim() || process.env.ROLLFI_CLIENT_ID?.trim()) || undefined;
   const secretKey = (process.env.ROLLFI_SANDBOX_SECRET_KEY?.trim() || process.env.ROLLFI_SECRET_KEY?.trim()) || undefined;
   return {
