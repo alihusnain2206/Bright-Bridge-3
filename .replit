@@ -33,3 +33,8 @@ externalPort = 3000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+IMPORT_ADMIN_SECRET = "2638f36dcf579e2df7bd6d213bab44f71f744aa03b60d41b"

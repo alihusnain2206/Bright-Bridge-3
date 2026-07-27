@@ -1,0 +1,82 @@
+Approved — Option C. Proceed step by step, confirming with me after each.
+
+════════════════════════════════════════════════════════════════
+🚨 ABSOLUTE CONSTRAINT — READ THIS FIRST
+════════════════════════════════════════════════════════════════
+This company and its four employees ALREADY EXIST in PRODUCTION Rollfi
+with real people's data, real wages, and (for Agnes) a completed KYC.
+
+The import endpoint must make **ZERO write calls to Rollfi**. It is
+read-only toward Rollfi and write-only toward our own database.
+
+PERMITTED Rollfi calls — read only:
+  getCompanies, getCompanyInfo, getCompanyLocationInfo, getUsers, getUser
+
+FORBIDDEN — must not appear anywhere in this endpoint's code path, not
+even conditionally, not even in a helper it calls:
+  addUser, addUserWage, updateUserWage, addKycInformation,
+  initiateUserKyc, addW4Information, addStateW4Information,
+  addUserBankAccount, acceptTermsAndCondition, addCompany,
+  createBusiness, addUsersToRegularPayPeriod,
+  removeUsersFromRegularPayPeriod, importRegularPayrollData,
+  initiatePayroll, or ANY other POST/PUT/PATCH/DELETE to Rollfi.
+
+Do NOT reuse onboardEmployeeToRollfi, syncEmployeeToIntegrations,
+runEmployeeKycOnboarding, or registerEmployeeInEasyTeam inside this
+endpoint — they contain Rollfi writes. Write the DB inserts directly.
+
+BEFORE you publish, grep the endpoint and everything it calls, and paste
+me the proof that no Rollfi write method appears in that code path. I
+want to see the grep output, not a statement that you checked.
+
+If anything is ambiguous, STOP and ask rather than assuming.
+
+════════════════════════════════════════════════════════════════
+THE WORK
+════════════════════════════════════════════════════════════════
+
+STEP 1 — Write the endpoint (do not publish yet)
+POST /api/admin/import-brightbridge
+  - Guarded by Authorization: Bearer <secret>, secret from an env var,
+    never hardcoded. Not session auth.
+  - Uses ORG-BRIGHTBRIDGE as the company ID.
+  - Reads from PRODUCTION Rollfi via the permitted calls only.
+  - Writes the same rows the dry run produced: companies,
+    rollfi_company_records, employees, user_accounts,
+    rollfi_employee_records, compliance_items, onboarding_tasks,
+    people_activity_log.
+  - Does NOT store SSN or dateOfBirth — leave null, and never log a full
+    getUser response.
+  - Idempotent: safe to run twice without duplicating rows.
+  - Returns a full summary of what was created.
+Report the code and the grep proof. Wait for my approval.
+
+STEP 2 — Publish
+This also carries the trailing-slash fix, which is currently breaking
+every production Rollfi call. Confirm the deploy succeeded and production
+is on the current commit.
+
+STEP 3 — Trigger the import ONCE
+Report the full response. If anything fails partway, STOP and report —
+do not retry automatically.
+
+STEP 4 — Verify against the PRODUCTION database explicitly
+(environment: "production" — this went to dev last time, so prove it):
+  - Row counts for all 8 tables
+  - Each employee's rollfiUserId matches Rollfi
+  - hourlyWage is 0 for the three salaried employees
+  - ssn and dateOfBirth are null for all four
+  - The company appears in the client list
+
+STEP 5 — Confirm Rollfi is UNCHANGED
+Re-read from Rollfi and compare against the pre-import dry-run data:
+  - Same 4 employees, no duplicates
+  - Each has exactly ONE wage record with the same wageId as before
+  - Agnes still shows kycStatus "passed" and her W4Informations intact
+  - Company still has one pay schedule, one bank account
+Report any difference at all, however small.
+
+STEP 6 — Remove the endpoint and publish again
+Confirm it returns 404 afterwards.
+
+Do not proceed past any step without my confirmation.
