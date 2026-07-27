@@ -1,0 +1,97 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express, brand navy #1B3A6B / teal #0EA5C9).
+
+Build the two header features that currently exist as non-functional
+placeholders: global search and notifications. Two independent parts —
+keep them separate in the code.
+
+════════════════════════════════════════════════════════════════
+PART 1 — GLOBAL SEARCH (the ⌘K box in the header)
+════════════════════════════════════════════════════════════════
+
+The header already advertises "Search employees, documents, policies"
+with a ⌘K shortcut and does nothing. Make it work.
+
+SCOPE — search these, in this priority order:
+  1. Employees — name, email, job title, employee display ID (E1001)
+  2. Documents — employee documents by name/type
+  3. Onboarding tasks — by task name, showing whose task it is
+  4. Companies — super_admin only
+
+DO NOT search: payroll amounts, pay periods, settings pages.
+
+BEHAVIOUR:
+  - Triggers at 2+ characters, debounced (~250ms)
+  - Results grouped by type with a heading, max 5 per group
+  - Each result shows enough to disambiguate (e.g. "Diane Whitfield ·
+    Program Coordinator · Sunshine")
+  - Arrow keys navigate, Enter opens, Escape closes
+  - Clicking a result navigates to it (employee → /people/:id, etc.)
+  - Empty state: "No results for '<query>'"
+  - Loading state while fetching
+
+🔒 SECURITY — COMPANY SCOPING IS MANDATORY:
+  The search endpoint MUST scope results server-side by the requester's
+  company. An owner or manager must never see another company's
+  employees, documents or tasks. Only super_admin sees across companies.
+  Use the existing assertCompanyAccess pattern. Do NOT rely on
+  client-side filtering. State in your deliverable exactly how scoping is
+  enforced.
+
+════════════════════════════════════════════════════════════════
+PART 2 — NOTIFICATIONS (the bell icon)
+════════════════════════════════════════════════════════════════
+
+APPROACH: DERIVED, not stored. Compute notifications live from existing
+data when the bell is opened — no new table, no background job, no stale
+rows. (We can add persistence later if needed; don't build it now.)
+
+WHAT TO SURFACE — only things that need the owner to ACT:
+  🔴 Payroll deadline approaching — within 48h of deadLineToRunPayroll,
+     showing the exact cutoff (12:00 PM ET)
+  🔴 Payroll failed — any pay period in "failed" status, with a link to
+     the off-cycle payment path
+  🟡 Hours awaiting approval — count of unapproved timesheets for the
+     current period
+  🟡 Employees who can't be paid — count of active employees whose
+     payroll readiness is blocked, with names
+  🟡 Compliance expiring — documents/certifications expiring within 30
+     days
+
+DO NOT surface: employee clocked in, employee added, or any routine
+event. Volume without action trains people to ignore the bell.
+
+BEHAVIOUR:
+  - Badge on the bell showing the count of red-level items only
+  - Dropdown lists items most-urgent first, each with a link
+  - Empty state: "You're all caught up"
+  - Role-aware: an employee sees nothing payroll-related; owners and
+    managers see their company's items only
+  - Same company scoping requirement as search
+
+════════════════════════════════════════════════════════════════
+GENERAL
+════════════════════════════════════════════════════════════════
+- Reuse existing endpoints where possible; add new ones only where needed
+  and say why
+- Company-scoped fetches, no duplicate calls
+- Must look sensible for a 3-person daycare, not just a large roster
+- No fake data — if something can't be computed, omit it rather than
+  showing a misleading zero
+
+SCOPE BOUNDARY — do not touch: payroll import/submit logic, the Rollfi
+integration, EasyTeam sync, or the employee onboarding chain.
+
+TESTING:
+- Search "Diane" as Sunshine's owner → finds her; the same search as
+  another company's owner → finds nothing
+- Search by display ID (E1001) works
+- Keyboard navigation works end to end
+- Notifications show the deadline warning when a period is within 48h
+- A company with nothing outstanding shows "You're all caught up"
+- An employee-role login sees no payroll notifications
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, new endpoints and how each enforces company
+scoping, and each test result.
+REMINDER: Publish required.
