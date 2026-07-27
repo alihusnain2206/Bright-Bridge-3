@@ -6,6 +6,7 @@ import {
   Mail, Phone, MapPin, Calendar, Briefcase, User, DollarSign, Building2,
   ClipboardList, ShieldCheck, FolderOpen, PhoneCall, CreditCard, Activity,
   Camera, X, Loader2, CheckCircle2, Clock, RefreshCw,
+  AlertTriangle, XCircle, Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -449,10 +450,335 @@ const STATUS_ITEMS = [
   { type: "policy",           label: "Policy Acknowledgment" },
 ];
 
+// ── Payroll Setup Modal ────────────────────────────────────────────────────
+
+type RepairStep = {
+  step: string;
+  result: "success" | "already_done" | "skipped" | "error";
+  detail?: string;
+};
+type RepairResult = {
+  alreadyComplete?: boolean;
+  message?: string;
+  stepsRun: RepairStep[];
+  liveKycStatus?: string | null;
+  liveUserStatus?: string | null;
+  success?: boolean;
+};
+
+const STEP_LABELS: Record<string, string> = {
+  addKycInformation:  "Submit identity information",
+  initiateUserKyc:    "Initiate identity verification",
+  addUserBankAccount: "Add direct deposit account",
+};
+
+function StepIcon({ result }: { result: RepairStep["result"] }) {
+  if (result === "success")     return <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />;
+  if (result === "already_done") return <CheckCircle2 className="h-4 w-4 text-gray-400 shrink-0" />;
+  if (result === "skipped")     return <Clock className="h-4 w-4 text-gray-300 shrink-0" />;
+  return <XCircle className="h-4 w-4 text-red-500 shrink-0" />;
+}
+
+function PayrollSetupModal({
+  emp,
+  isSuperAdmin,
+  onClose,
+  onComplete,
+}: {
+  emp: EmployeeDetail;
+  isSuperAdmin: boolean;
+  onClose: () => void;
+  onComplete: () => void;
+}) {
+  const [phase, setPhase]   = useState<"form" | "running" | "done" | "error">("form");
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [result, setResult] = useState<RepairResult | null>(null);
+
+  const [bankName,      setBankName]      = useState("");
+  const [routingNumber, setRoutingNumber] = useState("");
+  const [accountNumber, setAccountNumber] = useState("");
+  const [accountType,   setAccountType]   = useState("checking");
+  const [skipBank,      setSkipBank]      = useState(false);
+
+  // Address warning: homeAddress field appears to embed city or zip
+  const a1 = emp.homeAddress ?? "";
+  const addressHasEmbedded = /\b\d{5}\b/.test(a1) || (a1.includes(",") && a1.length > 40);
+
+  const providerLabel = isSuperAdmin ? "Rollfi" : "payroll provider";
+
+  async function handleRun() {
+    setPhase("running");
+    setApiError(null);
+    try {
+      const body: Record<string, unknown> = { employeeId: emp.id };
+      if (!skipBank && accountNumber && routingNumber && bankName) {
+        body.bankName      = bankName;
+        body.routingNumber = routingNumber;
+        body.accountNumber = accountNumber;
+        body.accountType   = accountType;
+      }
+      const r = await fetch("/api/rollfi/repair/employee-payroll-setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await r.json() as RepairResult & { error?: string; stepsRun?: RepairStep[] };
+      if (!r.ok) {
+        setApiError(data.error ?? "An error occurred. Please try again.");
+        setResult({ stepsRun: data.stepsRun ?? [] });
+        setPhase("error");
+      } else {
+        setResult(data);
+        setPhase("done");
+        onComplete();
+      }
+    } catch {
+      setApiError("Network error — please try again.");
+      setResult({ stepsRun: [] });
+      setPhase("error");
+    }
+  }
+
+  const bankFieldsFilled = !skipBank && bankName && routingNumber && accountNumber;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Wrench className="h-4 w-4 text-[#2C4562]" />
+            <h2 className="font-semibold text-gray-900 text-base">Complete Payroll Setup</h2>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5">
+          {/* Info */}
+          {phase === "form" && (
+            <p className="text-sm text-gray-600 leading-relaxed">
+              This will check {emp.firstName}'s current status with the {providerLabel} and run any
+              missing setup steps — identity verification and/or direct deposit.
+              No steps will be run for anything already complete.
+            </p>
+          )}
+
+          {/* Address warning */}
+          {phase === "form" && addressHasEmbedded && (
+            <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-amber-800">Check home address before continuing</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  The home address field (<span className="font-mono">{a1}</span>) may contain an
+                  embedded city name or zip code. Only the street address should be in that field —
+                  city, state, and zip have their own fields. An incorrect address format can cause
+                  identity verification to be rejected.
+                </p>
+                <button
+                  onClick={onClose}
+                  className="mt-2 text-xs font-medium text-amber-800 underline underline-offset-2"
+                >
+                  Fix address first →
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Bank account section */}
+          {phase === "form" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-800">Direct deposit account</p>
+                <button
+                  onClick={() => setSkipBank(v => !v)}
+                  className={`text-xs underline underline-offset-2 ${skipBank ? "text-[#0EA5C9]" : "text-gray-400"}`}
+                >
+                  {skipBank ? "Add bank account" : "Skip (already set up)"}
+                </button>
+              </div>
+              {!skipBank ? (
+                <div className="space-y-3 bg-gray-50 rounded-xl p-4 border border-gray-200">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Bank Name</label>
+                      <input
+                        value={bankName}
+                        onChange={e => setBankName(e.target.value)}
+                        placeholder="e.g. Chase, Bank of America"
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Routing Number</label>
+                      <input
+                        value={routingNumber}
+                        onChange={e => setRoutingNumber(e.target.value.replace(/\D/g, "").slice(0, 9))}
+                        placeholder="9 digits"
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+                      <input
+                        value={accountNumber}
+                        onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                        placeholder="Account number"
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
+                      />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
+                      <select
+                        value={accountType}
+                        onChange={e => setAccountType(e.target.value)}
+                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 bg-white"
+                      >
+                        <option value="checking">Checking</option>
+                        <option value="savings">Savings</option>
+                      </select>
+                    </div>
+                  </div>
+                  {!skipBank && !bankFieldsFilled && (
+                    <p className="text-xs text-gray-400">
+                      Leave all fields empty to skip the bank step (e.g. if the employee already has a bank account in {providerLabel}).
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 text-xs text-gray-500">
+                  Bank step will be skipped — {providerLabel} will use the existing account on file.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Running */}
+          {phase === "running" && (
+            <div className="flex flex-col items-center gap-4 py-8">
+              <Loader2 className="h-8 w-8 text-[#2C4562] animate-spin" />
+              <p className="text-sm text-gray-600">Running setup steps…</p>
+            </div>
+          )}
+
+          {/* Done */}
+          {(phase === "done" || phase === "error") && result && (
+            <div className="space-y-4">
+              {/* alreadyComplete banner */}
+              {result.alreadyComplete && (
+                <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-emerald-800">Already complete</p>
+                    <p className="text-xs text-emerald-700 mt-0.5">{result.message}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Error banner */}
+              {phase === "error" && apiError && (
+                <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                  <XCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-red-800">Setup did not complete</p>
+                    <p className="text-xs text-red-700 mt-0.5">{apiError}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Success banner */}
+              {phase === "done" && !result.alreadyComplete && (
+                <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                  <p className="text-sm font-medium text-emerald-800">Setup steps completed successfully.</p>
+                </div>
+              )}
+
+              {/* Step timeline */}
+              {result.stepsRun.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Steps run</p>
+                  <div className="space-y-2">
+                    {result.stepsRun.map((s, i) => (
+                      <div key={i} className="flex items-start gap-2">
+                        <StepIcon result={s.result} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-800">{STEP_LABELS[s.step] ?? s.step}</p>
+                          {s.result === "already_done" && (
+                            <p className="text-xs text-gray-400">Already on file — no change made</p>
+                          )}
+                          {s.detail && s.result !== "success" && (
+                            <p className="text-xs text-red-600 mt-0.5">{s.detail}</p>
+                          )}
+                        </div>
+                        <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
+                          s.result === "success"     ? "bg-emerald-100 text-emerald-700" :
+                          s.result === "already_done"? "bg-gray-100 text-gray-500"       :
+                          s.result === "error"       ? "bg-red-100 text-red-600"         :
+                                                       "bg-gray-100 text-gray-400"
+                        }`}>
+                          {s.result === "already_done" ? "already done" : s.result}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Live status */}
+              {(result.liveKycStatus || result.liveUserStatus) && (
+                <div className="bg-gray-50 rounded-lg px-4 py-3 text-xs text-gray-600 space-y-1">
+                  <p className="font-medium text-gray-700 mb-1">Current {providerLabel} status</p>
+                  {result.liveUserStatus && <p>Account: <span className="font-medium">{result.liveUserStatus}</span></p>}
+                  {result.liveKycStatus  && <p>Identity: <span className="font-medium">{result.liveKycStatus}</span></p>}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
+          {(phase === "form" || phase === "error") && (
+            <>
+              <Button variant="outline" size="sm" onClick={onClose}>
+                {phase === "error" ? "Close" : "Cancel"}
+              </Button>
+              {phase === "form" && (
+                <Button
+                  size="sm"
+                  onClick={handleRun}
+                  disabled={addressHasEmbedded}
+                  className="bg-[#2C4562] hover:bg-[#3a5878] text-white"
+                >
+                  Run Setup
+                </Button>
+              )}
+            </>
+          )}
+          {phase === "done" && (
+            <Button size="sm" onClick={onClose} className="bg-[#2C4562] hover:bg-[#3a5878] text-white">
+              Done
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isSuperAdmin: boolean }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState<string | null>(null);
+  const [setupModalOpen, setSetupModalOpen] = useState(false);
 
   const { data: compData, isLoading: compLoading } = useQuery<{ items: ComplianceItemP[]; score: number }>({
     queryKey: ["compliance", emp.id],
@@ -603,12 +929,22 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
               {isSuperAdmin && (
                 <p className="text-[11px] text-gray-400 font-mono truncate">ID: {emp.rollfiUserId}</p>
               )}
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex flex-wrap items-center gap-2 pt-1">
                 {needsKyc && (
                   <Link href="/payroll"
                     className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-[#2C4562] text-white hover:bg-[#3a5878] transition-colors">
                     {isSuperAdmin ? "Complete KYC →" : "Complete Verification →"}
                   </Link>
+                )}
+                {/* Complete Payroll Setup — for imported employees missing KYC initiation or bank */}
+                {!!emp.rollfiUserId && accountStatus !== "Active" && (user?.role === "owner" || user?.role === "super_admin") && (
+                  <button
+                    onClick={() => setSetupModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-[#2C4562] text-[#2C4562] hover:bg-[#2C4562] hover:text-white transition-colors"
+                  >
+                    <Wrench className="h-3 w-3" />
+                    Complete Payroll Setup
+                  </button>
                 )}
                 <Link href="/payroll"
                   className="inline-flex items-center gap-1.5 text-xs text-[#0EA5C9] hover:underline">
@@ -619,6 +955,17 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
           )}
         </div>
       </div>
+      {setupModalOpen && (
+        <PayrollSetupModal
+          emp={emp}
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setSetupModalOpen(false)}
+          onComplete={() => {
+            setSetupModalOpen(false);
+            void qc.invalidateQueries({ queryKey: ["employee-detail", emp.id] });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -2687,6 +2687,257 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
   }
 });
 
+// ── Complete Payroll Setup (imported / stale employees) ────────────────────
+// POST /rollfi/repair/employee-payroll-setup
+//
+// Detects which steps are missing by querying Rollfi live (getUsers), then
+// runs ONLY the missing steps.  Safe to call on an employee who needs nothing
+// (e.g. Joanne, whose bank is already pending) — it updates our stale
+// kycStatus from Rollfi's live value and returns alreadyComplete:true without
+// making any Rollfi write calls.
+//
+// Detection logic:
+//   Rollfi kycStatus after initiateUserKyc was called:
+//     "not_started" | "pending" | "passed" | "failed" | "approved" | "verified"
+//   If kycStatus is null or "kyc not initiated", both addKycInformation AND
+//   initiateUserKyc are attempted (addKycInformation handles "already exists"
+//   gracefully, so it is safe for Alexandra whose KYC data already exists in Rollfi).
+//
+// SSN handling: SSN is read from our DB, sent to Rollfi, and then CLEARED from
+// our DB after a successful initiateUserKyc in production — Rollfi holds it
+// from that point on.
+router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  if (!getRollfiConfig().credentialsPresent) {
+    res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+  }
+
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || !["owner", "super_admin"].includes(caller.role)) {
+    res.status(403).json({ error: "Only owners and super admins can run payroll setup" }); return;
+  }
+
+  const { employeeId, bankName, routingNumber, accountNumber, accountType } = req.body as {
+    employeeId: string; bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
+  };
+  if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
+
+  const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+  if (!emp.rollfiUserId) { res.status(400).json({ error: "Employee has no Rollfi account" }); return; }
+
+  if (caller.role !== "super_admin" && caller.companyId !== emp.companyId) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+
+  const [companyRow] = await db
+    .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+    .from(companiesTable).where(eq(companiesTable.id, emp.companyId));
+  const rollfiCompanyId =
+    companyRow?.rollfiCompanyId ?? store.getRollfiCompany(emp.companyId)?.rollfiCompanyId ?? null;
+  if (!rollfiCompanyId) {
+    res.status(400).json({ error: "Company is not registered with payroll provider" }); return;
+  }
+
+  const now = new Date().toISOString();
+  const isProduction = getRollfiConfig().env === "production";
+  type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
+
+  // ── Phase 1: read-only live detection ────────────────────────────────────
+  let liveKycStatus: string | null = null;
+  let liveUserStatus: string | null = null;
+  try {
+    const r = await axios.post(
+      `${getBaseUrl()}/reports#getUsers`,
+      { method: "getUsers", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    const users: RollfiUser[] = ((r.data as { users?: RollfiUser[] }).users ?? []);
+    const found = users.find(u => u.userId === emp.rollfiUserId);
+    if (!found) {
+      res.status(404).json({ error: "Employee not found in payroll provider — cannot determine repair steps" }); return;
+    }
+    liveKycStatus  = found.kycStatus           ?? null;
+    liveUserStatus = found.status?.userStatus  ?? null;
+    req.log.info({ employeeId, liveKycStatus, liveUserStatus }, "repair-payroll-setup: live status fetched");
+  } catch (err) {
+    req.log.error({ err }, "repair-payroll-setup: getUsers failed");
+    res.status(502).json({ error: "Could not reach payroll provider to check current status. Please try again." }); return;
+  }
+
+  // Write live status back to DB immediately (even when no steps will run)
+  await db.update(employeesTable).set({
+    kycStatus:           liveKycStatus  ?? emp.kycStatus           ?? undefined,
+    rollfiAccountStatus: liveUserStatus ?? emp.rollfiAccountStatus ?? undefined,
+    updatedAt: now,
+  }).where(eq(employeesTable.id, employeeId));
+
+  // ── Determine needed steps ────────────────────────────────────────────────
+  // Rollfi sets kycStatus to one of these once initiateUserKyc has been called.
+  // "not_started" = addKycInformation + initiateUserKyc done; employee hasn't verified yet.
+  const KYC_POST_INITIATE = new Set(["not_started", "pending", "passed", "failed", "approved", "verified"]);
+  const kycAlreadyInitiated = !!liveKycStatus && KYC_POST_INITIATE.has(liveKycStatus);
+  const needsKycSteps = !kycAlreadyInitiated;
+  const hasBankCreds  = !!(accountNumber && routingNumber);
+
+  if (!needsKycSteps && !hasBankCreds) {
+    req.log.info({ employeeId, liveKycStatus }, "repair-payroll-setup: already complete — no steps needed");
+    res.json({
+      alreadyComplete: true,
+      message: "Payroll setup is already complete for this employee. Status updated from live provider.",
+      liveKycStatus,
+      liveUserStatus,
+      stepsRun: [],
+    });
+    return;
+  }
+
+  // ── Phase 2: pre-flight validation ───────────────────────────────────────
+  if (needsKycSteps) {
+    const ssnDigits = (emp.ssn ?? "").replace(/\D/g, "");
+    if (!ssnDigits || ssnDigits.length !== 9) {
+      res.status(400).json({
+        error: "SSN is required before identity verification can be submitted. Enter a valid 9-digit SSN on the Personal tab first.",
+      }); return;
+    }
+    if (!emp.dateOfBirth) {
+      res.status(400).json({
+        error: "Date of Birth is required. Enter it on the Personal tab first.",
+      }); return;
+    }
+    const a1 = emp.homeAddress ?? "";
+    if (/\b\d{5}\b/.test(a1) || a1.includes(",")) {
+      req.log.warn({ employeeId }, "repair-payroll-setup: address1 may contain embedded city/zip — KYC may reject it; owner warned in UI");
+    }
+  }
+
+  type StepResult = { step: string; result: "success" | "already_done" | "skipped" | "error"; detail?: string };
+  const stepsRun: StepResult[] = [];
+
+  // ── Step A: addKycInformation ─────────────────────────────────────────────
+  // "already exists" = Rollfi already has the KYC data (safe for Alexandra). Treat as success.
+  let kycAdded = kycAlreadyInitiated;
+  if (needsKycSteps) {
+    const ssnDigits = (emp.ssn ?? "").replace(/\D/g, "");
+    try {
+      const r = await axios.post(`${getBaseUrl()}/userOnboarding#addKycInformation`, {
+        method: "addKycInformation",
+        kycInformation: {
+          userId: emp.rollfiUserId, ssn: ssnDigits,
+          dateOfBirth: emp.dateOfBirth ?? "",
+          address1: emp.homeAddress ?? "", address2: "",
+          city: emp.homeCity ?? "", state: emp.homeState ?? "", zipcode: emp.homeZip ?? "",
+        },
+      }, { headers: rollfiHeaders() });
+      // safeRollfiLog strips raw fields — never log the full response here (may echo SSN)
+      req.log.info({ rollfiResult: safeRollfiLog(r.data), employeeId }, "repair-payroll-setup: addKycInformation response");
+      const errMsg = extractRollfiError(r.data);
+      const alreadyExists = errMsg?.toLowerCase().includes("already exists") ?? false;
+      if (!errMsg || alreadyExists) {
+        kycAdded = true;
+        stepsRun.push({ step: "addKycInformation", result: alreadyExists ? "already_done" : "success" });
+      } else {
+        stepsRun.push({ step: "addKycInformation", result: "error", detail: errMsg });
+        res.status(422).json({ error: `Identity information rejected: ${errMsg}`, stepsRun }); return;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stepsRun.push({ step: "addKycInformation", result: "error", detail: msg });
+      res.status(502).json({ error: `Could not submit identity information: ${msg}`, stepsRun }); return;
+    }
+  }
+
+  // ── Step B: initiateUserKyc ───────────────────────────────────────────────
+  if (needsKycSteps) {
+    if (!kycAdded) {
+      stepsRun.push({ step: "initiateUserKyc", result: "skipped", detail: "addKycInformation did not succeed" });
+      res.status(422).json({ error: "Cannot initiate verification — identity information was not accepted.", stepsRun }); return;
+    }
+    try {
+      const r = await axios.post(`${getBaseUrl()}/userOnboarding#initiateUserKyc`, {
+        method: "initiateUserKyc", userId: emp.rollfiUserId,
+      }, { headers: rollfiHeaders() });
+      req.log.info({ rollfiResult: safeRollfiLog(r.data), employeeId }, "repair-payroll-setup: initiateUserKyc response");
+      const errMsg = extractRollfiError(r.data as Record<string, unknown>);
+      if (errMsg) {
+        const isKyb = /kyb is not initiated|company kyb/i.test(errMsg);
+        const surfaced = isKyb
+          ? "Company identity verification (KYB) has not passed — contact Rollfi support before employees can be verified"
+          : errMsg;
+        stepsRun.push({ step: "initiateUserKyc", result: "error", detail: surfaced });
+        res.status(422).json({ error: `Identity verification could not be started: ${surfaced}`, stepsRun }); return;
+      }
+      stepsRun.push({ step: "initiateUserKyc", result: "success" });
+      // In production: clear SSN now that Rollfi holds it — no reason to retain it
+      if (isProduction) {
+        await db.update(employeesTable).set({ ssn: null, updatedAt: now }).where(eq(employeesTable.id, employeeId));
+        req.log.info({ employeeId }, "repair-payroll-setup: SSN cleared from DB after successful initiateUserKyc");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stepsRun.push({ step: "initiateUserKyc", result: "error", detail: msg });
+      res.status(502).json({ error: `Could not start identity verification: ${msg}`, stepsRun }); return;
+    }
+  }
+
+  // ── Step C: addUserBankAccount ────────────────────────────────────────────
+  if (hasBankCreds) {
+    const maskedAcct = `****${(accountNumber ?? "").slice(-4)}`;
+    req.log.info({ employeeId, bankName, maskedAcct }, "repair-payroll-setup: submitting bank account");
+    try {
+      const r = await axios.post(`${getBaseUrl()}/userPortal#addUserBankAccount`, {
+        method: "addUserBankAccount",
+        linkType: "Manual",
+        userPayAccountEntity: {
+          companyId: rollfiCompanyId, userId: emp.rollfiUserId,
+          accountNumber, routingNumber,
+          bankName: bankName ?? "Direct Deposit",
+          accountType: accountType ?? "checking",
+          accountName: "default", payPercentage: 100, isPrimary: true,
+        },
+      }, { headers: rollfiHeaders() });
+      req.log.info({ rollfiResult: safeRollfiLog(r.data), employeeId }, "repair-payroll-setup: addUserBankAccount response");
+      const errMsg = extractRollfiError(r.data as Record<string, unknown>);
+      if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
+        stepsRun.push({ step: "addUserBankAccount", result: "error", detail: errMsg });
+        res.status(422).json({ error: `Bank account rejected: ${errMsg}`, stepsRun }); return;
+      }
+      stepsRun.push({
+        step: "addUserBankAccount",
+        result: errMsg?.toLowerCase().includes("already exists") ? "already_done" : "success",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      stepsRun.push({ step: "addUserBankAccount", result: "error", detail: msg });
+      res.status(502).json({ error: `Could not add bank account: ${msg}`, stepsRun }); return;
+    }
+  }
+
+  // ── Final: refresh live status and write back ─────────────────────────────
+  let finalKycStatus  = liveKycStatus;
+  let finalUserStatus = liveUserStatus;
+  try {
+    const r2 = await axios.post(
+      `${getBaseUrl()}/reports#getUsers`,
+      { method: "getUsers", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    const u2 = ((r2.data as { users?: RollfiUser[] }).users ?? []).find(u => u.userId === emp.rollfiUserId);
+    if (u2) {
+      finalKycStatus  = u2.kycStatus           ?? liveKycStatus;
+      finalUserStatus = u2.status?.userStatus  ?? liveUserStatus;
+      await db.update(employeesTable).set({
+        kycStatus:           finalKycStatus  ?? undefined,
+        rollfiAccountStatus: finalUserStatus ?? undefined,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(employeesTable.id, employeeId));
+    }
+  } catch { /* non-fatal — steps already ran */ }
+
+  req.log.info({ employeeId, stepsRun, finalKycStatus, finalUserStatus }, "repair-payroll-setup: complete");
+  res.json({ success: true, stepsRun, liveKycStatus: finalKycStatus, liveUserStatus: finalUserStatus });
+});
+
 // ── Employee Rollfi activation status ────────────────────────
 
 router.get("/rollfi/employees/status", async (req, res) => {
