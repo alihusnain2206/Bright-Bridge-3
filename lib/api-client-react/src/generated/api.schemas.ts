@@ -134,6 +134,10 @@ export interface Client {
   longitude: number;
   timezone: string;
   createdAt: string;
+  /** EasyTeam / Rollfi location external ID (e.g. "LOC-SUNSHINE"). Use this — not `id` — when
+   *  passing locations to the EasyTeam launcher, because `id` is the company ID ("ORG-SUNSHINE")
+   *  which EasyTeam does not recognise as a location external ID. */
+  locationId?: string | null;
 }
 
 export interface CreateClientRequest {

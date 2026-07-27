@@ -16,6 +16,8 @@ type CompanyRow = {
   name: string;
   locationName: string | null;
   createdAt?: string | null;
+  /** Populated for DB-persisted companies (wizard flow). Used as locationId fallback. */
+  rollfiLocationId?: string | null;
 };
 
 /**
@@ -26,6 +28,11 @@ type CompanyRow = {
  */
 function projectCompany(co: CompanyRow) {
   const storeCo = store.getCompany(co.id);
+  // locationId is the EasyTeam / Rollfi *location* external ID (e.g. "LOC-SUNSHINE").
+  // It must differ from the company/org ID ("ORG-SUNSHINE") — the EasyTeam launcher resolves
+  // locations by their external ID, not the organisation ID.
+  // Resolution order: in-memory store (seeded companies) → DB rollfiLocationId (wizard companies).
+  const locationId = storeCo?.locationId ?? co.rollfiLocationId ?? null;
   return {
     id: co.id,
     name: co.name,
@@ -35,6 +42,7 @@ function projectCompany(co: CompanyRow) {
     timezone: "America/New_York",
     createdAt: co.createdAt ?? new Date().toISOString(),
     linkedCompanyId: co.id,
+    locationId,
   };
 }
 

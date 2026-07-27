@@ -12,3 +12,4 @@
 - [Rollfi state W-4 field names](rollfi-state-w4-fields.md) — allowances field name differs by state; NJ="Total Allowances", NY="Withholding Allowance"; use getStateW4FormFields at /reports not /userOnboarding
 - [KYC order fix](kyc-order-silent-failure.md) — initiateUserKyc now HARD; rollfi.ts routes restructured (wage before KYC); result never discarded; wizard surfaces failure in panel
 - [People Hub API shapes](people-hub-api-shapes.md) — /api/employees returns `{ employees: [] }` (wrapped); /api/companies returns `{ companies: [] }` (wrapped); /api/documents uses `?employeeId=` not nested `/employees/:id/documents`
+- [EasyTeam location timezone fix](easyteam-location-country-state.md) — PATCH country+state not timezone IANA string; `{ timezone }` returns 500

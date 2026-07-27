@@ -1411,6 +1411,145 @@ router.get("/timesheets/trend", requireAuth, async (req, res) => {
   }
 });
 
+// ── Location timezone management ──────────────────────────────────────────────────────
+//
+// EasyTeam auto-creates a location record the first time it sees a locationId in a JWT, but
+// it uses the *partner account* timezone as the default because no timezone is supplied during
+// that implicit creation. The result: all shifts carry the wrong timezone label even though the
+// clock-in/clock-out local times are correct.
+//
+// Fix: call PATCH on the EasyTeam location record to set the correct IANA timezone. This is
+// idempotent — calling it multiple times is safe.
+//
+// Multi-state support: the `timezone` parameter is the IANA name for the company's state
+// (e.g. "America/Chicago" for Illinois, "America/Los_Angeles" for California). Currently the
+// server hardcodes "America/New_York" for all companies because all demo companies are in NJ.
+// When wizard-created companies support a state field, derive the timezone from that field and
+// pass it here instead.
+
+// EasyTeam location registration note:
+// EasyTeam does NOT accept a `timezone` IANA string on PATCH. Instead it derives the timezone
+// from `country` + `state` fields. Setting these is idempotent and safe to repeat on every boot.
+//
+// Multi-state support: pass the ISO 3166-1 country code ("US") and the state abbreviation
+// ("NJ", "CA", "IL", etc.) that matches the company's physical location. EasyTeam maps the
+// state to its IANA timezone internally:
+//   NJ / NY / MA / CT / PA → America/New_York
+//   IL / MO / TN           → America/Chicago
+//   CA / WA / OR           → America/Los_Angeles
+//   AZ                     → America/Phoenix
+// For wizard-created companies, add a `state` field to the company record and pass it here.
+// Currently defaults to US/NJ because all demo companies are in New Jersey.
+
+async function ensureLocationTimezone(
+  locationId: string,
+  opts: { country?: string; state?: string } = {}
+): Promise<{ ok: boolean; detail?: string }> {
+  if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
+
+  const country = opts.country ?? "US";
+  const state   = opts.state   ?? "NJ";
+
+  // Reuse a manager user registered under this location to sign the admin JWT.
+  let managerUser = store.getAllStaffUsers().find(
+    (u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")
+  );
+  if (!managerUser?.employeeId) {
+    managerUser = store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+  }
+  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${locationId}` };
+
+  try {
+    const adminJwt = jwt.sign(
+      {
+        employeeId: managerUser.employeeId,
+        organizationId: "ORG-BRIGHTBRIDGE",
+        locationId,
+        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+        accessRole: {
+          name: "manager",
+          permissions: ["LOCATION_ADMIN", "LOCATION_READ", "ORGANIZATION_ADMIN"],
+        },
+        role: { name: managerUser.position ?? "Daycare Manager", hourlyWage: 25 },
+        wage: 25, wageType: "hourly",
+        features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+      },
+      EASYTEAM_API_KEY,
+      { algorithm: "RS256", expiresIn: "1h" }
+    );
+
+    const exchangeResp = await axios.post<{ accessToken: string }>(
+      `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+      { token: adminJwt },
+      { timeout: 8000 }
+    );
+    const accessToken = exchangeResp.data.accessToken;
+
+    // Decode the access token to get EasyTeam's internal UUIDs
+    let internalOrgId = "ORG-BRIGHTBRIDGE";
+    let internalLocId = locationId;
+    try {
+      const parts = accessToken.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+        if (typeof payload.organizationId === "string") internalOrgId = payload.organizationId;
+        if (typeof payload.locationId === "string") internalLocId = payload.locationId;
+      }
+    } catch { /* keep defaults */ }
+
+    const patchUrl = `${EASYTEAM_EMBED_API}/organizations/${internalOrgId}/locations/${internalLocId}`;
+    // EasyTeam derives timezone from country + state — it does not accept an IANA timezone string.
+    await axios.patch(
+      patchUrl,
+      { country, state },
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 8000 }
+    );
+
+    logger.info({ locationId, internalLocId, country, state, patchUrl }, "ensureLocationTimezone: country/state patched");
+    return { ok: true };
+  } catch (err) {
+    const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
+    const detail = axErr.response
+      ? `HTTP ${axErr.response.status}: ${JSON.stringify(axErr.response.data)}`
+      : (axErr.message ?? "Unknown");
+    logger.warn({ locationId, country, state, detail }, "ensureLocationTimezone: PATCH failed (non-fatal)");
+    return { ok: false, detail };
+  }
+}
+
+// At startup, patch country+state for all seeded locations whose EasyTeam record may have no
+// location data (causing EasyTeam to default to the partner account's timezone). Idempotent.
+// Runs after a short delay so the server is fully up before making outbound calls.
+setTimeout(() => {
+  if (!EASYTEAM_API_KEY) return;
+  const seedLocations: Array<{ locationId: string; country: string; state: string }> = [
+    { locationId: "LOC-SUNSHINE", country: "US", state: "NJ" },
+    { locationId: "LOC-RAINBOW",  country: "US", state: "NJ" },
+  ];
+  for (const { locationId, country, state } of seedLocations) {
+    ensureLocationTimezone(locationId, { country, state }).catch(() => { /* already logged inside */ });
+  }
+}, 5000);
+
+// Admin endpoint: trigger country/state PATCH for any company on demand.
+// POST /api/easyteam/admin/patch-location-timezone
+// Body: { companyId: string, country?: string, state?: string }
+// EasyTeam derives timezone from country+state — no IANA timezone string is accepted.
+router.post("/easyteam/admin/patch-location-timezone", requireRole("super_admin"), async (req, res) => {
+  const { companyId, country = "US", state = "NJ" } = req.body as {
+    companyId?: string;
+    country?: string;
+    state?: string;
+  };
+  if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+
+  const locationId = await resolveCompanyLocationId(companyId);
+  if (!locationId) { res.status(404).json({ error: "Could not resolve locationId for company" }); return; }
+
+  const result = await ensureLocationTimezone(locationId, { country, state });
+  res.json({ companyId, locationId, country, state, ...result });
+});
+
 router.post("/easyteam/test-connection", requireRole("super_admin", "owner"), async (req, res) => {
   const apiKeyPresent = !!EASYTEAM_API_KEY;
   const partnerIdPresent = !!EASYTEAM_PARTNER_ID;

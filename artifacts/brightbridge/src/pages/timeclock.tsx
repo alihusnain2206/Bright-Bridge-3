@@ -62,8 +62,8 @@ export default function TimeClock() {
           launch(data.token, {
             page: Pages.TIME_CLOCK,
             organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
-            locations: [{ id: client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
-            employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.role, timeTrackingEnabled: true })),
+            locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
+            employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
           });
         }
         setAccessToken(data.token);
