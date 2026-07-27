@@ -1,50 +1,55 @@
 ---
 name: Repair Payroll Setup endpoint
-description: POST /rollfi/repair/employee-payroll-setup — live-detects missing KYC/bank steps for imported employees and runs only what's needed. SSN cleared after successful initiateUserKyc in production.
+description: POST /rollfi/repair/employee-payroll-setup — live-detects missing KYC/bank steps for imported employees and runs only what's needed. GET /rollfi/repair/preflight-status for modal pre-check.
 ---
 
-## The endpoint
+## Endpoints
 
-`POST /rollfi/repair/employee-payroll-setup` in `artifacts/api-server/src/routes/rollfi.ts`
+- `POST /rollfi/repair/employee-payroll-setup` — runs the missing steps
+- `GET /rollfi/repair/preflight-status?employeeId=...` — read-only, called by modal on open
 
-## Detection logic
+Both are in `artifacts/api-server/src/routes/rollfi.ts`. Auth: `owner` or `super_admin` only.
 
-Uses `getUsers` (read-only) to fetch live kycStatus + userStatus from Rollfi BEFORE running anything.
+## Detection (getUsers live check)
 
-Rollfi's kycStatus after `initiateUserKyc` has been called:
-- `not_started` | `pending` | `passed` | `failed` | `approved` | `verified` → KYC initiated (both addKycInformation + initiateUserKyc done)
-- null or `"kyc not initiated"` → KYC steps needed
+`getUsers` fields captured per user: `kycStatus`, `status.userStatus`, `isTermsAccepted`, `bankAccounts[]`.
 
-If live kycStatus is in the "initiated" set AND no bank credentials provided → returns `alreadyComplete: true` without any write calls.
+- `kycAlreadyInitiated` = kycStatus ∈ `{not_started, pending, passed, failed, approved, verified}`
+- `liveHasBankInRollfi` = `bankAccounts.length > 0`
+- `liveIsTermsAccepted` = `isTermsAccepted ?? false`
 
-## Steps run
+## alreadyComplete logic
 
-A. `addKycInformation` — attempted when kycStatus shows nothing done; "already exists" treated as success (safe for Alexandra whose KYC data already exists in Rollfi from import)
-B. `initiateUserKyc` — runs after A succeeds; KYB failure surfaced as user-friendly message
-C. `addUserBankAccount` — only runs when `accountNumber + routingNumber` provided in request body
+- `alreadyComplete: true` → `!needsKycSteps && hasBankInRollfi && !hasBankCreds`
+- `needsBankAccount: true` → `!needsKycSteps && !hasBankInRollfi && !hasBankCreds` (KYC done but bank missing — modal should prompt)
+- Otherwise proceed to run steps
 
-## SSN handling
+## Step order (matches wizard: acceptTerms → addKyc → initiateKyc → addBank)
 
-After successful `initiateUserKyc` in production, SSN is immediately cleared from our DB (`ssn = null`). Rollfi holds it from that point. This is logged explicitly.
+- **Step A** `acceptTermsAndCondition` (SOFT) — skip API call if `liveIsTermsAccepted`, record as `already_done`. Must run before `initiateUserKyc`.
+- **Step B** `addKycInformation` — "already exists" treated as `already_done` (safe for Alexandra)
+- **Step C** `initiateUserKyc` (HARD) — KYB failure surfaced clearly; SSN cleared from DB after success in production
+- **Step D** `addUserBankAccount` — only when `accountNumber + routingNumber` provided
 
-## Address warning
+## Wizard steps NOT in repair (intentionally omitted)
 
-If `homeAddress` contains a 5-digit zip pattern (`\b\d{5}\b`) or comma, the backend logs a warning and the frontend modal shows a blocking warning (disables "Run Setup" button) with a "Fix address first →" link.
+`addW4Information` and `addStateW4Information` — imported employees already have W4 in Rollfi directly; we don't have their W4 data and calling these could cause unintended overwrites.
 
-## Frontend
+## Phone number sync fix
 
-`PayrollSetupModal` component in `artifacts/brightbridge/src/pages/employee-profile.tsx` (defined before `PayrollReadinessPanel`).
+`syncEmployeeToRollfi` in `people.ts`: phone must be digits-only before sending to Rollfi — strip with `.replace(/\D/g, "")` for both `updateUser.phoneNumber` and `updateKycInformation.phoneNumber`. Both calls also check `extractRollfiError(r.data)` now (Rollfi 200+error-body pattern).
 
-"Complete Payroll Setup" button (wrench icon) in `PayrollReadinessPanel` Provider Verification section. Visible when:
-- `emp.rollfiUserId` is set
-- `accountStatus !== "Active"`
-- `user.role === "owner" || user.role === "super_admin"`
+## Frontend modal (`PayrollSetupModal` in employee-profile.tsx)
 
-**Important JSX gotcha**: The modal must be rendered INSIDE the outer panel `<div>` (not as a sibling after it closes). Attempting a fragment `<>...</>` or sibling placement after `</div>` causes Babel parse errors. Since the modal uses `position: fixed`, DOM placement inside the panel div doesn't affect layout.
+Phase machine: `loading → ready → running → done | error`
 
-## Per-employee state (production, as of July 2026)
+On mount (`useEffect`), calls `GET /api/rollfi/repair/preflight-status`. Preflight result drives:
+- Bank section: shows "on file ✓" if `hasBankInRollfi`, shows form with amber warning if not
+- Preflight status summary: shows KYC + bank status before user runs anything
+- `skipBank` pre-set to `true` when `hasBankInRollfi`
 
-- **Joanne Indviglio**: bank verifying in Rollfi → should detect as `alreadyComplete` (no write calls)
-- **Agnes Johnson**: kycStatus=passed, needs bank only
-- **Alexandra Indiviglio**: Rollfi has KYC data from import, needs only `initiateUserKyc` + bank
-- **Arisleyda Reyes Lopez**: needs full chain; SSN + DOB now in production DB; address needs fix first (remove embedded city/zip from homeAddress field)
+**JSX gotcha**: Modal must render INSIDE the outer panel `<div>`, not as a sibling. Fragment `<>` causes Babel parse errors here; `position: fixed` means DOM placement doesn't affect layout.
+
+## Production outcomes (Arisleyda, July 2026)
+
+Steps ran: `addKycInformation (already_done)` → `acceptTermsAndCondition (success)` → `initiateUserKyc (success)`. Final kycStatus: `passed`. SSN cleared from DB. Still needs bank account (Agnes and Alexandra also need bank).

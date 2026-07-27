@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useRoute, useLocation, useSearch, Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -459,17 +459,28 @@ type RepairStep = {
 };
 type RepairResult = {
   alreadyComplete?: boolean;
+  needsBankAccount?: boolean;
   message?: string;
   stepsRun: RepairStep[];
   liveKycStatus?: string | null;
   liveUserStatus?: string | null;
+  isTermsAccepted?: boolean;
+  hasBankInRollfi?: boolean;
   success?: boolean;
+};
+type PreflightResult = {
+  liveKycStatus: string | null;
+  liveUserStatus: string | null;
+  isTermsAccepted: boolean;
+  kycAlreadyInitiated: boolean;
+  hasBankInRollfi: boolean;
 };
 
 const STEP_LABELS: Record<string, string> = {
-  addKycInformation:  "Submit identity information",
-  initiateUserKyc:    "Initiate identity verification",
-  addUserBankAccount: "Add direct deposit account",
+  addKycInformation:        "Submit identity information",
+  acceptTermsAndCondition:  "Accept terms & conditions",
+  initiateUserKyc:          "Initiate identity verification",
+  addUserBankAccount:       "Add direct deposit account",
 };
 
 function StepIcon({ result }: { result: RepairStep["result"] }) {
@@ -490,15 +501,41 @@ function PayrollSetupModal({
   onClose: () => void;
   onComplete: () => void;
 }) {
-  const [phase, setPhase]   = useState<"form" | "running" | "done" | "error">("form");
+  const [phase, setPhase]   = useState<"loading" | "ready" | "running" | "done" | "error">("loading");
   const [apiError, setApiError] = useState<string | null>(null);
   const [result, setResult] = useState<RepairResult | null>(null);
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
 
   const [bankName,      setBankName]      = useState("");
   const [routingNumber, setRoutingNumber] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountType,   setAccountType]   = useState("checking");
   const [skipBank,      setSkipBank]      = useState(false);
+
+  // Fetch live status on open so we know what's needed before the user clicks "Run Setup"
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch(`/api/rollfi/repair/preflight-status?employeeId=${encodeURIComponent(emp.id)}`, {
+          credentials: "include",
+        });
+        const data = await r.json() as PreflightResult & { error?: string };
+        if (!r.ok) {
+          setPreflightError(data.error ?? "Could not check current status — you can still run setup manually.");
+          setPhase("ready");
+          return;
+        }
+        setPreflight(data);
+        // Pre-set skipBank = true only when Rollfi already has a bank account on file
+        if (data.hasBankInRollfi) setSkipBank(true);
+        setPhase("ready");
+      } catch {
+        setPreflightError("Could not reach payroll provider — you can still run setup manually.");
+        setPhase("ready");
+      }
+    })();
+  }, [emp.id]);
 
   // Address warning: homeAddress field appears to embed city or zip
   const a1 = emp.homeAddress ?? "";
@@ -540,8 +577,6 @@ function PayrollSetupModal({
     }
   }
 
-  const bankFieldsFilled = !skipBank && bankName && routingNumber && accountNumber;
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4"
@@ -560,103 +595,150 @@ function PayrollSetupModal({
         </div>
 
         <div className="px-6 py-5 space-y-5">
-          {/* Info */}
-          {phase === "form" && (
-            <p className="text-sm text-gray-600 leading-relaxed">
-              This will check {emp.firstName}'s current status with the {providerLabel} and run any
-              missing setup steps — identity verification and/or direct deposit.
-              No steps will be run for anything already complete.
-            </p>
-          )}
-
-          {/* Address warning */}
-          {phase === "form" && addressHasEmbedded && (
-            <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
-              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm font-medium text-amber-800">Check home address before continuing</p>
-                <p className="text-xs text-amber-700 mt-0.5">
-                  The home address field (<span className="font-mono">{a1}</span>) may contain an
-                  embedded city name or zip code. Only the street address should be in that field —
-                  city, state, and zip have their own fields. An incorrect address format can cause
-                  identity verification to be rejected.
-                </p>
-                <button
-                  onClick={onClose}
-                  className="mt-2 text-xs font-medium text-amber-800 underline underline-offset-2"
-                >
-                  Fix address first →
-                </button>
-              </div>
+          {/* Loading preflight */}
+          {phase === "loading" && (
+            <div className="flex flex-col items-center gap-3 py-8">
+              <Loader2 className="h-7 w-7 text-[#2C4562] animate-spin" />
+              <p className="text-sm text-gray-500">Checking current setup status…</p>
             </div>
           )}
 
-          {/* Bank account section */}
-          {phase === "form" && (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-gray-800">Direct deposit account</p>
-                <button
-                  onClick={() => setSkipBank(v => !v)}
-                  className={`text-xs underline underline-offset-2 ${skipBank ? "text-[#0EA5C9]" : "text-gray-400"}`}
-                >
-                  {skipBank ? "Add bank account" : "Skip (already set up)"}
-                </button>
-              </div>
-              {!skipBank ? (
-                <div className="space-y-3 bg-gray-50 rounded-xl p-4 border border-gray-200">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="col-span-2">
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Bank Name</label>
-                      <input
-                        value={bankName}
-                        onChange={e => setBankName(e.target.value)}
-                        placeholder="e.g. Chase, Bank of America"
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Routing Number</label>
-                      <input
-                        value={routingNumber}
-                        onChange={e => setRoutingNumber(e.target.value.replace(/\D/g, "").slice(0, 9))}
-                        placeholder="9 digits"
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
-                      <input
-                        value={accountNumber}
-                        onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
-                        placeholder="Account number"
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
-                      />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
-                      <select
-                        value={accountType}
-                        onChange={e => setAccountType(e.target.value)}
-                        className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 bg-white"
-                      >
-                        <option value="checking">Checking</option>
-                        <option value="savings">Savings</option>
-                      </select>
-                    </div>
+          {/* Info */}
+          {phase === "ready" && (
+            <>
+              <p className="text-sm text-gray-600 leading-relaxed">
+                This will run any missing setup steps for {emp.firstName} —
+                identity verification and/or direct deposit.
+                Steps already completed in {providerLabel} will be skipped automatically.
+              </p>
+
+              {/* Preflight summary */}
+              {preflight && (
+                <div className="bg-gray-50 rounded-xl px-4 py-3 border border-gray-200 text-xs space-y-1.5">
+                  <p className="font-semibold text-gray-600 mb-1">Current status in {providerLabel}</p>
+                  <div className="flex items-center gap-2">
+                    {preflight.kycAlreadyInitiated
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      : <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                    <span className={preflight.kycAlreadyInitiated ? "text-emerald-700" : "text-amber-700"}>
+                      Identity verification: {preflight.kycAlreadyInitiated ? `${preflight.liveKycStatus ?? "done"}` : "not started"}
+                    </span>
                   </div>
-                  {!skipBank && !bankFieldsFilled && (
-                    <p className="text-xs text-gray-400">
-                      Leave all fields empty to skip the bank step (e.g. if the employee already has a bank account in {providerLabel}).
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 text-xs text-gray-500">
-                  Bank step will be skipped — {providerLabel} will use the existing account on file.
+                  <div className="flex items-center gap-2">
+                    {preflight.hasBankInRollfi
+                      ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+                      : <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />}
+                    <span className={preflight.hasBankInRollfi ? "text-emerald-700" : "text-amber-700"}>
+                      Bank account: {preflight.hasBankInRollfi ? "on file" : "not found"}
+                    </span>
+                  </div>
                 </div>
               )}
-            </div>
+
+              {/* Preflight error (non-fatal) */}
+              {preflightError && (
+                <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {preflightError}
+                </div>
+              )}
+
+              {/* Address warning */}
+              {addressHasEmbedded && (
+                <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Check home address before continuing</p>
+                    <p className="text-xs text-amber-700 mt-0.5">
+                      The home address field (<span className="font-mono">{a1}</span>) may contain an
+                      embedded city name or zip code. Only the street address should go in that field —
+                      city, state, and zip each have their own fields.
+                    </p>
+                    <button onClick={onClose} className="mt-2 text-xs font-medium text-amber-800 underline underline-offset-2">
+                      Fix address first →
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Bank account section — check first, form only if needed */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-gray-800">Direct deposit account</p>
+                  {preflight && (
+                    <button
+                      onClick={() => setSkipBank(v => !v)}
+                      className="text-xs underline underline-offset-2 text-gray-400"
+                    >
+                      {skipBank ? (preflight.hasBankInRollfi ? "Replace bank account" : "Add bank account") : "Skip"}
+                    </button>
+                  )}
+                </div>
+
+                {/* Bank on file — default to skipping */}
+                {preflight?.hasBankInRollfi && skipBank ? (
+                  <div className="flex items-center gap-2 bg-emerald-50 rounded-xl p-3 border border-emerald-200 text-xs text-emerald-700">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    Bank account already on file in {providerLabel}. No action needed.
+                  </div>
+                ) : !skipBank ? (
+                  // Show form when: bank is missing, or user toggled to replace/add
+                  <div className="space-y-3 bg-gray-50 rounded-xl p-4 border border-gray-200">
+                    {preflight && !preflight.hasBankInRollfi && (
+                      <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                        No bank account found in {providerLabel} — direct deposit details required.
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Bank Name</label>
+                        <input
+                          value={bankName}
+                          onChange={e => setBankName(e.target.value)}
+                          placeholder="e.g. Chase, Bank of America"
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Routing Number</label>
+                        <input
+                          value={routingNumber}
+                          onChange={e => setRoutingNumber(e.target.value.replace(/\D/g, "").slice(0, 9))}
+                          placeholder="9 digits"
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+                        <input
+                          value={accountNumber}
+                          onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
+                          placeholder="Account number"
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Account Type</label>
+                        <select
+                          value={accountType}
+                          onChange={e => setAccountType(e.target.value)}
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 bg-white"
+                        >
+                          <option value="checking">Checking</option>
+                          <option value="savings">Savings</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  // skipBank=true but no bank on file (e.g. preflight failed) — show skip notice
+                  <div className="bg-gray-50 rounded-xl p-3 border border-gray-200 text-xs text-gray-500">
+                    Bank step will be skipped for this run.
+                  </div>
+                )}
+              </div>
+            </>
           )}
 
           {/* Running */}
@@ -667,16 +749,27 @@ function PayrollSetupModal({
             </div>
           )}
 
-          {/* Done */}
+          {/* Done / Error */}
           {(phase === "done" || phase === "error") && result && (
             <div className="space-y-4">
-              {/* alreadyComplete banner */}
+              {/* Already complete */}
               {result.alreadyComplete && (
                 <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                   <div>
                     <p className="text-sm font-medium text-emerald-800">Already complete</p>
                     <p className="text-xs text-emerald-700 mt-0.5">{result.message}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Needs bank account (KYC done but no bank found) */}
+              {result.needsBankAccount && (
+                <div className="flex gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Bank account required</p>
+                    <p className="text-xs text-amber-700 mt-0.5">{result.message}</p>
                   </div>
                 </div>
               )}
@@ -693,7 +786,7 @@ function PayrollSetupModal({
               )}
 
               {/* Success banner */}
-              {phase === "done" && !result.alreadyComplete && (
+              {phase === "done" && !result.alreadyComplete && !result.needsBankAccount && (
                 <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
                   <p className="text-sm font-medium text-emerald-800">Setup steps completed successfully.</p>
@@ -718,10 +811,10 @@ function PayrollSetupModal({
                           )}
                         </div>
                         <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full shrink-0 ${
-                          s.result === "success"     ? "bg-emerald-100 text-emerald-700" :
-                          s.result === "already_done"? "bg-gray-100 text-gray-500"       :
-                          s.result === "error"       ? "bg-red-100 text-red-600"         :
-                                                       "bg-gray-100 text-gray-400"
+                          s.result === "success"      ? "bg-emerald-100 text-emerald-700" :
+                          s.result === "already_done" ? "bg-gray-100 text-gray-500"       :
+                          s.result === "error"        ? "bg-red-100 text-red-600"         :
+                                                        "bg-gray-100 text-gray-400"
                         }`}>
                           {s.result === "already_done" ? "already done" : s.result}
                         </span>
@@ -745,12 +838,12 @@ function PayrollSetupModal({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-100">
-          {(phase === "form" || phase === "error") && (
+          {(phase === "ready" || phase === "error") && (
             <>
               <Button variant="outline" size="sm" onClick={onClose}>
                 {phase === "error" ? "Close" : "Cancel"}
               </Button>
-              {phase === "form" && (
+              {phase === "ready" && (
                 <Button
                   size="sm"
                   onClick={handleRun}

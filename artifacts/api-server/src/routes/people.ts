@@ -17,6 +17,7 @@ import fs from "fs";
 import axios from "axios";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
+import { extractRollfiError } from "../lib/rollfi-employee-sync.js";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -528,7 +529,8 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
     try {
       const user: Record<string, unknown> = { userId: rollfiUserId };
       if (changed.has("email"))      user.email         = emp.email;
-      if (changed.has("phone"))      user.phoneNumber   = emp.phone;
+      // Rollfi expects digits-only for phoneNumber (no dashes / spaces)
+      if (changed.has("phone"))      user.phoneNumber   = (emp.phone ?? "").replace(/\D/g, "");
       if (changed.has("startDate"))  user.dateOfJoin    = emp.startDate;
       if (changed.has("workerType")) user.workerType    = emp.workerType;
       if (changed.has("jobTitle"))   user.jobTitle      = emp.jobTitle;
@@ -537,7 +539,13 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
         { method: "updateUser", user },
         { headers: rollfiHeaders() },
       );
-      result.updateUser = { success: true, status: r.status as number };
+      // Rollfi returns 200 even on failure — check body for error message
+      const rollfiErr = extractRollfiError(r.data as Record<string, unknown>);
+      if (rollfiErr) {
+        result.updateUser = { success: false, error: rollfiErr };
+      } else {
+        result.updateUser = { success: true, status: r.status as number };
+      }
     } catch (e) {
       result.updateUser = { success: false, error: String(e) };
     }
@@ -556,17 +564,24 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
     } else {
       try {
         const kycInfo: Record<string, unknown> = { userId: rollfiUserId };
-        if (changed.has("homeAddress")) kycInfo.address1     = emp.homeAddress;
-        if (changed.has("homeCity"))    kycInfo.city         = emp.homeCity;
-        if (changed.has("homeState"))   kycInfo.state        = emp.homeState;
-        if (changed.has("homeZip"))     kycInfo.zipcode      = emp.homeZip;
-        if (changed.has("phone"))       kycInfo.phoneNumber  = emp.phone;
+        if (changed.has("homeAddress")) kycInfo.address1    = emp.homeAddress;
+        if (changed.has("homeCity"))    kycInfo.city        = emp.homeCity;
+        if (changed.has("homeState"))   kycInfo.state       = emp.homeState;
+        if (changed.has("homeZip"))     kycInfo.zipcode     = emp.homeZip;
+        // Rollfi expects digits-only for phoneNumber (no dashes / spaces)
+        if (changed.has("phone"))       kycInfo.phoneNumber = (emp.phone ?? "").replace(/\D/g, "");
         const r = await axios.put(
           `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
           { method: "updateKycInformation", kycInformation: kycInfo },
           { headers: rollfiHeaders() },
         );
-        result.updateKycInfo = { success: true, status: r.status as number };
+        // Rollfi returns 200 even on failure — check body for error message
+        const rollfiErr = extractRollfiError(r.data as Record<string, unknown>);
+        if (rollfiErr) {
+          result.updateKycInfo = { success: false, error: rollfiErr };
+        } else {
+          result.updateKycInfo = { success: true, status: r.status as number };
+        }
       } catch (e) {
         result.updateKycInfo = { success: false, error: String(e) };
       }

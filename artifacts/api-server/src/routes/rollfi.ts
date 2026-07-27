@@ -2741,11 +2741,19 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
 
   const now = new Date().toISOString();
   const isProduction = getRollfiConfig().env === "production";
-  type RollfiUser = { userId: string; status?: { userStatus?: string }; kycStatus?: string };
+  type RollfiUser = {
+    userId: string;
+    status?: { userStatus?: string };
+    kycStatus?: string;
+    isTermsAccepted?: boolean;
+    bankAccounts?: Array<{ status?: string }>;
+  };
 
   // ── Phase 1: read-only live detection ────────────────────────────────────
   let liveKycStatus: string | null = null;
   let liveUserStatus: string | null = null;
+  let liveIsTermsAccepted = false;
+  let liveHasBankInRollfi = false;
   try {
     const r = await axios.post(
       `${getBaseUrl()}/reports#getUsers`,
@@ -2757,9 +2765,11 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
     if (!found) {
       res.status(404).json({ error: "Employee not found in payroll provider — cannot determine repair steps" }); return;
     }
-    liveKycStatus  = found.kycStatus           ?? null;
-    liveUserStatus = found.status?.userStatus  ?? null;
-    req.log.info({ employeeId, liveKycStatus, liveUserStatus }, "repair-payroll-setup: live status fetched");
+    liveKycStatus        = found.kycStatus          ?? null;
+    liveUserStatus       = found.status?.userStatus ?? null;
+    liveIsTermsAccepted  = found.isTermsAccepted    ?? false;
+    liveHasBankInRollfi  = (found.bankAccounts?.length ?? 0) > 0;
+    req.log.info({ employeeId, liveKycStatus, liveUserStatus, liveIsTermsAccepted, liveHasBankInRollfi }, "repair-payroll-setup: live status fetched");
   } catch (err) {
     req.log.error({ err }, "repair-payroll-setup: getUsers failed");
     res.status(502).json({ error: "Could not reach payroll provider to check current status. Please try again." }); return;
@@ -2780,13 +2790,25 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
   const needsKycSteps = !kycAlreadyInitiated;
   const hasBankCreds  = !!(accountNumber && routingNumber);
 
-  if (!needsKycSteps && !hasBankCreds) {
+  // Truly complete: KYC initiated AND bank already exists in Rollfi AND no new creds to process
+  if (!needsKycSteps && liveHasBankInRollfi && !hasBankCreds) {
     req.log.info({ employeeId, liveKycStatus }, "repair-payroll-setup: already complete — no steps needed");
     res.json({
       alreadyComplete: true,
       message: "Payroll setup is already complete for this employee. Status updated from live provider.",
-      liveKycStatus,
-      liveUserStatus,
+      liveKycStatus, liveUserStatus, isTermsAccepted: liveIsTermsAccepted, hasBankInRollfi: liveHasBankInRollfi,
+      stepsRun: [],
+    });
+    return;
+  }
+
+  // KYC done but no bank found in Rollfi and no creds provided — tell the modal to ask for bank details
+  if (!needsKycSteps && !liveHasBankInRollfi && !hasBankCreds) {
+    req.log.info({ employeeId, liveKycStatus }, "repair-payroll-setup: KYC complete but bank missing and no creds provided");
+    res.json({
+      needsBankAccount: true,
+      message: "Identity verification is complete, but no bank account was found. Please provide direct deposit details.",
+      liveKycStatus, liveUserStatus, isTermsAccepted: liveIsTermsAccepted, hasBankInRollfi: liveHasBankInRollfi,
       stepsRun: [],
     });
     return;
@@ -2814,8 +2836,37 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
   type StepResult = { step: string; result: "success" | "already_done" | "skipped" | "error"; detail?: string };
   const stepsRun: StepResult[] = [];
 
-  // ── Step A: addKycInformation ─────────────────────────────────────────────
-  // "already exists" = Rollfi already has the KYC data (safe for Alexandra). Treat as success.
+  // ── Step A: acceptTermsAndCondition ──────────────────────────────────────
+  // Matches wizard order (acceptTerms → addKyc → initiateKyc).
+  // Must be called before initiateUserKyc. Idempotent — safe when already accepted.
+  // Skip the API call (record as already_done) when getUsers confirmed it's already accepted.
+  if (needsKycSteps) {
+    if (liveIsTermsAccepted) {
+      stepsRun.push({ step: "acceptTermsAndCondition", result: "already_done" });
+    } else {
+      try {
+        const r = await axios.put(`${getBaseUrl()}/userOnboarding#acceptTermsAndCondition`, {
+          method: "acceptTermsAndCondition", userId: emp.rollfiUserId,
+        }, { headers: rollfiHeaders() });
+        req.log.info({ rollfiResult: safeRollfiLog(r.data), employeeId }, "repair-payroll-setup: acceptTermsAndCondition response");
+        const errMsg = extractRollfiError(r.data as Record<string, unknown>);
+        const alreadyAccepted = errMsg?.toLowerCase().includes("already") ?? false;
+        stepsRun.push({
+          step: "acceptTermsAndCondition",
+          result: alreadyAccepted ? "already_done" : (errMsg ? "error" : "success"),
+          detail: (errMsg && !alreadyAccepted) ? errMsg : undefined,
+        });
+        // Not fatal even on error — Rollfi may already have accepted terms for this user
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        req.log.warn({ err, employeeId }, "repair-payroll-setup: acceptTermsAndCondition failed (soft — continuing)");
+        stepsRun.push({ step: "acceptTermsAndCondition", result: "already_done", detail: msg });
+      }
+    }
+  }
+
+  // ── Step B: addKycInformation ─────────────────────────────────────────────
+  // "already exists" = Rollfi already has the KYC data (e.g. Alexandra). Treat as success.
   let kycAdded = kycAlreadyInitiated;
   if (needsKycSteps) {
     const ssnDigits = (emp.ssn ?? "").replace(/\D/g, "");
@@ -2847,7 +2898,7 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
     }
   }
 
-  // ── Step B: initiateUserKyc ───────────────────────────────────────────────
+  // ── Step C: initiateUserKyc ───────────────────────────────────────────────
   if (needsKycSteps) {
     if (!kycAdded) {
       stepsRun.push({ step: "initiateUserKyc", result: "skipped", detail: "addKycInformation did not succeed" });
@@ -2935,7 +2986,71 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
   } catch { /* non-fatal — steps already ran */ }
 
   req.log.info({ employeeId, stepsRun, finalKycStatus, finalUserStatus }, "repair-payroll-setup: complete");
-  res.json({ success: true, stepsRun, liveKycStatus: finalKycStatus, liveUserStatus: finalUserStatus });
+  res.json({
+    success: true, stepsRun,
+    liveKycStatus: finalKycStatus, liveUserStatus: finalUserStatus,
+    isTermsAccepted: liveIsTermsAccepted, hasBankInRollfi: liveHasBankInRollfi,
+  });
+});
+
+// ── Preflight status for repair modal ────────────────────────────────────────
+// Called by the modal on open to know what steps are needed before the user clicks "Run Setup".
+// Read-only — no Rollfi writes.
+router.get("/rollfi/repair/preflight-status", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || !["owner", "super_admin"].includes(caller.role)) {
+    res.status(403).json({ error: "Owners and super admins only" }); return;
+  }
+  const employeeId = String(req.query.employeeId ?? "");
+  if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
+
+  const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+  if (!emp.rollfiUserId) { res.status(400).json({ error: "Employee has no Rollfi account" }); return; }
+
+  if (caller.role !== "super_admin" && caller.companyId !== emp.companyId) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+
+  const [companyRow] = await db
+    .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+    .from(companiesTable).where(eq(companiesTable.id, emp.companyId));
+  const rollfiCompanyId =
+    companyRow?.rollfiCompanyId ?? store.getRollfiCompany(emp.companyId)?.rollfiCompanyId ?? null;
+  if (!rollfiCompanyId) {
+    res.status(400).json({ error: "Company is not registered with payroll provider" }); return;
+  }
+
+  try {
+    type PreflightUser = {
+      userId: string;
+      status?: { userStatus?: string };
+      kycStatus?: string;
+      isTermsAccepted?: boolean;
+      bankAccounts?: Array<{ status?: string }>;
+    };
+    const r = await axios.post(
+      `${getBaseUrl()}/reports#getUsers`,
+      { method: "getUsers", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() }
+    );
+    const users: PreflightUser[] = ((r.data as { users?: PreflightUser[] }).users ?? []);
+    const found = users.find(u => u.userId === emp.rollfiUserId);
+    if (!found) {
+      res.status(404).json({ error: "Employee not found in payroll provider" }); return;
+    }
+    const KYC_POST_INITIATE = new Set(["not_started", "pending", "passed", "failed", "approved", "verified"]);
+    const liveKycStatus       = found.kycStatus          ?? null;
+    const liveUserStatus      = found.status?.userStatus ?? null;
+    const isTermsAccepted     = found.isTermsAccepted    ?? false;
+    const hasBankInRollfi     = (found.bankAccounts?.length ?? 0) > 0;
+    const kycAlreadyInitiated = !!liveKycStatus && KYC_POST_INITIATE.has(liveKycStatus);
+    res.json({ liveKycStatus, liveUserStatus, isTermsAccepted, kycAlreadyInitiated, hasBankInRollfi });
+  } catch (err) {
+    req.log.error({ err }, "preflight-status: getUsers failed");
+    res.status(502).json({ error: "Could not reach payroll provider. Try again." });
+  }
 });
 
 // ── Employee Rollfi activation status ────────────────────────
