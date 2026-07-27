@@ -116,6 +116,7 @@ export default function Timesheets() {
   const [editNotes,     setEditNotes]     = useState<Record<string, string>>({});
   const [tokenLoading,  setTokenLoading]  = useState(false);
   const [tokenError,    setTokenError]    = useState("");
+  const [syncWarning,   setSyncWarning]   = useState<string | null>(null);
   const [employeeNames, setEmployeeNames] = useState<Record<string, string>>({});
 
   const handleEvent = useCallback((event: EasyTeamEvent) => {
@@ -198,15 +199,33 @@ export default function Timesheets() {
   // ── handlePullHours ───────────────────────────────────────────
   const handlePullHours = useCallback(async () => {
     if (!user?.companyId) return;
-    setPulling(true); setApprovalDone(false); setApprovalDataSource(null);
+    setPulling(true); setApprovalDone(false); setApprovalDataSource(null); setSyncWarning(null);
     try {
-      await fetch("/api/easyteam/hours/sync", {
+      const r = await fetch("/api/easyteam/hours/sync", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ companyId: user.companyId, from: fromDate, to: toDate }),
       });
+      const d = await r.json() as {
+        success?: boolean;
+        skippedUnknownEmployees?: number;
+        skippedUnknownMinutes?: number;
+        skippedForeignShifts?: number;
+      };
       await fetchHours();
       setLastSyncedAt(new Date());
+      // Surface any partial-sync exclusions as a warning toast
+      const parts: string[] = [];
+      if (d.skippedUnknownEmployees) {
+        const hrs = Math.round(((d.skippedUnknownMinutes ?? 0) / 60) * 10) / 10;
+        parts.push(`${d.skippedUnknownEmployees} employee(s) could not be matched, ${hrs}h not imported`);
+      }
+      if (d.skippedForeignShifts) {
+        parts.push(`${d.skippedForeignShifts} shift(s) from another location were excluded`);
+      }
+      if (parts.length > 0) {
+        setSyncWarning(`Sync complete — ${parts.join("; ")}. Contact support if this is unexpected.`);
+      }
     } finally { setPulling(false); }
   }, [user?.companyId, fromDate, toDate, fetchHours]);
 
@@ -434,6 +453,13 @@ export default function Timesheets() {
           <div id={CONTAINER_ID} className={`w-full ${etLaunchedRef.current ? "border-b border-white/10" : ""}`} />
 
           <div className="px-6 py-5">
+            {syncWarning && (
+              <div className="mb-4 flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
+                <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-amber-300 text-sm flex-1">{syncWarning}</p>
+                <button onClick={() => setSyncWarning(null)} className="text-white/30 hover:text-white/50 text-xs shrink-0">✕</button>
+              </div>
+            )}
             {approvalDone && (
               <div className="mb-5 flex items-start gap-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-4 py-3">
                 <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5" />

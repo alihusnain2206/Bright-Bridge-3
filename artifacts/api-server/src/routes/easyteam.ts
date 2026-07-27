@@ -479,6 +479,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
   let restSynced = 0;
   let restApiResponded = false;
   let totalSkippedForeign = 0;
+  const skippedUnknownUuids: Array<{ etEmpId: string; minutesLost: number }> = [];
   for (const co of companiesToSync) {
     const locId = co.locationId;
     const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
@@ -559,9 +560,10 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
       for (const [etEmpId, totalMinutes] of minutesByEmp) {
         // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
         const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
-        // Skip entries whose UUID we can't map — they belong to employees outside our system
+        // Collect entries whose UUID we can't map — accumulate for response, then skip
         if (internalEmpId === etEmpId) {
-          req.log.warn({ etEmpId }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
+          req.log.warn({ etEmpId, minutesLost: totalMinutes }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
+          skippedUnknownUuids.push({ etEmpId, minutesLost: totalMinutes });
           continue;
         }
         const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
@@ -583,9 +585,22 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
   }
 
   if (restApiResponded) {
-    req.log.info({ periodKey, companyId, restSynced, totalSkippedForeign }, "Sync: used EasyTeam REST API data");
+    const skippedUnknownMinutes = skippedUnknownUuids.reduce((s, e) => s + e.minutesLost, 0);
+    req.log.info(
+      { periodKey, companyId, restSynced, totalSkippedForeign, skippedUnknownEmployees: skippedUnknownUuids.length, skippedUnknownMinutes },
+      "Sync: used EasyTeam REST API data",
+    );
     if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${restSynced} employee${restSynced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
-    res.json({ success: true, source: "easyteam", periodKey, synced: restSynced, skippedForeignShifts: totalSkippedForeign });
+    res.json({
+      success: true,
+      source: "easyteam",
+      periodKey,
+      synced: restSynced,
+      skippedForeignShifts: totalSkippedForeign,
+      skippedUnknownEmployees: skippedUnknownUuids.length,
+      skippedUnknownMinutes,
+      skippedUnknownEtIds: skippedUnknownUuids.map((e) => e.etEmpId),
+    });
     return;
   }
 
