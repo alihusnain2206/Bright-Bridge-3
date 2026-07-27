@@ -100,9 +100,7 @@ export function WorkforceShell({
       {/* Sub-nav */}
       <div className="flex items-center gap-5 mt-4 text-sm">
         <NavLink href="/workforce"             label="Overview"       active={activeTab === "overview"} />
-        <SoonPill label="My Team" />
         <NavLink href="/workforce/employees"   label="All Employees"  active={activeTab === "employees"} />
-        <SoonPill label="Locations" />
         <NavLink href="/workforce/departments" label="Departments"    active={activeTab === "departments"} />
       </div>
     </div>
