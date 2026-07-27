@@ -746,7 +746,10 @@ export default function ManagerPayrollSubmit() {
                     const selPrev = selectedImportEmp.previewEmp;
                     const grossTotal   = Number(item.grossTotal ?? 0);
                     const netPay       = Number(item.netTotal ?? 0);
-                    const addComp      = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                    const addCompArr    = (item.additionalCompensations ?? item.additionalCompensation ?? []) as Array<Record<string, unknown>>;
+                    const addComp      = Array.isArray(addCompArr)
+                      ? Math.round(addCompArr.reduce((s, c) => s + Number(c.amount ?? c.value ?? 0), 0) * 100) / 100
+                      : Number(item.additionalCompensationTotal ?? 0);
                     // basePay = base wages only; grossTotal already includes additional comp
                     const basePay      = Number(item.baseTotal ?? item.base ?? (grossTotal - addComp));
                     const hours        = selPrev?.netPayableHours ?? selPrev?.hoursWorked ?? 0;
@@ -892,7 +895,10 @@ export default function ManagerPayrollSubmit() {
                                   const grossTotal  = Number(item.grossTotal ?? 0);
                                   const netPay      = Number(item.netTotal ?? 0);
                                   const erTax       = Number(item.employerTaxTotal ?? item.employerTax ?? 0);
-                                  const addComp     = Number(item.additionalCompensationTotal ?? item.additionalComp ?? 0);
+                                  const addCompArr2  = (item.additionalCompensations ?? item.additionalCompensation ?? []) as Array<Record<string, unknown>>;
+                                  const addComp     = Array.isArray(addCompArr2)
+                                    ? Math.round(addCompArr2.reduce((s, c) => s + Number(c.amount ?? c.value ?? 0), 0) * 100) / 100
+                                    : Number(item.additionalCompensationTotal ?? 0);
                                   // basePay = base wages only; Rollfi's grossTotal already includes addComp
                                   const basePay     = Number(item.baseTotal ?? item.base ?? (grossTotal - addComp));
                                   const empDed      = Number(item.employeeTaxTotal ?? item.deductions ?? 0);
