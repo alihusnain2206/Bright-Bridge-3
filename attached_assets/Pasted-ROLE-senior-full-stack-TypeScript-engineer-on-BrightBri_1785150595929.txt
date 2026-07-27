@@ -1,0 +1,83 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express, brand navy #1B3A6B / teal #0EA5C9, success
+#10B981, warning #F59E0B, error #EF4444).
+
+GOAL: build two sub-pages of the Workforce module that currently show
+"Soon" pills: **All Employees** and **Departments**. Leave "My Team" and
+"Locations" as Soon pills — those are deliberately out of scope.
+
+CONTEXT: the Workforce Overview page already works and reads from:
+  GET /api/timesheets/shifts?companyId=&from=&to=  → shifts + flags +
+      summary (totalShifts, totalPayableHours, activeNow,
+      missedPunchCount, extendedBreakCount)
+  GET /api/timesheets/trend?companyId=&from=&to=   → days[] + totals
+  existing approvals data, and employees/departments from our database.
+These two new pages are DRILL-DOWN VIEWS of the same data — not new
+features. Reuse the existing endpoints; add new ones only if genuinely
+needed, and say why.
+
+=== SHARED FOUNDATION (do this first) ===
+Both pages are the same table with different grouping. Build ONE shared
+table component and configure it, rather than two bespoke tables. Both
+pages share the Workforce page's existing date-range picker and company
+scope — reuse them, don't duplicate.
+
+=== PAGE 1: ALL EMPLOYEES (route /workforce/employees) ===
+One row per employee for the selected period. Columns:
+  Employee (name + job title) | Department | Hours Worked | Overtime |
+  Punch Exceptions | Approval Status | Labor Cost
+- Hours = payable hours from shifts in the period
+- Overtime = hours above 40 per ISO week (same rule the Overview KPI uses)
+- Punch Exceptions = count of missedPunch / extendedBreak / longShift
+  flags for that employee, with a tooltip breaking them down
+- Approval Status = Approved / Pending / Manager-edited (from our
+  approvals data)
+- Labor Cost = for HOURLY employees, hours × rate. For SALARIED
+  employees, do NOT compute from hours — show "Salaried" or their
+  period amount if available. ⚠️ Use the shared formatEmployeeRate /
+  pay-type logic already in the codebase; salaried staff must never
+  display an hourly rate or a $0 that looks like they aren't paid.
+- Sortable columns, search by name, CSV export
+- Clicking a row opens that employee's profile (/people/:id)
+- Employees with zero hours still appear (with 0), but salaried staff
+  must not be flagged as a problem for having no hours
+
+=== PAGE 2: DEPARTMENTS (route /workforce/departments) ===
+One row per department for the selected period. Columns:
+  Department | Headcount | Total Hours | Overtime | Labor Cost |
+  Avg Hours per Employee
+- Expandable rows: clicking a department reveals its employees using the
+  SAME shared table component from Page 1, filtered to that department
+- Employees with no department assigned appear under "Unassigned" —
+  do not hide them
+- Sortable, CSV export
+
+=== REQUIREMENTS ===
+- Sub-nav: Overview | My Team (Soon) | All Employees | Locations (Soon)
+  | Departments — the two built pages become real links, the other two
+  stay as Soon pills
+- Owner + super_admin only, consistent with the Overview page
+- Company-scoped fetches; ONE fetch cycle keyed on (companyId,
+  dateRange) — no duplicate calls
+- Loading skeletons, empty states ("No employees in this period", "No
+  departments configured"), error state with retry
+- Must look right for a 3-person daycare, not just a large roster
+- No fake data; if something can't be computed, say so rather than
+  showing a misleading zero
+
+TESTING CHECKLIST:
+- Sunshine: All Employees lists every employee; John Smith shows 1.9833h
+  and his correct cost; salaried staff (Diane, Gerald) show "Salaried",
+  never $0.00/hr or an Excluded-style flag
+- Departments groups correctly; employees without a department appear
+  under Unassigned; expanding a department shows its employees
+- Changing the date range updates both pages in one fetch cycle (verify
+  in the network tab)
+- A company with no departments shows a sensible empty state
+- CSV export produces the visible columns
+- Overview page unchanged (regression check)
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, the shared table component's props/signature
+and where it's used, the data source for each column, and each checklist
+result. REMINDER: Publish required for bright-bridge-3.replit.app.

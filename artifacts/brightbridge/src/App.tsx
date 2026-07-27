@@ -45,6 +45,8 @@ import EmployeeContactsPage from "@/pages/employee-contacts";
 import EmployeeDocumentsPage from "@/pages/employee-documents";
 import EmergencyContactsListPage from "@/pages/emergency-contacts-list";
 import WorkforcePage from "@/pages/workforce";
+import WorkforceEmployeesPage from "@/pages/workforce-employees";
+import WorkforceDepartmentsPage from "@/pages/workforce-departments";
 
 const queryClient = new QueryClient();
 
@@ -197,6 +199,12 @@ function Router() {
               <ProtectedRoute component={Clients} roles={["super_admin"]} />
             </Route>
 
+            <Route path="/workforce/employees">
+              <ProtectedRoute component={WorkforceEmployeesPage} roles={["super_admin", "owner"]} />
+            </Route>
+            <Route path="/workforce/departments">
+              <ProtectedRoute component={WorkforceDepartmentsPage} roles={["super_admin", "owner"]} />
+            </Route>
             <Route path="/workforce">
               <ProtectedRoute component={WorkforcePage} roles={["super_admin", "owner"]} />
             </Route>

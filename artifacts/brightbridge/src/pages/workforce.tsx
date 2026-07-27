@@ -17,6 +17,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { WorkforceShell } from "@/components/WorkforceShell";
 
 // ── Brand constants ──────────────────────────────────────────────────────────
 const NAVY   = "#1B3A6B";
@@ -436,58 +437,19 @@ export default function WorkforcePage() {
     <div className="min-h-screen bg-gray-50">
 
       {/* ── Header ── */}
-      <div className="border-b border-gray-100 bg-white px-6 py-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Workforce Management &amp; Attendance</h1>
-            <p className="text-sm text-gray-400 mt-0.5">{fmtDateLabel(fromDate, toDate)}</p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Company selector — super_admin only */}
-            {isSuperAdmin && clients.length > 0 && (
-              <Select value={companyId} onValueChange={v => setCompanyId(v)}>
-                <SelectTrigger className="h-8 w-44 text-xs border-gray-200 bg-white text-gray-700">
-                  <SelectValue placeholder="Select company" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clients.map(c => (
-                    <SelectItem key={c.id} value={c.id} className="text-xs">{c.name ?? c.id}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-            {/* Date range */}
-            <input
-              type="date" value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
-              className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
-            />
-            <span className="text-gray-400 text-xs">–</span>
-            <input
-              type="date" value={toDate}
-              onChange={e => setToDate(e.target.value)}
-              className="h-8 rounded border border-gray-200 bg-white px-2 text-xs text-gray-700"
-            />
-            <Button
-              size="sm" variant="ghost"
-              onClick={() => void fetchAll()}
-              disabled={loading}
-              className="h-8 text-xs text-gray-500 border border-gray-200 hover:bg-gray-50"
-            >
-              {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-            </Button>
-          </div>
-        </div>
-
-        {/* Sub-nav */}
-        <div className="flex items-center gap-5 mt-4 text-sm">
-          <span className="text-[#0EA5C9] border-b-2 border-[#0EA5C9] pb-1 font-medium cursor-default">Overview</span>
-          <SoonPill label="My Team" />
-          <SoonPill label="All Employees" />
-          <SoonPill label="Locations" />
-          <SoonPill label="Departments" />
-        </div>
-      </div>
+      <WorkforceShell
+        activeTab="overview"
+        companyId={companyId}
+        setCompanyId={setCompanyId}
+        isSuperAdmin={isSuperAdmin}
+        clients={clients}
+        fromDate={fromDate}
+        setFromDate={setFromDate}
+        toDate={toDate}
+        setToDate={setToDate}
+        loading={loading}
+        onRefresh={() => void fetchAll()}
+      />
 
       <div className="px-6 py-6 space-y-6">
 
