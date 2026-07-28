@@ -676,54 +676,76 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
   // Boolean fields
   const boolFields = ["overtimeEligible","w4MultipleJobs","taxExempt"] as const;
 
-  const dbUpdates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-  const changed = new Set<string>();
-
-  for (const k of stringFields) {
-    if (k in req.body) { dbUpdates[k] = req.body[k] as string | null; changed.add(k); }
-  }
-  for (const k of intFields) {
-    if (k in req.body) {
-      const v = req.body[k] as unknown;
-      dbUpdates[k] = (v === null || v === "") ? null : Number(v);
-      changed.add(k);
-    }
-  }
-  for (const k of boolFields) {
-    if (k in req.body) {
-      const v = req.body[k] as unknown;
-      dbUpdates[k] = v === null ? null : Boolean(v);
-      changed.add(k);
-    }
-  }
-
-  if (changed.size === 0) {
-    res.status(400).json({ error: "No updatable fields provided" }); return;
-  }
-
-  // ── Wage sanity guard (edit) ──────────────────────────────────────────────────
-  // hourlyWage and annualSalary are stored in CENTS. Guard catches cents-as-dollars.
-  // Allows 0 (clearing a field) but rejects any positive value below the floor.
-  const pendingHourly = dbUpdates.hourlyWage as number | null | undefined;
-  const pendingSalary = dbUpdates.annualSalary as number | null | undefined;
-  if (pendingHourly !== undefined && pendingHourly !== null && pendingHourly > 0 && pendingHourly < 100) {
-    res.status(400).json({
-      error: `hourlyWage is stored in cents and must be ≥ 100 (=$1.00/hr) or 0/null. ` +
-             `Received: ${pendingHourly}. Example: 1850 for $18.50/hr.`,
-    });
-    return;
-  }
-  if (pendingSalary !== undefined && pendingSalary !== null && pendingSalary > 0 && pendingSalary < 100_000) {
-    res.status(400).json({
-      error: `annualSalary is stored in cents and must be ≥ 100,000 (=$1,000/yr) or 0/null. ` +
-             `Received: ${pendingSalary}. Example: 6000000 for $60,000/yr.`,
-    });
-    return;
-  }
-
   try {
+    // ── Fetch current DB row FIRST so we can diff incoming vs existing ────────────
+    // changed-set is built by VALUE COMPARISON, not by field presence.
+    // This ensures that submitting the same value for a field — even a wage field —
+    // never marks that field as changed, and therefore never triggers provider calls
+    // for fields that haven't actually moved.
     const [existing] = await db.select().from(employees).where(eq(employees.id, id));
     if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }
+
+    const dbUpdates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    const changed = new Set<string>();
+
+    // Normalise helpers — bring incoming and DB values to a comparable form.
+    const ns = (v: unknown): string | null => (v == null || v === "") ? null : String(v);
+    const ni = (v: unknown): number | null => (v == null || v === "") ? null : Number(v);
+    const nb = (v: unknown): boolean | null => v == null ? null : Boolean(v);
+
+    for (const k of stringFields) {
+      if (k in req.body) {
+        const incoming = ns(req.body[k]);
+        if (incoming !== ns(existing[k as keyof typeof existing])) {
+          dbUpdates[k] = incoming;
+          changed.add(k);
+        }
+      }
+    }
+    for (const k of intFields) {
+      if (k in req.body) {
+        const incoming = ni(req.body[k]);
+        if (incoming !== ni(existing[k as keyof typeof existing])) {
+          dbUpdates[k] = incoming;
+          changed.add(k);
+        }
+      }
+    }
+    for (const k of boolFields) {
+      if (k in req.body) {
+        const incoming = nb(req.body[k]);
+        if (incoming !== nb(existing[k as keyof typeof existing])) {
+          dbUpdates[k] = incoming;
+          changed.add(k);
+        }
+      }
+    }
+
+    // No genuine changes — return the current record without touching DB or providers.
+    if (changed.size === 0) {
+      res.json({ employee: existing, noChange: true });
+      return;
+    }
+
+    // ── Wage sanity guard (edit) ──────────────────────────────────────────────────
+    // hourlyWage and annualSalary are stored in CENTS. Guard catches cents-as-dollars.
+    // Allows 0 (clearing a field) but rejects any positive value below the floor.
+    const pendingHourly = dbUpdates.hourlyWage as number | null | undefined;
+    const pendingSalary = dbUpdates.annualSalary as number | null | undefined;
+    if (pendingHourly !== undefined && pendingHourly !== null && pendingHourly > 0 && pendingHourly < 100) {
+      res.status(400).json({
+        error: `hourlyWage is stored in cents and must be ≥ 100 (=$1.00/hr) or 0/null. ` +
+               `Received: ${pendingHourly}. Example: 1850 for $18.50/hr.`,
+      });
+      return;
+    }
+    if (pendingSalary !== undefined && pendingSalary !== null && pendingSalary > 0 && pendingSalary < 100_000) {
+      res.status(400).json({
+        error: `annualSalary is stored in cents and must be ≥ 100,000 (=$1,000/yr) or 0/null. ` +
+               `Received: ${pendingSalary}. Example: 6000000 for $60,000/yr.`,
+      });
+      return;
+    }
 
     // ── Pay-type-switch guard ─────────────────────────────────────────────────────
     // Switching to salary without also providing annualSalary leaves a blank Pay Rate.
