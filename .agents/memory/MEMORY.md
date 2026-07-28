@@ -15,3 +15,4 @@
 - [People Hub API shapes](people-hub-api-shapes.md) — /api/employees returns `{ employees: [] }` (wrapped); /api/companies returns `{ companies: [] }` (wrapped); /api/documents uses `?employeeId=` not nested `/employees/:id/documents`
 - [EasyTeam location timezone fix](easyteam-location-country-state.md) — PATCH country+state not timezone IANA string; `{ timezone }` returns 500
 - [Repair Payroll Setup endpoint](repair-payroll-setup.md) — live-detect + run missing KYC/bank steps; alreadyComplete no-op for Joanne; JSX modal must live INSIDE parent div not as sibling
+- [Company Settings dashboard endpoint](company-settings-dashboard.md) — companySettingsRouter mounted WITHOUT prefix; GET /dashboard is at /api/dashboard not /api/company-settings/dashboard

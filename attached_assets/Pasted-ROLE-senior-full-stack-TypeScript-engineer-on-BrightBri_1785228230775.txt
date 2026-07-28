@@ -1,0 +1,120 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express, brand navy #1B3A6B / teal #0EA5C9).
+
+Build the Company Settings landing page. I've attached a design mockup —
+follow its LAYOUT AND VISUAL STYLE (card grid, progress stepper, right-
+hand panel, spacing, typography), but build ONLY the sections listed
+below. Several things in the mockup do not exist in our product and must
+NOT be built.
+
+════════════════════════════════════════════════════════════════
+FIX FIRST
+════════════════════════════════════════════════════════════════
+/company-settings currently returns 404. It becomes this page.
+
+════════════════════════════════════════════════════════════════
+1. SETTINGS CATEGORIES GRID (see mockup's "Settings Categories")
+════════════════════════════════════════════════════════════════
+Card grid, same visual treatment as the mockup — icon, title,
+description, footer status.
+
+LIVE cards, each clickable and routing to its own page:
+  - Account Settings        → /account-settings
+  - Company Information     → /settings (Company Information tab)
+  - State Tax Information   → /settings/state-tax
+
+COMING SOON cards — visible, greyed, NOT clickable, "Soon" pill:
+  Payroll Settings · Time & Attendance · Compliance Settings ·
+  Documents · Notifications · Security
+
+⚠️ The mockup shows "X of Y configured" on each card. Only show that
+where it's computed from real data. If we can't compute it, omit the
+footer entirely — do not invent numbers.
+
+════════════════════════════════════════════════════════════════
+2. CONFIGURATION PROGRESS (see mockup's numbered stepper + ring)
+════════════════════════════════════════════════════════════════
+Same visual treatment: numbered steps with completed/current states, a
+percentage ring, and a "what's outstanding" line beneath.
+
+EIGHT steps toward first payroll, EVERY one computed from real data:
+  1. Company registered        → rollfiCompanyId exists
+  2. Business verified         → kybStatus === "approved"
+  3. Funding account           → bankAccountAdded AND verified status
+  4. Pay schedule              → payScheduleAdded
+  5. State tax registered      → an ACTIVE registration exists for every
+                                 state employees work in (reuse the
+                                 existing gaps endpoint; exclude
+                                 no-income-tax and federal-W4 states)
+  6. Employees added           → count > 0
+  7. Employees payroll-ready   → all active employees have
+                                 rollfiAccountStatus "Active" and KYC
+                                 passed
+  8. Ready to run payroll      → all of the above
+
+Each incomplete step must state WHAT is missing and link to where it's
+resolved. Not just "incomplete".
+
+For BrightbridgeAssist this should currently show roughly 4 of 8 —
+funding shows "notfound", NY registration failed, NJ unregistered, and
+no employee is Active. If it shows 8 of 8, the logic is wrong.
+
+════════════════════════════════════════════════════════════════
+3. ATTENTION REQUIRED (replaces the mockup's "Change Center" panel)
+════════════════════════════════════════════════════════════════
+Same right-hand panel position and list styling as the mockup, but the
+content is warnings, not an audit log.
+
+Combine two sources:
+  a. The payroll provider's own company task list (we already call
+     getCompanyTask). It currently returns "Missing State Tax
+     Registration Details for NJ" and "Form TR-2000 signature request" —
+     this is authoritative and must be surfaced.
+  b. Our own checks: employees who cannot be paid, states with no
+     registration, compliance items expiring within 30 days.
+
+Each item links to where it's resolved. Empty state: "Nothing needs your
+attention."
+
+⚠️ Provider task text may contain the provider's name — strip or
+rephrase it. Owners must never see it.
+
+════════════════════════════════════════════════════════════════
+DO NOT BUILD (present in the mockup, deliberately excluded)
+════════════════════════════════════════════════════════════════
+  ✗ AI Company Copilot — we do not ship fake AI
+  ✗ Organization Readiness percentages — Benefits, Documents, Security,
+    Accounting and Automation do not exist; six invented percentages
+    would be dishonest
+  ✗ Smart Settings Search — global search is separate work
+  ✗ Client Accounting Software / QuickBooks — no such integration
+  ✗ Configuration Shortcuts row — the linked features don't exist yet
+  ✗ The eleven top tabs — our nav structure is Company Settings →
+    Account / Organization
+
+Take the mockup's visual language, not its feature list.
+
+════════════════════════════════════════════════════════════════
+REQUIREMENTS
+════════════════════════════════════════════════════════════════
+- Owner + super_admin only; company-scoped server-side
+- Reuse existing endpoints (state registration gaps, compliance,
+  employee readiness). Add new ones only where needed and say why.
+- One fetch cycle; no duplicate calls
+- Loading skeletons, error states with retry
+- Must look right for a 3-person daycare, not just a large roster
+- Never show the payroll provider's name in owner-facing copy
+
+TESTING:
+- /company-settings loads (no 404) and the parent nav item works
+- Configuration Progress shows the genuine count for BrightbridgeAssist,
+  with each incomplete step naming what's missing
+- Attention Required shows the NJ registration gap and the TR-2000 task
+- Coming Soon cards are visibly inert
+- Another company's owner sees only their own data
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, the data source for every computed value
+(and confirmation that nothing is hardcoded), new endpoints and their
+scoping, and each test result.
+REMINDER: Publish required.

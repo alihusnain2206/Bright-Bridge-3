@@ -49,6 +49,7 @@ import WorkforceEmployeesPage from "@/pages/workforce-employees";
 import WorkforceDepartmentsPage from "@/pages/workforce-departments";
 import SettingsHubPage from "@/pages/settings-hub";
 import AccountSettingsPage from "@/pages/account-settings";
+import CompanySettingsPage from "@/pages/company-settings";
 
 const queryClient = new QueryClient();
 
@@ -226,6 +227,9 @@ function Router() {
               <ProtectedRoute component={Config} roles={["super_admin", "owner"]} />
             </Route>
             {/* Company Settings */}
+            <Route path="/company-settings">
+              <ProtectedRoute component={CompanySettingsPage} roles={["owner", "super_admin"]} />
+            </Route>
             <Route path="/account-settings">
               <ProtectedRoute component={AccountSettingsPage} roles={["owner", "super_admin"]} />
             </Route>

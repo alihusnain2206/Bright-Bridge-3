@@ -537,4 +537,231 @@ router.put("/company-info/kyb", requireAuth, async (req: Request, res: Response)
   }
 });
 
+// ── GET /dashboard ───────────────────────────────────────────────────────────
+// Single-fetch endpoint for the Company Settings landing page.
+// Returns: configuration progress (8 steps), attention items, and registration count.
+// Owner + super_admin only; company-scoped via resolveCompanyId.
+router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  try {
+    // ── 1. Company record ──────────────────────────────────────────────────────
+    const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(404).json({ error: "Company not found" }); return; }
+
+    // Resolve rollfi IDs — legacy companies may only have them in rollfi_company_records
+    let resolvedRollfiCompanyId: string | null = co.rollfiCompanyId ?? null;
+    if (!resolvedRollfiCompanyId) {
+      const [leg] = await db
+        .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords)
+        .where(eq(rollfiCompanyRecords.companyId, companyId))
+        .catch(() => [undefined]);
+      resolvedRollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+
+    // ── 2. Parallel data fetches ───────────────────────────────────────────────
+    const [allEmps, regs] = await Promise.all([
+      db.select({
+        id:                  employeesTable.id,
+        firstName:           employeesTable.firstName,
+        lastName:            employeesTable.lastName,
+        homeState:           employeesTable.homeState,
+        status:              employeesTable.status,
+        rollfiAccountStatus: employeesTable.rollfiAccountStatus,
+      }).from(employeesTable).where(eq(employeesTable.companyId, companyId)),
+      db.select({ stateCode: stateRegistrationsTable.stateCode, status: stateRegistrationsTable.status })
+        .from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId)),
+    ]);
+
+    // ── 3. Rollfi getCompanyTask (authoritative for KYB + bank) ───────────────
+    let rollfiTasks: Array<{ task: string; description: string }> = [];
+    let kybStatusFromProvider: string | null = null;
+    let bankLinked: boolean = co.bankAccountAdded ?? false;
+
+    if (resolvedRollfiCompanyId) {
+      try {
+        const r = await axios.post(
+          `${getBaseUrl()}/reports#getCompanyTask`,
+          { method: "getCompanyTask", companyId: resolvedRollfiCompanyId },
+          { headers: rollfiHeaders() },
+        );
+        const raw = r.data as Record<string, unknown>;
+        rollfiTasks = (raw.tasks ?? []) as Array<{ task: string; description: string }>;
+        const kybTask  = rollfiTasks.find(t => t.task === "KYB verification");
+        const bankTask = rollfiTasks.find(t => t.task === "Connect bank account");
+        if (!kybTask) {
+          kybStatusFromProvider = "approved";
+        } else {
+          const desc = kybTask.description.toLowerCase();
+          if (desc.includes("failed")) kybStatusFromProvider = "failed";
+          else if (desc.includes("pending") || desc.includes("review")) kybStatusFromProvider = "pending";
+          else if (desc.includes("approved") || desc.includes("verified") || desc.includes("success")) kybStatusFromProvider = "approved";
+          else kybStatusFromProvider = "issue";
+        }
+        bankLinked = !bankTask;
+      } catch {
+        // Non-fatal — fall back to DB values
+      }
+    }
+
+    const kybStatus   = kybStatusFromProvider ?? co.kybStatus;
+    const kybApproved = kybStatus === "approved";
+
+    // ── 4. Derive state registration gaps ─────────────────────────────────────
+    const activeRegStates = new Set(regs.filter(r => r.status === "active").map(r => r.stateCode));
+
+    const gapMap = new Map<string, { state: string; employees: { id: string; name: string }[] }>();
+    for (const emp of allEmps) {
+      if (!emp.homeState || emp.status === "terminated") continue;
+      const st = emp.homeState.trim().toUpperCase();
+      if (NO_REGISTRATION_NEEDED.has(st) || activeRegStates.has(st)) continue;
+      if (!gapMap.has(st)) gapMap.set(st, { state: st, employees: [] });
+      gapMap.get(st)!.employees.push({ id: emp.id, name: `${emp.firstName} ${emp.lastName}`.trim() });
+    }
+    const gaps = Array.from(gapMap.values());
+
+    // ── 5. Employee counts ─────────────────────────────────────────────────────
+    const activeEmps       = allEmps.filter(e => e.status !== "terminated" && e.status !== "inactive");
+    const employeeCount    = activeEmps.length;
+    const notReadyEmps     = activeEmps.filter(e => e.rollfiAccountStatus !== "Active");
+    const payrollReadyCount = activeEmps.length - notReadyEmps.length;
+
+    // ── 6. Build configuration progress steps ─────────────────────────────────
+    const payScheduleSet = (co.payScheduleAdded === true) && !!(co.payFrequency);
+    const stepsAllDone   = !!resolvedRollfiCompanyId && kybApproved && bankLinked &&
+      payScheduleSet && gaps.length === 0 && employeeCount > 0 && notReadyEmps.length === 0;
+
+    const steps = [
+      {
+        id: "company_registered", number: 1, label: "Company registered",
+        done: !!resolvedRollfiCompanyId,
+        missingText: "Enroll your company in the payroll service",
+        linkTo: "/settings?tab=company-info",
+      },
+      {
+        id: "business_verified", number: 2, label: "Business verified",
+        done: kybApproved,
+        missingText: kybStatus === "pending" ? "Business verification is pending review"
+          : kybStatus === "failed" ? "Business verification failed — contact support"
+          : "Submit your business verification documents",
+        linkTo: "/settings?tab=company-info",
+      },
+      {
+        id: "funding_account", number: 3, label: "Funding account",
+        done: bankLinked,
+        missingText: "Connect a bank account for payroll funding",
+        linkTo: null,
+      },
+      {
+        id: "pay_schedule", number: 4, label: "Pay schedule",
+        done: payScheduleSet,
+        missingText: co.payScheduleAdded && !co.payFrequency
+          ? "Select a pay frequency to finalize your pay schedule"
+          : "Set up a pay schedule for your employees",
+        linkTo: "/payroll",
+      },
+      {
+        id: "state_tax", number: 5, label: "State tax registered",
+        done: gaps.length === 0,
+        missingText: gaps.length === 1
+          ? `${gaps[0].state} state tax registration is missing`
+          : `${gaps.length} states need tax registration`,
+        linkTo: "/settings?tab=state-tax",
+      },
+      {
+        id: "employees_added", number: 6, label: "Employees added",
+        done: employeeCount > 0,
+        missingText: "Add at least one employee before running payroll",
+        linkTo: "/people/new",
+      },
+      {
+        id: "employees_ready", number: 7, label: "Employees payroll-ready",
+        done: employeeCount > 0 && notReadyEmps.length === 0,
+        missingText: notReadyEmps.length > 0
+          ? `${notReadyEmps.length} employee${notReadyEmps.length > 1 ? "s are" : " is"} not yet activated for payroll`
+          : "Add employees first",
+        linkTo: "/people",
+      },
+      {
+        id: "ready_to_run", number: 8, label: "Ready to run payroll",
+        done: stepsAllDone,
+        missingText: "Complete all steps above to unlock payroll",
+        linkTo: null,
+      },
+    ];
+
+    const completedCount = steps.filter(s => s.done).length;
+
+    // ── 7. Attention Required items ────────────────────────────────────────────
+    const PROVIDER_RE = /\brollfi\b/gi;
+    const sanitize = (t: string) => t.replace(PROVIDER_RE, "payroll service");
+
+    const attention: Array<{
+      id: string; severity: "high" | "medium" | "low";
+      message: string; linkTo: string | null; category: string;
+    }> = [];
+
+    // a. Provider task list (exclude the bank-account task — it's in the progress steps)
+    for (const t of rollfiTasks) {
+      if (t.task === "Connect bank account") continue;
+      const raw = `${t.task}${t.description ? ": " + t.description : ""}`;
+      attention.push({
+        id: `task_${t.task.replace(/\W+/g, "_").toLowerCase()}`,
+        severity: "high",
+        message: sanitize(raw),
+        linkTo: /state.*(tax|reg)/i.test(raw) ? "/settings?tab=state-tax" : null,
+        category: "task",
+      });
+    }
+
+    // b. State registration gaps
+    for (const gap of gaps) {
+      const empNames = gap.employees.slice(0, 2).map(e => e.name).join(", ");
+      const more = gap.employees.length > 2 ? ` +${gap.employees.length - 2} more` : "";
+      attention.push({
+        id: `gap_${gap.state}`,
+        severity: "high",
+        message: `${gap.state} state tax registration is missing (${empNames}${more})`,
+        linkTo: "/settings?tab=state-tax",
+        category: "registration",
+      });
+    }
+
+    // c. Employees not yet payroll-ready
+    const MAX_EMP_ITEMS = 3;
+    for (const emp of notReadyEmps.slice(0, MAX_EMP_ITEMS)) {
+      attention.push({
+        id: `emp_${emp.id}`,
+        severity: "medium",
+        message: `${emp.firstName} ${emp.lastName} is not yet activated for payroll`,
+        linkTo: `/people/${emp.id}`,
+        category: "employee",
+      });
+    }
+    if (notReadyEmps.length > MAX_EMP_ITEMS) {
+      attention.push({
+        id: "emp_overflow",
+        severity: "medium",
+        message: `${notReadyEmps.length - MAX_EMP_ITEMS} more employee${notReadyEmps.length - MAX_EMP_ITEMS > 1 ? "s are" : " is"} not yet activated for payroll`,
+        linkTo: "/people",
+        category: "employee",
+      });
+    }
+
+    res.json({
+      company: { id: co.id, name: co.name },
+      progress: { completedCount, totalCount: 8, steps },
+      attention,
+      registrationCount: activeRegStates.size,
+      // Debug summary (stripped in prod UI)
+      _debug: { kybStatus, bankLinked, payScheduleSet, employeeCount, payrollReadyCount, gapCount: gaps.length },
+    });
+  } catch (err) {
+    req.log.error({ err }, "GET /company-settings/dashboard failed");
+    res.status(500).json({ error: "Failed to load company settings dashboard" });
+  }
+});
+
 export default router;
