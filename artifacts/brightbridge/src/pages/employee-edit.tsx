@@ -234,7 +234,8 @@ export default function EmployeeEditPage() {
       ? Math.round(Number(form.hourlyWageDisplay as string) * 100)
       : null;
     const isSalary      = form.payType === "salary";
-    const hourlyWageCents  = isSalary ? null : wageCents;
+    // hourly_wage column is NOT NULL — use 0 as the sentinel for salary employees
+    const hourlyWageCents  = isSalary ? 0 : wageCents;
     const annualSalaryCents = isSalary ? wageCents : null;
 
     const payload: Record<string, unknown> = {
