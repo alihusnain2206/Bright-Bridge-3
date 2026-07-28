@@ -272,9 +272,7 @@ export async function calculateComplianceScore(employeeId: string): Promise<numb
 export async function calculateReadinessFlags(employeeId: string) {
   const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
   const done = (type: string) => items.some((i) => i.type === type && i.status === "completed");
-  // payrollReady = can Rollfi process pay for this employee (W-4 + bank account).
-  // I-9 is employment eligibility, not a Rollfi payroll requirement — it lives in hrReady only.
-  const payrollReady   = done("w4") && done("direct_deposit");
+  const payrollReady   = done("w4") && done("direct_deposit") && done("i9");
   const hrReady        = done("i9") && done("handbook") && done("policy");
   const complianceReady = done("background_check");
   const firstPayrollReady = payrollReady && hrReady;
