@@ -47,8 +47,7 @@ import EmergencyContactsListPage from "@/pages/emergency-contacts-list";
 import WorkforcePage from "@/pages/workforce";
 import WorkforceEmployeesPage from "@/pages/workforce-employees";
 import WorkforceDepartmentsPage from "@/pages/workforce-departments";
-import SettingsPage from "@/pages/settings";
-import SettingsStateTaxPage from "@/pages/settings-state-tax";
+import SettingsHubPage from "@/pages/settings-hub";
 
 const queryClient = new QueryClient();
 
@@ -225,12 +224,9 @@ function Router() {
             <Route path="/config">
               <ProtectedRoute component={Config} roles={["super_admin", "owner"]} />
             </Route>
-            {/* Company Settings */}
-            <Route path="/settings/state-tax">
-              <ProtectedRoute component={SettingsStateTaxPage} roles={["owner", "super_admin"]} />
-            </Route>
+            {/* Organization Settings */}
             <Route path="/settings">
-              <ProtectedRoute component={SettingsPage} roles={["owner", "super_admin"]} />
+              <ProtectedRoute component={SettingsHubPage} roles={["owner", "super_admin"]} />
             </Route>
             <Route path="/payroll">
               <ProtectedRoute component={Payroll} roles={["super_admin"]} />

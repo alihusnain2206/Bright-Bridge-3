@@ -28,13 +28,6 @@ interface NavItem {
   children?: NavSubItem[];
 }
 
-const SETTINGS_SUBNAV: NavSubItem[] = [
-  { href: "/settings",           label: "My Account",            soon: true },
-  { href: "/settings",           label: "Organization Settings", heading: true },
-  { href: "/settings",           label: "Company Information",   soon: true },
-  { href: "/settings/state-tax", label: "State Tax Information" },
-];
-
 const PEOPLE_SUBNAV: NavSubItem[] = [
   { href: "/people/directory",    label: "Employee Directory" },
   { href: "/people/new-hires",    label: "New Hires" },
@@ -66,9 +59,9 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: "/schedule",             label: "Schedule",   icon: Calendar },
         { href: "/roles",                label: "Roles",      icon: Scale },
         { href: "/payroll",              label: "Payroll",    icon: DollarSign },
-        { href: "/webhooks",             label: "Webhooks",          icon: Webhook },
-        { href: "/config",               label: "Config",            icon: Settings },
-        { href: "/settings",             label: "Company Settings",  icon: Settings, children: SETTINGS_SUBNAV },
+        { href: "/webhooks",             label: "Webhooks",               icon: Webhook },
+        { href: "/config",               label: "Config",                 icon: Settings },
+        { href: "/settings",             label: "Organization Settings",  icon: Settings },
       ];
     case "owner":
       return [
@@ -88,10 +81,10 @@ function getNavItems(role: string | undefined): NavItem[] {
             { href: "/manager-payroll/submit",        label: "Submit Payroll" },
           ],
         },
-        { href: "/webhooks",  label: "Webhooks",         icon: Webhook },
-        { href: "/config",    label: "Config",           icon: Settings },
-        { href: "/settings",  label: "Company Settings", icon: Settings, children: SETTINGS_SUBNAV },
-        { href: "/roles",     label: "Roles",            icon: Scale },
+        { href: "/webhooks",  label: "Webhooks",              icon: Webhook },
+        { href: "/config",    label: "Config",                icon: Settings },
+        { href: "/settings",  label: "Organization Settings", icon: Settings },
+        { href: "/roles",     label: "Roles",                 icon: Scale },
       ];
     case "manager":
       return [
