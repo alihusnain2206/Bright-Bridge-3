@@ -10,6 +10,7 @@ import searchRouter from "./search";
 import notificationsRouter from "./notifications";
 import companySettingsRouter from "./company-settings";
 import accountRouter from "./account";
+import adminRouter from "./admin";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(searchRouter);
 router.use(notificationsRouter);
 router.use(companySettingsRouter);
 router.use(accountRouter);
+router.use(adminRouter);
 
 export default router;
