@@ -270,9 +270,22 @@ export async function calculateComplianceScore(employeeId: string): Promise<numb
 }
 
 export async function calculateReadinessFlags(employeeId: string) {
-  const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
+  const [items, empRows] = await Promise.all([
+    db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId)),
+    db.select({ rollfiAccountStatus: employees.rollfiAccountStatus, kycStatus: employees.kycStatus })
+      .from(employees).where(eq(employees.id, employeeId)),
+  ]);
   const done = (type: string) => items.some((i) => i.type === type && i.status === "completed");
-  const payrollReady   = done("w4") && done("direct_deposit") && done("i9");
+
+  // payrollReady: reflect Rollfi's own verdict — the account is Active and identity is verified.
+  // This correctly handles imported employees (no onboarding gap) and updates whenever
+  // the live-status endpoint refreshes from Rollfi.
+  const emp = empRows[0];
+  const rollfiActive  = emp?.rollfiAccountStatus === "Active";
+  const kycVerified   = emp?.kycStatus === "passed" || emp?.kycStatus === "verified";
+  const payrollReady  = rollfiActive && kycVerified;
+
+  // hrReady: federal + company policy compliance — unchanged, I-9 still required here
   const hrReady        = done("i9") && done("handbook") && done("policy");
   const complianceReady = done("background_check");
   const firstPayrollReady = payrollReady && hrReady;

@@ -161,7 +161,7 @@ router.get("/notifications", requireAuth, async (req: Request, res: Response) =>
           id: "blocked-from-payroll",
           level: "yellow",
           title: `${blocked.length} employee${blocked.length > 1 ? "s" : ""} can't be paid`,
-          detail: `${names}${extra} — missing bank account or onboarding step.`,
+          detail: `${names}${extra} — payroll account not yet active in provider.`,
           link: "/people/directory",
         });
       }

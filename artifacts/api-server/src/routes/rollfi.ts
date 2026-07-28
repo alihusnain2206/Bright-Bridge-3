@@ -3164,13 +3164,19 @@ router.get("/rollfi/employees/:rollfiUserId/live-status", async (req, res) => {
     if (!found) { res.status(404).json({ error: "Employee not found in Rollfi" }); return; }
 
     const nowISO = new Date().toISOString();
+    const newUserStatus = found.status?.userStatus ?? emp.rollfiAccountStatus ?? undefined;
+    const newKycStatus  = found.kycStatus ?? emp.kycStatus ?? undefined;
+    const payrollReady  = newUserStatus === "Active" &&
+      (newKycStatus === "passed" || newKycStatus === "verified");
+
     await db.update(employeesTable).set({
-      kycStatus: found.kycStatus ?? emp.kycStatus ?? undefined,
-      rollfiAccountStatus: found.status?.userStatus ?? emp.rollfiAccountStatus ?? undefined,
+      kycStatus:           newKycStatus,
+      rollfiAccountStatus: newUserStatus,
+      payrollReady,
       updatedAt: nowISO,
     }).where(eq(employeesTable.id, emp.id));
 
-    req.log.info({ employeeId: emp.id, userStatus: found.status?.userStatus, kycStatus: found.kycStatus }, "live-status: wrote back");
+    req.log.info({ employeeId: emp.id, userStatus: newUserStatus, kycStatus: newKycStatus, payrollReady }, "live-status: wrote back");
     res.json({
       rollfiUserId,
       employeeId: emp.id,
