@@ -403,7 +403,7 @@ export const store = {
   },
 
   // ── Staff Users (payroll employees) ──
-  createStaffUser(data: { name: string; email: string; position: string; hourlyWage: number; companyId: string }): Omit<TestUser, "password"> {
+  createStaffUser(data: { name: string; email: string; position: string; hourlyWage: number; companyId: string; password?: string }): Omit<TestUser, "password"> {
     const id = `USER-${uid().toUpperCase()}`;
     const employeeId = `EMP-${uid().toUpperCase()}`;
     const company = companies.find((c) => c.id === data.companyId);
@@ -412,7 +412,7 @@ export const store = {
       id,
       name: data.name,
       email: data.email,
-      password: "Staff123!",
+      password: data.password || "Staff123!",
       role: "employee",
       companyId: data.companyId,
       locationId,

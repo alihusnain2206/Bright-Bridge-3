@@ -314,10 +314,11 @@ router.post("/auth/create-sub-role", async (req, res) => {
     return;
   }
 
-  const { name, email, role, position, hourlyWage } = req.body as {
+  const { name, email, role, position, hourlyWage, password: submittedPassword } = req.body as {
     name?: string; email?: string;
     role?: "owner" | "employee";
     position?: string; hourlyWage?: number;
+    password?: string;
   };
 
   if (!name || !email || !role) {
@@ -347,6 +348,7 @@ router.post("/auth/create-sub-role", async (req, res) => {
       name, email,
       position: position ?? "Company Manager",
       companyId,
+      password: submittedPassword || undefined,
     });
     newUser = result.user;
     password = result.password;
@@ -356,9 +358,10 @@ router.post("/auth/create-sub-role", async (req, res) => {
       position: position ?? "Staff",
       hourlyWage: hourlyWage ?? 1500,
       companyId,
+      password: submittedPassword || undefined,
     });
     newUser = staffUser;
-    password = "Staff123!";
+    password = submittedPassword || "Staff123!";
   }
 
   const fullUser = store.getUserByEmail(email);
