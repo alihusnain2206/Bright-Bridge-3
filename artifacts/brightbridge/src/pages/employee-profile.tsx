@@ -6,7 +6,7 @@ import {
   Mail, Phone, MapPin, Calendar, Briefcase, User, DollarSign, Building2,
   ClipboardList, ShieldCheck, FolderOpen, PhoneCall, CreditCard, Activity,
   Camera, X, Loader2, CheckCircle2, Clock, RefreshCw,
-  AlertTriangle, XCircle, Wrench,
+  AlertTriangle, XCircle, Wrench, KeyRound, Eye, EyeOff, Lock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -249,7 +249,165 @@ const TABS = [
   { id: "contacts",    label: "Contacts",    icon: PhoneCall },
   { id: "payroll",     label: "Payroll",     icon: CreditCard },
   { id: "activity",    label: "Activity",    icon: Activity },
+  { id: "account",     label: "Account",     icon: KeyRound },
 ];
+
+// ── Account Tab ───────────────────────────────────────────────
+function AccountTab({ emp }: { emp: EmployeeDetail }) {
+  const [password,  setPassword]  = useState("");
+  const [confirm,   setConfirm]   = useState("");
+  const [showPw,    setShowPw]    = useState(false);
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [success,   setSuccess]   = useState(false);
+  const [acctInfo,  setAcctInfo]  = useState<{ hasAccount: boolean; role: string | null } | null>(null);
+  const [loading,   setLoading]   = useState(true);
+
+  React.useEffect(() => {
+    fetch("/api/admin/users", { credentials: "include" })
+      .then(r => r.json() as Promise<{ users: Array<{ employeeId: string; hasAccount: boolean; role: string | null }> }>)
+      .then(d => {
+        const row = d.users?.find(u => u.employeeId === emp.id);
+        setAcctInfo(row ? { hasAccount: row.hasAccount, role: row.role } : { hasAccount: false, role: null });
+      })
+      .catch(() => setAcctInfo({ hasAccount: false, role: null }))
+      .finally(() => setLoading(false));
+  }, [emp.id]);
+
+  const mismatch = confirm.length > 0 && password !== confirm;
+  const tooShort = password.length > 0 && password.length < 8;
+  const canSave  = password.length >= 8 && password === confirm && !saving;
+
+  async function handleReset() {
+    setError(null);
+    if (!password || !confirm) { setError("Both fields are required"); return; }
+    if (password !== confirm)  { setError("Passwords do not match");    return; }
+    if (password.length < 8)   { setError("Minimum 8 characters");       return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/admin/users/${emp.id}/set-password`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: password }),
+      });
+      const data = await r.json() as { error?: string };
+      if (!r.ok) throw new Error(data.error ?? "Failed");
+      setSuccess(true); setPassword(""); setConfirm("");
+      setTimeout(() => setSuccess(false), 5000);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to reset password");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-4 max-w-lg">
+      {/* Login info card */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${NAVY}15` }}>
+            <User className="h-4 w-4" style={{ color: NAVY }} />
+          </div>
+          <h3 className="text-sm font-semibold text-gray-800">Login Account</h3>
+        </div>
+        {loading ? (
+          <p className="text-sm text-gray-400">Checking account status…</p>
+        ) : (
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-24">Email</span>
+              <span className="text-gray-900 font-medium">{emp.email}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-gray-500 w-24">Status</span>
+              {acctInfo?.hasAccount ? (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Has account
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                  <XCircle className="h-3.5 w-3.5" /> No account yet
+                </span>
+              )}
+            </div>
+            {acctInfo?.role && (
+              <div className="flex items-center gap-2">
+                <span className="text-gray-500 w-24">Role</span>
+                <span className="text-gray-800 capitalize">{acctInfo.role.replace("_", " ")}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Admin reset password card */}
+      {acctInfo?.hasAccount && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${NAVY}15` }}>
+              <KeyRound className="h-4 w-4" style={{ color: NAVY }} />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-gray-800">Reset Password</h3>
+              <p className="text-xs text-gray-500">Set a new password on behalf of this employee. No current password required.</p>
+            </div>
+          </div>
+
+          {success ? (
+            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              Password updated. The employee can now sign in with the new password.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-gray-600 mb-1 block">New password</label>
+                <div className="relative">
+                  <input
+                    type={showPw ? "text" : "password"}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    placeholder="Minimum 8 characters"
+                    autoComplete="new-password"
+                    className={`w-full rounded-md border px-3 py-2 text-sm pr-10 outline-none focus:ring-2 focus:ring-[#0EA5C9]/30 ${tooShort ? "border-amber-400" : "border-gray-200"}`}
+                  />
+                  <button type="button" className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    onClick={() => setShowPw(v => !v)}>
+                    {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {tooShort && <p className="text-xs text-amber-600 mt-1">Must be at least 8 characters</p>}
+              </div>
+              <div>
+                <label className="text-xs text-gray-600 mb-1 block">Confirm new password</label>
+                <input
+                  type={showPw ? "text" : "password"}
+                  value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  className={`w-full rounded-md border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#0EA5C9]/30 ${mismatch ? "border-red-400" : "border-gray-200"}`}
+                />
+                {mismatch && <p className="text-xs text-red-500 mt-1">Passwords do not match</p>}
+              </div>
+              {error && (
+                <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
+              )}
+              <button
+                onClick={handleReset}
+                disabled={!canSave}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-opacity disabled:opacity-40"
+                style={{ background: NAVY }}
+              >
+                {saving ? <><RefreshCw className="h-4 w-4 animate-spin" /> Saving…</> : <><Lock className="h-4 w-4" /> Set New Password</>}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Overview Tab ───────────────────────────────────────────────
 function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (t: string) => void }) {
@@ -1586,6 +1744,7 @@ export default function EmployeeProfilePage() {
         )}
         {activeTab === "payroll" && <PayrollTab emp={emp} isSuperAdmin={user?.role === "super_admin"} />}
         {activeTab === "activity" && <ActivityTab emp={emp} />}
+        {activeTab === "account" && <AccountTab emp={emp} />}
       </div>
 
       {/* Status modals */}

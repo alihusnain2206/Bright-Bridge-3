@@ -5,7 +5,7 @@ import {
   Webhook, Settings, SlidersHorizontal, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  BarChart2, AlertTriangle, UserCog,
+  BarChart2, AlertTriangle, UserCog, Menu, X,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,7 @@ function getNavItems(role: string | undefined): NavItem[] {
           icon: Settings,
           children: [
             { href: "/account-settings", label: "Account Settings" },
+            { href: "/users-access",     label: "Users & Access" },
             { href: "/settings",         label: "Organization Settings" },
           ],
         },
@@ -95,6 +96,7 @@ function getNavItems(role: string | undefined): NavItem[] {
           icon: Settings,
           children: [
             { href: "/account-settings", label: "Account Settings" },
+            { href: "/users-access",     label: "Users & Access" },
             { href: "/settings",         label: "Organization Settings" },
           ],
         },
@@ -122,8 +124,9 @@ function getNavItems(role: string | undefined): NavItem[] {
       ];
     case "employee":
       return [
-        { href: dashboardPath("employee"), label: "Dashboard",       icon: LayoutDashboard },
-        { href: "/roles",                  label: "Role Comparison", icon: Scale },
+        { href: dashboardPath("employee"), label: "Dashboard",        icon: LayoutDashboard },
+        { href: "/account-settings",       label: "Account Settings", icon: UserCog },
+        { href: "/roles",                  label: "Role Comparison",  icon: Scale },
       ];
     case "parent":
       return [
@@ -215,6 +218,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navItems = getNavItems(user?.role);
   const [manualExpanded, setManualExpanded] = useState<Set<string>>(new Set());
   const [company, setCompany] = useState<CompanyInfo | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     if (!user?.companyId) return;
@@ -277,13 +281,22 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <EnvironmentBanner />
 
       {/* ── Top Header ── */}
-      <header className="flex items-center gap-3 px-5 h-16 bg-white border-b border-gray-100 shrink-0 z-10">
+      <header className="flex items-center gap-3 px-4 sm:px-5 h-14 sm:h-16 bg-white border-b border-gray-100 shrink-0 z-10">
+        {/* Mobile hamburger */}
+        <button
+          className="md:hidden p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 transition-colors shrink-0"
+          onClick={() => setMobileOpen(v => !v)}
+          aria-label="Open navigation"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
         {/* Logo */}
         <Link href={user ? dashboardPath(user.role) : "/"}>
           <img
             src="/brightbridge-logo.png"
             alt="BrightBridge"
-            className="h-11 object-contain cursor-pointer"
+            className="h-9 sm:h-11 object-contain cursor-pointer"
           />
         </Link>
 
@@ -334,8 +347,124 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
       <div className="flex flex-1 min-h-0">
 
-        {/* ── Sidebar ── */}
-        <aside className="w-56 flex flex-col shrink-0 overflow-y-auto bg-white border-r border-gray-100">
+        {/* ── Mobile Nav Drawer ── */}
+        {mobileOpen && (
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 bg-black/40 z-40 md:hidden"
+              onClick={() => setMobileOpen(false)}
+            />
+            {/* Drawer */}
+            <aside className="fixed inset-y-0 left-0 w-64 flex flex-col z-50 md:hidden bg-white border-r border-gray-100 shadow-xl overflow-y-auto">
+              {/* Drawer header */}
+              <div className="flex items-center justify-between px-4 h-14 border-b border-gray-100 shrink-0">
+                <img src="/brightbridge-logo.png" alt="BrightBridge" className="h-9 object-contain" />
+                <button
+                  className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"
+                  onClick={() => setMobileOpen(false)}
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              {/* Nav items — same as sidebar */}
+              <nav className="flex-1 px-3 py-4 space-y-0.5">
+                {navItems.map((item) => {
+                  const { href, label, icon: Icon, children } = item;
+                  if (!children) {
+                    return (
+                      <Link key={href + label} href={href}>
+                        <button
+                          onClick={() => setMobileOpen(false)}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                            isActive(href)
+                              ? "bg-[#2C4562] text-white shadow-sm"
+                              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {label}
+                        </button>
+                      </Link>
+                    );
+                  }
+                  const expanded = isGroupExpanded(item);
+                  const parentActive = isActive(href);
+                  return (
+                    <div key={href + label}>
+                      <Link href={href}>
+                        <button
+                          onClick={() => { if (parentActive) toggleGroup(href); setMobileOpen(false); }}
+                          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all text-left ${
+                            parentActive
+                              ? "bg-[#2C4562]/10 text-[#2C4562]"
+                              : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <span className="flex-1">{label}</span>
+                          {expanded
+                            ? <ChevronDown className="h-3.5 w-3.5 text-gray-400" />
+                            : <ChevronRight className="h-3.5 w-3.5 text-gray-300" />}
+                        </button>
+                      </Link>
+                      {expanded && (
+                        <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-gray-200 pl-3">
+                          {children.map(child =>
+                            child.heading ? (
+                              <div key={child.label} className="mt-2 mb-0.5 px-2.5 text-[9px] font-bold text-gray-400 uppercase tracking-widest select-none">
+                                {child.label}
+                              </div>
+                            ) : child.soon ? (
+                              <div key={child.label} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-300 cursor-not-allowed select-none">
+                                <span className="flex-1 truncate">{child.label}</span>
+                                <span className="text-[9px] font-semibold bg-gray-100 text-gray-400 px-1 py-0.5 rounded uppercase tracking-wide shrink-0">Soon</span>
+                              </div>
+                            ) : (
+                              <Link key={child.href + child.label} href={child.href}>
+                                <button
+                                  onClick={() => setMobileOpen(false)}
+                                  className={`w-full text-left px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
+                                    isSubItemActive(child.href, child.label)
+                                      ? "bg-[#2C4562] text-white shadow-sm"
+                                      : "text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+                                  }`}
+                                >
+                                  {child.label}
+                                </button>
+                              </Link>
+                            )
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </nav>
+              {/* User + Logout */}
+              {user && (
+                <div className="px-4 pt-3 pb-5 border-t border-gray-100 shrink-0 space-y-2">
+                  <div className="flex items-center gap-2 px-1">
+                    <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style={{ background: `${ROLE_COLOR[user.role] ?? "#E8622A"}15` }}>
+                      <ShieldCheck className="h-3.5 w-3.5" style={{ color: ROLE_COLOR[user.role] ?? "#E8622A" }} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-gray-800 text-xs font-semibold truncate">{user.name}</div>
+                      <div className="text-gray-400 text-[10px] uppercase tracking-wider">{user.role.replace(/_/g, " ")}</div>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={handleLogout}
+                    className="w-full justify-start h-7 text-xs text-gray-500 hover:text-gray-900 hover:bg-gray-100 gap-2 px-2">
+                    <LogOut className="h-3.5 w-3.5" /> Logout
+                  </Button>
+                </div>
+              )}
+            </aside>
+          </>
+        )}
+
+        {/* ── Sidebar (desktop) ── */}
+        <aside className="hidden md:flex w-56 flex-col shrink-0 overflow-y-auto bg-white border-r border-gray-100">
 
           {/* Nav items */}
           <nav className="flex-1 px-3 py-4 space-y-0.5">
@@ -449,8 +578,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </aside>
 
         {/* ── Main content ── */}
-        <main className="flex-1 overflow-y-auto bg-white">
-          <div className="px-6 py-6">
+        <main className="flex-1 overflow-y-auto bg-white min-w-0">
+          <div className="px-3 py-4 sm:px-6 sm:py-6">
             {children}
           </div>
           <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100">
