@@ -126,7 +126,6 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: dashboardPath("employee"), label: "Dashboard",        icon: LayoutDashboard },
         { href: "/account-settings",       label: "Account Settings", icon: UserCog },
-        { href: "/roles",                  label: "Role Comparison",  icon: Scale },
       ];
     case "parent":
       return [

@@ -208,8 +208,8 @@ export default function EmployeeDashboard() {
           { icon: User,      label: "Name",     value: user?.name },
           { icon: Briefcase, label: "Position", value: user?.position },
           { icon: Building2, label: "Company",  value: company?.name },
-          { icon: DollarSign, label: "Hourly Rate", value: user?.hourlyWage
-            ? `$${String(user.hourlyWage).slice(0, -2) || "0"}.${String(user.hourlyWage).slice(-2)}/hr`
+          { icon: DollarSign, label: "Hourly Rate", value: user?.hourlyWage != null
+            ? `$${(user.hourlyWage / 100).toFixed(2)}/hr`
             : "$–/hr" },
         ].map(({ icon: Icon, label, value }) => (
           <div key={label} className="space-y-0.5">
@@ -364,19 +364,6 @@ export default function EmployeeDashboard() {
           {detailsContent}
         </Collapsible>
 
-        <Collapsible title="Your Access" icon={CheckCircle2}>
-          {accessContent}
-        </Collapsible>
-
-        <Collapsible title="Live Events" icon={Zap}>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-gray-400">Last 10 events</span>
-            <button onClick={() => void fetchEvents()} className="text-gray-400 hover:text-gray-600">
-              <RefreshCw className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          {eventsContent}
-        </Collapsible>
       </div>
     );
   }
@@ -401,8 +388,8 @@ export default function EmployeeDashboard() {
             { icon: User,      label: "Name",     value: user?.name },
             { icon: Briefcase, label: "Position", value: user?.position },
             { icon: Building2, label: "Company",  value: company?.name },
-            { icon: DollarSign, label: "Hourly Rate", value: user?.hourlyWage
-              ? `$${String(user.hourlyWage).slice(0, -2) || "0"}.${String(user.hourlyWage).slice(-2)}/hr`
+            { icon: DollarSign, label: "Hourly Rate", value: user?.hourlyWage != null
+              ? `$${(user.hourlyWage / 100).toFixed(2)}/hr`
               : "$–/hr" },
           ].map(({ icon: Icon, label, value }) => (
             <div key={label} className="space-y-1">
@@ -421,13 +408,8 @@ export default function EmployeeDashboard() {
       {/* Time Clock */}
       {timeClock}
 
-      {/* Access + Token */}
+      {/* Token */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <div className="rounded-2xl bg-white border p-5 shadow-sm">
-          <h3 className="font-semibold text-gray-900 mb-4">Your Access</h3>
-          {accessContent}
-        </div>
-
         {tokenData ? (
           <div className="rounded-2xl overflow-hidden border" style={PANEL}>
             <div className="px-5 py-3 border-b border-white/10 flex items-center gap-2">
@@ -452,35 +434,6 @@ export default function EmployeeDashboard() {
         )}
       </div>
 
-      {/* Events */}
-      <div className="rounded-2xl overflow-hidden border" style={PANEL}>
-        <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Zap className="h-4 w-4 text-white/50" />
-            <span className="text-white font-semibold text-sm">Live EasyTeam Events</span>
-          </div>
-          <button onClick={() => void fetchEvents()} className="text-white/40 hover:text-white">
-            <RefreshCw className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        {events.length === 0 ? (
-          <div className="px-6 py-10 text-center text-white/30 text-sm">
-            No events yet. Try clocking in using the time clock above!
-          </div>
-        ) : (
-          <div className="divide-y divide-white/5">
-            {events.map(ev => (
-              <div key={ev.id} className="px-6 py-3 flex items-center gap-4 text-sm">
-                <span className="text-white/40 text-xs font-mono w-20 shrink-0">
-                  {new Date(ev.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="px-2 py-0.5 rounded text-xs font-medium bg-[#E8622A]/20 text-[#E8622A]">{ev.event}</span>
-                <span className="text-white/60 text-xs">{ev.employee_id}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
