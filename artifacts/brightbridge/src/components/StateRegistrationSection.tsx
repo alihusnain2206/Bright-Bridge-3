@@ -16,9 +16,7 @@
  */
 import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Globe, Plus, AlertTriangle, CheckCircle2, Loader2,
-} from "lucide-react";
+import { Globe, Plus, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -28,7 +26,7 @@ import { Input } from "@/components/ui/input";
 
 const NAVY = "#284362";
 
-export const US_STATES = [
+const US_STATES = [
   { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
   { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
   { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "DC", name: "District of Columbia" },
@@ -175,7 +173,7 @@ export function StateRegistrationSection({
         setStateFields(fields);
         setFieldValues(vals);
       })
-      .catch(() => setFieldsError("Failed to load state fields from Rollfi"))
+      .catch(() => setFieldsError("Failed to load registration fields from the payroll provider"))
       .finally(() => setFieldsLoading(false));
   }, [stateCode]);
 
@@ -217,7 +215,7 @@ export function StateRegistrationSection({
             <Globe className="h-4 w-4 text-[#284362]" />State Tax Registrations
           </p>
           <p className="text-xs text-gray-500 mt-0.5">
-            Required by Rollfi to withhold and file state taxes at year-end
+            Required to withhold and file state taxes at year-end
           </p>
         </div>
         {hasRollfi && !showForm && (
@@ -235,7 +233,7 @@ export function StateRegistrationSection({
       {!hasRollfi && (
         <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 rounded-lg p-3 border border-amber-200">
           <AlertTriangle className="h-4 w-4 shrink-0" />
-          Complete Rollfi onboarding before adding state registrations.
+          Complete payroll provider onboarding before adding state registrations.
         </div>
       )}
 
@@ -247,8 +245,8 @@ export function StateRegistrationSection({
           <Globe className="h-8 w-8 mx-auto mb-2 text-gray-300" />
           <p className="text-sm font-medium text-gray-700">No states registered yet</p>
           <p className="text-xs text-gray-400 mt-1 mb-3">
-            Add the states where your company employs people so Rollfi can correctly
-            withhold and file state taxes.
+            Add the states where your company employs people so your payroll provider
+            can correctly withhold and file state taxes.
           </p>
           <Button size="sm" variant="outline" onClick={() => setShowForm(true)} className="gap-1.5 text-xs">
             <Plus className="h-3.5 w-3.5" />Register First State

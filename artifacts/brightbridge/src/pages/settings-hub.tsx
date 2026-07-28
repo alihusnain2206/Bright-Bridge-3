@@ -11,7 +11,7 @@ import React from "react";
 import { useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { AlertTriangle, Globe, ExternalLink, Building2 } from "lucide-react";
+import { AlertTriangle, Globe, Building2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StateRegistrationSection } from "@/components/StateRegistrationSection";
 
@@ -20,6 +20,8 @@ import { StateRegistrationSection } from "@/components/StateRegistrationSection"
 interface GapEntry {
   state: string;
   employees: { id: string; name: string }[];
+  /** null = no row at all; 'failed' | 'pending' = row exists but is not active */
+  registrationStatus: string | null;
 }
 
 interface CompanyData {
@@ -88,22 +90,56 @@ function GapWarnings({ companyId }: { companyId: string }) {
 
   return (
     <div className="space-y-2 mb-5">
-      {gaps.map(gap => (
-        <div
-          key={gap.state}
-          className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-800"
-        >
-          <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-          <div>
-            <span className="font-semibold">
-              {gap.employees.length === 1 ? "1 employee works" : `${gap.employees.length} employees work`}{" "}
-              in {stateName(gap.state)} ({gap.state}),
-            </span>{" "}
-            which isn&apos;t registered for payroll tax. They cannot have state withholding until it is.{" "}
-            <span className="text-amber-600 text-xs">(Register {gap.state} below to resolve this.)</span>
+      {gaps.map(gap => {
+        const sn = stateName(gap.state);
+        const count = gap.employees.length;
+        const empDesc = count === 1
+          ? `1 employee works`
+          : `${count} employees work`;
+
+        if (gap.registrationStatus === "failed") {
+          return (
+            <div key={gap.state}
+              className="flex items-start gap-3 p-3 rounded-lg border border-red-200 bg-red-50 text-sm text-red-800"
+            >
+              <AlertTriangle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">{sn} ({gap.state}) registration failed.</span>{" "}
+                {empDesc} in {sn} without state withholding.{" "}
+                <span className="text-red-600 text-xs">Use the Retry button below to re-submit it.</span>
+              </div>
+            </div>
+          );
+        }
+
+        if (gap.registrationStatus === "pending") {
+          return (
+            <div key={gap.state}
+              className="flex items-start gap-3 p-3 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-800"
+            >
+              <AlertTriangle className="h-4 w-4 text-blue-400 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-semibold">{sn} ({gap.state}) registration is pending.</span>{" "}
+                {empDesc} in {sn} — withholding will activate once the registration is confirmed.
+              </div>
+            </div>
+          );
+        }
+
+        // registrationStatus === null → no row at all
+        return (
+          <div key={gap.state}
+            className="flex items-start gap-3 p-3 rounded-lg border border-amber-200 bg-amber-50 text-sm text-amber-800"
+          >
+            <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold">{sn} ({gap.state}) isn&apos;t registered for payroll tax.</span>{" "}
+              {empDesc} there without state withholding.{" "}
+              <span className="text-amber-600 text-xs">Add it below to resolve this.</span>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -113,17 +149,9 @@ function StateTaxTab({ companyId, hasRollfi }: { companyId: string; hasRollfi: b
     <div className="space-y-5">
       <div className="flex items-start justify-between">
         <p className="text-sm text-gray-500 max-w-xl">
-          Register the states where your employees work so Rollfi can correctly
+          Register the states where your employees work so your payroll provider can correctly
           withhold and remit state payroll taxes.
         </p>
-        <a
-          href="https://rollfi.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1 text-xs text-[#0EA5C9] hover:underline shrink-0 ml-4 mt-0.5"
-        >
-          Rollfi portal <ExternalLink className="h-3 w-3" />
-        </a>
       </div>
 
       <GapWarnings companyId={companyId} />

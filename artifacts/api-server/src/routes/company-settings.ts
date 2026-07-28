@@ -99,14 +99,29 @@ router.get("/state-registrations/gaps", requireAuth, async (req: Request, res: R
       regs.filter(r => r.status === "active").map(r => r.stateCode),
     );
 
-    // Group affected employees by their unregistered homeState
-    const stateMap = new Map<string, { state: string; employees: { id: string; name: string }[] }>();
+    // Map state → existing registration status (for non-active rows)
+    const stateStatusMap = new Map<string, string>(
+      regs.filter(r => r.status !== "active").map(r => [r.stateCode, r.status]),
+    );
+
+    // Group affected employees by their unregistered/non-active homeState.
+    // registrationStatus = null  → no row exists at all
+    // registrationStatus = 'failed' | 'pending'  → row exists but isn't active
+    const stateMap = new Map<string, {
+      state: string;
+      employees: { id: string; name: string }[];
+      registrationStatus: string | null;
+    }>();
     for (const emp of emps) {
       if (!emp.homeState || emp.status === "terminated") continue;
       if (NO_REGISTRATION_NEEDED.has(emp.homeState)) continue;
       if (activeStates.has(emp.homeState)) continue;
       if (!stateMap.has(emp.homeState)) {
-        stateMap.set(emp.homeState, { state: emp.homeState, employees: [] });
+        stateMap.set(emp.homeState, {
+          state: emp.homeState,
+          employees: [],
+          registrationStatus: stateStatusMap.get(emp.homeState) ?? null,
+        });
       }
       stateMap.get(emp.homeState)!.employees.push({
         id:   emp.id,
