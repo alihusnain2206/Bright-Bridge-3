@@ -11,10 +11,11 @@ import React from "react";
 import { useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { AlertTriangle, Globe } from "lucide-react";
+import { AlertTriangle, Globe, FileSignature } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StateRegistrationSection } from "@/components/StateRegistrationSection";
 import { CompanyInfoSection } from "@/components/CompanyInfoSection";
+import { SignaturesSection } from "@/components/SignaturesSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -47,11 +48,12 @@ function stateName(code: string) { return STATE_NAMES[code] ?? code; }
 
 // ── Tabs config ───────────────────────────────────────────────────────────────
 
-type TabId = "company-info" | "state-tax";
+type TabId = "company-info" | "state-tax" | "signatures";
 
 const TABS: { id: TabId; label: string; soon?: boolean }[] = [
   { id: "company-info", label: "Company Information" },
   { id: "state-tax",    label: "State Tax Information" },
+  { id: "signatures",   label: "Signatures" },
 ];
 
 
@@ -227,6 +229,7 @@ export default function SettingsHubPage() {
           {activeTab === "state-tax"    && (
             <StateTaxTab companyId={companyId} hasRollfi={hasRollfi} />
           )}
+          {activeTab === "signatures"   && <SignaturesSection companyId={companyId} />}
         </>
       )}
     </div>

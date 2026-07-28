@@ -49,6 +49,7 @@ interface AttentionItem {
   severity: "high" | "medium" | "low";
   message: string;
   linkTo: string | null;
+  actionLabel?: string | null;
   category: string;
 }
 
@@ -425,7 +426,7 @@ function AttentionPanel({ items }: { items: AttentionItem[] }) {
                     onClick={() => navigate(item.linkTo!)}
                     className="mt-1 text-[11px] text-[#0EA5C9] font-medium hover:underline flex items-center gap-0.5"
                   >
-                    Resolve <ArrowRight className="w-3 h-3" />
+                    {item.actionLabel ?? "Resolve"} <ArrowRight className="w-3 h-3" />
                   </button>
                 )}
               </div>

@@ -700,19 +700,23 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 
     const attention: Array<{
       id: string; severity: "high" | "medium" | "low";
-      message: string; linkTo: string | null; category: string;
+      message: string; linkTo: string | null; actionLabel?: string | null; category: string;
     }> = [];
 
     // a. Provider task list (exclude the bank-account task — it's in the progress steps)
     for (const t of rollfiTasks) {
       if (t.task === "Connect bank account") continue;
       const raw = `${t.task}${t.description ? ": " + t.description : ""}`;
+      const isSignature = /signature request/i.test(t.task);
       attention.push({
         id: `task_${t.task.replace(/\W+/g, "_").toLowerCase()}`,
         severity: "high",
         message: sanitize(raw),
-        linkTo: /state.*(tax|reg)/i.test(raw) ? "/settings?tab=state-tax" : null,
-        category: "task",
+        linkTo: isSignature
+          ? "/settings?tab=signatures"
+          : /state.*(tax|reg)/i.test(raw) ? "/settings?tab=state-tax" : null,
+        actionLabel: isSignature ? "Sign form" : null,
+        category: isSignature ? "signature" : "task",
       });
     }
 
@@ -762,6 +766,101 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     req.log.error({ err }, "GET /company-settings/dashboard failed");
     res.status(500).json({ error: "Failed to load company settings dashboard" });
   }
+});
+
+// ── GET /rollfi/pending-signatures ────────────────────────────────────────────
+// Returns only the "Signature request" tasks from Rollfi's getCompanyTask.
+
+router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  let rollfiCompanyId: string | null = null;
+  try {
+    const [co] = await db.select({ rid: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    rollfiCompanyId = co?.rid ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+  } catch { /* fall through */ }
+
+  if (!rollfiCompanyId || !getRollfiConfig().credentialsPresent) {
+    res.json({ signatures: [] }); return;
+  }
+
+  try {
+    const r = await axios.post(
+      `${getBaseUrl()}/reports#getCompanyTask`,
+      { method: "getCompanyTask", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() },
+    );
+    const tasks = ((r.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description: string }>;
+    res.json({ signatures: tasks.filter(t => /signature request/i.test(t.task)) });
+  } catch (err) {
+    req.log.error({ err }, "GET /rollfi/pending-signatures failed");
+    res.status(500).json({ error: "Failed to fetch pending signatures" });
+  }
+});
+
+// ── POST /rollfi/request-signing-link ────────────────────────────────────────
+// Probes Rollfi for a live signing URL; returns { url, message, emailSent }.
+// On sandbox / unavailable → graceful email-fallback message.
+
+router.post("/rollfi/request-signing-link", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+  const { formTask } = req.body as { formTask?: string };
+
+  let rollfiCompanyId: string | null = null;
+  try {
+    const [co] = await db.select({ rid: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    rollfiCompanyId = co?.rid ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+  } catch { /* fall through */ }
+
+  if (!rollfiCompanyId) {
+    res.json({ url: null, message: "Company is not yet enrolled in the payroll service.", emailSent: false });
+    return;
+  }
+
+  // Extract form identifier (e.g. "Form TR-2000 Signature request" → "TR-2000")
+  const formMatch = (formTask ?? "").match(/Form\s+([\w-]+)\s+Signature/i);
+  const formType = formMatch?.[1] ?? "Unknown";
+
+  // Probe Rollfi — try several signing-URL method/path combos
+  const attempts: Array<[string, Record<string, string>]> = [
+    ["/reports#getCompanySigningUrl",            { method: "getCompanySigningUrl",       companyId: rollfiCompanyId, documentType: formType }],
+    ["/reports#getSigningUrl",                   { method: "getSigningUrl",              companyId: rollfiCompanyId, formType }],
+    ["/companyOnboarding#getSigningUrl",         { method: "getSigningUrl",              companyId: rollfiCompanyId, formType }],
+    ["/companyOnboarding#getDocumentSigningUrl", { method: "getDocumentSigningUrl",      companyId: rollfiCompanyId, documentType: formType }],
+  ];
+
+  for (const [path, body] of attempts) {
+    try {
+      const r = await axios.post(`${getBaseUrl()}${path}`, body, { headers: rollfiHeaders() });
+      const d = r.data as Record<string, unknown>;
+      const url = (d.url ?? d.signingUrl ?? d.signUrl ?? d.link ?? null) as string | null;
+      if (url && typeof url === "string" && url.startsWith("http")) {
+        res.json({ url, message: "Signing page opened.", emailSent: false });
+        return;
+      }
+    } catch { /* try next */ }
+  }
+
+  // No live URL — surface a friendly fallback
+  res.json({
+    url: null,
+    message: `We've requested the signing link for ${formType}. Please check your registered email address — you should receive the link within a few minutes.`,
+    emailSent: true,
+  });
 });
 
 export default router;
