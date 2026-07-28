@@ -2,10 +2,10 @@ import React, { useState, useEffect } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import {
   FlaskConical, LayoutDashboard, Clock, CalendarDays, Calendar,
-  Webhook, Settings, LogOut, ShieldCheck, Scale, Building2, DollarSign,
+  Webhook, Settings, SlidersHorizontal, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  BarChart2, AlertTriangle,
+  BarChart2, AlertTriangle, UserCog,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -52,16 +52,24 @@ function getNavItems(role: string | undefined): NavItem[] {
       return [
         { href: "/dashboard/super-admin", label: "Dashboard", icon: LayoutDashboard },
         { href: "/clients",               label: "Clients",    icon: Building2 },
-        { href: "/people",               label: "People",     icon: Users, children: PEOPLE_SUBNAV },
-        { href: "/workforce",            label: "Workforce",  icon: BarChart2 },
+        { href: "/people",                label: "People",     icon: Users, children: PEOPLE_SUBNAV },
+        { href: "/workforce",             label: "Workforce",  icon: BarChart2 },
         { href: "/timeclock",             label: "Time Clock", icon: Clock },
         { href: "/timesheets",            label: "Timesheets", icon: CalendarDays },
-        { href: "/schedule",             label: "Schedule",   icon: Calendar },
-        { href: "/roles",                label: "Roles",      icon: Scale },
-        { href: "/payroll",              label: "Payroll",    icon: DollarSign },
-        { href: "/webhooks",             label: "Webhooks",               icon: Webhook },
-        { href: "/config",               label: "Config",                 icon: Settings },
-        { href: "/settings",             label: "Organization Settings",  icon: Settings },
+        { href: "/schedule",              label: "Schedule",   icon: Calendar },
+        { href: "/payroll",               label: "Payroll",    icon: DollarSign },
+        {
+          href: "/company-settings",
+          label: "Company Settings",
+          icon: Settings,
+          children: [
+            { href: "/account-settings", label: "Account Settings" },
+            { href: "/settings",         label: "Organization Settings" },
+          ],
+        },
+        { href: "/config",    label: "Config",    icon: SlidersHorizontal },
+        { href: "/roles",     label: "Roles",     icon: Scale },
+        { href: "/webhooks",  label: "Webhooks",  icon: Webhook },
       ];
     case "owner":
       return [
@@ -81,10 +89,18 @@ function getNavItems(role: string | undefined): NavItem[] {
             { href: "/manager-payroll/submit",        label: "Submit Payroll" },
           ],
         },
-        { href: "/webhooks",  label: "Webhooks",              icon: Webhook },
-        { href: "/config",    label: "Config",                icon: Settings },
-        { href: "/settings",  label: "Organization Settings", icon: Settings },
-        { href: "/roles",     label: "Roles",                 icon: Scale },
+        {
+          href: "/company-settings",
+          label: "Company Settings",
+          icon: Settings,
+          children: [
+            { href: "/account-settings", label: "Account Settings" },
+            { href: "/settings",         label: "Organization Settings" },
+          ],
+        },
+        { href: "/config",    label: "Config",    icon: SlidersHorizontal },
+        { href: "/roles",     label: "Roles",     icon: Scale },
+        { href: "/webhooks",  label: "Webhooks",  icon: Webhook },
       ];
     case "manager":
       return [
@@ -230,7 +246,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
   const isGroupExpanded = (item: NavItem) => {
     if (!item.children) return false;
-    const onChildPath = location.startsWith(item.href);
+    // Auto-expand if the current path is the parent href or any child's path
+    const onChildPath = location.startsWith(item.href) ||
+      item.children.some(c => location.startsWith(c.href.split("?")[0]));
     return onChildPath || manualExpanded.has(item.href);
   };
 

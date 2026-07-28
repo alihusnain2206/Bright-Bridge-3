@@ -1806,28 +1806,48 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
     ? JSON.parse(reg.fieldValuesJson) as Record<string, string>
     : buildStateRegistrationPayload(reg.stateCode, reg.stateEmployerId ?? "", reg.suiAccountNumber, reg.suiRate ?? 2.8);
 
+  // Detect whether this state is already registered at the provider (i.e. the
+  // prior failure was a duplicate-registration error).  If so, we must call
+  // updateStateRegistrationInfo instead of addStateRegistrationInfo — calling
+  // add again would produce the same "already registered" 400 error.
+  const isAlreadyAtProvider = (() => {
+    if (!reg.rollfiResponse) return false;
+    try {
+      const parsed = JSON.parse(reg.rollfiResponse) as { error?: { message?: string } };
+      return /already registered/i.test(parsed?.error?.message ?? "");
+    } catch { return false; }
+  })();
+
+  const rollfiMethodName = isAlreadyAtProvider ? "updateStateRegistrationInfo" : "addStateRegistrationInfo";
+  const rollfiEndpoint   = isAlreadyAtProvider
+    ? `${getBaseUrl()}/adminPortal/updateStateRegistrationInfo`
+    : `${getBaseUrl()}/adminPortal/addStateRegistrationInfo`;
+
+  req.log.info({ regId: id, stateCode: reg.stateCode, rollfiMethod: rollfiMethodName, isAlreadyAtProvider },
+    "state-reg retry: routing to provider method");
+
   try {
     const response = await axios.post(
-      `${getBaseUrl()}/adminPortal/addStateRegistrationInfo`,
+      rollfiEndpoint,
       {
-        method: "addStateRegistrationInfo",
+        method: rollfiMethodName,
         companyId: rollfiCompanyId,
         code: reg.stateCode,
         companyStateRegistration,
       },
       { headers: rollfiHeaders() }
     );
-    // Rollfi returns HTTP 200 even on errors — check the body for an error object
+    // Provider returns HTTP 200 even on errors — check the body for an error object
     const rollfiRetryErr = (response.data as { error?: { code?: number; message?: string } })?.error;
     if (rollfiRetryErr) {
-      req.log.error({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode }, "Rollfi addStateRegistrationInfo retry returned error in body");
+      req.log.error({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode, rollfiMethod: rollfiMethodName }, "state-reg retry: provider returned body error");
       await db.update(stateRegistrationsTable)
         .set({ status: "failed", rollfiResponse: JSON.stringify(response.data), updatedAt: nowISO })
         .where(eq(stateRegistrationsTable.id, id)).catch(() => {});
-      res.status(400).json({ error: rollfiRetryErr.message ?? "Rollfi rejected state registration", rollfiResponse: response.data }); return;
+      res.status(400).json({ error: rollfiRetryErr.message ?? "Provider rejected state registration", rollfiResponse: response.data }); return;
     }
 
-    req.log.info({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode }, "Rollfi addStateRegistrationInfo retry success");
+    req.log.info({ rollfiResponse: response.data, regId: id, stateCode: reg.stateCode, rollfiMethod: rollfiMethodName }, "state-reg retry: success");
 
     const [updated] = await db.update(stateRegistrationsTable)
       .set({ status: "active", rollfiCompanyId, rollfiResponse: JSON.stringify(response.data), updatedAt: nowISO })

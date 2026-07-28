@@ -16,7 +16,7 @@
  */
 import React, { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Globe, Plus, AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
+import { Globe, Plus, AlertTriangle, CheckCircle2, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Label } from "@/components/ui/label";
@@ -62,6 +62,19 @@ const STATE_REG_STATUS: Record<string, { label: string; color: string }> = {
   pending: { label: "Pending",    color: "bg-yellow-100 text-yellow-700"  },
   failed:  { label: "Failed",     color: "bg-red-100 text-red-700"        },
 };
+
+// ── Validation ────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true when the user has typed the field's own label as its value —
+ * e.g. typing "Withholding ID Number" (or "Withholding ID Number*") into the
+ * Withholding ID Number field.  Normalises both sides: trims whitespace and
+ * strips any trailing asterisk(s) before the case-insensitive comparison.
+ */
+function isFieldLabelAsValue(fieldName: string, value: string): boolean {
+  const norm = (s: string) => s.trim().replace(/\*+$/, "").trim().toLowerCase();
+  return norm(value) === norm(fieldName);
+}
 
 // ── RetryStateRegButton ───────────────────────────────────────────────────────
 
@@ -130,6 +143,7 @@ export function StateRegistrationSection({
   hasRollfi,
   registrationsUrl,
 }: StateRegistrationSectionProps) {
+  // ── Add-state form state ────────────────────────────────────────────────────
   const [showForm, setShowForm] = useState(false);
   const [stateCode, setStateCode] = useState("");
   const [saving, setSaving] = useState(false);
@@ -139,6 +153,18 @@ export function StateRegistrationSection({
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [fieldsLoading, setFieldsLoading] = useState(false);
   const [fieldsError, setFieldsError] = useState("");
+
+  // ── Edit-state form state ───────────────────────────────────────────────────
+  const [editingRegId, setEditingRegId] = useState<string | null>(null);
+  const [editStateCode, setEditStateCode] = useState("");
+  const [editStateName, setEditStateName] = useState("");
+  const [editFields, setEditFields] = useState<Record<string, { isMandatory: boolean }>>({});
+  const [editFieldValues, setEditFieldValues] = useState<Record<string, string>>({});
+  const [editFieldsLoading, setEditFieldsLoading] = useState(false);
+  const [editFieldsError, setEditFieldsError] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editSuccess, setEditSuccess] = useState(false);
 
   const { data, isLoading, refetch } = useQuery<{ registrations: StateRegistration[] }>({
     queryKey: ["state-registrations", companyId, registrationsUrl],
@@ -184,6 +210,17 @@ export function StateRegistrationSection({
       .map(([k]) => k);
     if (missing.length > 0) { setSaveError(`Required: ${missing.join(", ")}`); return; }
 
+    // Reject any field whose value is the field's own label
+    const labelFields = Object.entries(fieldValues)
+      .filter(([name, val]) => val.trim() && isFieldLabelAsValue(name, val))
+      .map(([name]) => name);
+    if (labelFields.length > 0) {
+      setSaveError(
+        `Enter the actual value${labelFields.length > 1 ? "s" : ""} for: ${labelFields.join(", ")}. The field label was typed as the value.`
+      );
+      return;
+    }
+
     setSaving(true); setSaveError(""); setSaveSuccess(false);
     try {
       const selectedState = US_STATES.find(s => s.code === stateCode);
@@ -206,6 +243,97 @@ export function StateRegistrationSection({
     }
   };
 
+  // ── Edit handlers ───────────────────────────────────────────────────────────
+
+  const startEdit = (reg: StateRegistration) => {
+    // Close add form if open
+    setShowForm(false); setSaveError(""); setSaveSuccess(false);
+    setEditingRegId(reg.id);
+    setEditStateCode(reg.stateCode);
+    setEditStateName(reg.stateName);
+    setEditError(""); setEditSuccess(false);
+    setEditFieldsError(""); setEditFieldsLoading(true); setEditFields({});
+
+    // Pre-fill from stored fieldValuesJson
+    const stored: Record<string, string> = reg.fieldValuesJson
+      ? JSON.parse(reg.fieldValuesJson) as Record<string, string>
+      : {};
+    setEditFieldValues(stored);
+
+    // Load dynamic field definitions from the provider
+    fetch(`/api/rollfi/state-fields/${reg.stateCode}`, { credentials: "include" })
+      .then(r => r.json())
+      .then((d: {
+        companyStateRegistrationFieldList?: Record<string, string>;
+        fieldDescription?: Record<string, { isMandatory: boolean }>;
+        error?: string;
+      }) => {
+        if (d.error) { setEditFieldsError(d.error); return; }
+        const fieldList = d.companyStateRegistrationFieldList ?? {};
+        const desc      = d.fieldDescription ?? {};
+        const fields: Record<string, { isMandatory: boolean }> = {};
+        for (const key of Object.keys(fieldList)) {
+          fields[key] = { isMandatory: desc[key]?.isMandatory ?? false };
+        }
+        setEditFields(fields);
+        // Merge stored values with discovered field keys — preserve existing, default new to ""
+        setEditFieldValues(prev => {
+          const merged: Record<string, string> = {};
+          for (const key of Object.keys(fields)) {
+            merged[key] = prev[key] ?? "";
+          }
+          return merged;
+        });
+      })
+      .catch(() => setEditFieldsError("Failed to load registration fields from the payroll provider"))
+      .finally(() => setEditFieldsLoading(false));
+  };
+
+  const cancelEdit = () => {
+    setEditingRegId(null); setEditStateCode(""); setEditStateName("");
+    setEditFields({}); setEditFieldValues({});
+    setEditFieldsLoading(false); setEditFieldsError("");
+    setEditError(""); setEditSuccess(false);
+  };
+
+  const handleEditSubmit = async () => {
+    if (!editingRegId || Object.keys(editFields).length === 0) return;
+
+    const missing = Object.entries(editFields)
+      .filter(([k, v]) => v.isMandatory && !editFieldValues[k]?.trim())
+      .map(([k]) => k);
+    if (missing.length > 0) { setEditError(`Required: ${missing.join(", ")}`); return; }
+
+    // Reject any field whose value is the field's own label
+    const labelFields = Object.entries(editFieldValues)
+      .filter(([name, val]) => val.trim() && isFieldLabelAsValue(name, val))
+      .map(([name]) => name);
+    if (labelFields.length > 0) {
+      setEditError(
+        `Enter the actual value${labelFields.length > 1 ? "s" : ""} for: ${labelFields.join(", ")}. The field label was typed as the value.`
+      );
+      return;
+    }
+
+    setEditSaving(true); setEditError(""); setEditSuccess(false);
+    try {
+      const res = await fetch(`/api/state-registrations/${editingRegId}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fieldValues: editFieldValues }),
+      });
+      const d = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(d.error ?? "Update failed");
+      setEditSuccess(true);
+      cancelEdit();
+      void refetch();
+    } catch (e) {
+      setEditError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-xl border p-5 shadow-sm space-y-4">
       {/* Header */}
@@ -218,7 +346,7 @@ export function StateRegistrationSection({
             Required to withhold and file state taxes at year-end
           </p>
         </div>
-        {hasRollfi && !showForm && (
+        {hasRollfi && !showForm && !editingRegId && (
           <Button
             size="sm" variant="outline"
             onClick={() => { setShowForm(true); setSaveError(""); setSaveSuccess(false); }}
@@ -300,6 +428,15 @@ export function StateRegistrationSection({
                       onSuccess={() => void refetch()}
                     />
                   )}
+                  {hasRollfi && editingRegId !== reg.id && (
+                    <button
+                      onClick={() => startEdit(reg)}
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 flex items-center gap-1"
+                      title={`Edit ${reg.stateName} registration fields`}
+                    >
+                      <Pencil className="h-2.5 w-2.5" />Edit
+                    </button>
+                  )}
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${sc.color}`}>
                     {sc.label}
                   </span>
@@ -310,11 +447,88 @@ export function StateRegistrationSection({
         </div>
       )}
 
-      {/* Success banner */}
+      {/* Add success banner */}
       {saveSuccess && (
         <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg p-3 border border-emerald-200">
           <CheckCircle2 className="h-4 w-4 shrink-0" />
-          State registration submitted to Rollfi successfully.
+          State registration submitted successfully.
+        </div>
+      )}
+
+      {/* Edit success banner */}
+      {editSuccess && (
+        <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-lg p-3 border border-emerald-200">
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+          {editStateName} registration updated successfully.
+        </div>
+      )}
+
+      {/* Edit-state form */}
+      {editingRegId && (
+        <div className="border border-blue-200 rounded-xl p-4 space-y-3 bg-blue-50/40">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-gray-800 flex items-center gap-1.5">
+              <Pencil className="h-3.5 w-3.5 text-[#284362]" />
+              Edit {editStateName} ({editStateCode}) Registration
+            </p>
+          </div>
+
+          {editError && (
+            <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+              {editError}
+            </div>
+          )}
+
+          {editFieldsLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500 py-2">
+              <Loader2 className="h-4 w-4 animate-spin" />Loading {editStateCode} registration fields…
+            </div>
+          )}
+          {editFieldsError && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+              {editFieldsError}
+            </div>
+          )}
+
+          {!editFieldsLoading && Object.keys(editFields).length > 0 && (
+            <div className="space-y-3">
+              {Object.entries(editFields).map(([fieldName, meta]) => (
+                <div key={fieldName} className="space-y-1">
+                  <Label className="text-xs text-gray-600 font-medium">
+                    {fieldName}
+                    {meta.isMandatory
+                      ? <span className="text-red-500 ml-1">*</span>
+                      : <span className="text-gray-400 font-normal ml-1">(optional)</span>}
+                  </Label>
+                  <Input
+                    value={editFieldValues[fieldName] ?? ""}
+                    onChange={e =>
+                      setEditFieldValues(prev => ({ ...prev, [fieldName]: e.target.value }))
+                    }
+                    placeholder={fieldName}
+                    className="h-9 text-sm bg-white"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex gap-2 justify-end pt-1">
+            <Button variant="outline" size="sm" onClick={cancelEdit}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => { void handleEditSubmit(); }}
+              disabled={editFieldsLoading || Object.keys(editFields).length === 0 || editSaving}
+              className="text-white border-0 gap-1.5"
+              style={{ background: NAVY }}
+            >
+              {editSaving
+                ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving…</>
+                : <><Pencil className="h-3.5 w-3.5" />Save Changes</>}
+            </Button>
+          </div>
         </div>
       )}
 

@@ -1,0 +1,68 @@
+Two things: verify the retry path, and add editing. Do NOT submit any
+changes to the provider — build the capability only.
+
+════════════════════════════════════════════════════════════════
+1. VERIFY THE RETRY PATH BEFORE I USE IT
+════════════════════════════════════════════════════════════════
+You said retry calls updateStateRegistrationInfo, but your earlier audit
+reported that endpoint is "not called anywhere" and that the retry at
+rollfi.ts:1811 calls addStateRegistrationInfo. If that's still true,
+retrying NY will fail with the same duplicate error
+("State 'NY' is already registered for company...").
+
+Show the actual retry endpoint code. Then make it correct:
+  - State genuinely new to the provider → addStateRegistrationInfo
+  - State the provider already has → updateStateRegistrationInfo
+Detect which case applies rather than assuming.
+
+════════════════════════════════════════════════════════════════
+2. ADD EDIT — WE HAVE NO WAY TO FIX BAD DATA
+════════════════════════════════════════════════════════════════
+NEW INFORMATION: I checked the payroll provider's own dashboard and it
+shows the SAME bad value — "Withholding ID Number: Withholding ID
+Number*". So the field label was submitted as the value at original
+registration, and the wrong value is stored on THEIR side, not just
+ours. We cannot read the correct value back from them; the real NY
+Withholding ID has to come from the client.
+
+We need an Edit action on each state registration and don't have one:
+  - "Edit" button on each registration row in the State Tax section
+  - Opens the same dynamic field form used for Add, PRE-FILLED with the
+    current stored values from field_values_json
+  - Submitting calls updateStateRegistrationInfo (an endpoint that has
+    never been called from anywhere in our codebase)
+  - On success, update the DB row: field values, status, rollfiResponse
+  - Error-check the response BODY, not just the HTTP status — the
+    provider returns 200 with errors nested
+
+VALIDATION — stop this recurring: reject a field value that matches its
+own label (with or without a trailing *). Someone typed "Withholding ID
+Number*" into the Withholding ID Number field and nothing stopped them.
+Apply it to every dynamically-rendered field, not just this one.
+
+════════════════════════════════════════════════════════════════
+TESTING — ⚠️ DO NOT SUBMIT ANY EDIT TO THE PROVIDER
+════════════════════════════════════════════════════════════════
+We do not have the real NY Withholding ID Number; I'm waiting on it from
+the client. Nothing may write to New York's registration until then.
+
+Test only:
+- The Edit button appears on each registration row
+- Clicking it opens the form PRE-FILLED with the current stored values
+  (confirm by screenshot or by logging the loaded values — do not save)
+- Entering a field's own label as its value is rejected with a clear
+  message (test the validation in the form, without submitting)
+- The retry path is correct by CODE INSPECTION: show that it would call
+  updateStateRegistrationInfo for an already-registered state rather
+  than addStateRegistrationInfo. Do not run it against NY.
+- Another company's owner cannot see or edit these registrations
+- Super-admin client page still works (shared component regression)
+- tsc --noEmit clean
+
+Build the capability; I'll make the actual correction once I have the
+real ID.
+
+DELIVERABLE: the retry endpoint code before and after, the Edit flow's
+files and endpoint, how the label-as-value validation works, and each
+test result.
+REMINDER: Publish required.
