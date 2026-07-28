@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
-import { Search, User, FileText, ClipboardList, Building2, Loader2 } from "lucide-react";
+import { Search, User, FileText, ClipboardList, Building2, Loader2, HelpCircle } from "lucide-react";
 import {
   CommandDialog,
   CommandEmpty,
@@ -21,6 +21,7 @@ interface EmpResult {
   jobTitle?: string | null;
   employeeDisplayId?: string | null;
   companyId: string;
+  status?: string;
 }
 
 interface DocResult {
@@ -53,9 +54,10 @@ interface SearchResults {
   documents: DocResult[];
   tasks: TaskResult[];
   companies: CompanyResult[];
+  suggestions: EmpResult[];   // fuzzy / "Did you mean?" candidates
 }
 
-const EMPTY: SearchResults = { employees: [], documents: [], tasks: [], companies: [] };
+const EMPTY: SearchResults = { employees: [], documents: [], tasks: [], companies: [], suggestions: [] };
 
 function hasResults(r: SearchResults) {
   return r.employees.length > 0 || r.documents.length > 0 || r.tasks.length > 0 || r.companies.length > 0;
@@ -100,7 +102,9 @@ export function GlobalSearch() {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { credentials: "include" });
       if (res.ok) {
         const data = await res.json() as SearchResults;
-        setResults(data);
+        setResults({ ...EMPTY, ...data });
+      } else {
+        setResults(EMPTY);
       }
     } catch {
       setResults(EMPTY);
@@ -122,7 +126,8 @@ export function GlobalSearch() {
     navigate(href);
   }, [navigate]);
 
-  const isEmpty = query.length >= 2 && !loading && !hasResults(results);
+  const noExactResults = query.length >= 2 && !loading && !hasResults(results);
+  const hasSuggestions = results.suggestions.length > 0;
 
   return (
     <>
@@ -137,8 +142,12 @@ export function GlobalSearch() {
         <kbd className="text-[10px] text-gray-300 font-mono hidden xl:block shrink-0">⌘ K</kbd>
       </button>
 
-      {/* Command palette */}
-      <CommandDialog open={open} onOpenChange={setOpen}>
+      {/* Command palette
+          filter={() => 1} disables cmdk's built-in text filter so it never hides
+          items that our server-side search already matched. Without this, cmdk
+          re-filters the rendered items against the input and can silently drop
+          results when the query doesn't appear verbatim in the item's value prop. */}
+      <CommandDialog open={open} onOpenChange={setOpen} filter={() => 1}>
         <CommandInput
           placeholder="Search employees, documents, tasks…"
           value={query}
@@ -153,16 +162,44 @@ export function GlobalSearch() {
             </div>
           )}
 
-          {/* Empty */}
-          {isEmpty && (
-            <CommandEmpty>No results for &ldquo;{query}&rdquo;</CommandEmpty>
-          )}
-
           {/* Prompt */}
           {!loading && query.length < 2 && (
             <div className="py-6 text-center text-sm text-muted-foreground">
               Type at least 2 characters to search
             </div>
+          )}
+
+          {/* No exact results — show fuzzy suggestions if available */}
+          {!loading && noExactResults && !hasSuggestions && (
+            <CommandEmpty>No results for &ldquo;{query}&rdquo;</CommandEmpty>
+          )}
+
+          {!loading && noExactResults && hasSuggestions && (
+            <>
+              <div className="px-4 pt-4 pb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+                <span>No exact match — did you mean…?</span>
+              </div>
+              <CommandGroup heading="Suggestions">
+                {results.suggestions.map(emp => (
+                  <CommandItem
+                    key={`sug-${emp.id}`}
+                    value={`sug-${emp.id}`}
+                    onSelect={() => go(`/people/${emp.id}`)}
+                    className="flex items-center gap-2 cursor-pointer"
+                  >
+                    <User className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                    <span className="font-medium">{emp.firstName} {emp.lastName}</span>
+                    {emp.employeeDisplayId && (
+                      <span className="text-xs text-muted-foreground font-mono">{emp.employeeDisplayId}</span>
+                    )}
+                    <span className="text-xs text-muted-foreground ml-auto truncate max-w-40">
+                      {emp.jobTitle ?? emp.position}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            </>
           )}
 
           {/* Employees */}

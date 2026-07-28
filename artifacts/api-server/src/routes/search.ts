@@ -8,6 +8,13 @@
  * The companyId is never taken from the query string — it is always read from
  * the session user record (store.getUserById), so a client cannot widen scope
  * by passing a different companyId.
+ *
+ * Fuzzy fallback:
+ *   When the exact ILIKE search returns no employees we try two strategies in order:
+ *   1. pg_trgm similarity (if the extension is available)
+ *   2. Token-split ILIKE — search each word in the query independently
+ *   Results are returned in a `suggestions` array so the frontend can render
+ *   "Did you mean …?" without mixing them with exact matches.
  */
 import { Router, type Request, type Response, type IRouter } from "express";
 import {
@@ -25,6 +32,31 @@ const router: IRouter = Router();
 
 const MAX_PER_GROUP = 5;
 
+// Try to enable pg_trgm once at startup. Failure is silent — we fall back to
+// token-split search instead.
+let trgmAvailable: boolean | null = null;
+async function ensureTrgm(): Promise<boolean> {
+  if (trgmAvailable !== null) return trgmAvailable;
+  try {
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
+    trgmAvailable = true;
+  } catch {
+    trgmAvailable = false;
+  }
+  return trgmAvailable;
+}
+
+interface EmpSuggestion {
+  id: string;
+  firstName: string;
+  lastName: string;
+  jobTitle: string | null;
+  position: string | null;
+  employeeDisplayId: string | null;
+  companyId: string;
+  status: string;
+}
+
 router.get("/search", requireAuth, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const user = store.getUserById(userId);
@@ -32,7 +64,7 @@ router.get("/search", requireAuth, async (req: Request, res: Response) => {
 
   const q = String(req.query.q ?? "").trim();
   if (q.length < 2) {
-    res.json({ employees: [], documents: [], tasks: [], companies: [] });
+    res.json({ employees: [], documents: [], tasks: [], companies: [], suggestions: [] });
     return;
   }
 
@@ -154,11 +186,94 @@ router.get("/search", requireAuth, async (req: Request, res: Response) => {
     companyResults = compRows;
   }
 
+  // ── Fuzzy suggestions (only when exact search found no employees) ──────────
+  let suggestions: EmpSuggestion[] = [];
+
+  if (empRows.length === 0 && q.length >= 3) {
+    const scopeFilter = isSuperAdmin
+      ? sql`TRUE`
+      : sql`company_id = ${companyId}`;
+
+    const trgm = await ensureTrgm();
+
+    if (trgm) {
+      // pg_trgm path — similarity over full name
+      try {
+        const fuzzyRows = await db.execute<{
+          id: string; first_name: string; last_name: string;
+          job_title: string | null; position: string | null;
+          employee_display_id: string | null; company_id: string; status: string;
+        }>(sql`
+          SELECT id, first_name, last_name, job_title, position,
+                 employee_display_id, company_id, status
+          FROM employees
+          WHERE ${scopeFilter}
+            AND (
+              similarity(CONCAT(first_name, ' ', last_name), ${q}) > 0.15
+              OR similarity(first_name, ${q}) > 0.25
+              OR similarity(last_name,  ${q}) > 0.25
+            )
+          ORDER BY similarity(CONCAT(first_name, ' ', last_name), ${q}) DESC
+          LIMIT 3
+        `);
+        suggestions = fuzzyRows.rows.map(r => ({
+          id: r.id,
+          firstName: r.first_name,
+          lastName: r.last_name,
+          jobTitle: r.job_title,
+          position: r.position,
+          employeeDisplayId: r.employee_display_id,
+          companyId: r.company_id,
+          status: r.status,
+        }));
+      } catch {
+        trgmAvailable = false; // extension present but query failed — fall through
+      }
+    }
+
+    // Token-split fallback — each word in the query searched independently
+    if (!trgm || suggestions.length === 0) {
+      const tokens = q.split(/\s+/).filter(t => t.length >= 2);
+      if (tokens.length > 0) {
+        const tokenConditions = tokens.map(tok => {
+          const tp = `%${tok}%`;
+          return or(
+            ilike(employees.firstName, tp),
+            ilike(employees.lastName, tp),
+            sql`CONCAT(${employees.firstName}, ' ', ${employees.lastName}) ILIKE ${tp}`,
+          )!;
+        });
+        const tokenSearch = or(...tokenConditions)!;
+        const tokenWhere = isSuperAdmin
+          ? tokenSearch
+          : and(tokenSearch, eq(employees.companyId, companyId));
+
+        const tokenRows = await db
+          .select({
+            id: employees.id,
+            firstName: employees.firstName,
+            lastName: employees.lastName,
+            position: employees.position,
+            jobTitle: employees.jobTitle,
+            employeeDisplayId: employees.employeeDisplayId,
+            companyId: employees.companyId,
+            status: employees.status,
+          })
+          .from(employees)
+          .where(tokenWhere)
+          .limit(3);
+
+        suggestions = tokenRows;
+      }
+    }
+  }
+
   res.json({
     employees: empRows,
     documents: docResults,
     tasks: taskResults,
     companies: companyResults,
+    suggestions,
   });
 });
 
