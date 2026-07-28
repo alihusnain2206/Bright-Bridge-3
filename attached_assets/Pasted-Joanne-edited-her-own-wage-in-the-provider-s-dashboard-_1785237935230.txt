@@ -1,0 +1,42 @@
+Joanne edited her own wage in the provider's dashboard — no bug, and
+your audit confirmed our system made zero wage writes. But we're now out
+of sync, and it matters more than it first appears.
+
+1. SYNC HER RECORD. Our production DB says pay_type "salary",
+   annual_salary $100,000/yr. The provider says $30/hour.
+   This is NOT cosmetic: our salaried/hourly logic decides whether an
+   employee is EXCLUDED from the hours import. Our app currently thinks
+   she's salaried and would skip her, while the provider expects hours —
+   she'd likely be paid $0.
+   Update production to match: pay_type "hourly", hourly_wage 3000
+   (cents), annual_salary null.
+   Production DB writes only work through the deployed app — report HOW
+   you'd do this before doing it, and wait for my approval.
+
+2. CHECK THE OTHER THREE for the same drift. Compare our stored wage
+   against the provider's for Agnes, Alexandra and Arisleyda —
+   pay_type, hourly_wage, annual_salary vs their WageRate and WageBasis.
+   Report any mismatch. READ ONLY.
+
+3. WHY THIS HAPPENED — does the existing live-status refresh pull WAGE
+   data from the provider, or only KYC and account status? If only the
+   latter, report what it would take to include wages, so an owner
+   editing in the provider's dashboard doesn't silently desync us again.
+   Note there is no wage webhook in the provider's event list, so
+   refresh-on-read is the only mechanism available for this.
+
+4. PAY TYPE / WAGE FIELD MISMATCH in the employee edit form: when Pay
+   Type is switched between Hourly and Salary, the wage field's label,
+   placeholder and helper text must switch with it:
+     Hourly → "Hourly Rate", placeholder "20.00", helper "per hour"
+     Salary → "Annual Salary", placeholder "60000", helper "per year"
+   Right now the label stays hourly regardless, which invites someone to
+   type an annual figure into an hourly field. That is exactly how we
+   ended up with an employee at $8,200/hour and a withholding ID field
+   containing its own label.
+   Apply this EVERYWHERE pay type and wage are edited together — the
+   employee wizard AND the edit form. Report every location changed.
+
+⚠️ We are on PRODUCTION with a real company. Make NO write calls to the
+provider. Items 2 and 3 are read-only investigation; item 1 writes only
+to our own database after I approve; item 4 is frontend only.

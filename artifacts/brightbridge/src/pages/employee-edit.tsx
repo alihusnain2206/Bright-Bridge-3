@@ -20,7 +20,7 @@ interface EmployeeDetail {
   position: string; jobTitle?: string|null; employmentType: string; workerType: string;
   startDate?: string|null; status: string; employeeDisplayId?: string|null;
   department?: string|null; managerId?: string|null; managerName?: string|null;
-  payType?: string|null; hourlyWage?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
+  payType?: string|null; hourlyWage?: number|null; annualSalary?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
   ssn?: string|null; dateOfBirth?: string|null;
   homeAddress?: string|null; homeCity?: string|null; homeState?: string|null; homeZip?: string|null;
   w4FilingStatus?: string|null; w4MultipleJobs?: boolean|null; w4Dependents?: number|null; w4ExtraWithholding?: number|null;
@@ -195,9 +195,14 @@ export default function EmployeeEditPage() {
         department:     e.department     ?? "",
         managerName:    e.managerName    ?? "",
         managerId:      e.managerId      ?? "",
-        // Compensation (display in dollars)
+        // Compensation (display in dollars — load from the right column based on payType)
         payType:          e.payType          ?? "hourly",
-        hourlyWageDisplay: e.hourlyWage != null ? String((e.hourlyWage / 100).toFixed(2)) : "",
+        hourlyWageDisplay: (() => {
+          if ((e.payType ?? "hourly") === "salary") {
+            return e.annualSalary != null ? String(Math.round(e.annualSalary / 100)) : "";
+          }
+          return e.hourlyWage != null ? String((e.hourlyWage / 100).toFixed(2)) : "";
+        })(),
         overtimeEligible: e.overtimeEligible ?? true,
         paymentMethod:    e.paymentMethod    ?? "Direct Deposit",
         // Personal
@@ -224,10 +229,13 @@ export default function EmployeeEditPage() {
     if (!form) return;
     setSaving(true); setError(null); setSaved(false); setSyncResult(null);
 
-    // Convert wage display → cents
-    const hourlyWageCents = form.hourlyWageDisplay !== ""
+    // Convert wage display → cents, routing to the correct column by pay type
+    const wageCents = form.hourlyWageDisplay !== ""
       ? Math.round(Number(form.hourlyWageDisplay as string) * 100)
       : null;
+    const isSalary      = form.payType === "salary";
+    const hourlyWageCents  = isSalary ? null : wageCents;
+    const annualSalaryCents = isSalary ? wageCents : null;
 
     const payload: Record<string, unknown> = {
       firstName: form.firstName, lastName: form.lastName,
@@ -236,7 +244,7 @@ export default function EmployeeEditPage() {
       employmentType: form.employmentType, workerType: form.workerType,
       startDate: form.startDate, status: form.status,
       department: form.department, managerName: form.managerName, managerId: form.managerId,
-      payType: form.payType, hourlyWage: hourlyWageCents,
+      payType: form.payType, hourlyWage: hourlyWageCents, annualSalary: annualSalaryCents,
       overtimeEligible: form.overtimeEligible, paymentMethod: form.paymentMethod,
       ssn: form.ssn || null, dateOfBirth: form.dateOfBirth || null,
       homeAddress: form.homeAddress || null, homeCity: form.homeCity || null,
@@ -413,15 +421,20 @@ export default function EmployeeEditPage() {
               <Field label="Pay Type">
                 <Sel value={form.payType as string} onChange={v => set("payType", v)} options={PAY_TYPES} />
               </Field>
-              <Field label="Hourly Wage (USD)" hint="Enter as dollars, e.g. 18.50">
+              <Field
+                label={form.payType === "salary" ? "Annual Salary (USD)" : "Hourly Rate (USD)"}
+                hint={form.payType === "salary" ? "Enter as dollars, e.g. 60000" : "Enter as dollars, e.g. 18.50"}
+              >
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
                   <Input
-                    type="number" step="0.01" min="0"
+                    type="number"
+                    step={form.payType === "salary" ? "1" : "0.01"}
+                    min="0"
                     value={form.hourlyWageDisplay as string}
                     onChange={e => set("hourlyWageDisplay", e.target.value)}
                     className="h-9 text-sm pl-7"
-                    placeholder="0.00"
+                    placeholder={form.payType === "salary" ? "60000" : "18.00"}
                   />
                 </div>
               </Field>
