@@ -134,8 +134,10 @@ function fmtD(n: number) { return `$${n.toLocaleString("en-US", { minimumFractio
  *  Salaried employees show their annual salary (or "Salaried"), never an hourly rate.
  *  Use this everywhere a rate label is rendered — it's the single source of truth. */
 function formatEmployeeRate(emp: { hourlyRate: number; payType?: string | null; annualSalaryCents?: number | null }): string {
+  // annualSalaryCents is a fallback ONLY when payType is absent (e.g. stale cached response).
+  // An explicit payType="hourly" must never be overridden by a leftover annual_salary value.
   const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
-    || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
+    || (!emp.payType && !!emp.annualSalaryCents && emp.annualSalaryCents > 0);
   if (isSalary) {
     return emp.annualSalaryCents && emp.annualSalaryCents > 0
       ? `${fmtD(emp.annualSalaryCents / 100)} / year`
@@ -1602,10 +1604,10 @@ export default function Payroll() {
                         const er  = calcErTax(emp.grossPay);
                         const key = emp.employeeId ?? emp.name;
                         const isExpanded = expandedEmp === key;
-                        // Defensive: also treat as salaried when annualSalaryCents is set,
-                        // so a stale/null payType from a cached response never shows "$0.00/hr".
+                        // annualSalaryCents is a fallback ONLY when payType is absent.
+                        // An explicit payType="hourly" must never be overridden by a leftover annual_salary value.
                         const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
-                          || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
+                          || (!emp.payType && !!emp.annualSalaryCents && emp.annualSalaryCents > 0);
                         const isZeroHours = !isSalary && emp.hoursWorked === 0 && emp.grossPay === 0;
                         // After import, look up this employee's Rollfi-computed gross from lineItems
                         // so salaried employees show their actual amount rather than "auto (Rollfi)".

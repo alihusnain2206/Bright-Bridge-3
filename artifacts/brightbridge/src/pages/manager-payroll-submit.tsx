@@ -77,8 +77,10 @@ function fmtDate(s?: string) {
  *  Salaried employees show their annual salary (or "Salaried"), never an hourly rate.
  *  Use this everywhere a rate label is rendered so the fix stays in one place. */
 function formatEmployeeRate(emp: { hourlyRate: number; payType?: string | null; annualSalaryCents?: number | null }): string {
+  // annualSalaryCents is a fallback ONLY when payType is absent (e.g. stale cached response).
+  // An explicit payType="hourly" must never be overridden by a leftover annual_salary value.
   const isSalary = emp.payType === "salary" || (emp.payType?.startsWith("salary_") ?? false)
-    || (!!emp.annualSalaryCents && emp.annualSalaryCents > 0);
+    || (!emp.payType && !!emp.annualSalaryCents && emp.annualSalaryCents > 0);
   if (isSalary) {
     return emp.annualSalaryCents && emp.annualSalaryCents > 0
       ? `${fmtD(emp.annualSalaryCents / 100)} / year`
@@ -487,7 +489,7 @@ export default function ManagerPayrollSubmit() {
             {(() => {
               const isSalariedEmp = (e: PreviewEmployee) =>
                 e.payType === "salary" || (e.payType?.startsWith("salary_") ?? false)
-                || (!!e.annualSalaryCents && e.annualSalaryCents > 0);
+                || (!e.payType && !!e.annualSalaryCents && e.annualSalaryCents > 0);
               const hourlyEmps   = preview.employees.filter((e) => !isSalariedEmp(e));
               const salariedEmps = preview.employees.filter(isSalariedEmp);
               return (
