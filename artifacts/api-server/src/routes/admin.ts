@@ -153,6 +153,17 @@ adminRouter.post("/admin/users/:employeeId/set-password", async (req, res) => {
     return;
   }
 
+  // Privilege-escalation guard: owners may only reset employee/manager accounts.
+  // They must never be able to overwrite a super_admin's or another owner's password,
+  // even if that person's employee record happens to share the same companyId.
+  const OWNER_RESETTABLE_ROLES = ["employee", "manager"];
+  if (caller.role === "owner" && acct.role && !OWNER_RESETTABLE_ROLES.includes(acct.role)) {
+    res.status(403).json({
+      error: `You cannot reset the password of a ${acct.role} account.`,
+    });
+    return;
+  }
+
   const hashed = await bcrypt.hash(newPassword, 12);
   await db.update(userAccounts).set({ password: hashed }).where(eq(userAccounts.id, acct.id));
 
