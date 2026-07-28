@@ -467,7 +467,7 @@ export default function ManagerPayrollSubmit() {
                     <p className="text-amber-500/70 text-[11px] mt-1.5">
                       Payroll will proceed, but state taxes won't be withheld for these employees.
                       Fix in{" "}
-                      <a href="/settings/state-tax" className="underline hover:text-amber-300">
+                      <a href="/settings?tab=state-tax" className="underline hover:text-amber-300">
                         Company Settings → State Tax Information
                       </a>.
                     </p>
