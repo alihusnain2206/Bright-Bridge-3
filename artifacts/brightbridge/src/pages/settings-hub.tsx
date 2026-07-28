@@ -11,9 +11,10 @@ import React from "react";
 import { useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/useAuth";
-import { AlertTriangle, Globe, Building2 } from "lucide-react";
+import { AlertTriangle, Globe } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StateRegistrationSection } from "@/components/StateRegistrationSection";
+import { CompanyInfoSection } from "@/components/CompanyInfoSection";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -49,29 +50,10 @@ function stateName(code: string) { return STATE_NAMES[code] ?? code; }
 type TabId = "company-info" | "state-tax";
 
 const TABS: { id: TabId; label: string; soon?: boolean }[] = [
-  { id: "company-info", label: "Company Information", soon: true },
+  { id: "company-info", label: "Company Information" },
   { id: "state-tax",    label: "State Tax Information" },
 ];
 
-// ── Company Information tab (coming soon) ─────────────────────────────────────
-
-function CompanyInfoTab() {
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
-      <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
-        <Building2 className="h-7 w-7 text-gray-400" />
-      </div>
-      <h3 className="text-base font-semibold text-gray-700 mb-1">Company Information</h3>
-      <p className="text-sm text-gray-400 max-w-xs">
-        Edit your company's name, address, EIN, and other details here.
-        This section is coming soon.
-      </p>
-      <span className="mt-4 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-400 uppercase tracking-widest">
-        Soon
-      </span>
-    </div>
-  );
-}
 
 // ── State Tax tab ─────────────────────────────────────────────────────────────
 
@@ -241,7 +223,7 @@ export default function SettingsHubPage() {
         <Skeleton className="h-40 rounded-xl" />
       ) : (
         <>
-          {activeTab === "company-info" && <CompanyInfoTab />}
+          {activeTab === "company-info" && <CompanyInfoSection companyId={companyId} />}
           {activeTab === "state-tax"    && (
             <StateTaxTab companyId={companyId} hasRollfi={hasRollfi} />
           )}

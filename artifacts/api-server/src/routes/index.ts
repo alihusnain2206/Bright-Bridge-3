@@ -9,6 +9,7 @@ import peopleRouter from "./people";
 import searchRouter from "./search";
 import notificationsRouter from "./notifications";
 import companySettingsRouter from "./company-settings";
+import accountRouter from "./account";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(peopleRouter);
 router.use(searchRouter);
 router.use(notificationsRouter);
 router.use(companySettingsRouter);
+router.use(accountRouter);
 
 export default router;

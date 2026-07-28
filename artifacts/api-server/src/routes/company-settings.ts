@@ -18,6 +18,8 @@ import {
   db,
   stateRegistrations as stateRegistrationsTable,
   employees as employeesTable,
+  companies as companiesTable,
+  rollfiCompanyRecords,
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../lib/auth-middleware.js";
@@ -209,6 +211,329 @@ router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Re
       error:   "Failed to update state registration",
       details: e.response?.data ?? String(err),
     });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════
+// COMPANY INFORMATION ROUTES
+// ════════════════════════════════════════════════════════════════
+// All routes are owner + super_admin only (same resolveCompanyId guard).
+// Every save must succeed at the provider level — DB is only updated
+// after a confirmed provider success.  Provider name never exposed to owners.
+
+// ── GET /api/company-info ─────────────────────────────────────
+router.get("/company-info", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  try {
+    const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(404).json({ error: "Company not found" }); return; }
+
+    // Resolve rollfi IDs — companies table is authoritative, but legacy/demo companies
+    // may only have their Rollfi IDs in rollfi_company_records (not yet back-filled to companies).
+    let resolvedRollfiCompanyId: string | null = co.rollfiCompanyId ?? null;
+    let resolvedRollfiLocationId: string | null = co.rollfiLocationId ?? null;
+
+    if (!resolvedRollfiCompanyId) {
+      const [legacy] = await db
+        .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId, rollfiLocationId: rollfiCompanyRecords.rollfiLocationId })
+        .from(rollfiCompanyRecords)
+        .where(eq(rollfiCompanyRecords.companyId, companyId))
+        .catch(() => [undefined]);
+      if (legacy) {
+        resolvedRollfiCompanyId = legacy.rollfiCompanyId ?? null;
+        resolvedRollfiLocationId = legacy.rollfiLocationId ?? resolvedRollfiLocationId;
+      }
+    }
+
+    // Fetch live KYB data from provider to get kybInformationId + entity fields
+    let rollfiKybInformationId: string | null = null;
+    let rollfiEntityType: string | null = null;
+    let rollfiDateOfIncorporation: string | null = null;
+    let rollfiEin: string | null = null;
+
+    if (resolvedRollfiCompanyId) {
+      try {
+        const r = await axios.post(
+          `${getBaseUrl()}/reports#getCompanyInfo`,
+          { method: "getCompanyInfo", companyId: resolvedRollfiCompanyId },
+          { headers: rollfiHeaders() },
+        );
+        const rollfiCo = r.data?.Company?.[0];
+        if (rollfiCo) {
+          const kyb = rollfiCo.KYBInformations?.[0];
+          if (kyb) {
+            rollfiKybInformationId   = kyb.KybInformationId ?? null;
+            rollfiEntityType          = kyb.EntityType?.entityType ?? null;
+            rollfiDateOfIncorporation = kyb.dateOfIncorporation ?? null;
+            rollfiEin                 = kyb.ein ?? null;
+          }
+          // Provider location ID overrides our stored value
+          const providerLocId = rollfiCo.CompanyLocations?.[0]?.companyLocationID ?? null;
+          if (providerLocId) resolvedRollfiLocationId = providerLocId;
+        }
+      } catch (_e) {
+        // Non-fatal — provider data is supplementary
+      }
+    }
+
+    res.json({
+      company: {
+        id:                      co.id,
+        name:                    co.name,
+        doingBusinessAs:         co.doingBusinessAs ?? null,
+        businessWebsite:         co.businessWebsite ?? null,
+        phone:                   co.phone ?? "",
+        address1:                co.address1 ?? "",
+        address2:                co.address2 ?? null,
+        city:                    co.city ?? "",
+        state:                   co.state ?? "",
+        zipcode:                 co.zipcode ?? "",
+        ein:                     co.ein ?? null,
+        kybStatus:               co.kybStatus,
+        rollfiCompanyId:         resolvedRollfiCompanyId,
+        rollfiLocationId:        resolvedRollfiLocationId,
+        rollfiKybInformationId,
+        rollfiEntityType,
+        rollfiDateOfIncorporation,
+        rollfiEin,
+      },
+    });
+  } catch (err) {
+    req.log.error({ err }, "GET /company-info failed");
+    res.status(500).json({ error: "Failed to load company information" });
+  }
+});
+
+// ── PUT /api/company-info/basic ───────────────────────────────
+// Updates doingBusinessAs and/or businessWebsite via updateCompany.
+// Provider call is required — DB only written on success.
+router.put("/company-info/basic", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  const { doingBusinessAs, businessWebsite } = req.body as {
+    doingBusinessAs?: string;
+    businessWebsite?: string;
+  };
+
+  try {
+    const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(404).json({ error: "Company not found" }); return; }
+
+    let rollfiCompanyId: string | null = co.rollfiCompanyId ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+    if (!rollfiCompanyId) { res.status(400).json({ error: "Company not yet enrolled in payroll" }); return; }
+
+    // Strip https:// / http:// prefix — provider expects www.domain.com format
+    const websiteToSend = businessWebsite
+      ? businessWebsite.replace(/^https?:\/\//i, "").trim()
+      : undefined;
+
+    const companyPayload: Record<string, string> = {
+      companyId: rollfiCompanyId,
+    };
+    if (doingBusinessAs !== undefined) companyPayload.doingBusinessAs = doingBusinessAs;
+    if (websiteToSend   !== undefined) companyPayload.businessWebsite = websiteToSend;
+
+    const r = await axios.post(
+      `${getBaseUrl()}/companyOnboarding#updateCompany`,
+      { method: "updateCompany", company: companyPayload },
+      { headers: rollfiHeaders() },
+    );
+
+    const rollfiErr = extractRollfiError(r.data);
+    if (rollfiErr) {
+      res.status(400).json({ error: rollfiErr, rollfiResponse: r.data }); return;
+    }
+
+    // Write to DB only after confirmed provider success
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbSet: Record<string, any> = { updatedAt: new Date().toISOString() };
+    if (doingBusinessAs !== undefined) dbSet.doingBusinessAs = doingBusinessAs || null;
+    if (websiteToSend   !== undefined) dbSet.businessWebsite = websiteToSend  || null;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.update(companiesTable).set(dbSet as any).where(eq(companiesTable.id, companyId));
+
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "PUT /company-info/basic failed");
+    res.status(500).json({ error: "Save failed", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── PUT /api/company-info/location ────────────────────────────
+// Updates address + phone via updateCompanyLocation.
+router.put("/company-info/location", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  const { address1, address2, city, state, zipcode, phone } = req.body as {
+    address1?: string; address2?: string; city?: string;
+    state?: string; zipcode?: string; phone?: string;
+  };
+
+  // Validate
+  if (phone && !/^\d{10}$/.test(phone)) {
+    res.status(400).json({ error: "Phone must be exactly 10 digits" }); return;
+  }
+  if (zipcode && !/^\d{5}(\d{4})?$/.test(zipcode)) {
+    res.status(400).json({ error: "ZIP code must be 5 or 9 digits" }); return;
+  }
+
+  try {
+    const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(404).json({ error: "Company not found" }); return; }
+
+    let rollfiCompanyId: string | null = co.rollfiCompanyId ?? null;
+    let rollfiLocationId: string | null = co.rollfiLocationId ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId, rollfiLocationId: rollfiCompanyRecords.rollfiLocationId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId  = leg?.rollfiCompanyId  ?? null;
+      rollfiLocationId = leg?.rollfiLocationId ?? rollfiLocationId;
+    }
+    if (!rollfiCompanyId) { res.status(400).json({ error: "Company not yet enrolled in payroll" }); return; }
+
+    // Provider call — companyLocationId from DB rollfiLocationId
+    const locationPayload: Record<string, string> = {
+      companyId: rollfiCompanyId,
+    };
+    if (rollfiLocationId) locationPayload.companyLocationId = rollfiLocationId;
+    if (address1 !== undefined) { locationPayload.address1 = address1.slice(0, 40); }
+    if (address2 !== undefined) { locationPayload.address2 = address2.slice(0, 40); }
+    if (city     !== undefined) { locationPayload.city     = city.slice(0, 40); }
+    if (state    !== undefined) { locationPayload.state    = state; }
+    if (zipcode  !== undefined) { locationPayload.zipcode  = zipcode; }
+    if (phone    !== undefined) { locationPayload.phoneNumber = phone; }
+    locationPayload.country = "US";
+
+    const r = await axios.post(
+      `${getBaseUrl()}/companyOnboarding#updateCompanyLocation`,
+      { method: "updateCompanyLocation", companyLocation: locationPayload },
+      { headers: rollfiHeaders() },
+    );
+
+    // Provider returns empty body with 400 when request format is invalid
+    if (!r.data || (typeof r.data === "object" && Object.keys(r.data).length === 0)) {
+      res.status(400).json({
+        error: "Address update was rejected by the payroll provider. Please check the values and try again.",
+      });
+      return;
+    }
+
+    const rollfiErr = extractRollfiError(r.data);
+    if (rollfiErr) {
+      res.status(400).json({ error: rollfiErr, rollfiResponse: r.data }); return;
+    }
+
+    // Write to DB
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbSet: Record<string, any> = { updatedAt: new Date().toISOString() };
+    if (address1 !== undefined) dbSet.address1 = address1;
+    if (address2 !== undefined) dbSet.address2 = address2 || null;
+    if (city     !== undefined) dbSet.city     = city;
+    if (state    !== undefined) dbSet.state    = state;
+    if (zipcode  !== undefined) dbSet.zipcode  = zipcode;
+    if (phone    !== undefined) dbSet.phone    = phone;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.update(companiesTable).set(dbSet as any).where(eq(companiesTable.id, companyId));
+
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown; status?: number } };
+    // Surface the empty-body 400 specifically
+    if (e.response?.status === 400) {
+      res.status(400).json({
+        error: "Address update was rejected by the payroll provider. Please check the values and try again.",
+      });
+      return;
+    }
+    req.log.error({ err }, "PUT /company-info/location failed");
+    res.status(500).json({ error: "Save failed", details: e.response?.data ?? String(err) });
+  }
+});
+
+// ── PUT /api/company-info/kyb ─────────────────────────────────
+// Updates EIN / entity type / date of incorporation via updateKybInformation.
+// Locked when kybStatus is not "not_started" (matches provider's own restriction).
+router.put("/company-info/kyb", requireAuth, async (req: Request, res: Response) => {
+  const companyId = resolveCompanyId(req, res);
+  if (!companyId) return;
+
+  const { ein, entityType, dateOfIncorporation } = req.body as {
+    ein?: string; entityType?: string; dateOfIncorporation?: string;
+  };
+
+  try {
+    const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
+    if (!co) { res.status(404).json({ error: "Company not found" }); return; }
+
+    let rollfiCompanyId: string | null = co.rollfiCompanyId ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+    if (!rollfiCompanyId) { res.status(400).json({ error: "Company not yet enrolled in payroll" }); return; }
+
+    if (co.kybStatus !== "not_started") {
+      res.status(400).json({
+        error: "Tax and legal details are locked once business verification has been submitted. Contact support if a correction is needed.",
+      });
+      return;
+    }
+
+    // Get kybInformationId from provider
+    let kybInformationId: string | null = null;
+    try {
+      const infoR = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyInfo`,
+        { method: "getCompanyInfo", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders() },
+      );
+      kybInformationId = infoR.data?.Company?.[0]?.KYBInformations?.[0]?.KybInformationId ?? null;
+    } catch (_e) { /* proceed without */ }
+
+    const kybPayload: Record<string, string> = {
+      companyId: rollfiCompanyId,
+    };
+    if (kybInformationId)      kybPayload.kybInformationId   = kybInformationId;
+    if (ein)                   kybPayload.ein                = ein;
+    if (entityType)            kybPayload.entityType         = entityType;
+    if (dateOfIncorporation)   kybPayload.dateOfIncorporation = dateOfIncorporation;
+
+    const r = await axios.post(
+      `${getBaseUrl()}/companyOnboarding#updateKybInformation`,
+      { method: "updateKybInformation", kybInformation: kybPayload },
+      { headers: rollfiHeaders() },
+    );
+
+    const rollfiErr = extractRollfiError(r.data);
+    if (rollfiErr) {
+      res.status(400).json({ error: rollfiErr, rollfiResponse: r.data }); return;
+    }
+
+    // Write to DB
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbSet: Record<string, any> = { updatedAt: new Date().toISOString() };
+    if (ein)   dbSet.ein = ein;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await db.update(companiesTable).set(dbSet as any).where(eq(companiesTable.id, companyId));
+
+    res.json({ success: true });
+  } catch (err: unknown) {
+    const e = err as { response?: { data: unknown } };
+    req.log.error({ err }, "PUT /company-info/kyb failed");
+    res.status(500).json({ error: "Save failed", details: e.response?.data ?? String(err) });
   }
 });
 

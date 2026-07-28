@@ -12,6 +12,8 @@ export interface AuthUser {
   employeeId: string | null;
   position: string;
   hourlyWage?: number;
+  /** Set after a profile-photo upload; null means no photo on file */
+  photoUrl?: string | null;
 }
 
 export interface AuthCompany {

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
+import * as bcrypt from "bcryptjs";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
@@ -93,7 +94,16 @@ router.post("/auth/login", async (req, res) => {
   }
 
   const user = store.getUserByEmail(email);
-  if (!user || user.password !== password) {
+  if (!user) {
+    res.status(401).json({ error: "Invalid email or password" });
+    return;
+  }
+  // Support both legacy plain-text passwords and bcrypt hashes (set via change-password)
+  const storedPw = user.password;
+  const isMatch = (storedPw.startsWith("$2b$") || storedPw.startsWith("$2a$"))
+    ? await bcrypt.compare(password, storedPw)
+    : storedPw === password;
+  if (!isMatch) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
@@ -132,7 +142,14 @@ router.get("/auth/me", async (req, res) => {
   }
   const company = await resolveUserCompany(user.companyId);
   const location = await resolveUserLocation(user.id);
-  res.json({ user, company, location });
+  // Attach photoUrl from DB (not stored in in-memory TestUser)
+  const [dbRow] = await db
+    .select({ photoUrl: userAccounts.photoUrl })
+    .from(userAccounts)
+    .where(eq(userAccounts.id, user.id))
+    .catch(() => [undefined]);
+  // getUserById already strips password — spread directly
+  res.json({ user: { ...user, photoUrl: dbRow?.photoUrl ?? null }, company, location });
 });
 
 // ── Role-based JWT token generation ─────────────────────────

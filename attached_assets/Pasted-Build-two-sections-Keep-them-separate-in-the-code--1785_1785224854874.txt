@@ -1,0 +1,89 @@
+Build two sections. Keep them separate in the code.
+
+════════════════════════════════════════════════════════════════
+PART 1 — ACCOUNT SETTINGS (/account-settings)
+════════════════════════════════════════════════════════════════
+Available to EVERY role, not just owners — employees need this too.
+Scope for now: profile photo, display name, change password.
+Notification preferences: leave as a "Soon" placeholder.
+
+CHANGE PASSWORD — the priority. Every account in the system is currently
+on a default (Staff123! / Admin123) with no way to change it.
+  - Require the current password; verify before accepting
+  - New password + confirm, minimum 8 characters, mismatch blocked
+  - Hash properly (match however existing passwords are stored)
+  - Clear success and failure messages
+  - ⚠️ CHECK FIRST: USER-001 (joanne@brightbridgeassist.com) is
+    hardcoded in store.ts, not in the database. Report whether that
+    account can have its password changed at all — if not, say so
+    plainly rather than building a form that silently fails for her.
+
+PROFILE PHOTO
+  - Upload, preview, remove
+  - Use the existing avatar handling if there is any (the employee wizard
+    has photo upload) — report what exists rather than building a second
+    system
+
+DISPLAY NAME
+  - ⚠️ Be careful here: user_accounts.name and employees.firstName/
+    lastName are different things. Changing an account's display name
+    must NOT alter the employee record used for payroll, or push a name
+    change to the payroll provider. Report how you've kept them
+    separate.
+
+════════════════════════════════════════════════════════════════
+PART 2 — COMPANY INFORMATION (under Organization Settings)
+════════════════════════════════════════════════════════════════
+FIRST — probe two fields before building the form. The provider's own
+dashboard can edit "Doing business as" and "Email", but neither appears
+in the documented API:
+  - updateCompany accepts ONLY businessWebsite per the spec
+  - updateKybInformation documents only ein, entityType,
+    dateOfIncorporation — yet getCompanyInfo returns email and
+    phoneNumber inside KYBInformations
+Probe against SANDBOX (never production) whether updateKybInformation
+accepts email and phoneNumber, and whether updateCompany accepts
+doingBusinessAs. Report what each returns. Do not build inputs for
+fields we can't actually save.
+
+THEN build:
+
+EDITABLE (map each to its endpoint):
+  - Business website → updateCompany (max 40 chars)
+  - Address 1 & 2, City, State, Zip → updateCompanyLocation
+    (address/city max 40; state = 2-letter enum; zip 5 or 9 digits)
+  - Phone → updateCompanyLocation (exactly 10 digits)
+  - EIN, entity type, date of incorporation → updateKybInformation
+  - Plus anything the probe confirms
+
+READ-ONLY:
+  - Company name — no endpoint exists. Greyed, with: "Company name
+    cannot be changed after registration. Contact support if it needs
+    correcting."
+
+KYB LOCK: EIN, entity type and incorporation date cannot be updated
+while KYB status is "pending". Detect it and disable those fields with a
+clear explanation.
+
+════════════════════════════════════════════════════════════════
+BOTH PARTS
+════════════════════════════════════════════════════════════════
+- Company-scoped server-side where relevant
+- Saves must write to BOTH our DB and the provider where applicable — if
+  the provider call fails, do NOT report success. Check the response
+  body, not just the HTTP status.
+- Never show the provider's name in owner-facing copy
+
+TESTING: ⚠️ SANDBOX ONLY for Part 2. Do not modify BrightbridgeAssist's
+production company record — real company, real EIN.
+  - Password change works; wrong current password is rejected
+  - Changing an account's display name does NOT alter the employee
+    record or reach the provider
+  - Each company field saves and appears in the provider's record
+  - Company name is read-only with the explanation
+  - A failed provider call shows an error, not a false success
+  - tsc clean
+
+DELIVERABLE: the USER-001 password finding, the probe results, the
+field-to-endpoint mapping, and each test result.
+REMINDER: Publish required.

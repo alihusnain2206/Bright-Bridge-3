@@ -54,6 +54,7 @@ export const userAccounts = pgTable("user_accounts", {
   locationId:  text("location_id"),
   employeeId:  text("employee_id"),
   position:    text("position"),
+  photoUrl:    text("photo_url"),
   createdAt:   text("created_at").notNull(),
 });
 
