@@ -17,7 +17,7 @@ import {
   onboardingTasks,
   companies,
 } from "@workspace/db";
-import { ilike, or, and, eq, sql } from "drizzle-orm";
+import { ilike, or, and, eq, sql, inArray } from "drizzle-orm";
 import { requireAuth } from "../lib/auth-middleware.js";
 import { store } from "../store.js";
 
@@ -97,7 +97,7 @@ router.get("/search", requireAuth, async (req: Request, res: Response) => {
     const empLookup = await db
       .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
       .from(employees)
-      .where(sql`${employees.id} = ANY(${docEmployeeIds})`);
+      .where(inArray(employees.id, docEmployeeIds));
     docEmployeeMap = Object.fromEntries(empLookup.map(e => [e.id, `${e.firstName} ${e.lastName}`]));
   }
 
@@ -130,7 +130,7 @@ router.get("/search", requireAuth, async (req: Request, res: Response) => {
     const empLookup2 = await db
       .select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
       .from(employees)
-      .where(sql`${employees.id} = ANY(${taskEmployeeIds})`);
+      .where(inArray(employees.id, taskEmployeeIds));
     taskEmployeeMap = Object.fromEntries(empLookup2.map(e => [e.id, `${e.firstName} ${e.lastName}`]));
   }
 
