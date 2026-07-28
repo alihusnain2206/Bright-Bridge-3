@@ -1,0 +1,86 @@
+ROLE: senior full-stack TypeScript engineer on BrightBridge Assist
+(React/TS + Node/Express, brand navy #1B3A6B / teal #0EA5C9).
+
+Build a new Company Settings area with a sub-navigation structure, then
+implement ONE section within it. The other sections are placeholders for
+now.
+
+════════════════════════════════════════════════════════════════
+PART 1 — THE SHELL (structure only)
+════════════════════════════════════════════════════════════════
+
+New top-level nav item: **Company Settings** (sidebar, owner +
+super_admin only).
+
+Sub-navigation, following the same pattern as the People and Workforce
+modules (left sub-nav with "Soon" pills for unbuilt pages):
+
+  Company Settings
+    ├─ My Account            → Soon pill
+    └─ Organization Settings
+         ├─ Company Information   → Soon pill
+         └─ State Tax Information → BUILT (Part 2)
+
+Only State Tax Information is functional. The other two render a clean
+"Coming soon" state — do not build stub forms.
+
+If a Company Settings or /settings route already exists (there is a
+Team & Access / Departments settings page), report how it relates before
+creating a new one — I want this to absorb or sit alongside it sensibly,
+not duplicate it.
+
+════════════════════════════════════════════════════════════════
+PART 2 — STATE TAX INFORMATION (the working section)
+════════════════════════════════════════════════════════════════
+
+REUSE, don't rebuild: the super-admin StateRegistrationSection in
+client-detail.tsx is fully functional. Extract it into a SHARED component
+used by both the super-admin client page and this new owner-facing
+section — one component, two doors. Do not copy-paste.
+
+BUILD:
+1. GET /api/state-registrations scoped to the requester's company (owners
+   cannot use the super-admin route). Enforce with assertCompanyAccess
+   server-side.
+2. PUT /rollfi/state-registrations/:id → calls updateStateRegistrationInfo
+   (currently never called anywhere).
+3. Gap detection endpoint: employees whose homeState has no ACTIVE row in
+   state_registrations. EXCLUDE states in NO_INCOME_TAX_STATES and
+   STATES_USING_FEDERAL_W4 — those legitimately need no registration.
+4. Surface the gap as a warning in this section AND on the Submit Payroll
+   page:
+   "2 employees work in New Jersey, which isn't registered for payroll
+   tax. They cannot have state withholding until it is."
+   A warning, not a block — the owner may be mid-registration with the
+   state.
+
+DO NOT BUILD: delete. Removing a registration for a state where employees
+work would break their withholding. Report what a safe delete would
+require (e.g. only when zero employees are in that state) but don't
+implement it.
+
+REQUIREMENTS:
+- Owner + super_admin only; company scoping enforced server-side
+- Rollfi returns HTTP 200 with errors nested in the body — use
+  extractRollfiError on every call. No silent failures.
+- Failed registrations show status with the existing Retry action
+- Empty state: "No states registered yet"
+- Adding a state fetches its dynamic fields via
+  GET /rollfi/state-fields/:stateCode (already works)
+
+SCOPE BOUNDARY: don't touch payroll import/submit logic, the Rollfi
+employee sync, or EasyTeam.
+
+TESTING:
+- Owner sees only their own company's registrations; another company's
+  owner sees none
+- Adding a state renders that state's dynamic fields correctly
+- The gap warning appears when an employee's state is unregistered, and
+  does NOT appear for no-income-tax states
+- The super-admin client page still works after the component extraction
+  (regression check)
+- tsc --noEmit clean
+
+DELIVERABLE: files changed, the shared component's signature and both
+call sites, how company scoping is enforced, and each test result.
+REMINDER: Publish required.

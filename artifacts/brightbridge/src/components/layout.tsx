@@ -17,6 +17,8 @@ interface NavSubItem {
   href: string;
   label: string;
   soon?: boolean;
+  /** Renders as a non-clickable section label/divider in the sub-nav. */
+  heading?: boolean;
 }
 
 interface NavItem {
@@ -25,6 +27,13 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   children?: NavSubItem[];
 }
+
+const SETTINGS_SUBNAV: NavSubItem[] = [
+  { href: "/settings",           label: "My Account",            soon: true },
+  { href: "/settings",           label: "Organization Settings", heading: true },
+  { href: "/settings",           label: "Company Information",   soon: true },
+  { href: "/settings/state-tax", label: "State Tax Information" },
+];
 
 const PEOPLE_SUBNAV: NavSubItem[] = [
   { href: "/people/directory",    label: "Employee Directory" },
@@ -57,8 +66,9 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: "/schedule",             label: "Schedule",   icon: Calendar },
         { href: "/roles",                label: "Roles",      icon: Scale },
         { href: "/payroll",              label: "Payroll",    icon: DollarSign },
-        { href: "/webhooks",             label: "Webhooks",   icon: Webhook },
-        { href: "/config",               label: "Config",     icon: Settings },
+        { href: "/webhooks",             label: "Webhooks",          icon: Webhook },
+        { href: "/config",               label: "Config",            icon: Settings },
+        { href: "/settings",             label: "Company Settings",  icon: Settings, children: SETTINGS_SUBNAV },
       ];
     case "owner":
       return [
@@ -78,9 +88,10 @@ function getNavItems(role: string | undefined): NavItem[] {
             { href: "/manager-payroll/submit",        label: "Submit Payroll" },
           ],
         },
-        { href: "/webhooks", label: "Webhooks", icon: Webhook },
-        { href: "/config",   label: "Config",   icon: Settings },
-        { href: "/roles",    label: "Roles",    icon: Scale },
+        { href: "/webhooks",  label: "Webhooks",         icon: Webhook },
+        { href: "/config",    label: "Config",           icon: Settings },
+        { href: "/settings",  label: "Company Settings", icon: Settings, children: SETTINGS_SUBNAV },
+        { href: "/roles",     label: "Roles",            icon: Scale },
       ];
     case "manager":
       return [
@@ -362,7 +373,12 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                   {expanded && (
                     <div className="ml-3 mt-0.5 mb-1 space-y-0.5 border-l border-gray-200 pl-3">
                       {children.map(child => (
-                        child.soon ? (
+                        child.heading ? (
+                          <div key={child.label}
+                            className="mt-2 mb-0.5 px-2.5 text-[9px] font-bold text-gray-400 uppercase tracking-widest select-none">
+                            {child.label}
+                          </div>
+                        ) : child.soon ? (
                           <div key={child.label}
                             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium text-gray-300 cursor-not-allowed select-none">
                             <span className="flex-1 truncate">{child.label}</span>

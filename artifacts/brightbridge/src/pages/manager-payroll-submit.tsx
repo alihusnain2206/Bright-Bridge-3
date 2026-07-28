@@ -259,6 +259,16 @@ export default function ManagerPayrollSubmit() {
       retry: false,
     });
 
+  // State-registration gap detection — warning only, never a block
+  const { data: gapsData } = useQuery<{ gaps: Array<{ state: string; employees: { id: string; name: string }[] }> }>({
+    queryKey: ["state-registration-gaps", companyId],
+    queryFn: () =>
+      fetch("/api/state-registrations/gaps", { credentials: "include" })
+        .then(r => r.json() as Promise<{ gaps: Array<{ state: string; employees: { id: string; name: string }[] }> }>),
+    staleTime: 120_000,
+    enabled: !!companyId && (user?.role === "owner" || user?.role === "super_admin"),
+  });
+
   // Adjustments are per-period overrides only — clear them whenever the active pay period rolls
   // over so they never bleed into a different period (stale-comp guard, mirrors STEP 5).
   useEffect(() => {
@@ -433,6 +443,37 @@ export default function ManagerPayrollSubmit() {
 
         {preview && !previewLoading && (
           <>
+            {/* State registration gap warning — shown above the employee table; never blocks submission */}
+            {(gapsData?.gaps ?? []).length > 0 && (
+              <div className="mb-3 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-amber-300 text-sm font-semibold mb-1">
+                      Missing state tax registration{(gapsData?.gaps ?? []).length > 1 ? "s" : ""}
+                    </p>
+                    <ul className="space-y-0.5">
+                      {(gapsData?.gaps ?? []).map(gap => (
+                        <li key={gap.state} className="text-amber-400/80 text-xs">
+                          <span className="font-semibold">{gap.state}</span>
+                          {" "}— {gap.employees.length === 1
+                            ? `${gap.employees[0]?.name} has no state withholding`
+                            : `${gap.employees.length} employees have no state withholding`}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="text-amber-500/70 text-[11px] mt-1.5">
+                      Payroll will proceed, but state taxes won't be withheld for these employees.
+                      Fix in{" "}
+                      <a href="/settings/state-tax" className="underline hover:text-amber-300">
+                        Company Settings → State Tax Information
+                      </a>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="mb-2 flex items-center justify-between">
               {!preview.allOnboarded && (
                 <div className="flex items-center gap-1.5 text-amber-400 text-xs">
