@@ -76,16 +76,22 @@ function projectEmployee(e: typeof employeesTable.$inferSelect) {
 router.get("/clients", async (_req, res) => {
   const rows: (typeof companiesTable.$inferSelect)[] = await db.select().from(companiesTable).catch(() => []);
 
-  // Build a map of DB rows keyed by ID (excluding HQ).
+  // Build a map of DB rows keyed by ID.
+  // ORG-BRIGHTBRIDGE is excluded ONLY when it has no rollfiLocationId — i.e. it is
+  // the bare seeded HQ record with no real EasyTeam location. When an owner has gone
+  // through the company wizard their ORG-BRIGHTBRIDGE row gains a rollfiLocationId
+  // and must appear in the clients list so Schedule / Time Clock can look it up.
   const dbMap = new Map(
-    rows.filter((r) => r.id !== "ORG-BRIGHTBRIDGE").map((r) => [r.id, r])
+    rows
+      .filter((r) => r.id !== "ORG-BRIGHTBRIDGE" || !!r.rollfiLocationId)
+      .map((r) => [r.id, r])
   );
 
   // Add seeded in-memory store daycare companies that are not already in the DB.
   // Only include companies that have a locationId — these are actual daycare sites.
   const storeCompanies = store.getCompanies?.() ?? [];
   for (const sc of storeCompanies) {
-    if (sc.id === "ORG-BRIGHTBRIDGE" || !sc.locationId) continue;
+    if (!sc.locationId) continue;
     if (!dbMap.has(sc.id)) {
       // Project store company into the CompanyRow shape expected by projectCompany().
       dbMap.set(sc.id, {
