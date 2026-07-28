@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Search, User, FileText, ClipboardList, Building2, Loader2, HelpCircle } from "lucide-react";
 import {
-  CommandDialog,
   CommandEmpty,
   CommandGroup,
   CommandInput,
@@ -10,6 +9,11 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+// Use Command directly (not CommandDialog) so we can set shouldFilter={false}.
+// CommandDialog spreads its props onto <Dialog>, not the inner <Command>, so
+// filter/shouldFilter never reach cmdk when going through CommandDialog.
+import { Command as CommandPrimitive } from "cmdk";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 // ── API shape ─────────────────────────────────────────────────────────────────
 
@@ -142,12 +146,16 @@ export function GlobalSearch() {
         <kbd className="text-[10px] text-gray-300 font-mono hidden xl:block shrink-0">⌘ K</kbd>
       </button>
 
-      {/* Command palette
-          filter={() => 1} disables cmdk's built-in text filter so it never hides
-          items that our server-side search already matched. Without this, cmdk
-          re-filters the rendered items against the input and can silently drop
-          results when the query doesn't appear verbatim in the item's value prop. */}
-      <CommandDialog open={open} onOpenChange={setOpen} filter={() => 1}>
+      {/* Command palette — Dialog wraps Command so we can set shouldFilter={false}
+          directly on cmdk's Command primitive. CommandDialog spreads its props
+          onto <Dialog>, not the inner <Command>, so filter/shouldFilter never
+          reach cmdk when going through CommandDialog. */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="overflow-hidden p-0 max-w-lg">
+          <CommandPrimitive
+            shouldFilter={false}
+            className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5 flex h-full w-full flex-col overflow-hidden rounded-md bg-popover text-popover-foreground"
+          >
         <CommandInput
           placeholder="Search employees, documents, tasks…"
           value={query}
@@ -289,7 +297,9 @@ export function GlobalSearch() {
             </CommandGroup>
           )}
         </CommandList>
-      </CommandDialog>
+          </CommandPrimitive>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
