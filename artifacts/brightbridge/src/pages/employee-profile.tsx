@@ -515,10 +515,13 @@ function PayrollSetupModal({
 
   // Fetch live status on open so we know what's needed before the user clicks "Run Setup"
   useEffect(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     (async () => {
       try {
         const r = await fetch(`/api/rollfi/repair/preflight-status?employeeId=${encodeURIComponent(emp.id)}`, {
           credentials: "include",
+          signal: controller.signal,
         });
         const data = await r.json() as PreflightResult & { error?: string };
         if (!r.ok) {
@@ -530,11 +533,17 @@ function PayrollSetupModal({
         // Pre-set skipBank = true only when Rollfi already has a bank account on file
         if (data.hasBankInRollfi) setSkipBank(true);
         setPhase("ready");
-      } catch {
-        setPreflightError("Could not reach payroll provider — you can still run setup manually.");
+      } catch (err: unknown) {
+        const isAbort = err instanceof DOMException && err.name === "AbortError";
+        setPreflightError(isAbort
+          ? "Status check timed out — you can still run setup manually."
+          : "Could not reach payroll provider — you can still run setup manually.");
         setPhase("ready");
+      } finally {
+        clearTimeout(timer);
       }
     })();
+    return () => { controller.abort(); clearTimeout(timer); };
   }, [emp.id]);
 
   // Address warning: homeAddress field appears to embed city or zip
@@ -594,11 +603,11 @@ function PayrollSetupModal({
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-5">
+        <div className="px-6 py-5 space-y-5 min-h-[120px]">
           {/* Loading preflight */}
           {phase === "loading" && (
-            <div className="flex flex-col items-center gap-3 py-8">
-              <Loader2 className="h-7 w-7 text-[#2C4562] animate-spin" />
+            <div className="flex flex-col items-center gap-4 py-10">
+              <Loader2 className="h-8 w-8 text-[#2C4562] animate-spin" />
               <p className="text-sm text-gray-500">Checking current setup status…</p>
             </div>
           )}
