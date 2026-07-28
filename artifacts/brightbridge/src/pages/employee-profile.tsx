@@ -898,7 +898,11 @@ function PayrollReadinessPanel({ emp, isSuperAdmin }: { emp: EmployeeDetail; isS
 
   const appReady    = PAYROLL_ITEMS.every(i => done(i.type));
   const rollfiReady = accountStatus === "Active" && kycStatus === "passed";
-  const fullyReady  = !!emp.rollfiUserId && appReady && rollfiReady;
+  // Use the DB-persisted payrollReady flag as the authoritative source so the
+  // panel matches the employee-list badge (both reflect Active + KYC passed).
+  // Imported employees may never have an I-9 compliance record, so appReady
+  // alone would permanently show "In Progress" even when Rollfi is fully live.
+  const fullyReady  = !!emp.rollfiUserId && (emp.payrollReady === true || (appReady && rollfiReady));
   const needsKyc    = !!emp.rollfiUserId && (kycStatus === "new" || kycStatus === "pending" || kycStatus === "not_started");
 
   async function handleRefresh() {

@@ -111,16 +111,22 @@ export default function PeopleKpiCards({
     enabled: !!companyId, staleTime: 60_000,
   });
 
-  // Card 1: Active employees
-  const activeEmps = employees.filter(e => e.status === "active");
-  const now = Date.now();
-  const thisMonthActive = activeEmps.filter(e => e.startDate && now - new Date(e.startDate).getTime() < 30 * 86400000);
-
-  // Card 2: New hires
-  const newHires = employees.filter(e => {
-    if (e.status === "onboarding" || e.status === "pending") return true;
+  // Card 1: All non-terminated employees (active + onboarding + pending)
+  const activeEmps = employees.filter(e => e.status !== "terminated");
+  const now = new Date();
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+  const thisMonthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
+  const thisMonthActive = activeEmps.filter(e => {
     if (!e.startDate) return false;
-    return now - new Date(e.startDate).getTime() < 30 * 86400000;
+    const t = new Date(e.startDate).getTime();
+    return t >= thisMonthStart && t < thisMonthEnd;
+  });
+
+  // Card 2: New hires = employees whose startDate is in the current calendar month
+  const newHires = employees.filter(e => {
+    if (!e.startDate) return false;
+    const t = new Date(e.startDate).getTime();
+    return t >= thisMonthStart && t < thisMonthEnd;
   });
   const newHiresOnboarding = newHires.filter(e => e.status === "onboarding" || e.status === "pending");
 
