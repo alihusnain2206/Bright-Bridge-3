@@ -21,7 +21,11 @@ export default function Schedule() {
   const urlEmployeeId = params.get("employeeId") ?? "";
 
   const { user } = useAuth();
-  const isOwner = user?.role === "owner";
+  // "Owner-locked" mode: show a read-only chip and auto-launch only when the user
+  // is an owner scoped to a real daycare company (not the HQ org).
+  // super_admin (companyId = ORG-BRIGHTBRIDGE) and any edge case where the user's
+  // company is HQ always fall through to the full client dropdown.
+  const isOwner = user?.role === "owner" && !!user?.companyId && user.companyId !== "ORG-BRIGHTBRIDGE";
 
   // Owners are locked to their own company; admins/managers get the full picker.
   // clientId starts empty and is set once auth resolves (owner) or via URL param / dropdown (others).
