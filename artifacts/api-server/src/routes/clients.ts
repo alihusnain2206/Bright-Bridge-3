@@ -68,9 +68,37 @@ function projectEmployee(e: typeof employeesTable.$inferSelect) {
 }
 
 // ── GET /clients ─────────────────────────────────────────────
+// Returns all daycare clients: DB-persisted companies (wizard flow) merged with
+// in-memory store companies that have a locationId (seeded demo daycares like
+// Sunshine and Rainbow). Store companies are listed first; DB rows for the same
+// ID take precedence and override the store entry. ORG-BRIGHTBRIDGE (HQ) is
+// always excluded — it is not a daycare client.
 router.get("/clients", async (_req, res) => {
   const rows: (typeof companiesTable.$inferSelect)[] = await db.select().from(companiesTable).catch(() => []);
-  const clients = rows.filter((c) => c.id !== "ORG-BRIGHTBRIDGE").map(projectCompany);
+
+  // Build a map of DB rows keyed by ID (excluding HQ).
+  const dbMap = new Map(
+    rows.filter((r) => r.id !== "ORG-BRIGHTBRIDGE").map((r) => [r.id, r])
+  );
+
+  // Add seeded in-memory store daycare companies that are not already in the DB.
+  // Only include companies that have a locationId — these are actual daycare sites.
+  const storeCompanies = store.getCompanies?.() ?? [];
+  for (const sc of storeCompanies) {
+    if (sc.id === "ORG-BRIGHTBRIDGE" || !sc.locationId) continue;
+    if (!dbMap.has(sc.id)) {
+      // Project store company into the CompanyRow shape expected by projectCompany().
+      dbMap.set(sc.id, {
+        id: sc.id,
+        name: sc.name,
+        locationName: sc.name,
+        createdAt: null,
+        rollfiLocationId: sc.locationId,
+      });
+    }
+  }
+
+  const clients = Array.from(dbMap.values()).map(projectCompany);
   res.json({ clients });
 });
 
