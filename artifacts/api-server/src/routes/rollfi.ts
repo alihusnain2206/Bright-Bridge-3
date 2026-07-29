@@ -11,6 +11,28 @@ import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } f
 import { desc, eq, inArray, and } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
+import crypto from "crypto";
+
+// ── Rollfi / Convoy webhook HMAC verification ─────────────────────────────────
+const CONVOY_WEBHOOK_SECRET = process.env.CONVOY_WEBHOOK_SECRET;
+
+function verifyConvoySignature(rawBody: string, signatureHeader: string | undefined, secret: string): boolean {
+  if (!signatureHeader) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const expectedBuf = Buffer.from(expected, "hex");
+  // Accept Convoy format "v1=<hmac>,v1=<hmac>" OR plain hex
+  const tokens = signatureHeader.split(",").map((s) => s.trim());
+  return tokens.some((tok) => {
+    const eqIdx = tok.indexOf("=");
+    const hashStr = eqIdx >= 0 ? tok.slice(eqIdx + 1) : tok;
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hashStr, "hex"), expectedBuf);
+    } catch {
+      return false;
+    }
+  });
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 const router: IRouter = Router();
 
@@ -4730,12 +4752,42 @@ function resolveCompanyId(rollfiCompanyId: string | null): string | null {
   return null;
 }
 
-// POST /rollfi/webhook — public, called directly by Rollfi
+// POST /rollfi/webhook — public endpoint called by Rollfi via Convoy.
+// HMAC-SHA256 signature verification is enforced when CONVOY_WEBHOOK_SECRET is set.
 router.post("/rollfi/webhook", async (req, res) => {
+  const rawBody = JSON.stringify(req.body);
+  const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
+  const isProd = process.env.NODE_ENV === "production";
+
+  // ── HMAC signature verification ───────────────────────────────────────────
+  if (!CONVOY_WEBHOOK_SECRET) {
+    if (isProd) {
+      req.log.error("CONVOY_WEBHOOK_SECRET is not set in production — rejecting unverified Rollfi webhook");
+      res.status(401).json({ error: "Webhook signature verification not configured" });
+      return;
+    }
+    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification (non-production mode)");
+  } else {
+    if (!signatureHeader) {
+      req.log.warn({ path: req.path }, "Rollfi webhook rejected: missing x-convoy-signature header");
+      res.status(401).json({ error: "Missing webhook signature" });
+      return;
+    }
+    const valid = verifyConvoySignature(rawBody, signatureHeader, CONVOY_WEBHOOK_SECRET);
+    if (valid) {
+      req.log.info({ sig: signatureHeader.slice(0, 24) + "…" }, "Rollfi webhook signature verified OK");
+    } else {
+      req.log.warn({ signatureHeader }, "Rollfi webhook rejected: HMAC signature mismatch");
+      res.status(401).json({ error: "Invalid webhook signature" });
+      return;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const body = req.body as Record<string, unknown>;
 
   // Rollfi nests the event type at body.trigger.eventType — check that first,
-  // then fall back to legacy flat fields for other event shapes.
+  // then fall back to legacy flat fields for older event shapes.
   const trigger = body.trigger as Record<string, unknown> | undefined;
   const eventType =
     (trigger?.eventType as string) ||
@@ -4775,17 +4827,34 @@ router.post("/rollfi/webhook", async (req, res) => {
     req.log.warn({ err }, "Failed to persist Rollfi webhook event");
   }
 
-  // Write-back: on employee status events, update kyc_status + rollfi_account_status in DB.
+  // ── Write-back handlers ───────────────────────────────────────────────────
   // Any write failure returns 200 anyway — never crash the webhook endpoint.
-  if (eventType === "employee.employeestatus.update") {
+
+  // Shared types for employee event payloads (same shape across all 4 types)
+  type WebhookUser = {
+    userId?: string;
+    kycStatus?: string;
+    status?: { userStatus?: string };
+    bankAccounts?: Array<{ status?: string; accountPriority?: string }>;
+  };
+  type WebhookPayloadEntry = { user?: WebhookUser[]; Company?: WebhookCompany[] };
+  type WebhookCompany = {
+    companyID?: string;
+    kycStatus?: string; // Rollfi names the company KYB field "kycStatus" in the payload
+  };
+
+  // employee.employeestatus.update / .insert
+  // employee.kycstatus.update / .insert
+  // All four use identical payload shape → one shared handler.
+  const isEmployeeEvent = [
+    "employee.employeestatus.update",
+    "employee.employeestatus.insert",
+    "employee.kycstatus.update",
+    "employee.kycstatus.insert",
+  ].includes(eventType);
+
+  if (isEmployeeEvent) {
     try {
-      type WebhookUser = {
-        userId?: string;
-        kycStatus?: string;
-        status?: { userStatus?: string };
-        bankAccounts?: Array<{ status?: string }>;
-      };
-      type WebhookPayloadEntry = { user?: WebhookUser[] };
       const payloadArr = (body.payload as WebhookPayloadEntry[] | undefined) ?? [];
       const users: WebhookUser[] = payloadArr.flatMap((p) => p.user ?? []);
 
@@ -4796,22 +4865,57 @@ router.post("/rollfi/webhook", async (req, res) => {
           .from(employeesTable)
           .where(eq(employeesTable.rollfiUserId, u.userId));
         if (!emp) {
-          req.log.warn({ rollfiUserId: u.userId }, "Rollfi webhook: no employee found for userId — skipping write-back");
+          req.log.warn({ rollfiUserId: u.userId, eventType }, "Rollfi webhook: no employee found for userId — skipping write-back");
           continue;
         }
         const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
         if (u.kycStatus !== undefined) updates.kycStatus = u.kycStatus;
         if (u.status?.userStatus !== undefined) updates.rollfiAccountStatus = u.status.userStatus;
+        // Bank account status — log it; no dedicated column, but surfaces in logs for debugging
+        const primaryBank = u.bankAccounts?.find((b) => b.accountPriority === "Primary") ?? u.bankAccounts?.[0];
+        const bankStatus = primaryBank?.status;
         await db.update(employeesTable).set(updates).where(eq(employeesTable.id, emp.id));
         req.log.info(
-          { employeeId: emp.id, name: `${emp.firstName} ${emp.lastName}`, kycStatus: u.kycStatus, userStatus: u.status?.userStatus },
+          { employeeId: emp.id, name: `${emp.firstName} ${emp.lastName}`, eventType, kycStatus: u.kycStatus, userStatus: u.status?.userStatus, bankAccountStatus: bankStatus ?? "none" },
           "Rollfi webhook: wrote back employee status"
         );
       }
     } catch (writeErr) {
-      req.log.warn({ writeErr }, "Rollfi webhook write-back failed — returning 200 anyway");
+      req.log.warn({ writeErr, eventType }, "Rollfi webhook employee write-back failed — returning 200 anyway");
     }
   }
+
+  // company.kybstatus.update → write kybStatus to the companies table
+  else if (eventType === "company.kybstatus.update") {
+    try {
+      const payloadArr = (body.payload as WebhookPayloadEntry[] | undefined) ?? [];
+      const companies: WebhookCompany[] = payloadArr.flatMap((p) => p.Company ?? []);
+
+      for (const c of companies) {
+        if (!c.companyID) continue;
+        const kybStatus = c.kycStatus; // Rollfi calls it kycStatus in the payload for company events
+        if (!kybStatus) continue;
+        const result = await db
+          .update(companiesTable)
+          .set({ kybStatus, updatedAt: new Date().toISOString() })
+          .where(eq(companiesTable.rollfiCompanyId, c.companyID));
+        req.log.info({ rollfiCompanyId: c.companyID, kybStatus, result }, "Rollfi webhook: wrote back company kybStatus");
+      }
+    } catch (writeErr) {
+      req.log.warn({ writeErr }, "Rollfi webhook company write-back failed — returning 200 anyway");
+    }
+  }
+
+  // payperiod.payperiodstatus.insert / .update — informational only, no write-back needed
+  else if (eventType === "payperiod.payperiodstatus.insert" || eventType === "payperiod.payperiodstatus.update") {
+    req.log.info({ eventType, rollfiCompanyId, payPeriodId }, "Rollfi webhook: pay period status event received — logged only, no write-back");
+  }
+
+  // Truly unrecognised events — still logged to the DB table above, just surfaced here
+  else if (eventType !== "unknown") {
+    req.log.info({ eventType, rollfiCompanyId }, "Rollfi webhook: unrecognised event type — stored but no write-back");
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   req.log.info({ eventType, rollfiCompanyId, payPeriodId }, "Rollfi webhook received");
   res.json({ received: true });
