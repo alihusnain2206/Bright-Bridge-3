@@ -1124,6 +1124,77 @@ router.get("/easyteam/debug/shifts", requireRole("super_admin", "owner"), async 
   res.json({ locationId, exchangeToken, exchangeError, rawResponse, rawError });
 });
 
+// ── Unmatched-hours diagnostic ────────────────────────────────────────────────
+// Fetches raw EasyTeam shifts for a period, groups by employee UUID, resolves
+// known UUIDs to BrightBridge names, and surfaces unrecognised UUIDs with their hours.
+router.get("/easyteam/debug/unmatched-shifts", requireRole("super_admin", "owner"), async (req, res) => {
+  const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+
+  const toDate   = to   ? new Date(to)   : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
+
+  const locationId = await resolveCompanyLocationId(companyId);
+  if (!locationId) { res.status(400).json({ error: "No location found for this company" }); return; }
+
+  const result = await fetchEasyTeamShiftsForLocation(locationId, fromDate, toDate, companyId);
+  if ("error" in result) { res.status(502).json({ error: result.error }); return; }
+
+  const etLocId = result.easyteamLocationId;
+  const fromStr = fromDate.toISOString().split("T")[0]!;
+  const toStr   = toDate.toISOString().split("T")[0]!;
+
+  // Filter to this location + date range (same logic as sync)
+  const inRange = result.shifts.filter((s) => {
+    if (!s.utcStartTime || s.locationId !== etLocId) return false;
+    const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0);
+    return ld >= fromStr && ld <= toStr;
+  });
+
+  // Group minutes + break minutes by EasyTeam employee UUID
+  const minutesByUuid  = new Map<string, number>();
+  const breakByUuid    = new Map<string, number>();
+  for (const s of inRange) {
+    minutesByUuid.set(s.employeeId, (minutesByUuid.get(s.employeeId) ?? 0) + shiftDurationMinutes(s));
+    breakByUuid.set(s.employeeId,   (breakByUuid.get(s.employeeId)   ?? 0) + breakDurationMinutes(s));
+  }
+
+  // Build a reverse map: internal employeeId → name  (all staff users)
+  const nameByInternalId = new Map<string, string>(
+    store.getAllStaffUsers().map((u) => [u.employeeId ?? "", u.name])
+  );
+
+  const matched:   Array<{ etUuid: string; employeeId: string; name: string; hoursWorked: number; breakHours: number }> = [];
+  const unmatched: Array<{ etUuid: string; hoursWorked: number; breakHours: number }> = [];
+
+  for (const [etUuid, totalMinutes] of minutesByUuid) {
+    const internalId  = store.resolveEasyTeamUuid(etUuid);
+    const hoursWorked = Math.round((totalMinutes / 60) * 100) / 100;
+    const breakHours  = Math.round(((breakByUuid.get(etUuid) ?? 0) / 60) * 100) / 100;
+    if (internalId !== etUuid) {
+      matched.push({ etUuid, employeeId: internalId, name: nameByInternalId.get(internalId) ?? internalId, hoursWorked, breakHours });
+    } else {
+      unmatched.push({ etUuid, hoursWorked, breakHours });
+    }
+  }
+
+  const totalMatched   = matched.reduce((s, e) => s + e.hoursWorked, 0);
+  const totalUnmatched = unmatched.reduce((s, e) => s + e.hoursWorked, 0);
+
+  res.json({
+    period: { from: fromStr, to: toStr },
+    totalShifts: inRange.length,
+    matched,
+    unmatched,
+    summary: {
+      matchedEmployees:   matched.length,
+      unmatchedEmployees: unmatched.length,
+      totalMatchedHours:   Math.round(totalMatched   * 100) / 100,
+      totalUnmatchedHours: Math.round(totalUnmatched * 100) / 100,
+    },
+  });
+});
+
 router.post("/easyteam/webhook", (req, res) => {
   const payload = req.body as {
     event?: string;
