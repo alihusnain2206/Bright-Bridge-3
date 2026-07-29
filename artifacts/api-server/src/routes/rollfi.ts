@@ -919,6 +919,32 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
     req.log.info({ employeeId, previousStatus, newStatus: "on_leave", reason, changedBy: req.session.userId }, "Employee status changed to on_leave");
     await db.update(employeesTable).set({ status: "on_leave", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
 
+    // Best-effort: remove from any open pay period so they don't appear in the next import.
+    // Rollfi never auto-removes deactivated employees from in-flight periods.
+    if (rollfiCompanyId) {
+      try {
+        const ppResp = await axios.post(
+          `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
+          { method: "getUnProcessedPayPeriod", companyId: rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        const ppArr = ((ppResp.data as Record<string, unknown>).unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+        const openPeriod = ppArr[0] as Record<string, unknown> | undefined;
+        if (openPeriod?.payPeriodId) {
+          const removeResp = await axios.post(
+            `${getBaseUrl()}/payroll#removeUsersFromRegularPayPeriod`,
+            { method: "removeUsersFromRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId: openPeriod.payPeriodId,
+              payrollLineItems: [{ userId: rollfiUserId }] },
+            { headers: rollfiHeaders() }
+          );
+          req.log.info({ rollfiResponse: removeResp.data, rollfiUserId, payPeriodId: openPeriod.payPeriodId },
+            "Deactivate: removed employee from open pay period");
+        }
+      } catch (ppErr) {
+        req.log.warn({ err: ppErr, rollfiUserId }, "Deactivate: failed to remove from open pay period (non-fatal — employee still deactivated)");
+      }
+    }
+
     res.json({ success: true, status: "on_leave", rollfiResponse: response.data });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
@@ -987,6 +1013,31 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
     store.updateEmployeeStatus(employeeId, "terminated", { terminatedAt: nowISO, terminationReason, lastWorkingDay, terminatedBy: req.session.userId });
     req.log.info({ employeeId, previousStatus, newStatus: "terminated", terminationReason, lastWorkingDay, changedBy: req.session.userId }, "Employee status changed to terminated");
     await db.update(employeesTable).set({ status: "terminated", updatedAt: nowISO }).where(eq(employeesTable.id, employeeId)).catch((e: unknown) => { req.log.warn({ err: e }, "DB status update failed (non-fatal)"); });
+
+    // Best-effort: remove from any open pay period (same as deactivate).
+    if (rollfiCompanyId) {
+      try {
+        const ppResp = await axios.post(
+          `${getBaseUrl()}/reports#getUnProcessedPayPeriod`,
+          { method: "getUnProcessedPayPeriod", companyId: rollfiCompanyId },
+          { headers: rollfiHeaders() }
+        );
+        const ppArr = ((ppResp.data as Record<string, unknown>).unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
+        const openPeriod = ppArr[0] as Record<string, unknown> | undefined;
+        if (openPeriod?.payPeriodId) {
+          const removeResp = await axios.post(
+            `${getBaseUrl()}/payroll#removeUsersFromRegularPayPeriod`,
+            { method: "removeUsersFromRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId: openPeriod.payPeriodId,
+              payrollLineItems: [{ userId: rollfiUserId }] },
+            { headers: rollfiHeaders() }
+          );
+          req.log.info({ rollfiResponse: removeResp.data, rollfiUserId, payPeriodId: openPeriod.payPeriodId },
+            "Terminate: removed employee from open pay period");
+        }
+      } catch (ppErr) {
+        req.log.warn({ err: ppErr, rollfiUserId }, "Terminate: failed to remove from open pay period (non-fatal — employee still terminated)");
+      }
+    }
 
     res.json({ success: true, status: "terminated", rollfiResponse: response.data });
   } catch (err: unknown) {
@@ -3544,7 +3595,7 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     // Using employees.rollfiUserId directly is restart-safe: store.getRollfiEmployee() loses
     // data on server restart for employees not persisted in rollfi_employee_records.
     const dbPayTypeRowsInit = await db
-      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId })
+      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId, status: employeesTable.status })
       .from(employeesTable).where(eq(employeesTable.companyId, companyId));
     const dbPayTypeByEmpId = new Map(dbPayTypeRowsInit.map((r) => [r.id, r.payType ?? "hourly"]));
     // Extend rollfiIdToUser with DB employees not covered by testUsers, using the DB column directly.
@@ -3566,6 +3617,25 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
     for (const r of dbPayTypeRowsInit) {
       if (r.payType === "salary" && r.rollfiUserId) salariedRollfiUids.add(r.rollfiUserId.toUpperCase());
     }
+
+    // Filter out employees whose local status is on_leave or terminated (same as import route).
+    {
+      const inactiveUidsInit = new Set(
+        dbPayTypeRowsInit
+          .filter((r) => !!r.rollfiUserId && (r.status === "on_leave" || r.status === "terminated"))
+          .map((r) => r.rollfiUserId!.toUpperCase())
+      );
+      if (inactiveUidsInit.size > 0) {
+        const before = enrolledItems.length;
+        enrolledItems = enrolledItems.filter((item) => {
+          const uid = String(item.userId ?? item.userID ?? item.employeeId ?? item.id ?? "").toUpperCase();
+          return !inactiveUidsInit.has(uid);
+        });
+        req.log.info({ filtered: before - enrolledItems.length, remaining: enrolledItems.length, inactiveUids: [...inactiveUidsInit] },
+          "Initiate: filtered out on_leave/terminated employees from Rollfi roster");
+      }
+    }
+
     enrolledItems = await recoverZeroedSalariedEmployees(
       rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUids, req.log
     );
@@ -3813,7 +3883,7 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     // Using employees.rollfiUserId directly is restart-safe: store.getRollfiEmployee() loses
     // data on server restart for employees not persisted in rollfi_employee_records.
     const dbPayTypeRowsImport = await db
-      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId })
+      .select({ id: employeesTable.id, payType: employeesTable.payType, rollfiUserId: employeesTable.rollfiUserId, status: employeesTable.status })
       .from(employeesTable).where(eq(employeesTable.companyId, companyId));
     const dbPayTypeByEmpIdImport = new Map(dbPayTypeRowsImport.map((r) => [r.id, r.payType ?? "hourly"]));
     // Extend rollfiIdToUser with DB employees not covered by testUsers, using the DB column directly.
@@ -3835,6 +3905,28 @@ router.post("/rollfi/payroll/import", async (req, res) => {
     for (const r of dbPayTypeRowsImport) {
       if (r.payType === "salary" && r.rollfiUserId) salariedRollfiUidsImport.add(r.rollfiUserId.toUpperCase());
     }
+
+    // Filter out employees whose local status is on_leave or terminated.
+    // Rollfi never auto-removes deactivated employees from an open pay period, so their
+    // line items remain in getPayPeriodDetails after deactivation. We must exclude them here
+    // to prevent them from appearing in the payroll table or being included in the import.
+    {
+      const inactiveUids = new Set(
+        dbPayTypeRowsImport
+          .filter((r) => !!r.rollfiUserId && (r.status === "on_leave" || r.status === "terminated"))
+          .map((r) => r.rollfiUserId!.toUpperCase())
+      );
+      if (inactiveUids.size > 0) {
+        const before = enrolledItems.length;
+        enrolledItems = enrolledItems.filter((item) => {
+          const uid = String(item.userId ?? item.userID ?? item.employeeId ?? item.id ?? "").toUpperCase();
+          return !inactiveUids.has(uid);
+        });
+        req.log.info({ filtered: before - enrolledItems.length, remaining: enrolledItems.length, inactiveUids: [...inactiveUids] },
+          "Import: filtered out on_leave/terminated employees from Rollfi roster");
+      }
+    }
+
     enrolledItems = await recoverZeroedSalariedEmployees(
       rollfiCompany.rollfiCompanyId, payPeriodId, enrolledItems, salariedRollfiUidsImport, req.log
     );
