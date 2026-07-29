@@ -217,6 +217,12 @@ export interface PeopleActivityEntry {
 const rollfiCompanies = new Map<string, RollfiCompanyRecord>();
 const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
 
+// ─── EASYTEAM IGNORED UUIDs (persisted to DB) ─────────────────
+// EasyTeam employee UUIDs in this set are silently skipped during every sync.
+// Used to block test/demo employees registered directly in EasyTeam that have no
+// corresponding BrightBridge employee record.
+const ignoredEtUuids = new Set<string>();
+
 // ─── PEOPLE MODULE STORAGE ────────────────────────────────────
 const departments: Department[] = [];
 const onboardingTasks: OnboardingTask[] = [];
@@ -314,6 +320,20 @@ export const store = {
   },
   resolveEasyTeamUuid(etUuid: string): string {
     return etUuidToEmployeeId.get(etUuid) ?? etUuid;
+  },
+
+  // ── EasyTeam ignored UUID blocklist ──
+  ignoreEasyTeamUuid(etUuid: string): void {
+    ignoredEtUuids.add(etUuid);
+  },
+  unignoreEasyTeamUuid(etUuid: string): void {
+    ignoredEtUuids.delete(etUuid);
+  },
+  isEasyTeamUuidIgnored(etUuid: string): boolean {
+    return ignoredEtUuids.has(etUuid);
+  },
+  getAllIgnoredEtUuids(): string[] {
+    return Array.from(ignoredEtUuids);
   },
 
   // ── EasyTeam Hours Bridge ──

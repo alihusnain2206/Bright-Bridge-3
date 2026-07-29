@@ -375,6 +375,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     const hoursByEmp  = new Map<string, number>();
     const breaksByEmp = new Map<string, number>();
     for (const shift of found.shifts) {
+      if (store.isEasyTeamUuidIgnored(shift.employeeId)) continue;
       if (companyId) {
         const internalEmpId = store.resolveEasyTeamUuid(shift.employeeId);
         const ru = allStaff.find((u) => u.employeeId === internalEmpId);
@@ -528,6 +529,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
       // Persist raw shifts to timesheet_shifts (upsert — last-write-wins so open shifts update on close)
       const syncedAt = new Date().toISOString();
       await Promise.all(inRange.map(async (s) => {
+        if (store.isEasyTeamUuidIgnored(s.employeeId)) return; // blocklisted — skip entirely
         const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
         const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
         if (!mappedEmpId) {
@@ -561,6 +563,10 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
         // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
         const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
         // Collect entries whose UUID we can't map — accumulate for response, then skip
+        if (store.isEasyTeamUuidIgnored(etEmpId)) {
+          req.log.info({ etEmpId, minutesLost: totalMinutes }, "Sync: silently skipping blocklisted EasyTeam UUID");
+          continue;
+        }
         if (internalEmpId === etEmpId) {
           req.log.warn({ etEmpId, minutesLost: totalMinutes }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
           skippedUnknownUuids.push({ etEmpId, minutesLost: totalMinutes });
@@ -1192,6 +1198,105 @@ router.get("/easyteam/debug/unmatched-shifts", requireRole("super_admin", "owner
       totalMatchedHours:   Math.round(totalMatched   * 100) / 100,
       totalUnmatchedHours: Math.round(totalUnmatched * 100) / 100,
     },
+  });
+});
+
+// ── Remove unmatched EasyTeam UUID (blocklist + best-effort shift deletion) ──
+// Adds the UUID to the persistent blocklist so it is skipped on every future sync.
+// Also attempts to DELETE each shift from EasyTeam's API (best-effort — some API
+// plans don't support shift deletion; the blocklist fires regardless).
+router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner"), async (req, res) => {
+  const { etUuid, companyId, from, to } = req.body as { etUuid?: string; companyId?: string; from?: string; to?: string };
+  if (!etUuid)     { res.status(400).json({ error: "etUuid required" });     return; }
+  if (!companyId)  { res.status(400).json({ error: "companyId required" });  return; }
+
+  // 1. Persist to DB blocklist
+  await pool.query(
+    `INSERT INTO easyteam_ignored_uuids (et_uuid, company_id, reason)
+     VALUES ($1, $2, 'Manually removed via debug panel')
+     ON CONFLICT (et_uuid) DO NOTHING`,
+    [etUuid, companyId]
+  );
+  store.ignoreEasyTeamUuid(etUuid);
+
+  // 2. Try to fetch the shifts for this UUID and delete them from EasyTeam
+  const toDate   = to   ? new Date(to)   : new Date();
+  const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 60 * 24 * 60 * 60 * 1000); // look back 60 days
+
+  const locationId = await resolveCompanyLocationId(companyId);
+  let shiftsDeleted = 0;
+  let deleteErrors: string[] = [];
+
+  if (locationId) {
+    const result = await fetchEasyTeamShiftsForLocation(locationId, fromDate, toDate, companyId);
+    if (!("error" in result)) {
+      const etLocId = result.easyteamLocationId;
+      const fromStr = fromDate.toISOString().split("T")[0]!;
+      const toStr   = toDate.toISOString().split("T")[0]!;
+
+      const targetShifts = result.shifts.filter((s) =>
+        s.employeeId === etUuid &&
+        s.locationId === etLocId &&
+        (() => { const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0); return ld >= fromStr && ld <= toStr; })()
+      );
+
+      // Generate a token with SHIFT_DELETE permission for the delete calls
+      const adminJwt = result.shifts[0] ? await (async () => {
+        try {
+          const managerUser =
+            store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")) ??
+            store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
+          if (!managerUser?.employeeId) return null;
+          return jwt.sign(
+            {
+              employeeId: managerUser.employeeId,
+              organizationId: "ORG-BRIGHTBRIDGE",
+              locationId,
+              ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
+              accessRole: {
+                name: "manager",
+                permissions: ["LOCATION_ADMIN", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_DELETE", "TIMESHEET_READ", "TIMESHEET_WRITE"],
+              },
+              role: { name: "Daycare Manager", hourlyWage: 25 },
+              wage: 25, wageType: "hourly",
+              features: { geolocation: false },
+            },
+            EASYTEAM_API_KEY ?? "",
+            { expiresIn: "1h", algorithm: "HS256" }
+          );
+        } catch { return null; }
+      })() : null;
+
+      if (adminJwt) {
+        for (const s of targetShifts) {
+          const deleteUrl = `${EASYTEAM_EMBED_API}/organizations/ORG-BRIGHTBRIDGE/locations/${locationId}/shifts/${s.id}`;
+          try {
+            const dr = await axios.delete(deleteUrl, {
+              headers: { Authorization: `Bearer ${adminJwt}` },
+              timeout: 8000,
+              validateStatus: () => true,
+            });
+            if (dr.status >= 200 && dr.status < 300) {
+              shiftsDeleted++;
+            } else {
+              deleteErrors.push(`Shift ${s.id}: HTTP ${dr.status}`);
+            }
+          } catch (e) {
+            deleteErrors.push(`Shift ${s.id}: ${(e as { message?: string }).message ?? "error"}`);
+          }
+        }
+      }
+    }
+  }
+
+  res.json({
+    blocklisted: true,
+    etUuid,
+    shiftsDeleted,
+    deleteErrors: deleteErrors.length > 0 ? deleteErrors : undefined,
+    note: shiftsDeleted === 0 && deleteErrors.length === 0
+      ? "UUID blocklisted. EasyTeam shift deletion was not attempted (no location token or no shifts found in range). Hours will no longer appear in future syncs."
+      : undefined,
   });
 });
 

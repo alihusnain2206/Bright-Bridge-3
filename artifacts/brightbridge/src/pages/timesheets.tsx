@@ -149,6 +149,34 @@ export default function Timesheets() {
     } finally { setUnmatchedLoading(false); }
   }, [user?.companyId, fromDate, toDate]);
 
+  const [removingUuid, setRemovingUuid] = useState<string | null>(null);
+  const [removeResults, setRemoveResults] = useState<Record<string, string>>({});
+
+  const handleRemoveUuid = useCallback(async (etUuid: string) => {
+    if (!user?.companyId) return;
+    setRemovingUuid(etUuid);
+    try {
+      const r = await fetch("/api/easyteam/debug/remove-uuid", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ etUuid, companyId: user.companyId, from: fromDate, to: toDate }),
+      });
+      const d = await r.json() as { blocklisted?: boolean; shiftsDeleted?: number; deleteErrors?: string[]; error?: string };
+      if (d.error) {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: `Error: ${d.error}` }));
+      } else if (d.shiftsDeleted && d.shiftsDeleted > 0) {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: `Removed — ${d.shiftsDeleted} shift${d.shiftsDeleted !== 1 ? "s" : ""} deleted from EasyTeam` }));
+      } else {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: "Blocklisted — will be ignored in all future syncs" }));
+      }
+      // Refresh the unmatched list
+      void handleCheckUnmatched();
+    } catch (e) {
+      setRemoveResults(prev => ({ ...prev, [etUuid]: `Error: ${String(e)}` }));
+    } finally { setRemovingUuid(null); }
+  }, [user?.companyId, fromDate, toDate, handleCheckUnmatched]);
+
   const handleEvent = useCallback((event: EasyTeamEvent) => {
     setEvents((prev) => [{ ...event, _receivedAt: new Date().toISOString() }, ...prev].slice(0, 20));
   }, []);
@@ -677,17 +705,33 @@ export default function Timesheets() {
                   {unmatchedResult.unmatched.length > 0 && (
                     <div>
                       <div className="text-xs text-amber-400/70 uppercase tracking-wide mb-1.5">⚠ Unmatched UUIDs (hours not imported)</div>
-                      <table className="w-full text-xs">
-                        <tbody className="divide-y divide-white/5">
-                          {unmatchedResult.unmatched.map(e => (
-                            <tr key={e.etUuid}>
-                              <td className="py-1.5 font-mono text-amber-300/80 break-all">{e.etUuid}</td>
-                              <td className="py-1.5 text-right text-amber-400 font-semibold pl-3">{e.hoursWorked}h</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      <p className="text-white/25 text-[10px] mt-2">These EasyTeam employee IDs have no matching BrightBridge employee. Check if they belong to staff registered directly in EasyTeam.</p>
+                      <div className="space-y-2">
+                        {unmatchedResult.unmatched.map(e => (
+                          <div key={e.etUuid} className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-mono text-amber-300/80 text-[10px] break-all flex-1">{e.etUuid}</span>
+                              <span className="text-amber-400 font-semibold text-xs shrink-0">{e.hoursWorked}h</span>
+                            </div>
+                            {removeResults[e.etUuid] ? (
+                              <p className={`text-[10px] mt-1.5 ${removeResults[e.etUuid]?.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+                                ✓ {removeResults[e.etUuid]}
+                              </p>
+                            ) : (
+                              <button
+                                onClick={() => void handleRemoveUuid(e.etUuid)}
+                                disabled={removingUuid === e.etUuid}
+                                className="mt-1.5 flex items-center gap-1 text-[10px] text-amber-400/70 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                              >
+                                {removingUuid === e.etUuid
+                                  ? <><Loader2 className="h-2.5 w-2.5 animate-spin" /> Removing…</>
+                                  : <><AlertTriangle className="h-2.5 w-2.5" /> Remove & block from future syncs</>
+                                }
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-white/25 text-[10px] mt-2">These EasyTeam employee IDs have no matching BrightBridge employee. Removing will block them from all future syncs and attempt to delete their shifts from EasyTeam.</p>
                     </div>
                   )}
 

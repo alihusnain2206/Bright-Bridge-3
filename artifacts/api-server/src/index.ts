@@ -29,6 +29,20 @@ async function bootSessionTable() {
   logger.info("Session table ready");
 }
 
+async function bootIgnoredEtUuids() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS easyteam_ignored_uuids (
+      et_uuid     text        PRIMARY KEY,
+      company_id  text,
+      reason      text,
+      ignored_at  timestamptz NOT NULL DEFAULT now()
+    );
+  `);
+  const { rows } = await pool.query<{ et_uuid: string }>(`SELECT et_uuid FROM easyteam_ignored_uuids`);
+  for (const row of rows) store.ignoreEasyTeamUuid(row.et_uuid);
+  if (rows.length > 0) logger.info({ count: rows.length }, "Boot: loaded ignored EasyTeam UUIDs from DB");
+}
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
@@ -363,7 +377,7 @@ app.listen(port, (err) => {
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([
-    bootSessionTable(),
+    bootSessionTable().then(() => bootIgnoredEtUuids()),
     bootSeedCompanies().then(() => bootSeedEmployees()),
     loadRollfiStateFromDb().then(({ companies, employees }) => {
       logger.info({ companies, employees }, "Rollfi state restored from DB");
