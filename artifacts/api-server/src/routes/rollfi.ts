@@ -3280,7 +3280,7 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 
   const allStaff = store
     .getAllStaffUsers()
-    .filter((u) => u.employeeId && u.role === "employee")
+    .filter((u) => u.employeeId) // include all roles — owners/managers can appear in payroll too
     .filter((u) => !companyId || u.companyId === companyId);
 
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
@@ -3341,9 +3341,13 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
       source:          dbRow?.payType ? "db" : ((u as { payType?: string }).payType ? "store" : "default"),
     }, "preview: payType resolution");
     const annualSalaryCents = dbRow?.annualSalary ?? null;
-    // Salaried employees have no clocked hours; grossPay = 0 here; payType flag signals the UI
+    // Salaried employees: estimate per-period pay as annual ÷ 26 (bi-weekly).
+    // This is only used for the dashboard estimate (~); the real figure comes from Rollfi after import.
+    const salariedEstimate = annualSalaryCents != null
+      ? Math.round((annualSalaryCents / 100 / 26) * 100) / 100
+      : 0;
     const grossPay = payType === "salary" || payType?.startsWith("salary_")
-      ? 0
+      ? salariedEstimate
       : Math.round(netPayableHours * hourlyRate * 100) / 100;
     const rollfiEmp = u.employeeId ? (store.getRollfiEmployee(u.employeeId) ?? null) : null;
 
