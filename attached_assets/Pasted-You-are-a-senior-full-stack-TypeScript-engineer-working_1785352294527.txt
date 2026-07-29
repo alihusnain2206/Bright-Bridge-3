@@ -1,0 +1,165 @@
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist, a
+payroll/HR SaaS. We are connected to LIVE PRODUCTION Rollfi data for at least one real
+company — be careful, this touches a real IRS authorization document.
+
+## BACKGROUND
+
+Rollfi requires a signed IRS Form 8655 ("Reporting Agent Authorization") for every company
+before payroll tax filing is authorized. Rollfi's own dashboard shows this as a pending task
+until it's uploaded. Rollfi's support confirmed:
+
+- Upload a filled PDF via their `uploadDocument` API with `documentType: "8655Form"` — this
+  removes the pending task from their side automatically
+- Dynamic field values come from two existing Rollfi APIs: `getCompanyInfo` and
+  `getBusinessUsers`
+- Only two return types need authorization: **940 and 941** (confirmed — no others needed,
+  do not build for 943/944/945/etc.)
+
+## STEP 1 — AUDIT FIRST (report only, do not build yet)
+
+Before writing any code, please report back:
+
+1. What currently exists on the **Signatures tab** (Company Settings → Organization Settings
+   → Signatures)? Is it empty, a placeholder, or does it have partial code already?
+2. Do we already have a PDF-filling utility/library in this codebase (e.g. pdf-lib or
+   similar) from any other feature? If yes, where, and what's the pattern used?
+3. Do we already have a typed-signature + consent-checkbox UI component anywhere (e.g. in
+   TaskActionModal's e-sign/acknowledge task type)? We want to REUSE that exact pattern, not
+   build a new signature component.
+4. Confirm the exact request/response shape of `getCompanyInfo` and `getBusinessUsers` for
+   an existing company (e.g. BrightbridgeAssist LLC), so we know what fields are actually
+   available and named what.
+5. Confirm the exact request shape Rollfi's `uploadDocument` endpoint expects (method,
+   companyId, fileName, documentType, fileBase64) per their docs at
+   developer.rollfi.xyz/api-reference/adminportal/uploadDocument.
+
+Report findings before proceeding to Step 2.
+
+## STEP 2 — BUILD (after audit is reviewed)
+
+### A. PDF template
+Add the official IRS Form 8655 (fillable AcroForm PDF, from irs.gov) as a server asset.
+Use the PDF-filling utility identified in the audit (or pdf-lib if none exists) to fill
+fields server-side — do not fill client-side.
+
+### B. Field mapping
+
+**Dynamic — from `getCompanyInfo`:**
+- Line 1a: Legal Business Name
+- Line 2: EIN
+- Line 3: Address (number, street, room/suite), City, State, ZIP
+
+**Dynamic — from `getBusinessUsers`:**
+- Line 6: Beneficial Owner name
+- Line 7: Beneficial Owner Number
+
+**Static — hardcode these exact values (Rollfi's own reporting agent info):**
+- Line 9: Rollfi, Inc
+- Line 10: 87-3373107
+- Line 11: 169 Maddison Ave #2351, New York, NY, 10016
+- Line 12: Perumalsamy Ramakrishnan
+- Line 13: (408) 582 4650
+- Line 14: 1-646-849-4046
+
+**Computed at signing time — DO NOT hardcode, calculate fresh every time the form is
+generated (never cache from onboarding/wizard time):**
+- Line 15, "940" blank: current calendar year, format `YYYY` (e.g. `2026`)
+- Line 15, "941" blank: `YYYY/MM` where MM is the last month of the CURRENT quarter
+  (Q1→03, Q2→06, Q3→09, Q4→12) — e.g. if today is any date in Q3 2026, this is `2026/09`
+- Line 16: same two values repeated (940 blank = same as line 15's 940 value; 941 blank =
+  same as line 15's 941 value)
+- Line 17: checked (checkbox)
+- Line 18a: current year
+- Line 18b: current year
+- Line 19: checked (checkbox)
+- Leave ALL other return-type blanks on lines 15 and 16 (943, 944, 945, 1042, CT-1, 720,
+  990-PF, 990-T, 1041, 1120) blank — we only authorize 940 and 941
+
+Write a small pure function, e.g. `getForm8655AuthDates(date: Date)`, that takes a date and
+returns `{ annualYear: string, quarterlyYearMonth: string }`. Unit-testable, called at the
+moment of signing — not stored/cached ahead of time.
+
+### C. Signatures tab UI
+
+On Company Settings → Organization Settings → Signatures:
+- Show a "Tax Filing Authorization (Form 8655)" card
+- If unsigned: plain-language explanation of what this authorizes, a read-only preview of
+  the pre-filled company data (name, EIN, address, beneficial owner), a typed full-name
+  signature field + "I agree this constitutes my electronic signature" consent checkbox +
+  title field, and a Submit button
+  - REUSE the existing e-sign/acknowledge component pattern from TaskActionModal — do not
+    build a new signature UI from scratch
+- If signed: show signed status, signer name, title, date signed, and a way to view/download
+  the submitted PDF
+- Loading and error states required (e.g. Rollfi upload fails — show a clear retry option,
+  do not fail silently)
+
+### D. Backend endpoint
+
+New endpoint, e.g. `POST /rollfi/companies/:id/sign-8655`:
+- Company-scoped — verify the requesting user has access to this company
+- Validates signer name, title, and consent checkbox are present
+- Fetches live data from `getCompanyInfo` and `getBusinessUsers` (do not trust cached/local
+  copies of this data — pull fresh at signing time)
+- Fills the PDF using the mapping above
+- Calls Rollfi's `uploadDocument` with `documentType: "8655Form"`
+- On success: store a record (signed date, signer name/title, PDF reference) so the
+  Signatures tab can show "signed" state without re-calling Rollfi every page load
+- On Rollfi upload failure: do NOT lose the signature data — store it with a "pending
+  upload"/failed state and allow retry, rather than forcing the owner to re-sign
+
+### E. Surface visibility (two more places)
+
+1. **Configuration Progress** widget (Settings landing page, "8 steps to first payroll"):
+   add "Tax Filing Authorization (Form 8655)" as a step, checked once signed. Reuse the
+   existing progress-step pattern — do not build a new progress component.
+2. **Attention Required** panel: if unsigned, show it there with a direct link to the
+   Signatures tab, same pattern as existing gap-detection items (e.g. unregistered state
+   warning).
+
+## SCOPE BOUNDARY — do NOT touch
+
+- Payroll processing/submission logic
+- The Rollfi company-creation chain (createBusiness, KYB, etc.) — this is ADDITIVE, runs
+  independently after a company already exists
+- Employee wizard, EasyTeam integration
+- State Tax Information tab logic (read-only reference only, don't modify)
+- Any return types other than 940/941 — do not build fields for 943/944/945/etc.
+
+## REQUIREMENTS
+
+- Company-scoped throughout; no cross-company data leakage
+- No duplicate API calls to Rollfi
+- TypeScript, existing brand colors, reuse components per house rules — no new signature
+  component, no new progress-step component, no new database tables unless genuinely
+  justified (a `company_signatures` or similar record to persist signed state is
+  reasonable — confirm naming fits existing schema conventions first)
+
+## TESTING CHECKLIST
+
+- [ ] Signatures tab shows correct pre-filled data for BrightbridgeAssist LLC (real company)
+- [ ] Line 15/16 dates are correct for TODAY's date — verify against the quarter math
+      manually (e.g. if today is in Q3, 941 value should be YYYY/09)
+- [ ] Submit with valid signature + consent → Rollfi upload succeeds → task disappears from
+      Rollfi's own dashboard (cross-check in Rollfi directly)
+- [ ] Submit with missing signature or unchecked consent → blocked with clear validation
+      message, no API call made
+- [ ] Simulate Rollfi upload failure → signature data preserved, retry available, no data
+      loss, no silent failure
+- [ ] Signed state persists correctly on page reload (doesn't re-prompt to sign again)
+- [ ] Configuration Progress reflects the new step correctly (unchecked → checked after
+      signing)
+- [ ] Attention Required panel shows/hides this item correctly based on signed state
+- [ ] Test with a SECOND company to confirm dynamic fields (name, EIN, owner) are pulled
+      correctly and not leaking from another company
+- [ ] Non-owner roles cannot access or sign this (owner/super_admin only — confirm against
+      existing role guards)
+
+## DELIVERABLE SUMMARY
+
+Please report:
+1. Files changed / created
+2. New endpoint(s) added
+3. Any new database table/columns, with justification
+4. Confirmation that line 15/16 dates are computed dynamically, not hardcoded
+5. Screenshot or description of the Signatures tab in both unsigned and signed states
