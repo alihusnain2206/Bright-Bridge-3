@@ -138,8 +138,8 @@ export default function Timesheets() {
     setUnmatchedLoading(true); setUnmatchedError(null); setUnmatchedOpen(true);
     try {
       const r = await fetch(
-        `/api/easyteam/debug/unmatched-shifts?companyId=${encodeURIComponent(user.companyId)}&from=${fromDate}&to=${toDate}`,
-        { credentials: "include" }
+        `/api/easyteam/debug/unmatched-shifts?companyId=${encodeURIComponent(user.companyId)}&from=${fromDate}&to=${toDate}&_t=${Date.now()}`,
+        { credentials: "include", cache: "no-store" }
       );
       const d = await r.json() as UnmatchedResult & { error?: string };
       if (d.error) { setUnmatchedError(d.error); return; }
