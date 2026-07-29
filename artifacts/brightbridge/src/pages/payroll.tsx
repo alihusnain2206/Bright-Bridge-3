@@ -1747,9 +1747,9 @@ export default function Payroll() {
                   const totalErTax  = confirmed && rollfiPd
                     ? r2(rollfiPd.employerTaxSum)
                     : r2(preview.employees.reduce((s, e) => s + calcErTax(e.grossPay).total, 0));
-                  const totalDebit  = rollfiPd?.total != null && rollfiPd.total > 0
-                    ? r2((rollfiPd.total ?? 0) + (rollfiPd.employerTaxSum ?? 0))
-                    : r2(totalGross + totalErTax);
+                  // Debit = gross payroll + employer taxes (matches Rollfi dashboard).
+                  // rollfiPd.total is a stale pre-import snapshot — never use it.
+                  const totalDebit  = r2(totalGross + totalErTax);
                   const erByComp    = preview.employees.reduce((s, e) => { const t = calcErTax(e.grossPay); return { ss: s.ss + t.ss, med: s.med + t.medicare, futa: s.futa + t.futa, nj: s.nj + t.njSui }; }, { ss: 0, med: 0, futa: 0, nj: 0 });
                   return (
                     <div className="mb-4 space-y-3">
