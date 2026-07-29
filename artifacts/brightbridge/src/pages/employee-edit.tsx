@@ -3,7 +3,7 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Save, CheckCircle2, AlertTriangle, XCircle,
-  RefreshCw, User, Briefcase, DollarSign, Lock, FileText,
+  RefreshCw, User, Briefcase, DollarSign, Lock, FileText, UploadCloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -167,6 +167,8 @@ export default function EmployeeEditPage() {
   const [error,  setError]        = useState<string | null>(null);
   const [saved,  setSaved]        = useState(false);
   const [syncResult, setSyncResult] = useState<RollfiSyncResult | null>(null);
+  const [addressSyncing, setAddressSyncing] = useState(false);
+  const [addressSyncResult, setAddressSyncResult] = useState<{ success: boolean; error?: string } | null>(null);
 
   const { data, isLoading } = useQuery<{ employee: EmployeeDetail }>({
     queryKey: ["employee-detail", empId],
@@ -276,6 +278,22 @@ export default function EmployeeEditPage() {
       setError("Network error — please try again");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleSyncAddress() {
+    if (!empId) return;
+    setAddressSyncing(true); setAddressSyncResult(null);
+    try {
+      const r = await fetch(`/api/employees/${empId}/sync-address`, {
+        method: "POST", credentials: "include",
+      });
+      const result = await r.json() as { success: boolean; error?: string };
+      setAddressSyncResult(result);
+    } catch {
+      setAddressSyncResult({ success: false, error: "Network error" });
+    } finally {
+      setAddressSyncing(false);
     }
   }
 
@@ -497,6 +515,28 @@ export default function EmployeeEditPage() {
             {emp?.rollfiUserId && (
               <div className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
                 ℹ Address and phone changes will be synced to Rollfi via <code>updateKycInformation</code>.
+              </div>
+            )}
+            {emp?.rollfiUserId && (
+              <div className="flex items-center gap-3">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={addressSyncing}
+                  onClick={() => void handleSyncAddress()}
+                  className="gap-1.5 h-8 text-xs border-amber-300 text-amber-700 hover:bg-amber-50"
+                >
+                  {addressSyncing
+                    ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    : <UploadCloud className="h-3.5 w-3.5" />}
+                  {addressSyncing ? "Syncing…" : "Re-sync address to Rollfi"}
+                </Button>
+                {addressSyncResult && (
+                  addressSyncResult.success
+                    ? <span className="text-xs text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3.5 w-3.5" /> Synced successfully</span>
+                    : <span className="text-xs text-red-600 flex items-center gap-1"><XCircle className="h-3.5 w-3.5" /> {addressSyncResult.error ?? "Sync failed"}</span>
+                )}
               </div>
             )}
           </>

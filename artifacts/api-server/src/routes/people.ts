@@ -586,13 +586,21 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       result.updateKycInfo = { success: false, blockedReason: "kyc_not_initiated" };
     } else {
       try {
+        // Always send ALL address fields together when any one changes — prevents
+        // stale-diff drift where a field was already updated in the DB but never
+        // reached Rollfi (e.g. a prior failed sync), so future saves that only
+        // change a different field never carry the previously-missed value.
+        const addressFields = ["homeAddress","homeCity","homeState","homeZip"];
+        const addressChanged = addressFields.some(f => changed.has(f));
         const kycInfo: Record<string, unknown> = { userId: rollfiUserId };
-        if (changed.has("homeAddress")) kycInfo.address1    = emp.homeAddress;
-        if (changed.has("homeCity"))    kycInfo.city        = emp.homeCity;
-        if (changed.has("homeState"))   kycInfo.state       = emp.homeState;
-        if (changed.has("homeZip"))     kycInfo.zipcode     = emp.homeZip;
+        if (addressChanged) {
+          kycInfo.address1 = emp.homeAddress;
+          kycInfo.city     = emp.homeCity;
+          kycInfo.state    = emp.homeState;
+          kycInfo.zipcode  = emp.homeZip;
+        }
         // Rollfi expects digits-only for phoneNumber (no dashes / spaces)
-        if (changed.has("phone"))       kycInfo.phoneNumber = (emp.phone ?? "").replace(/\D/g, "");
+        if (changed.has("phone")) kycInfo.phoneNumber = (emp.phone ?? "").replace(/\D/g, "");
         const r = await axios.put(
           `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
           { method: "updateKycInformation", kycInformation: kycInfo },
@@ -798,6 +806,54 @@ const photoUpload = multer({
     if (["image/jpeg","image/jpg","image/png","image/webp"].includes(file.mimetype)) cb(null, true);
     else cb(new Error("Invalid file type. JPG, PNG, or WebP only."));
   },
+});
+
+// ── Force-sync address to Rollfi ───────────────────────────────
+// Pushes all four address fields from the DB to Rollfi's updateKycInformation
+// regardless of what changed.  Used when a previous sync failed silently.
+router.post("/employees/:id/sync-address", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const id = String(req.params.id);
+  try {
+    const [emp] = await db.select().from(employees).where(eq(employees.id, id));
+    if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!emp.rollfiUserId) {
+      res.status(400).json({ error: "Employee has no Rollfi account — cannot sync address" }); return;
+    }
+    const rollfiCfg = getRollfiConfig();
+    if (!rollfiCfg.credentialsPresent) {
+      res.status(400).json({ error: "Rollfi credentials not configured" }); return;
+    }
+    if (!emp.kycStatus || emp.kycStatus === "kyc not initiated") {
+      res.status(400).json({ error: "KYC not yet initiated for this employee — address sync not available" }); return;
+    }
+    const encoded = Buffer.from(`${rollfiCfg.clientId ?? ""}:${rollfiCfg.secretKey ?? ""}`).toString("base64");
+    const headers = { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
+    const r = await axios.put(
+      `${rollfiCfg.baseUrl}/userPortal/updateKycInformation`,
+      {
+        method: "updateKycInformation",
+        kycInformation: {
+          userId:   emp.rollfiUserId,
+          address1: emp.homeAddress,
+          city:     emp.homeCity,
+          state:    emp.homeState,
+          zipcode:  emp.homeZip,
+        },
+      },
+      { headers },
+    );
+    const rollfiErr = extractRollfiError(r.data as Record<string, unknown>);
+    if (rollfiErr) {
+      res.status(400).json({ success: false, error: rollfiErr });
+    } else {
+      req.log.info({ employeeId: id, homeState: emp.homeState }, "Force-synced address to Rollfi");
+      res.json({ success: true, synced: { address1: emp.homeAddress, city: emp.homeCity, state: emp.homeState, zipcode: emp.homeZip } });
+    }
+  } catch (err) {
+    req.log.error({ err }, "sync-address failed");
+    res.status(500).json({ error: String(err) });
+  }
 });
 
 router.post("/employees/:id/photo", photoUpload.single("photo"), async (req: Request, res: Response) => {
