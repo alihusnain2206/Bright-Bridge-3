@@ -1,0 +1,85 @@
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist, a
+payroll/HR SaaS. We are in PRODUCTION with live payroll data — be careful and precise.
+
+## STEP 1 — AUDIT FIRST (report only, do not modify anything yet)
+
+On the Submit Payroll page (Payroll → Submit Payroll), we display four summary cards after
+"Re-import Hours": Total Employer Taxes, Total Employee Deductions, Total Gross Pay, Total
+Debit Amount.
+
+We've found a bug: for a payroll with 3 employees (Agnes Johnson $2,500.00, Alexandra
+Indiviglio $140.00, Joanne Indiviglio $150.00 — subtotals summing to Total Gross Pay of
+$2,790.00, which displays correctly), the "Total Debit Amount" card shows $2,500.00 — which
+is exactly Agnes Johnson's subtotal alone, not the sum of all three employees.
+
+Please investigate and report back (do not fix yet):
+
+1. Where does "Total Debit Amount" get its value from? Is it:
+   - Read directly from a field in Rollfi's getPayPeriodDetails (or equivalent) API response?
+   - Calculated client-side or server-side from the employee line items?
+2. If it comes from a Rollfi field, what is the exact field name/path, and what does Rollfi's
+   API actually return for this payroll (paste the raw relevant portion of the response)?
+3. If it's calculated locally, show the exact calculation logic and where in the codebase it
+   lives (file + line references).
+4. Compare against how "Total Gross Pay" is calculated/sourced, since that one is correct —
+   what's different about how Total Debit Amount is derived?
+5. Is there any filtering, `.find()`, array-index access, or similar logic that could cause
+   only ONE employee's data to be picked up instead of all employees being summed?
+
+Report your findings clearly before writing any fix.
+
+## STEP 2 — FIX (only after audit findings are reviewed and confirmed)
+
+Once we've confirmed the root cause together:
+
+- Fix Total Debit Amount so it correctly reflects the sum across ALL employees in the payroll
+  (gross pay + employer taxes, matching what Rollfi will actually debit from the company bank
+  account — this must be accurate, since it's a real dollar amount for a live company).
+- If Rollfi's API provides an authoritative total debit field, prefer reading that directly
+  over calculating it ourselves, to avoid future drift — but confirm this matches what their
+  dashboard shows for the same payroll before relying on it.
+- Do NOT change how Total Gross Pay, Total Employer Taxes, or Total Employee Deductions are
+  calculated — those are correct (or at least not part of this bug) and out of scope.
+
+## SCOPE BOUNDARY — do NOT touch
+
+- Payroll processing/submission logic itself (Confirm & Submit Payroll button, submission
+  API calls)
+- The Rollfi sync chain (addUser, addUserWage, etc.)
+- EasyTeam integration
+- Wizard onboarding flows
+- Any other page besides Submit Payroll
+- Total Gross Pay, Total Employer Taxes, Total Employee Deductions calculations (unless the
+  audit reveals they share the same broken code path — if so, STOP and report back before
+  changing them)
+
+## REQUIREMENTS
+
+- Company-scoped: confirm this fetch is scoped to the correct company (BrightbridgeAssist LLC)
+  and doesn't leak data across companies
+- No duplicate API calls (single useEffect/fetch, not re-triggered on every render)
+- Preserve existing empty/loading/error states — don't remove them
+- Use brand colors already in place; TypeScript throughout
+- Do not add new database tables or new components — reuse what's there
+
+## TESTING CHECKLIST (after fix)
+
+- [ ] Reload Submit Payroll for BrightbridgeAssist LLC's current pay period
+- [ ] Total Debit Amount now equals Total Gross Pay + Total Employer Taxes (currently $2,790
+      + $0 = should show $2,790.00, not $2,500.00)
+- [ ] Cross-check against Rollfi's own dashboard (Payroll → Pay Employees) for the same period
+      — numbers must match exactly
+- [ ] Test against a DIFFERENT company/pay period with more than one employee to confirm this
+      wasn't a one-off — the sum must scale correctly regardless of employee count
+- [ ] Confirm Total Gross Pay, Total Employer Taxes, and Total Employee Deductions are
+      unchanged and still correct
+- [ ] No new console errors; no duplicate network calls in the browser dev tools
+
+## DELIVERABLE SUMMARY
+
+Please report back with:
+1. Root cause (what was actually wrong)
+2. Files changed
+3. Any API endpoints touched
+4. Confirmation that Total Gross Pay/Taxes/Deductions were NOT altered
+5. Screenshot or description of the corrected numbers for BrightbridgeAssist LLC's payroll
