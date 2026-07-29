@@ -54,7 +54,7 @@ interface ImportResult {
   success: boolean;
   payPeriodId: string;
   skippedEmployees?: { rollfiUserId: string; name?: string; type?: string; reason: string }[];
-  realTotals?: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number } | null;
+  realTotals?: { grossPay: number; netPay: number; employeeTax: number; employerTax: number; totalDebit: number; zeroNetEmployees?: { rollfiUserId: string; name: string }[] } | null;
   /** Post-import Rollfi roster; each item includes userId and grossTotal */
   lineItems?: Record<string, unknown>[];
   notEnrolled?: { rollfiUserId: string; employeeId: string; name: string; reason: string }[];
@@ -2030,6 +2030,17 @@ export default function Payroll() {
                           </div>
                           {importResult.skippedEmployees && importResult.skippedEmployees.length > 0 && (
                             <p className="text-amber-400/70 text-xs">⚠ Excluded: {importResult.skippedEmployees.map((e) => e.name ?? e.rollfiUserId).join(", ")}</p>
+                          )}
+                          {t.zeroNetEmployees && t.zeroNetEmployees.length > 0 && (
+                            <div className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 space-y-1">
+                              <p className="text-red-300 font-semibold text-xs flex items-center gap-1.5">
+                                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                {t.zeroNetEmployees.length === 1 ? "1 employee will not be paid" : `${t.zeroNetEmployees.length} employees will not be paid`}
+                              </p>
+                              <p className="text-red-300/70 text-xs">
+                                {t.zeroNetEmployees.map((e) => e.name.trim()).join(", ")} — gross pay is $0 net in Rollfi, most likely because their bank account has not been verified. Go to Rollfi → Team → each employee → Pay Details to add and verify their bank account before submitting.
+                              </p>
+                            </div>
                           )}
                           <div className="pt-1 space-y-2">
                             {deadlineNear && (

@@ -4038,8 +4038,21 @@ router.post("/rollfi/payroll/import", async (req, res) => {
           const netPay      = Math.round(vItems.reduce((s, e) => s + Number(e.netTotal   ?? 0), 0) * 100) / 100;
           const employeeTax = Math.round(Number(vPd.employeeTaxSum ?? 0) * 100) / 100;
           const employerTax = Math.round(Number(vPd.employerTaxSum ?? 0) * 100) / 100;
-          const rollfiTotal = Number(vPd.total ?? 0);
-          realTotals = { grossPay, netPay, employeeTax, employerTax, totalDebit: Math.round((rollfiTotal + employerTax) * 100) / 100 };
+          // totalDebit = sum of employees' netTotal + employer taxes.
+          // This matches Rollfi's own "Debit amount" field: only employees whose
+          // netTotal > 0 (i.e. have a verified bank account) count toward the bank debit.
+          // Using vPd.total is wrong — that field is a pre-import snapshot and doesn't
+          // update until after Rollfi fully processes the payroll.
+          realTotals = { grossPay, netPay, employeeTax, employerTax, totalDebit: Math.round((netPay + employerTax) * 100) / 100 };
+          // Flag employees whose gross > 0 but net = 0 — they won't receive payment.
+          // Most common cause: bank account not verified in Rollfi.
+          const zeroNetEmployees = vItems
+            .filter((e) => Number(e.grossTotal ?? 0) > 0 && Number(e.netTotal ?? 0) === 0)
+            .map((e) => ({ rollfiUserId: String(e.userId ?? ""), name: String(e.userName ?? "") }));
+          if (zeroNetEmployees.length > 0) {
+            req.log.warn({ zeroNetEmployees }, "Post-import: employees with gross>0 but netTotal=0 — likely missing verified bank account");
+            (realTotals as Record<string, unknown>).zeroNetEmployees = zeroNetEmployees;
+          }
         }
       }
     } catch (verifyErr) {
