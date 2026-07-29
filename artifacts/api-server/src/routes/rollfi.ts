@@ -911,6 +911,7 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi deactivateUser response");
+    assertNoRollfiError(response.data as Record<string, unknown>, "deactivateUser");
 
     const nowISO = new Date().toISOString();
     const previousStatus = employee.status;
@@ -979,6 +980,7 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi terminateUser response");
+    assertNoRollfiError(response.data as Record<string, unknown>, "terminateUser");
 
     const nowISO = new Date().toISOString();
     const previousStatus = employee.status;
@@ -1045,6 +1047,7 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: response.data, employeeId, rollfiUserId }, "Rollfi reactivateUser response");
+    assertNoRollfiError(response.data as Record<string, unknown>, "activateUser");
 
     const nowISO = new Date().toISOString();
     const previousStatus = employee.status;
