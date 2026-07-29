@@ -15,28 +15,38 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import axios from "axios";
+import { ObjectStorageService, objectStorageClient } from "../lib/objectStorage.js";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 import { extractRollfiError } from "../lib/rollfi-employee-sync.js";
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+const objectStorage = new ObjectStorageService();
 
-const multerStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2)}${ext}`);
-  },
-});
+// Memory storage — bytes held in req.file.buffer, never written to disk
 const upload = multer({
-  storage: multerStorage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     if (["application/pdf", "image/jpeg", "image/png"].includes(file.mimetype)) cb(null, true);
     else cb(null, false);
   },
 });
+
+/** Upload a buffer directly to GCS; returns the /objects/… serving path stored in DB. */
+async function uploadDocToGcs(buffer: Buffer, mimeType: string, originalName: string): Promise<string> {
+  const { randomUUID } = await import("crypto");
+  const objectId = randomUUID();
+  const ext = path.extname(originalName) || "";
+  const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID!;
+  const privateDir = objectStorage.getPrivateObjectDir(); // gs://bucket/private
+  // Strip "gs://bucket/" prefix to get the bare GCS object prefix
+  const gcsPrefix = privateDir.replace(/^gs:\/\/[^/]+\//, "");
+  const objectName = `${gcsPrefix}/documents/${objectId}${ext}`;
+  const bucket = objectStorageClient.bucket(bucketId);
+  const file = bucket.file(objectName);
+  await file.save(buffer, { metadata: { contentType: mimeType } });
+  return `/objects/documents/${objectId}${ext}`;
+}
 
 const router: IRouter = Router();
 
@@ -1446,7 +1456,30 @@ router.get("/documents/:id/download", async (req: Request, res: Response) => {
   try {
     const [doc] = await db.select().from(employeeDocumentsTable).where(eq(employeeDocumentsTable.id, req.params.id as string));
     if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
-    if (!doc.fileUrl || !fs.existsSync(doc.fileUrl)) { res.status(404).json({ error: "File not found on server" }); return; }
+    if (!doc.fileUrl) { res.status(404).json({ error: "File not found on server" }); return; }
+
+    // New GCS-backed documents: fileUrl starts with /objects/
+    if (doc.fileUrl.startsWith("/objects/")) {
+      const bucketId = process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID!;
+      const privateDir = objectStorage.getPrivateObjectDir();
+      const gcsPrefix = privateDir.replace(/^gs:\/\/[^/]+\//, "");
+      // Strip /objects/ prefix and reconstruct the full GCS object name
+      const relativePath = doc.fileUrl.replace(/^\/objects\//, "");
+      const objectName = `${gcsPrefix}/${relativePath}`;
+      const bucket = objectStorageClient.bucket(bucketId);
+      const file = bucket.file(objectName);
+      const [exists] = await file.exists();
+      if (!exists) { res.status(404).json({ error: "File not found on server" }); return; }
+      const [metadata] = await file.getMetadata();
+      res.setHeader("Content-Type", (metadata.contentType as string) || "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${doc.fileName}"`);
+      if (metadata.size) res.setHeader("Content-Length", String(metadata.size));
+      file.createReadStream().pipe(res);
+      return;
+    }
+
+    // Legacy: local filesystem path (backward compat for old uploads)
+    if (!fs.existsSync(doc.fileUrl)) { res.status(404).json({ error: "File not found on server" }); return; }
     res.download(doc.fileUrl, doc.fileName);
   } catch (err) {
     req.log.error({ err }, "Failed to download document");
@@ -1465,11 +1498,12 @@ router.post("/documents/upload", upload.single("file"), async (req: Request, res
   try {
     const now = nowIso();
     const docId = `doc-${uid()}`;
+    const gcsPath = await uploadDocToGcs(req.file.buffer, req.file.mimetype, req.file.originalname);
     const [created] = await db.insert(employeeDocumentsTable).values({
       id: docId, employeeId, companyId,
       documentName, documentType, customTypeName: customTypeName ?? null,
       fileName: req.file.originalname,
-      fileUrl: req.file.path,
+      fileUrl: gcsPath,
       fileSize: req.file.size, mimeType: req.file.mimetype,
       status: "uploaded", uploadedAt: now, uploadedBy: req.session.userId,
       expiryDate: expiryDate || null, notes: notes || null,
