@@ -3,8 +3,11 @@ import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, FolderOpen, Upload, Trash2, Download, AlertCircle,
-  FileText, Image, File,
+  FileText, Image, File, UploadCloud,
 } from "lucide-react";
+
+const isLegacyPath = (url?: string | null) =>
+  !!url && (url.startsWith("/home/runner/") || url.startsWith("/uploads/"));
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -241,6 +244,11 @@ export default function EmployeeDocumentsPage() {
                       {doc.status === "verified" && (
                         <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">Verified</span>
                       )}
+                      {isLegacyPath(doc.fileUrl) && (
+                        <span className="flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                          <UploadCloud className="h-3 w-3" /> Re-upload needed
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-400 mt-0.5 flex flex-wrap gap-2">
                       <span>{fmt(doc.fileSize)}</span>
@@ -257,6 +265,11 @@ export default function EmployeeDocumentsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {isLegacyPath(doc.fileUrl) ? (
+                      <span className="p-1.5 rounded-lg text-gray-200 cursor-not-allowed" title="File no longer available — please re-upload">
+                        <Download className="h-3.5 w-3.5" />
+                      </span>
+                    ) : (
                     <a
                       href={`/api/documents/${doc.id}/download`}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
@@ -264,6 +277,7 @@ export default function EmployeeDocumentsPage() {
                     >
                       <Download className="h-3.5 w-3.5" />
                     </a>
+                    )}
                     <button
                       onClick={() => setDeleteConfirm(doc.id)}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"

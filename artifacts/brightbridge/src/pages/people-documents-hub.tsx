@@ -4,8 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import {
   FolderOpen, ChevronLeft, Building2, Search,
   FileText, Download, Eye, AlertTriangle, CheckCircle2,
-  File, ImageIcon, FileBadge, Lock,
+  File, ImageIcon, FileBadge, Lock, UploadCloud,
 } from "lucide-react";
+
+const isLegacyPath = (url?: string | null) =>
+  !!url && (url.startsWith("/home/runner/") || url.startsWith("/uploads/"));
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -152,12 +155,17 @@ function EmployeeDocRow({ emp }: { emp: Employee }) {
                   {fmtDate(doc.uploadedAt)}
                 </span>
               )}
-              {doc.fileUrl && (
+              {isLegacyPath(doc.fileUrl) ? (
+                <span className="flex items-center gap-1 text-[10px] font-medium text-amber-600 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full shrink-0"
+                  title="This file was stored on the old server and is no longer available. Please re-upload.">
+                  <UploadCloud className="h-3 w-3" /> Re-upload needed
+                </span>
+              ) : doc.fileUrl ? (
                 <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer"
                   className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors shrink-0">
                   <Eye className="h-3.5 w-3.5" />
                 </a>
-              )}
+              ) : null}
             </div>
           );
         })}
