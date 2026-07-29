@@ -3303,6 +3303,11 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     : [];
   const dbWageByEmpId = new Map(dbWageRows.map((r) => [r.id, r]));
 
+  // Only show employees that have a real row in the employees DB table.
+  // This filters out store-only phantom entries (super_admin accounts, daycare_manager
+  // placeholders, etc.) that have an employeeId in the store but no actual employees record.
+  const staffWithDbRecord = allStaff.filter((u) => u.employeeId && dbWageByEmpId.has(u.employeeId));
+
   // Preview is display-only: show period-specific approvals if they exist,
   // otherwise fall back to the latest approval so the submit page shows meaningful hours.
   // (The fallback does NOT apply to the actual import/initiate endpoints.)
@@ -3314,7 +3319,7 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
     : companyId ? await getLatestTimesheetApprovalsByCompany(companyId) : [];
   const approvalsByEmpId = new Map(dbApprovals.map((a) => [a.employeeId, a]));
 
-  const entries = allStaff.map((u) => {
+  const entries = staffWithDbRecord.map((u) => {
     // Only DB-approved hours are shown — no fallback to in-memory store or estimates.
     // Employees without a manager-approved record in timesheet_approvals show as pending.
     const approval = u.employeeId ? approvalsByEmpId.get(u.employeeId) : undefined;
