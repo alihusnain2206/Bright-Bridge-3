@@ -647,10 +647,11 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     const payrollReadyCount = activeEmps.length - notReadyEmps.length;
 
     // ── 6. Build configuration progress steps ─────────────────────────────────
-    const payScheduleSet = (co.payScheduleAdded === true) && !!(co.payFrequency);
-    const stepsAllDone   = !!resolvedRollfiCompanyId && kybApproved && bankLinked &&
+    const payScheduleSet   = (co.payScheduleAdded === true) && !!(co.payFrequency);
+    const form8655Submitted = form8655UploadStatus === "uploaded";
+    const stepsAllDone      = !!resolvedRollfiCompanyId && kybApproved && bankLinked &&
       payScheduleSet && gaps.length === 0 && employeeCount > 0 && notReadyEmps.length === 0 &&
-      form8655Signed;
+      form8655Signed && form8655Submitted;
 
     const steps = [
       {
@@ -710,7 +711,17 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
         linkTo: "/settings?tab=signatures",
       },
       {
-        id: "ready_to_run", number: 9, label: "Ready to run payroll",
+        id: "form_8655_submitted", number: 9, label: "Form 8655 submitted to IRS filing service",
+        done: form8655Submitted,
+        missingText: !form8655Signed
+          ? "Sign Form 8655 first"
+          : form8655UploadStatus === "failed"
+            ? "Submission failed — retry the upload on the Signatures tab"
+            : "Form 8655 has not yet been submitted to the IRS filing service",
+        linkTo: "/settings?tab=signatures",
+      },
+      {
+        id: "ready_to_run", number: 10, label: "Ready to run payroll",
         done: stepsAllDone,
         missingText: "Complete all steps above to unlock payroll",
         linkTo: null,
@@ -811,7 +822,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 
     res.json({
       company: { id: co.id, name: co.name },
-      progress: { completedCount, totalCount: 9, steps },
+      progress: { completedCount, totalCount: 10, steps },
       attention,
       registrationCount: activeRegStates.size,
       // Debug summary (stripped in prod UI)
