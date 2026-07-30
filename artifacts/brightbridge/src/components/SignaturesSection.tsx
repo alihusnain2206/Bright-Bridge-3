@@ -144,8 +144,22 @@ function SignatureCanvas({
 
   const handleConfirm = useCallback(() => {
     if (!padRef.current || padRef.current.isEmpty()) return;
-    const dataUrl = padRef.current.toDataURL("image/png");
-    onConfirm(dataUrl);
+    const srcCanvas = canvasRef.current;
+    if (!srcCanvas) return;
+
+    // Composite onto an opaque white canvas before export.
+    // The signature canvas has a transparent background; PDF viewers render
+    // transparent-PNG soft masks inconsistently. A white-filled copy produces
+    // a solid RGB PNG that embeds reliably in pdf-lib.
+    const flat = document.createElement("canvas");
+    flat.width  = srcCanvas.width;
+    flat.height = srcCanvas.height;
+    const ctx = flat.getContext("2d")!;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, flat.width, flat.height);
+    ctx.drawImage(srcCanvas, 0, 0);
+
+    onConfirm(flat.toDataURL("image/png"));
   }, [onConfirm]);
 
   return (
