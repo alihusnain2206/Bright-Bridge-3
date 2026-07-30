@@ -9,7 +9,7 @@ import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileSignature, ExternalLink, CheckCircle, AlertCircle,
-  Mail, Loader2, Shield, PenLine, Upload, Clock,
+  Mail, Loader2, Shield, PenLine, Upload, Clock, Download,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -231,7 +231,15 @@ function Form8655Card({
           </div>
         )}
 
-        <div className="mt-3 ml-12">
+        <div className="mt-3 ml-12 flex items-center gap-4">
+          <a
+            href={`/api/rollfi/companies/${companyId}/form-8655.pdf`}
+            download
+            className="inline-flex items-center gap-1 text-[11px] text-[#1B3A6B] hover:text-[#0f2447] font-medium underline underline-offset-2"
+          >
+            <Download className="w-3 h-3" />
+            Download PDF
+          </a>
           <button
             className="text-[11px] text-gray-400 hover:text-gray-600 underline underline-offset-2"
             onClick={() => setShowForm(true)}

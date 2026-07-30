@@ -1371,4 +1371,126 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
   res.json({ uploadStatus, uploadError, rollfiDocumentId });
 });
 
+// ── GET /rollfi/companies/:companyId/form-8655.pdf ────────────────────────────
+// Regenerates and returns the signed Form 8655 as a PDF file download.
+// Requires an existing signed record in company_signed_forms (form must have been
+// signed at least once). Works regardless of upload_status.
+
+router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req: Request, res: Response) => {
+  const sessionCompanyId = resolveCompanyId(req, res);
+  if (!sessionCompanyId) return;
+
+  const urlCompanyId = req.params.companyId as string;
+  const caller = store.getUserById(req.session.userId!);
+  if (!caller) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (caller.role !== "super_admin" && urlCompanyId !== sessionCompanyId) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+  const companyId = caller.role === "super_admin" ? urlCompanyId : sessionCompanyId;
+
+  // ── Load signed form record ───────────────────────────────────────────────
+  const [signedRecord] = await db
+    .select({
+      signerName:  companySignedForms.signerName,
+      signerTitle: companySignedForms.signerTitle,
+      signedAt:    companySignedForms.signedAt,
+    })
+    .from(companySignedForms)
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch(() => [undefined]);
+
+  if (!signedRecord) {
+    res.status(404).json({ error: "No signed Form 8655 found for this company" }); return;
+  }
+
+  // ── Resolve Rollfi company ID ─────────────────────────────────────────────
+  let rollfiCompanyId: string | null = null;
+  try {
+    const [co] = await db.select({ rid: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    rollfiCompanyId = co?.rid ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db
+        .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+  } catch { /* fall through */ }
+
+  // ── Fetch company info (Rollfi → DB fallback) ─────────────────────────────
+  let taxpayerName  = "";
+  let taxpayerEin   = "";
+  let address       = "";
+  let cityStateZip  = "";
+  let phone         = "";
+
+  if (rollfiCompanyId && getRollfiConfig().credentialsPresent) {
+    try {
+      const infoResp = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyInfo`,
+        { method: "getCompanyInfo", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders() },
+      );
+      const raw      = infoResp.data as Record<string, unknown>;
+      const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+      const co       = companies[0] ?? {};
+      taxpayerName   = (co.company as string | undefined) ?? "";
+      const kybInfos = Array.isArray(co.KYBInformations) ? co.KYBInformations as Record<string, unknown>[] : [];
+      taxpayerEin    = (kybInfos[0]?.ein as string | undefined) ?? "";
+      phone          = (kybInfos[0]?.phoneNumber as string | undefined) ?? "";
+      const locs     = Array.isArray(co.CompanyLocations) ? co.CompanyLocations as Record<string, unknown>[] : [];
+      const loc      = locs[0] ?? {};
+      address        = (loc.address1 as string | undefined) ?? "";
+      const city     = (loc.city    as string | undefined) ?? "";
+      const state    = (loc.state   as string | undefined) ?? "";
+      const zip      = (loc.zipcode as string | undefined) ?? "";
+      cityStateZip   = [city, state, zip].filter(Boolean).join(", ");
+    } catch { /* fall through to DB */ }
+  }
+
+  // DB fallback when Rollfi data is unavailable
+  if (!taxpayerName) {
+    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+    if (dbCo) {
+      taxpayerName = dbCo.name ?? "";
+      taxpayerEin  = dbCo.ein  ?? "";
+      address      = [dbCo.address1, dbCo.address2].filter(Boolean).join(" ");
+      cityStateZip = [dbCo.city, dbCo.state, dbCo.zipcode].filter(Boolean).join(", ");
+      phone        = dbCo.phone ?? "";
+    }
+  }
+
+  // ── Regenerate PDF ────────────────────────────────────────────────────────
+  const signedAt = new Date(signedRecord.signedAt);
+  const { annualYear, quarterlyBeginMonth } = getForm8655AuthDates(signedAt);
+
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await buildForm8655Pdf({
+      taxpayerName:        taxpayerName.trim()  || "Company",
+      taxpayerEin:         taxpayerEin.trim(),
+      address:             address.trim(),
+      cityStateZip:        cityStateZip.trim(),
+      phone:               phone.trim(),
+      signerName:          signedRecord.signerName,
+      signerTitle:         signedRecord.signerTitle,
+      signedAt,
+      annualYear,
+      quarterlyBeginMonth,
+    });
+  } catch (err) {
+    req.log.error({ err }, "form-8655.pdf: PDF generation failed");
+    res.status(500).json({ error: "Failed to generate Form 8655 PDF" }); return;
+  }
+
+  const dateStr  = signedAt.toISOString().slice(0, 10);
+  const safeName = signedRecord.signerName.replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
+  const fileName = `Form8655_${safeName}_${dateStr}.pdf`;
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+  res.setHeader("Content-Length", pdfBytes.length);
+  res.end(Buffer.from(pdfBytes));
+});
+
 export default router;
