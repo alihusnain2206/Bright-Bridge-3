@@ -1128,16 +1128,23 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
 
     req.log.info({ uploadResp: uploadResp.data }, "sign-8655: uploadDocument response");
 
-    // Rollfi returns { success, documentId } or { error }
+    // Expected Rollfi response shape: { documentId: string } on success,
+    // or { error: string } / { success: false } on failure.
+    // We require an explicit documentId or success:true — a 2xx with neither
+    // is treated as a failure so we never silently swallow unexpected shapes.
     const upData = uploadResp.data as Record<string, unknown>;
     if (upData?.documentId) {
       rollfiDocumentId = upData.documentId as string;
       uploadStatus = "uploaded";
+    } else if (upData?.success === true) {
+      // Provider confirmed success without a documentId
+      uploadStatus = "uploaded";
     } else if (upData?.error || upData?.success === false) {
       throw new Error(String(upData?.error ?? "uploadDocument returned success=false"));
     } else {
-      // Treat any 2xx with no explicit error as uploaded
-      uploadStatus = "uploaded";
+      // Neither documentId nor success:true — treat as failure and log raw body
+      req.log.error({ rawUploadResponse: uploadResp.data }, "sign-8655: uploadDocument returned unexpected shape (no documentId, no success:true)");
+      throw new Error(`uploadDocument returned an unrecognised response shape: ${JSON.stringify(uploadResp.data)}`);
     }
 
     // Persist the upload outcome
@@ -1340,15 +1347,23 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
 
     req.log.info({ uploadResp: uploadResp.data }, "retry-8655-upload: uploadDocument response");
 
+    // Expected Rollfi response shape: { documentId: string } on success,
+    // or { error: string } / { success: false } on failure.
+    // We require an explicit documentId or success:true — a 2xx with neither
+    // is treated as a failure so we never silently swallow unexpected shapes.
     const upData = uploadResp.data as Record<string, unknown>;
     if (upData?.documentId) {
       rollfiDocumentId = upData.documentId as string;
       uploadStatus = "uploaded";
+    } else if (upData?.success === true) {
+      // Provider confirmed success without a documentId
+      uploadStatus = "uploaded";
     } else if (upData?.error || upData?.success === false) {
       throw new Error(String(upData?.error ?? "uploadDocument returned success=false"));
     } else {
-      // Treat any 2xx with no explicit error as uploaded
-      uploadStatus = "uploaded";
+      // Neither documentId nor success:true — treat as failure and log raw body
+      req.log.error({ rawUploadResponse: uploadResp.data }, "retry-8655-upload: uploadDocument returned unexpected shape (no documentId, no success:true)");
+      throw new Error(`uploadDocument returned an unrecognised response shape: ${JSON.stringify(uploadResp.data)}`);
     }
 
     await db.update(companySignedForms)
