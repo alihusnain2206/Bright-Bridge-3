@@ -65,6 +65,12 @@ export interface Form8655Data {
   // Lines 15 & 16 (pass result of getForm8655AuthDates)
   annual940:    string;
   quarterly941: string;
+  /**
+   * Optional drawn signature image as a raw base64-encoded PNG (no data: prefix).
+   * When present, this is embedded on the PDF signature line instead of the typed name.
+   * The typed name is still used for the "Signed by" metadata fields.
+   */
+  signatureImageBase64?: string;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -190,9 +196,9 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   // (c1_3 at y=170; Rollfi handles state payroll taxes)
   try { form.getCheckBox(fn("c1_3")).check(); } catch { /* XFA-only, ignore */ }
 
-  // ── Sign Here — overlay typed text onto the signature lines ───────────────
+  // ── Sign Here — overlay typed text or drawn signature image ──────────────
   // The signature/title/date fields in the Sign Here box are XFA-only (no
-  // AcroForm equivalents). We overlay drawText at the correct y-position.
+  // AcroForm equivalents). We overlay content at the correct y-position.
   // Sign Here box occupies y≈65–155; signing row is at the bottom (~y=83).
   const pages = doc.getPages();
   const page  = pages[0];
@@ -200,10 +206,24 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   const reg   = await doc.embedFont(StandardFonts.Helvetica);
 
   // Signature of taxpayer (left column, wide)
-  // y=83 lands on the "I certify…" text; the actual signing lines are ~13pt lower.
-  page.drawText(data.signerName.trim(), {
-    x: 50, y: 70, size: 10, font: bold, color: rgb(0, 0, 0),
-  });
+  // When a drawn signature image is provided, embed the PNG.
+  // Otherwise fall back to typing the signer's name as text.
+  if (data.signatureImageBase64) {
+    try {
+      const sigImg = await doc.embedPng(Buffer.from(data.signatureImageBase64, "base64"));
+      page.drawImage(sigImg, { x: 50, y: 62, width: 200, height: 28 });
+    } catch {
+      // Corrupted or unsupported image — fall back to typed name
+      page.drawText(data.signerName.trim(), {
+        x: 50, y: 70, size: 10, font: bold, color: rgb(0, 0, 0),
+      });
+    }
+  } else {
+    page.drawText(data.signerName.trim(), {
+      x: 50, y: 70, size: 10, font: bold, color: rgb(0, 0, 0),
+    });
+  }
+
   // Title (middle column)
   page.drawText(data.signerTitle.trim(), {
     x: 322, y: 70, size: 9, font: reg, color: rgb(0, 0, 0),

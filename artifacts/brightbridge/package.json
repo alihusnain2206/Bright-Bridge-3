@@ -75,6 +75,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "@easyteam/launcher": "^1.1.19"
+    "@easyteam/launcher": "^1.1.19",
+    "signature_pad": "^5.1.3"
   }
 }

@@ -1046,10 +1046,15 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
   }
   const companyId = caller.role === "super_admin" ? urlCompanyId : sessionCompanyId;
 
-  const { signerName, signerTitle } = req.body as { signerName?: string; signerTitle?: string };
+  const { signerName, signerTitle, signatureImageBase64 } = req.body as { signerName?: string; signerTitle?: string; signatureImageBase64?: string };
   if (!signerName?.trim() || !signerTitle?.trim()) {
     res.status(400).json({ error: "signerName and signerTitle are required" }); return;
   }
+
+  // Validate drawn signature image if provided (must be a valid base64 PNG).
+  const cleanedSigImage: string | undefined = signatureImageBase64
+    ? signatureImageBase64.replace(/^data:image\/png;base64,/, "").trim() || undefined
+    : undefined;
 
   // ── Resolve Rollfi company ID ─────────────────────────────────────────────
   let rollfiCompanyId: string | null = null;
@@ -1134,6 +1139,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
       signedAt,
       annual940,
       quarterly941,
+      signatureImageBase64: cleanedSigImage,
     });
   } catch (err) {
     req.log.error({ err }, "sign-8655: PDF generation failed");
@@ -1161,6 +1167,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
         signedAt:          signedAtIso,
         uploadStatus:      "pending",
         uploadAttemptedAt,
+        signatureImage:    cleanedSigImage ?? null,
         createdAt,
       })
       .onConflictDoUpdate({
@@ -1173,6 +1180,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
           uploadAttemptedAt,
           uploadError:       null,
           rollfiDocumentId:  null,
+          signatureImage:    cleanedSigImage ?? null,
         },
       });
   } catch (err) {
@@ -1289,15 +1297,16 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
   // ── 1. Look up the existing signed-form record ────────────────────────────
   const [row] = await db
     .select({
-      id:           companySignedForms.id,
-      uploadStatus: companySignedForms.uploadStatus,
-      signerName:   companySignedForms.signerName,
-      signerTitle:  companySignedForms.signerTitle,
-      signedAt:     companySignedForms.signedAt,
+      id:             companySignedForms.id,
+      uploadStatus:   companySignedForms.uploadStatus,
+      signerName:     companySignedForms.signerName,
+      signerTitle:    companySignedForms.signerTitle,
+      signedAt:       companySignedForms.signedAt,
+      signatureImage: companySignedForms.signatureImage,
     })
     .from(companySignedForms)
     .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
-    .catch(() => [] as { id: string; uploadStatus: string; signerName: string; signerTitle: string; signedAt: string }[]);
+    .catch(() => [] as { id: string; uploadStatus: string; signerName: string; signerTitle: string; signedAt: string; signatureImage: string | null }[]);
 
   if (!row) {
     res.status(404).json({ error: "No signed Form 8655 found for this company" }); return;
@@ -1392,6 +1401,8 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
       signedAt,
       annual940,
       quarterly941,
+      // Re-use the stored drawn signature image so the retry PDF matches the original
+      signatureImageBase64: row.signatureImage ?? undefined,
     });
   } catch (err) {
     req.log.error({ err }, "retry-8655-upload: PDF regeneration failed");

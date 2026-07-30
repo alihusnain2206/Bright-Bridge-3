@@ -1,16 +1,17 @@
 /**
  * SignaturesSection — shown under /settings?tab=signatures
  *
- * Form 8655: fully in-app e-sign flow — typed name + title + consent checkbox.
+ * Form 8655: fully in-app e-sign flow — drawn signature pad + typed title + consent checkbox.
  *            On submit: POST /api/rollfi/companies/:id/sign-8655
  * TR-2000 (and any other tasks from Rollfi): existing "Get signing link" flow.
  */
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileSignature, ExternalLink, CheckCircle, AlertCircle,
-  Mail, Loader2, Shield, PenLine, Upload, Clock, Download,
+  Mail, Loader2, Shield, PenLine, Upload, Clock, Download, RotateCcw,
 } from "lucide-react";
+import SignaturePad from "signature_pad";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -83,6 +84,106 @@ function formatSignedDate(iso: string) {
   } catch { return iso; }
 }
 
+// ── Signature Pad Canvas ───────────────────────────────────────────────────────
+
+function SignatureCanvas({
+  onConfirm,
+  onClear,
+}: {
+  onConfirm: (dataUrl: string) => void;
+  onClear:   () => void;
+}) {
+  const canvasRef  = useRef<HTMLCanvasElement>(null);
+  const padRef     = useRef<SignaturePad | null>(null);
+  const [hasDrawn, setHasDrawn] = useState(false);
+
+  // Initialize SignaturePad once the canvas is in the DOM
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    // Scale canvas for device pixel ratio so the stroke is crisp on retina
+    const resize = () => {
+      const ratio  = Math.max(window.devicePixelRatio ?? 1, 1);
+      const w      = canvas.offsetWidth;
+      const h      = canvas.offsetHeight;
+      canvas.width  = w * ratio;
+      canvas.height = h * ratio;
+      const ctx = canvas.getContext("2d");
+      if (ctx) ctx.scale(ratio, ratio);
+      padRef.current?.clear();
+      setHasDrawn(false);
+    };
+
+    padRef.current = new SignaturePad(canvas, {
+      minWidth: 0.8,
+      maxWidth: 2.5,
+      penColor: "rgb(0, 0, 0)",
+    });
+
+    padRef.current.addEventListener("endStroke", () => {
+      setHasDrawn(!padRef.current?.isEmpty());
+    });
+
+    resize();
+
+    return () => {
+      padRef.current?.off();
+    };
+  }, []);
+
+  const handleClear = useCallback(() => {
+    padRef.current?.clear();
+    setHasDrawn(false);
+    onClear();
+  }, [onClear]);
+
+  const handleConfirm = useCallback(() => {
+    if (!padRef.current || padRef.current.isEmpty()) return;
+    const dataUrl = padRef.current.toDataURL("image/png");
+    onConfirm(dataUrl);
+  }, [onConfirm]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-medium text-gray-500">Draw your signature</label>
+        <button
+          type="button"
+          onClick={handleClear}
+          className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600"
+        >
+          <RotateCcw className="w-3 h-3" />
+          Clear
+        </button>
+      </div>
+      {/* Canvas area */}
+      <div className="relative rounded-lg border border-gray-300 bg-white overflow-hidden" style={{ height: 90 }}>
+        <canvas
+          ref={canvasRef}
+          style={{ width: "100%", height: "100%", touchAction: "none", cursor: "crosshair" }}
+        />
+        {!hasDrawn && (
+          <p className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-gray-300 select-none">
+            Sign here
+          </p>
+        )}
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        disabled={!hasDrawn}
+        onClick={handleConfirm}
+        className="h-7 px-3 text-xs text-white gap-1.5"
+        style={{ background: hasDrawn ? NAVY : undefined }}
+      >
+        <CheckCircle className="w-3.5 h-3.5" />
+        Confirm signature
+      </Button>
+    </div>
+  );
+}
+
 // ── Form 8655 in-app e-sign card ──────────────────────────────────────────────
 
 function Form8655Card({
@@ -101,8 +202,10 @@ function Form8655Card({
   const [ackChecked,  setAckChecked]  = useState(false);
   const [showForm,    setShowForm]    = useState(false);
   const [error,       setError]       = useState<string | null>(null);
+  // Confirmed drawn signature data URL (set after owner clicks "Confirm signature")
+  const [confirmedSig, setConfirmedSig] = useState<string | null>(null);
 
-  const mutation = useMutation<Sign8655Resp, Error, { signerName: string; signerTitle: string }>({
+  const mutation = useMutation<Sign8655Resp, Error, { signerName: string; signerTitle: string; signatureImageBase64?: string }>({
     mutationFn: async (body) => {
       const res = await fetch(`/api/rollfi/companies/${companyId}/sign-8655`, {
         method:      "POST",
@@ -142,6 +245,21 @@ function Form8655Card({
   });
 
   const meta = FORM_META["8655"]!;
+
+  const handleSubmit = () => {
+    setError(null);
+    // Strip the data: prefix before sending — server stores raw base64
+    const base64 = confirmedSig
+      ? confirmedSig.replace(/^data:image\/png;base64,/, "")
+      : undefined;
+    mutation.mutate({ signerName, signerTitle, signatureImageBase64: base64 });
+  };
+
+  const handleCancelForm = () => {
+    setShowForm(false);
+    setConfirmedSig(null);
+    setError(null);
+  };
 
   if (signed) {
     const isPending  = signed.uploadStatus === "pending";
@@ -313,7 +431,7 @@ function Form8655Card({
           </a>
           <button
             className="text-[11px] text-gray-400 hover:text-gray-600 underline underline-offset-2"
-            onClick={() => setShowForm(true)}
+            onClick={() => { setShowForm(true); setConfirmedSig(null); setError(null); }}
           >
             Re-sign with updated information
           </button>
@@ -323,10 +441,11 @@ function Form8655Card({
             signerName={signerName}     setSignerName={setSignerName}
             signerTitle={signerTitle}   setSignerTitle={setSignerTitle}
             ackChecked={ackChecked}     setAckChecked={setAckChecked}
+            confirmedSig={confirmedSig} setConfirmedSig={setConfirmedSig}
             error={error}
             submitting={mutation.isPending}
-            onSubmit={() => { setError(null); mutation.mutate({ signerName, signerTitle }); }}
-            onCancel={() => setShowForm(false)}
+            onSubmit={handleSubmit}
+            onCancel={handleCancelForm}
           />
         )}
       </div>
@@ -372,10 +491,11 @@ function Form8655Card({
             signerName={signerName}     setSignerName={setSignerName}
             signerTitle={signerTitle}   setSignerTitle={setSignerTitle}
             ackChecked={ackChecked}     setAckChecked={setAckChecked}
+            confirmedSig={confirmedSig} setConfirmedSig={setConfirmedSig}
             error={error}
             submitting={mutation.isPending}
-            onSubmit={() => { setError(null); mutation.mutate({ signerName, signerTitle }); }}
-            onCancel={() => setShowForm(false)}
+            onSubmit={handleSubmit}
+            onCancel={handleCancelForm}
           />
         )}
       </div>
@@ -389,12 +509,14 @@ function Form8655SignForm({
   signerName, setSignerName,
   signerTitle, setSignerTitle,
   ackChecked, setAckChecked,
+  confirmedSig, setConfirmedSig,
   error, submitting,
   onSubmit, onCancel,
 }: {
   signerName:    string; setSignerName:    (v: string) => void;
   signerTitle:   string; setSignerTitle:   (v: string) => void;
   ackChecked:    boolean; setAckChecked:   (v: boolean) => void;
+  confirmedSig:  string | null; setConfirmedSig: (v: string | null) => void;
   error:         string | null;
   submitting:    boolean;
   onSubmit:      () => void;
@@ -411,9 +533,39 @@ function Form8655SignForm({
         </p>
       </div>
 
-      {/* Signer name */}
+      {/* Drawn signature pad — replaces typed name as the visual signature on the PDF */}
+      {confirmedSig ? (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-gray-500">Signature</label>
+            <button
+              type="button"
+              onClick={() => setConfirmedSig(null)}
+              className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-gray-600"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Re-draw
+            </button>
+          </div>
+          <div className="rounded-lg border border-emerald-200 bg-white px-3 py-1 flex items-center gap-2">
+            <img
+              src={confirmedSig}
+              alt="Signature preview"
+              style={{ maxHeight: 48, maxWidth: "100%", objectFit: "contain" }}
+            />
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0 ml-auto" />
+          </div>
+        </div>
+      ) : (
+        <SignatureCanvas
+          onConfirm={setConfirmedSig}
+          onClear={() => setConfirmedSig(null)}
+        />
+      )}
+
+      {/* Full name — stored as signer identity in records and used as PDF fallback */}
       <div className="space-y-1">
-        <label className="text-xs font-medium text-gray-500">Full name (signer)</label>
+        <label className="text-xs font-medium text-gray-500">Full name (for records)</label>
         <input
           type="text"
           value={signerName}
@@ -461,7 +613,7 @@ function Form8655SignForm({
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          disabled={!ackChecked || !signerName.trim() || !signerTitle.trim() || submitting}
+          disabled={!ackChecked || !confirmedSig || !signerName.trim() || !signerTitle.trim() || submitting}
           onClick={onSubmit}
           className="h-8 px-4 text-xs text-white gap-1.5"
           style={{ background: NAVY }}

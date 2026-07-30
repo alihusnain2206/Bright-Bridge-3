@@ -29,6 +29,17 @@ async function bootSessionTable() {
   logger.info("Session table ready");
 }
 
+async function bootCompanySignedFormsSchema() {
+  // Add signature_image column introduced for drawn-signature support.
+  // Safe to run on every boot — IF NOT EXISTS guards prevent duplicate columns.
+  await pool.query(`
+    ALTER TABLE company_signed_forms
+      ADD COLUMN IF NOT EXISTS signature_image text;
+  `).catch(() => {
+    // Table may not exist yet (first boot before Drizzle push) — safe to ignore.
+  });
+}
+
 async function bootIgnoredEtUuids() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS easyteam_ignored_uuids (
@@ -377,7 +388,7 @@ app.listen(port, (err) => {
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([
-    bootSessionTable().then(() => bootIgnoredEtUuids()),
+    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()),
     bootSeedCompanies().then(() => bootSeedEmployees()),
     loadRollfiStateFromDb().then(({ companies, employees }) => {
       logger.info({ companies, employees }, "Rollfi state restored from DB");

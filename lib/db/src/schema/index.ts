@@ -374,6 +374,8 @@ export const companySignedForms = pgTable("company_signed_forms", {
   rollfiDocumentId:    text("rollfi_document_id"),
   /** ISO timestamp of the most recent upload attempt (set whenever uploadStatus is forced to "pending"). */
   uploadAttemptedAt:   text("upload_attempted_at"),
+  /** Base64-encoded PNG of the owner's drawn signature (data: prefix stripped). Null when only a typed name was supplied. */
+  signatureImage:      text("signature_image"),
   createdAt:           text("created_at").notNull(),
 }, (t) => ({
   uniqueCompanyForm: uniqueIndex("csf_company_form_unique").on(t.companyId, t.formType),
