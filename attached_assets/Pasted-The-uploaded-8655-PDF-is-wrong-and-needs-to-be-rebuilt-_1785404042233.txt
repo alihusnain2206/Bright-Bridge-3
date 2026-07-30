@@ -1,0 +1,15 @@
+The uploaded 8655 PDF is wrong and needs to be rebuilt. I've reviewed the downloaded output — it's a custom-generated document, not the official IRS Form 8655. Problems:
+
+We must use the official IRS Form 8655 (fillable PDF from irs.gov) and fill its actual form fields — not generate our own layout with pdf-lib text drawing. Download the official form, embed it as the template, and fill its AcroForm fields (or overlay text at the correct coordinates if the fields aren't fillable). The real form's structure (lines 1–21, including lines 15 and 16 with separate blanks per return type) must be preserved exactly.
+The Reporting Agent info is wrong. The form currently names "BrightBridge Payroll Services" with a placeholder phone. The Reporting Agent is Rollfi — fill these exact static values:
+Line 9: Rollfi, Inc
+Line 10: 87-3373107
+Line 11: 169 Maddison Ave #2351, New York, NY, 10016
+Line 12: Perumalsamy Ramakrishnan
+Line 13: (408) 582 4650
+Line 14: 1-646-849-4046
+Remove "BrightBridge Payroll Services" and the (888) 555-0100 number entirely — BrightBridge is not the reporting agent.
+Line 15/16 dates are wrong. The 941 value must be YYYY/MM where MM is the last month of the current quarter (today → 2026/09, not "July 2026"). The 940 value is the year (2026). Both lines 15 and 16 get these two values in their respective 940 and 941 blanks; all other return-type blanks stay empty. The getForm8655AuthDates helper may be correct — check whether the bug is in the helper or in what the PDF builder does with it, and fix accordingly.
+No invented content. Remove all fabricated certification text, footers, and layout. The only content should be the official form plus our filled values: taxpayer info (from getCompanyInfo), signer name/title/date (from the signing flow), Rollfi's static info, and the line 15/16 dates. Signature goes in the official Sign Here section.
+
+After rebuilding: re-run the flow for Maple Grove Early Learning on sandbox, upload the corrected PDF, and I'll download and inspect it before we ask Rollfi to review. Update the content-verification tests to check for the OFFICIAL form's structure and Rollfi's reporting agent values — the current tests validated incorrect content.
