@@ -196,9 +196,15 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   // (c1_3 at y=170; Rollfi handles state payroll taxes)
   try { form.getCheckBox(fn("c1_3")).check(); } catch { /* XFA-only, ignore */ }
 
+  // Flatten first so AcroForm field appearances are baked in before we draw
+  // the signature overlay. Flattening after drawImage/drawText would paint
+  // form field backgrounds on top of our overlays, hiding the signature.
+  form.flatten();
+
   // ── Sign Here — overlay typed text or drawn signature image ──────────────
   // The signature/title/date fields in the Sign Here box are XFA-only (no
-  // AcroForm equivalents). We overlay content at the correct y-position.
+  // AcroForm equivalents). We overlay content at the correct y-position
+  // AFTER flattening so nothing covers them up.
   // Sign Here box occupies y≈65–155; signing row is at the bottom (~y=83).
   const pages = doc.getPages();
   const page  = pages[0];
@@ -241,9 +247,6 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   page.drawText(formatDate(data.signedAt), {
     x: 466, y: 70, size: 9, font: reg, color: rgb(0, 0, 0),
   });
-
-  // Flatten so the filled values are baked in and can't be edited
-  form.flatten();
 
   return doc.save();
 }
