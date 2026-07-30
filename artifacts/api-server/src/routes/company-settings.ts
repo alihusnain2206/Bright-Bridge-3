@@ -912,8 +912,9 @@ router.post("/rollfi/request-signing-link", requireAuth, async (req: Request, re
 // 2. Fetches live company + beneficial-owner data from Rollfi (read-only).
 // 3. Generates the Form 8655 PDF using pdf-lib.
 // 4. Persists the signed record to company_signed_forms (UPSERT).
-// 5. Returns the record — does NOT call uploadDocument yet (deferred to
-//    sandbox→prod switch, per user instruction).
+// 5. Uploads the PDF to Rollfi via uploadDocument.
+// 6. Updates upload_status → "uploaded" (or "failed" on error).
+//    Signing always succeeds regardless of upload outcome.
 
 router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: Request, res: Response) => {
   // resolveCompanyId enforces owner/super_admin + scopes to caller's company.
