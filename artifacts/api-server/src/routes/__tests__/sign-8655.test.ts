@@ -416,6 +416,36 @@ describe("POST /rollfi/companies/:companyId/sign-8655", () => {
         expect.objectContaining({ signerName: SIGNER_NAME, signerTitle: SIGNER_TITLE }),
       );
     });
+
+    it("uploadDocument is called with the Rollfi company UUID (not the internal ID)", async () => {
+      await postSign(makeApp());
+      // Second axios.post call is uploadDocument
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(payload.companyId).toBe("rollfi-co-001");
+    });
+
+    it("uploadDocument is called with documentType '8655Form'", async () => {
+      await postSign(makeApp());
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(payload.documentType).toBe("8655Form");
+    });
+
+    it("uploadDocument is called with a non-empty base64 PDF string", async () => {
+      await postSign(makeApp());
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(typeof payload.fileBase64).toBe("string");
+      expect((payload.fileBase64 as string).length).toBeGreaterThan(0);
+    });
+
+    it("uploadDocument URL targets the adminPortal/uploadDocument endpoint", async () => {
+      await postSign(makeApp());
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const url = uploadCall[0] as string;
+      expect(url).toMatch(/adminPortal\/uploadDocument/);
+    });
   });
 
   // ── Provider success=true without documentId ───────────────────────────────
@@ -483,6 +513,21 @@ describe("POST /rollfi/companies/:companyId/sign-8655", () => {
       await postSign(makeApp());
       const setValues = dbState.updateCalls[0]?.setValues as Record<string, unknown>;
       expect(setValues?.uploadStatus).toBe("uploaded");
+    });
+
+    it("uploadDocument still sent with correct companyId when DB fallback is active", async () => {
+      await postSign(makeApp());
+      // First axios call rejected (getCompanyInfo), second is uploadDocument
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(payload.companyId).toBe("rollfi-co-001");
+    });
+
+    it("uploadDocument still sent with documentType '8655Form' when DB fallback is active", async () => {
+      await postSign(makeApp());
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(payload.documentType).toBe("8655Form");
     });
   });
 
