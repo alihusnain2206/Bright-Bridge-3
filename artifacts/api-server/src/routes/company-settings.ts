@@ -979,7 +979,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
 
   // ── Build PDF ─────────────────────────────────────────────────────────────
   const signedAt = new Date();
-  const { annualYear, quarterlyBeginMonth } = getForm8655AuthDates(signedAt);
+  const { annual940, quarterly941 } = getForm8655AuthDates(signedAt);
 
   let pdfBytes: Uint8Array;
   try {
@@ -992,8 +992,8 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
       signerName:          signerName.trim(),
       signerTitle:         signerTitle.trim(),
       signedAt,
-      annualYear,
-      quarterlyBeginMonth,
+      annual940,
+      quarterly941,
     });
   } catch (err) {
     req.log.error({ err }, "sign-8655: PDF generation failed");
@@ -1232,7 +1232,7 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
 
   // ── 5. Rebuild PDF ────────────────────────────────────────────────────────
   const signedAt = new Date(row.signedAt);
-  const { annualYear, quarterlyBeginMonth } = getForm8655AuthDates(signedAt);
+  const { annual940, quarterly941 } = getForm8655AuthDates(signedAt);
 
   let pdfBytes: Uint8Array;
   try {
@@ -1245,8 +1245,8 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
       signerName:          row.signerName.trim(),
       signerTitle:         row.signerTitle.trim(),
       signedAt,
-      annualYear,
-      quarterlyBeginMonth,
+      annual940,
+      quarterly941,
     });
   } catch (err) {
     req.log.error({ err }, "retry-8655-upload: PDF regeneration failed");
@@ -1412,7 +1412,7 @@ router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req
 
   // ── Regenerate PDF ────────────────────────────────────────────────────────
   const signedAt = new Date(signedRecord.signedAt);
-  const { annualYear, quarterlyBeginMonth } = getForm8655AuthDates(signedAt);
+  const { annual940, quarterly941 } = getForm8655AuthDates(signedAt);
 
   let pdfBytes: Uint8Array;
   try {
@@ -1425,8 +1425,8 @@ router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req
       signerName:          signedRecord.signerName,
       signerTitle:         signedRecord.signerTitle,
       signedAt,
-      annualYear,
-      quarterlyBeginMonth,
+      annual940,
+      quarterly941,
     });
   } catch (err) {
     req.log.error({ err }, "form-8655.pdf: PDF generation failed");

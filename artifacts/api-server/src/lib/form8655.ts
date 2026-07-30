@@ -1,242 +1,200 @@
 /**
  * form8655.ts — IRS Form 8655 helpers
  *
- * getForm8655AuthDates(date) — pure function; returns human-readable auth start dates.
- * buildForm8655Pdf(data)     — generates a PDF representation of Form 8655 using pdf-lib.
+ * getForm8655AuthDates(date) — returns YYYY and YYYY/MM strings for lines 15/16.
+ * buildForm8655Pdf(data)     — fills the official IRS Form 8655 AcroForm fields.
  *
+ * Reporting Agent static values are hard-coded (Rollfi, Inc).
  * No I/O here — callers are responsible for storing / uploading the result.
  */
 
-import { PDFDocument, StandardFonts, rgb, type PDFFont } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+// esbuild loader:.pdf=base64 embeds the official IRS form at build time
+import f8655Base64 from "../assets/f8655.pdf";
 
-// ── Date helpers ───────────────────────────────────────────────────────────────
+// ── Rollfi reporting agent constants ─────────────────────────────────────────
 
-const MONTH_NAMES = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
-] as const;
+const ROLLFI_NAME    = "Rollfi, Inc";
+const ROLLFI_EIN     = "87-3373107";
+const ROLLFI_ADDR    = "169 Maddison Ave #2351";
+const ROLLFI_CITYSZ  = "New York, NY 10016";
+const ROLLFI_CONTACT = "Perumalsamy Ramakrishnan";
+const ROLLFI_PHONE   = "(408) 582 4650";
+const ROLLFI_FAX     = "1-646-849-4046";
+
+// ── Date helpers ──────────────────────────────────────────────────────────────
 
 /**
- * Returns the auth-effective dates for Form 8655 lines 10a (annual) and 10b (quarterly).
+ * Returns auth-effective date strings for IRS Form 8655 lines 15 and 16.
  *
- * IRS rules:
- *   10a: Calendar year in which authorization begins (current year).
- *   10b: First month of the current quarter (the quarter in which the form is signed).
+ * IRS rules (Rev. January 2024):
+ *   940 blank  — calendar year in which authorization begins, YYYY format.
+ *   941 blank  — YYYY/MM where MM is the **last month** of the current quarter.
+ *                e.g. Q3 2026 (Jul–Sep) → "2026/09"
+ *
+ * Both line 15 (filing auth) and line 16 (deposit auth) receive the same values.
  */
 export function getForm8655AuthDates(date: Date): {
-  annualYear: string;           // e.g. "2026"
-  quarterlyBeginMonth: string;  // e.g. "July 2026"
+  annual940:    string;  // e.g. "2026"
+  quarterly941: string;  // e.g. "2026/09"
 } {
-  const year  = date.getFullYear();
+  const year = date.getFullYear();
   const month = date.getMonth(); // 0-indexed
-  const quarterStartIdx = Math.floor(month / 3) * 3; // 0=Jan, 3=Apr, 6=Jul, 9=Oct
+  // Quarter last month: Q1→2(Mar), Q2→5(Jun), Q3→8(Sep), Q4→11(Dec)
+  const quarterLastIdx = Math.floor(month / 3) * 3 + 2;
+  const mm = String(quarterLastIdx + 1).padStart(2, "0");
   return {
-    annualYear:           String(year),
-    quarterlyBeginMonth:  `${MONTH_NAMES[quarterStartIdx]} ${year}`,
+    annual940:    String(year),
+    quarterly941: `${year}/${mm}`,
   };
 }
 
-// ── PDF builder ────────────────────────────────────────────────────────────────
+// ── Data interface ────────────────────────────────────────────────────────────
 
 export interface Form8655Data {
-  // Part I — Taxpayer
-  taxpayerName:    string;   // company name
-  taxpayerEin:     string;   // EIN (digits only — formatter adds hyphen)
-  address:         string;   // street address
-  cityStateZip:    string;
-  phone:           string;
+  // Part I — Taxpayer (from Rollfi getCompanyInfo)
+  taxpayerName:  string;   // Line 1a
+  taxpayerEin:   string;   // Line 2  (digits only — formatter adds hyphen)
+  address:       string;   // Line 3  (street)
+  cityStateZip:  string;   // Line 3  (city/state/ZIP)
+  phone:         string;   // Line 7  (taxpayer daytime phone)
   // Signature block
-  signerName:      string;
-  signerTitle:     string;
-  signedAt:        Date;
-  // Part II — Reporting Agent (BrightBridge's fixed values)
-  agentName?:      string;
-  // Auth dates (pass result of getForm8655AuthDates)
-  annualYear:           string;
-  quarterlyBeginMonth:  string;
+  signerName:    string;
+  signerTitle:   string;
+  signedAt:      Date;
+  // Lines 15 & 16 (pass result of getForm8655AuthDates)
+  annual940:    string;
+  quarterly941: string;
 }
 
+// ── Formatters ────────────────────────────────────────────────────────────────
+
 function formatEin(ein: string): string {
-  const digits = ein.replace(/\D/g, "");
-  if (digits.length === 9) return `${digits.slice(0, 2)}-${digits.slice(2)}`;
-  return ein;
+  const d = ein.replace(/\D/g, "");
+  return d.length === 9 ? `${d.slice(0, 2)}-${d.slice(2)}` : ein;
 }
 
 function formatPhone(phone: string): string {
   const d = phone.replace(/\D/g, "");
-  if (d.length === 10) return `(${d.slice(0,3)}) ${d.slice(3,6)}-${d.slice(6)}`;
-  return phone;
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : phone;
 }
 
 function formatDate(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
-  const y = date.getFullYear();
-  return `${m}/${d}/${y}`;
+  return `${m}/${d}/${date.getFullYear()}`;
 }
 
-/** Draw a horizontal rule */
-function hRule(page: ReturnType<PDFDocument["addPage"]>, y: number, margin: number, w: number) {
-  page.drawLine({ start: { x: margin, y }, end: { x: margin + w, y }, thickness: 0.5, color: rgb(0.6, 0.6, 0.6) });
-}
+// ── Field mapping (AcroForm, sorted top→bottom) ───────────────────────────────
+//
+// Derived from coordinate dump of f8655.pdf (all fields on Page1):
+//
+// y=672  f1_01(x=36,w=381)  Line 1a — Taxpayer name
+// y=672  f1_03(x=418,w=158) Line 2  — Taxpayer EIN
+// y=651  c1_1  (x=566)      Line 4  — Seasonal employer checkbox (leave unchecked)
+// y=648  f1_02(x=36,w=381)  Line 1b — Trade name (leave blank)
+// y=624  f1_04(x=36,w=381)  Line 3  — Street address
+// y=624  f1_06(x=418,w=158) Line 5  — Other identification number (leave blank)
+// y=600  f1_05(x=36,w=540)  Line 3  — City, state, ZIP
+// y=576  f1_07(x=36,w=215)  Line 6  — Contact person
+// y=576  f1_08(x=252,w=166) Line 7  — Daytime telephone
+// y=576  f1_09(x=418,w=158) Line 8  — Fax (leave blank)
+// y=540  f1_10(x=36,w=381)  Line 9  — Reporting Agent name
+// y=540  f1_11(x=418,w=158) Line 10 — Reporting Agent EIN
+// y=516  f1_12(x=36,w=540)  Line 11 — Reporting Agent address
+// y=492  f1_13(x=36,w=540)  Line 11 — Reporting Agent city/state/ZIP
+// y=468  f1_14(x=36,w=215)  Line 12 — Reporting Agent contact
+// y=468  f1_15(x=252,w=166) Line 13 — Reporting Agent phone
+// y=468  f1_16(x=418,w=158) Line 14 — Reporting Agent fax
+//
+// Line 15 — Filing authorization (YYYY for 940, YYYY/MM for 941; others blank)
+// y=408  f1_17(x=86)   940    f1_18(x=209) 941    f1_19(x=331) 943    f1_20(x=454) 944
+// y=396  f1_21(x=86)   945    f1_22(x=209) [other] f1_23(x=331) [other]
+//
+// Line 16 — Deposit authorization (same 940/941 values; others blank)
+// y=336  f1_29(x=94) 720   f1_24(x=173) 940   f1_25(x=259) 941
+//         f1_26(x=346) 943  f1_27(x=432) 944   f1_28(x=518) 945
+// y=324  f1_34..f1_33 (other return types — leave blank)
+//
+// Sign Here section (y≈192–240)
+// y=240  f1_36(x=497,w=72)  Date
+// y=216  f1_37(x=497,w=72)  Title
+// y=192  f1_38(x=446,w=72)  Phone (taxpayer)
+// y= 60  f1_39(x=295,w=173) (footer area — leave blank)
+
+// Full AcroForm field name prefix
+const P = "topmostSubform[0].Page1[0].";
+const R = `${P}Line1_ReadOrder[0].`;
+const L = `${P}Lines2-3_ReadOrder[0].`;
+const fn = (n: string) => `${P}${n}[0]`;
 
 /**
- * Builds a multi-section PDF representation of IRS Form 8655.
- * Returns the raw PDF bytes (Uint8Array) — caller writes/uploads as needed.
+ * Fills the official IRS Form 8655 (Rev. January 2024) with the supplied data.
+ * Returns raw PDF bytes. Caller writes/uploads as needed.
  */
 export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> {
-  const doc   = await PDFDocument.create();
-  const page  = doc.addPage([612, 792]); // US Letter
-  const helvB = await doc.embedFont(StandardFonts.HelveticaBold);
-  const helv  = await doc.embedFont(StandardFonts.Helvetica);
-  const helvO = await doc.embedFont(StandardFonts.HelveticaOblique);
+  const irsBytes = Buffer.from(f8655Base64, "base64");
+  const doc  = await PDFDocument.load(irsBytes);
+  const form = doc.getForm();
 
-  const NAVY   = rgb(0.1, 0.22, 0.38); // #1B3A62
-  const BLACK  = rgb(0,   0,   0);
-  const GRAY   = rgb(0.4, 0.4, 0.4);
-  const LGRAY  = rgb(0.92, 0.92, 0.92);
-  const MARGIN = 50;
-  const W      = 612 - MARGIN * 2;
-
-  let y = 762; // cursor from top
-
-  // ── Header ─────────────────────────────────────────────────────────────────
-  page.drawRectangle({ x: MARGIN, y: y - 8, width: W, height: 34, color: NAVY, borderWidth: 0 });
-
-  page.drawText("Form 8655", {
-    x: MARGIN + 10, y: y + 10, size: 16, font: helvB, color: rgb(1, 1, 1),
-  });
-  page.drawText("Reporting Agent Authorization", {
-    x: MARGIN + 10, y: y - 2, size: 8, font: helv, color: rgb(0.8, 0.9, 1),
-  });
-  page.drawText("(Rev. February 2012)  OMB No. 1545-1058", {
-    x: MARGIN + W - 200, y: y + 10, size: 7.5, font: helv, color: rgb(0.7, 0.85, 1),
-  });
-  page.drawText("Department of the Treasury — Internal Revenue Service", {
-    x: MARGIN + W - 200, y: y - 2, size: 7, font: helvO, color: rgb(0.7, 0.85, 1),
-  });
-
-  y -= 30;
-
-  // Helper: labelled field row
-  const field = (label: string, value: string, yPos: number, labelW = 140, font: PDFFont = helv) => {
-    page.drawText(label, { x: MARGIN, y: yPos, size: 7, font: helv, color: GRAY });
-    page.drawText(value || "—", { x: MARGIN + labelW, y: yPos, size: 9, font, color: BLACK });
+  const tf = (name: string, value: string) => {
+    try {
+      form.getTextField(name).setText(value);
+    } catch (e) {
+      // Silently skip fields not present (XFA-only fields, etc.)
+    }
   };
 
-  // Helper: section header band
-  const sectionHeader = (title: string, yPos: number) => {
-    page.drawRectangle({ x: MARGIN, y: yPos - 3, width: W, height: 14, color: LGRAY });
-    page.drawText(title, { x: MARGIN + 6, y: yPos, size: 8, font: helvB, color: NAVY });
-    return yPos - 18;
-  };
+  // ── Part I — Taxpayer Information ─────────────────────────────────────────
+  tf(`${R}f1_01[0]`,           data.taxpayerName.trim());          // 1a name
+  tf(`${L}f1_03[0]`,           formatEin(data.taxpayerEin));       // 2  EIN
+  // f1_02 (1b trade name) — leave blank
+  tf(`${L}f1_04[0]`,           data.address.trim());               // 3  street
+  tf(`${L}f1_05[0]`,           data.cityStateZip.trim());          // 3  city/state/ZIP
+  // c1_1 (seasonal checkbox) — leave unchecked
+  // f1_06 (line 5 other ID) — leave blank
+  tf(fn("f1_07"),              "");                                 // 6  contact (no separate contact data available)
+  tf(fn("f1_08"),              formatPhone(data.phone));            // 7  taxpayer phone
+  // f1_09 (fax) — leave blank
 
-  // ── Part I — Taxpayer Information ──────────────────────────────────────────
-  y = sectionHeader("PART I — Taxpayer Information", y);
+  // ── Part II — Reporting Agent (Rollfi static values) ──────────────────────
+  tf(fn("f1_10"),              ROLLFI_NAME);     // 9  name
+  tf(fn("f1_11"),              ROLLFI_EIN);      // 10 EIN
+  tf(fn("f1_12"),              ROLLFI_ADDR);     // 11 address
+  tf(fn("f1_13"),              ROLLFI_CITYSZ);   // 11 city/state/ZIP
+  tf(fn("f1_14"),              ROLLFI_CONTACT);  // 12 contact
+  tf(fn("f1_15"),              ROLLFI_PHONE);    // 13 phone
+  tf(fn("f1_16"),              ROLLFI_FAX);      // 14 fax
 
-  field("1a  Taxpayer name",                   data.taxpayerName,                 y); y -= 16;
-  field("1b  Taxpayer Identification No. (EIN)", formatEin(data.taxpayerEin),     y); y -= 16;
-  field("1c  Mailing address",                  data.address,                     y); y -= 16;
-  field("1d  City, state, ZIP",                 data.cityStateZip,                y); y -= 12;
-  hRule(page, y, MARGIN, W); y -= 16;
+  // ── Line 15 — Authorization to sign and file ──────────────────────────────
+  tf(fn("f1_17"),  data.annual940);     // 940
+  tf(fn("f1_18"),  data.quarterly941);  // 941
+  // 943, 944, 945 and continuation row left blank
 
-  // ── Taxpayer Certification ─────────────────────────────────────────────────
-  y = sectionHeader("Taxpayer Certification", y);
+  // ── Line 16 — Authorization to make deposits ──────────────────────────────
+  tf(fn("f1_24"),  data.annual940);     // 940  (x=173)
+  tf(fn("f1_25"),  data.quarterly941);  // 941  (x=259)
+  // 720, 943, 944, 945 and second row left blank
 
-  const certText =
-    "By signing below, the taxpayer authorizes the Reporting Agent identified in Part II to perform the " +
-    "acts indicated in Part III on the taxpayer's behalf. If Part III, line 8 is checked, the taxpayer " +
-    "also authorizes the IRS to disclose tax return information to the Reporting Agent as described.";
+  // ── Sign Here section ─────────────────────────────────────────────────────
+  tf(fn("f1_36"),  formatDate(data.signedAt));  // Date
+  tf(fn("f1_37"),  data.signerTitle);           // Title
+  tf(fn("f1_38"),  formatPhone(data.phone));    // Phone (taxpayer)
 
-  const certLines = wrapText(certText, W - 10, helv, 8);
-  for (const line of certLines) {
-    page.drawText(line, { x: MARGIN + 5, y, size: 8, font: helv, color: BLACK }); y -= 11;
-  }
-  y -= 4;
-
-  // Signature row
-  page.drawRectangle({ x: MARGIN, y: y - 22, width: W / 2 - 6, height: 28, color: rgb(0.97, 0.97, 0.97) });
-  page.drawText("Taxpayer signature",  { x: MARGIN + 4,     y: y + 2,  size: 7,  font: helv,  color: GRAY });
-  page.drawText(data.signerName,       { x: MARGIN + 4,     y: y - 12, size: 11, font: helvB, color: BLACK });
-
-  page.drawRectangle({ x: MARGIN + W / 2 + 6, y: y - 22, width: W / 2 - 6, height: 28, color: rgb(0.97, 0.97, 0.97) });
-  page.drawText("Date",                { x: MARGIN + W/2 + 10, y: y + 2,  size: 7,  font: helv,  color: GRAY });
-  page.drawText(formatDate(data.signedAt), { x: MARGIN + W/2 + 10, y: y - 12, size: 11, font: helvB, color: BLACK });
-  y -= 30;
-
-  // Title + phone row
-  page.drawRectangle({ x: MARGIN, y: y - 18, width: W / 2 - 6, height: 24, color: rgb(0.97, 0.97, 0.97) });
-  page.drawText("Title",          { x: MARGIN + 4,         y: y + 2,  size: 7, font: helv, color: GRAY });
-  page.drawText(data.signerTitle, { x: MARGIN + 4,         y: y - 11, size: 9, font: helv, color: BLACK });
-
-  page.drawRectangle({ x: MARGIN + W/2 + 6, y: y - 18, width: W/2 - 6, height: 24, color: rgb(0.97, 0.97, 0.97) });
-  page.drawText("Phone number",        { x: MARGIN + W/2 + 10, y: y + 2,  size: 7, font: helv, color: GRAY });
-  page.drawText(formatPhone(data.phone), { x: MARGIN + W/2 + 10, y: y - 11, size: 9, font: helv, color: BLACK });
-  y -= 28;
-
-  hRule(page, y, MARGIN, W); y -= 16;
-
-  // ── Part II — Reporting Agent Information ─────────────────────────────────
-  y = sectionHeader("PART II — Reporting Agent Information", y);
-
-  const agentName = data.agentName ?? "BrightBridge Payroll Services";
-  field("4   Reporting Agent name",    agentName,          y); y -= 16;
-  field("5   Telephone number",        "(888) 555-0100",   y); y -= 12;
-  hRule(page, y, MARGIN, W); y -= 16;
-
-  // ── Part III — Authorization ───────────────────────────────────────────────
-  y = sectionHeader("PART III — Authorization (Effective Dates)", y);
-
-  page.drawText(
-    "This authorization is effective for the filing and payment of federal employment taxes:",
-    { x: MARGIN + 5, y, size: 8, font: helv, color: BLACK }
-  );
-  y -= 16;
-
-  field("10a  Annual forms (940 / 944 / W-2):",  `Tax year ${data.annualYear}`,  y); y -= 16;
-  field("10b  Quarterly forms (941):  beginning", data.quarterlyBeginMonth,       y); y -= 12;
-
-  hRule(page, y, MARGIN, W); y -= 16;
-
-  // ── Notice ─────────────────────────────────────────────────────────────────
-  const notice =
-    "This authorization supersedes any previously filed Form 8655 for the same tax matters. " +
-    "To revoke this authorization, the taxpayer must notify both the IRS and the Reporting Agent in writing.";
-  const noticeLines = wrapText(notice, W - 10, helv, 7);
-  for (const line of noticeLines) {
-    page.drawText(line, { x: MARGIN + 5, y, size: 7, font: helvO, color: GRAY }); y -= 10;
-  }
-
-  // ── Footer watermark ───────────────────────────────────────────────────────
-  const footerY = 22;
-  page.drawLine({
-    start: { x: MARGIN, y: footerY + 14 }, end: { x: MARGIN + W, y: footerY + 14 },
-    thickness: 0.5, color: LGRAY,
+  // Overlay signer name as typed text at the signature line
+  // (the actual "Signature of taxpayer" line is drawn, not an AcroForm field)
+  const pages = doc.getPages();
+  const page  = pages[0];
+  const font  = await doc.embedFont(StandardFonts.HelveticaBold);
+  page.drawText(data.signerName.trim(), {
+    x: 36, y: 246,   // just above the signature line (y≈240)
+    size: 11,
+    font,
+    color: rgb(0, 0, 0),
   });
-  page.drawText(
-    `Signed by ${data.signerName} on ${formatDate(data.signedAt)} — ${agentName} — Generated by BrightBridge`,
-    { x: MARGIN, y: footerY + 3, size: 7, font: helvO, color: GRAY }
-  );
+
+  // Flatten so the filled values are baked in and can't be edited
+  form.flatten();
 
   return doc.save();
-}
-
-// ── Text wrap utility ──────────────────────────────────────────────────────────
-
-function wrapText(text: string, maxWidth: number, font: PDFFont, size: number): string[] {
-  const words  = text.split(" ");
-  const lines: string[] = [];
-  let current  = "";
-
-  for (const word of words) {
-    const test = current ? `${current} ${word}` : word;
-    if (font.widthOfTextAtSize(test, size) > maxWidth && current) {
-      lines.push(current);
-      current = word;
-    } else {
-      current = test;
-    }
-  }
-  if (current) lines.push(current);
-  return lines;
 }
