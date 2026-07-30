@@ -359,6 +359,24 @@ export const beneficialOwners = pgTable("beneficial_owners", {
   isPayrollAdmin:      boolean("is_payroll_admin").notNull().default(true),
 });
 
+// ── Company Signed Forms ──────────────────────────────────────
+// One row per company+form_type.  uploadStatus tracks whether the PDF has been
+// pushed to Rollfi's uploadDocument API (happens on next sandbox→prod switch).
+export const companySignedForms = pgTable("company_signed_forms", {
+  id:               text("id").primaryKey(),
+  companyId:        text("company_id").notNull(),
+  formType:         text("form_type").notNull().default("8655"),   // "8655" | "TR-2000"
+  signerName:       text("signer_name").notNull(),
+  signerTitle:      text("signer_title").notNull(),
+  signedAt:         text("signed_at").notNull(),
+  uploadStatus:     text("upload_status").notNull().default("pending"), // "pending" | "uploaded" | "failed"
+  uploadError:      text("upload_error"),
+  rollfiDocumentId: text("rollfi_document_id"),
+  createdAt:        text("created_at").notNull(),
+}, (t) => ({
+  uniqueCompanyForm: uniqueIndex("csf_company_form_unique").on(t.companyId, t.formType),
+}));
+
 // ── EasyTeam Shift Store ──────────────────────────────────────
 // Raw shifts from GET /embed/api/timesheets — upserted on every Pull Hours sync.
 // employeeId is our internal ID resolved via EasyTeam-UUID→employee mapping;

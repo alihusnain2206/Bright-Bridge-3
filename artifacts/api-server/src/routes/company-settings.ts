@@ -20,7 +20,10 @@ import {
   employees as employeesTable,
   companies as companiesTable,
   rollfiCompanyRecords,
+  companySignedForms,
 } from "@workspace/db";
+import { buildForm8655Pdf, getForm8655AuthDates } from "../lib/form8655.js";
+import { randomUUID } from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../lib/auth-middleware.js";
 import { store } from "../store.js";
@@ -562,7 +565,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     }
 
     // ── 2. Parallel data fetches ───────────────────────────────────────────────
-    const [allEmps, regs] = await Promise.all([
+    const [allEmps, regs, signedFormRows] = await Promise.all([
       db.select({
         id:                  employeesTable.id,
         firstName:           employeesTable.firstName,
@@ -573,7 +576,19 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       }).from(employeesTable).where(eq(employeesTable.companyId, companyId)),
       db.select({ stateCode: stateRegistrationsTable.stateCode, status: stateRegistrationsTable.status })
         .from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId)),
+      db.select({
+        formType:   companySignedForms.formType,
+        signerName: companySignedForms.signerName,
+        signerTitle: companySignedForms.signerTitle,
+        signedAt:   companySignedForms.signedAt,
+      }).from(companySignedForms).where(eq(companySignedForms.companyId, companyId)),
     ]);
+
+    // Build a quick lookup: formType → signed record
+    const signedFormsMap = Object.fromEntries(
+      signedFormRows.map(r => [r.formType, r])
+    );
+    const form8655Signed = !!signedFormsMap["8655"];
 
     // ── 3. Rollfi getCompanyTask (authoritative for KYB + bank) ───────────────
     let rollfiTasks: Array<{ task: string; description: string }> = [];
@@ -631,7 +646,8 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     // ── 6. Build configuration progress steps ─────────────────────────────────
     const payScheduleSet = (co.payScheduleAdded === true) && !!(co.payFrequency);
     const stepsAllDone   = !!resolvedRollfiCompanyId && kybApproved && bankLinked &&
-      payScheduleSet && gaps.length === 0 && employeeCount > 0 && notReadyEmps.length === 0;
+      payScheduleSet && gaps.length === 0 && employeeCount > 0 && notReadyEmps.length === 0 &&
+      form8655Signed;
 
     const steps = [
       {
@@ -685,7 +701,13 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
         linkTo: "/people",
       },
       {
-        id: "ready_to_run", number: 8, label: "Ready to run payroll",
+        id: "form_8655_signed", number: 8, label: "IRS Form 8655 signed",
+        done: form8655Signed,
+        missingText: "Sign Form 8655 to authorize federal tax filing",
+        linkTo: "/settings?tab=signatures",
+      },
+      {
+        id: "ready_to_run", number: 9, label: "Ready to run payroll",
         done: stepsAllDone,
         missingText: "Complete all steps above to unlock payroll",
         linkTo: null,
@@ -754,13 +776,25 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       });
     }
 
+    // d. IRS Form 8655 not yet signed
+    if (!form8655Signed) {
+      attention.push({
+        id: "form_8655_unsigned",
+        severity: "high",
+        message: "IRS Form 8655 has not been signed — required before federal tax filings can be made",
+        linkTo: "/settings?tab=signatures",
+        actionLabel: "Sign form",
+        category: "signature",
+      });
+    }
+
     res.json({
       company: { id: co.id, name: co.name },
-      progress: { completedCount, totalCount: 8, steps },
+      progress: { completedCount, totalCount: 9, steps },
       attention,
       registrationCount: activeRegStates.size,
       // Debug summary (stripped in prod UI)
-      _debug: { kybStatus, bankLinked, payScheduleSet, employeeCount, payrollReadyCount, gapCount: gaps.length },
+      _debug: { kybStatus, bankLinked, payScheduleSet, employeeCount, payrollReadyCount, gapCount: gaps.length, form8655Signed },
     });
   } catch (err) {
     req.log.error({ err }, "GET /company-settings/dashboard failed");
@@ -769,11 +803,19 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 });
 
 // ── GET /rollfi/pending-signatures ────────────────────────────────────────────
-// Returns only the "Signature request" tasks from Rollfi's getCompanyTask.
+// Returns "Signature request" tasks from Rollfi + locally-signed form records.
 
 router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: Response) => {
   const companyId = resolveCompanyId(req, res);
   if (!companyId) return;
+
+  // Always fetch local signed-form records (fast DB query)
+  const signedRows = await db
+    .select({ formType: companySignedForms.formType, signerName: companySignedForms.signerName, signerTitle: companySignedForms.signerTitle, signedAt: companySignedForms.signedAt })
+    .from(companySignedForms)
+    .where(eq(companySignedForms.companyId, companyId))
+    .catch(() => [] as typeof signedRows);
+  const signedForms = Object.fromEntries(signedRows.map(r => [r.formType, r]));
 
   let rollfiCompanyId: string | null = null;
   try {
@@ -788,7 +830,7 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
   } catch { /* fall through */ }
 
   if (!rollfiCompanyId || !getRollfiConfig().credentialsPresent) {
-    res.json({ signatures: [] }); return;
+    res.json({ signatures: [], signedForms }); return;
   }
 
   try {
@@ -798,7 +840,7 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
       { headers: rollfiHeaders() },
     );
     const tasks = ((r.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description: string }>;
-    res.json({ signatures: tasks.filter(t => /signature request/i.test(t.task)) });
+    res.json({ signatures: tasks.filter(t => /signature request/i.test(t.task)), signedForms });
   } catch (err) {
     req.log.error({ err }, "GET /rollfi/pending-signatures failed");
     res.status(500).json({ error: "Failed to fetch pending signatures" });
@@ -861,6 +903,164 @@ router.post("/rollfi/request-signing-link", requireAuth, async (req: Request, re
     message: `We've requested the signing link for ${formType}. Please check your registered email address — you should receive the link within a few minutes.`,
     emailSent: true,
   });
+});
+
+// ── POST /rollfi/companies/:companyId/sign-8655 ───────────────────────────────
+// In-app e-sign for IRS Form 8655.
+//
+// 1. Validates caller (owner / super_admin via resolveCompanyId).
+// 2. Fetches live company + beneficial-owner data from Rollfi (read-only).
+// 3. Generates the Form 8655 PDF using pdf-lib.
+// 4. Persists the signed record to company_signed_forms (UPSERT).
+// 5. Returns the record — does NOT call uploadDocument yet (deferred to
+//    sandbox→prod switch, per user instruction).
+
+router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: Request, res: Response) => {
+  // resolveCompanyId enforces owner/super_admin + scopes to caller's company.
+  // For this route, also honour the URL param when the session company matches.
+  const sessionCompanyId = resolveCompanyId(req, res);
+  if (!sessionCompanyId) return;
+
+  const urlCompanyId = req.params.companyId as string;
+  // super_admin may sign for any company; owner must match their own
+  const caller = store.getUserById(req.session.userId!);
+  if (!caller) { res.status(401).json({ error: "Unauthorized" }); return; }
+  if (caller.role !== "super_admin" && urlCompanyId !== sessionCompanyId) {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+  const companyId = caller.role === "super_admin" ? urlCompanyId : sessionCompanyId;
+
+  const { signerName, signerTitle } = req.body as { signerName?: string; signerTitle?: string };
+  if (!signerName?.trim() || !signerTitle?.trim()) {
+    res.status(400).json({ error: "signerName and signerTitle are required" }); return;
+  }
+
+  // ── Resolve Rollfi company ID ─────────────────────────────────────────────
+  let rollfiCompanyId: string | null = null;
+  try {
+    const [co] = await db.select({ rid: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    rollfiCompanyId = co?.rid ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db
+        .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+  } catch { /* fall through */ }
+
+  if (!rollfiCompanyId) {
+    res.status(400).json({ error: "Company is not yet enrolled in the payroll service" }); return;
+  }
+
+  if (!getRollfiConfig().credentialsPresent) {
+    res.status(503).json({ error: "Payroll service credentials not configured" }); return;
+  }
+
+  // ── Fetch company info + business users from Rollfi (read-only) ───────────
+  let taxpayerName    = "";
+  let taxpayerEin     = "";
+  let address         = "";
+  let cityStateZip    = "";
+  let phone           = "";
+
+  try {
+    const infoResp = await axios.post(
+      `${getBaseUrl()}/reports#getCompanyInfo`,
+      { method: "getCompanyInfo", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() },
+    );
+    req.log.info({ rollfiResponse: infoResp.data }, "sign-8655: getCompanyInfo response");
+    const raw       = infoResp.data as Record<string, unknown>;
+    const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+    const co        = companies[0] ?? {};
+
+    taxpayerName = (co.company as string | undefined) ?? "";
+
+    const kybInfos = Array.isArray(co.KYBInformations) ? co.KYBInformations as Record<string, unknown>[] : [];
+    taxpayerEin    = (kybInfos[0]?.ein as string | undefined) ?? "";
+    phone          = (kybInfos[0]?.phoneNumber as string | undefined) ?? "";
+
+    const locs     = Array.isArray(co.CompanyLocations) ? co.CompanyLocations as Record<string, unknown>[] : [];
+    const loc      = locs[0] ?? {};
+    address        = (loc.address1 as string | undefined) ?? "";
+    const city     = (loc.city     as string | undefined) ?? "";
+    const state    = (loc.state    as string | undefined) ?? "";
+    const zip      = (loc.zipcode  as string | undefined) ?? "";
+    cityStateZip   = [city, state, zip].filter(Boolean).join(", ");
+  } catch (err) {
+    req.log.warn({ err }, "sign-8655: getCompanyInfo failed — using DB fallback");
+    // Fall back to DB company record
+    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+    if (dbCo) {
+      taxpayerName = dbCo.name ?? "";
+      taxpayerEin  = dbCo.ein  ?? "";
+      address      = [dbCo.address1, dbCo.address2].filter(Boolean).join(" ");
+      cityStateZip = [dbCo.city, dbCo.state, dbCo.zipcode].filter(Boolean).join(", ");
+      phone        = dbCo.phone ?? "";
+    }
+  }
+
+  // ── Build PDF ─────────────────────────────────────────────────────────────
+  const signedAt = new Date();
+  const { annualYear, quarterlyBeginMonth } = getForm8655AuthDates(signedAt);
+
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await buildForm8655Pdf({
+      taxpayerName:        taxpayerName.trim()  || "Company",
+      taxpayerEin:         taxpayerEin.trim(),
+      address:             address.trim(),
+      cityStateZip:        cityStateZip.trim(),
+      phone:               phone.trim(),
+      signerName:          signerName.trim(),
+      signerTitle:         signerTitle.trim(),
+      signedAt,
+      annualYear,
+      quarterlyBeginMonth,
+    });
+  } catch (err) {
+    req.log.error({ err }, "sign-8655: PDF generation failed");
+    res.status(500).json({ error: "Failed to generate Form 8655 PDF" }); return;
+  }
+
+  req.log.info({ companyId, pdfBytes: pdfBytes.length }, "sign-8655: PDF generated");
+
+  // ── Persist to DB (UPSERT — re-signing overwrites) ────────────────────────
+  const id        = randomUUID();
+  const createdAt = signedAt.toISOString();
+  const signedAtIso = signedAt.toISOString();
+
+  try {
+    await db
+      .insert(companySignedForms)
+      .values({
+        id,
+        companyId,
+        formType:     "8655",
+        signerName:   signerName.trim(),
+        signerTitle:  signerTitle.trim(),
+        signedAt:     signedAtIso,
+        uploadStatus: "pending",   // uploadDocument deferred to sandbox→prod switch
+        createdAt,
+      })
+      .onConflictDoUpdate({
+        target: [companySignedForms.companyId, companySignedForms.formType],
+        set: {
+          signerName:   signerName.trim(),
+          signerTitle:  signerTitle.trim(),
+          signedAt:     signedAtIso,
+          uploadStatus: "pending",
+          uploadError:  null,
+        },
+      });
+  } catch (err) {
+    req.log.error({ err }, "sign-8655: DB upsert failed");
+    res.status(500).json({ error: "Failed to save signature record" }); return;
+  }
+
+  req.log.info({ companyId, signerName, signerTitle }, "sign-8655: form signed and persisted");
+  res.json({ id, signerName: signerName.trim(), signerTitle: signerTitle.trim(), signedAt: signedAtIso, uploadStatus: "pending" });
 });
 
 export default router;
