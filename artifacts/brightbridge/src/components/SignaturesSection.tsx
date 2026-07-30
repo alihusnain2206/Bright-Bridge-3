@@ -190,11 +190,35 @@ function Form8655Card({
           <p><span className="text-gray-400 font-medium">Date: </span>{formatSignedDate(signed.signedAt)}</p>
         </div>
 
-        {/* Pending upload info banner */}
+        {/* Pending upload info banner + retry affordance */}
         {isPending && (
-          <div className="mt-3 ml-12 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-1.5">
-            <Clock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
-            <span>The signed form is waiting to be submitted to the IRS filing service. No action is needed — it will be sent automatically.</span>
+          <div className="mt-3 ml-12 space-y-2">
+            <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-1.5">
+              <Clock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+              <span>
+                The signed form is waiting to be submitted to the IRS filing service.
+                If it has been stuck here for more than a few minutes, you can retry the upload.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              disabled={retryMutation.isPending}
+              onClick={() => { retryMutation.reset(); retryMutation.mutate(); }}
+              className="h-8 px-3 text-xs text-white gap-1.5 bg-amber-600 hover:bg-amber-700"
+            >
+              {retryMutation.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Upload className="w-3.5 h-3.5" />}
+              Retry upload
+            </Button>
+            {retryMutation.isSuccess && (
+              <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" />Retry submitted — waiting for confirmation.
+              </p>
+            )}
+            {retryMutation.isError && (
+              <p className="text-[11px] text-red-600">{retryMutation.error.message}</p>
+            )}
           </div>
         )}
 
@@ -208,22 +232,21 @@ function Form8655Card({
                 {signed.uploadError ? ` Reason: ${signed.uploadError}` : ""}
               </span>
             </div>
-            {retryMutation.isSuccess ? (
+            <Button
+              size="sm"
+              disabled={retryMutation.isPending}
+              onClick={() => { retryMutation.reset(); retryMutation.mutate(); }}
+              className="h-8 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700"
+            >
+              {retryMutation.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Upload className="w-3.5 h-3.5" />}
+              Retry upload
+            </Button>
+            {retryMutation.isSuccess && (
               <p className="text-[11px] text-emerald-600 flex items-center gap-1">
-                <CheckCircle className="w-3.5 h-3.5" />Upload retry queued successfully.
+                <CheckCircle className="w-3.5 h-3.5" />Retry submitted — waiting for confirmation.
               </p>
-            ) : (
-              <Button
-                size="sm"
-                disabled={retryMutation.isPending}
-                onClick={() => retryMutation.mutate()}
-                className="h-8 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700"
-              >
-                {retryMutation.isPending
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <Upload className="w-3.5 h-3.5" />}
-                Retry upload
-              </Button>
             )}
             {retryMutation.isError && (
               <p className="text-[11px] text-red-600">{retryMutation.error.message}</p>

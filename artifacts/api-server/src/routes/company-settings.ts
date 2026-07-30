@@ -748,9 +748,9 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       attention.push({
         id: "form_8655_upload_pending",
         severity: "medium",
-        message: "Form 8655 is signed but has not yet been submitted to the IRS filing service",
+        message: "Form 8655 is signed but has not yet been submitted to the IRS filing service — if it has been pending for more than a few minutes, retry the upload",
         linkTo: "/settings?tab=signatures",
-        actionLabel: null,
+        actionLabel: "Retry upload",
         category: "signature",
       });
     }

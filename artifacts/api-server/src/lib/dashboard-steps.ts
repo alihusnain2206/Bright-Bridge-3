@@ -119,7 +119,9 @@ export function buildDashboardSteps(p: DashboardStepsParams): DashboardStepsResu
         ? "Sign Form 8655 first"
         : p.form8655UploadStatus === "failed"
           ? "Submission failed — retry the upload on the Signatures tab"
-          : "Form 8655 has not yet been submitted to the IRS filing service",
+          : p.form8655UploadStatus === "pending"
+            ? "Submission is in progress — if it has been stuck for more than a few minutes, retry on the Signatures tab"
+            : "Form 8655 has not yet been submitted to the IRS filing service",
       linkTo: "/settings?tab=signatures",
     },
     {
