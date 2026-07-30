@@ -211,7 +211,16 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   if (data.signatureImageBase64) {
     try {
       const sigImg = await doc.embedPng(Buffer.from(data.signatureImageBase64, "base64"));
-      page.drawImage(sigImg, { x: 50, y: 62, width: 200, height: 28 });
+      // Scale the image to fit the signature line (max 220pt wide, 44pt tall)
+      // while preserving its natural aspect ratio.
+      const natural = sigImg.scale(1);
+      const maxW = 220;
+      const maxH = 44;
+      const ratio = Math.min(maxW / natural.width, maxH / natural.height);
+      const drawW = natural.width  * ratio;
+      const drawH = natural.height * ratio;
+      // Align the bottom of the image to the signature line (~y=70)
+      page.drawImage(sigImg, { x: 50, y: 70, width: drawW, height: drawH });
     } catch {
       // Corrupted or unsupported image — fall back to typed name
       page.drawText(data.signerName.trim(), {

@@ -44,6 +44,12 @@ const rollfiCreds = vi.hoisted(() => ({
   present: true as boolean,
 }));
 
+/** Mutable store state — lets access-control tests switch roles per-test. */
+const storeState = vi.hoisted(() => ({
+  role:      "owner" as string,
+  companyId: "ORG-TEST" as string,
+}));
+
 const axiosMock = vi.hoisted(() => ({
   post: vi.fn<() => Promise<unknown>>(),
 }));
@@ -146,8 +152,8 @@ vi.mock("../../store.js", () => ({
   store: {
     getUserById: (_id: string) => ({
       id:        "USER-TEST",
-      role:      "owner",
-      companyId: "ORG-TEST",
+      role:      storeState.role,
+      companyId: storeState.companyId,
     }),
   },
 }));
@@ -259,6 +265,8 @@ beforeEach(() => {
   dbState.updateCalls.length = 0;
   dbState.insertThrows       = false;
   rollfiCreds.present        = true;
+  storeState.role            = "owner";
+  storeState.companyId       = "ORG-TEST";
   axiosMock.post.mockReset();
   buildPdfSpy.mockReset();
   buildPdfSpy.mockResolvedValue(FAKE_PDF_BYTES);
@@ -594,6 +602,72 @@ describe("POST /rollfi/companies/:companyId/sign-8655", () => {
       await postSign(makeApp());
       expect(axiosMock.post).toHaveBeenCalledTimes(2);
     });
+  });
+
+  // ── Access control ──────────────────────────────────────────────────────────
+  // Verifies that an owner can only sign for their own company, and that
+  // super_admin is permitted to sign for any company URL param.
+
+  describe("access control", () => {
+
+    it("returns 403 when an owner posts to a different company's URL", async () => {
+      // storeState.companyId is "ORG-TEST"; post to "ORG-OTHER" — mismatch → 403
+      const res = await request(makeApp())
+        .post("/rollfi/companies/ORG-OTHER/sign-8655")
+        .send({ signerName: SIGNER_NAME, signerTitle: SIGNER_TITLE })
+        .set("Content-Type", "application/json");
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatch(/access denied/i);
+    });
+
+    it("does not call Rollfi or touch the DB when an owner is rejected", async () => {
+      await request(makeApp())
+        .post("/rollfi/companies/ORG-OTHER/sign-8655")
+        .send({ signerName: SIGNER_NAME, signerTitle: SIGNER_TITLE })
+        .set("Content-Type", "application/json");
+      expect(axiosMock.post).not.toHaveBeenCalled();
+      expect(dbState.insertCalls).toHaveLength(0);
+    });
+
+    it("allows a super_admin to sign for any company URL param", async () => {
+      storeState.role      = "super_admin";
+      storeState.companyId = "ORG-ADMIN";
+      queueRollfiIdSelect("rollfi-other-001");
+      axiosMock.post
+        .mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO })
+        .mockResolvedValueOnce({ data: UPLOAD_SUCCESS });
+      const res = await request(makeApp())
+        .post("/rollfi/companies/ORG-OTHER/sign-8655")
+        .send({ signerName: SIGNER_NAME, signerTitle: SIGNER_TITLE })
+        .set("Content-Type", "application/json");
+      expect(res.status).toBe(200);
+      expect(res.body.uploadStatus).toBe("uploaded");
+    });
+
+    it("super_admin does not receive a 403 regardless of which company URL they target", async () => {
+      storeState.role      = "super_admin";
+      storeState.companyId = "ORG-ADMIN";
+      queueRollfiIdSelect();
+      axiosMock.post
+        .mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO })
+        .mockResolvedValueOnce({ data: UPLOAD_SUCCESS });
+      const res = await request(makeApp())
+        .post("/rollfi/companies/ORG-COMPLETELY-DIFFERENT/sign-8655")
+        .send({ signerName: SIGNER_NAME, signerTitle: SIGNER_TITLE })
+        .set("Content-Type", "application/json");
+      expect(res.status).not.toBe(403);
+    });
+
+    it("owner posting to their own company URL is not rejected", async () => {
+      // Sanity check: ORG-TEST owner → /rollfi/companies/ORG-TEST/... → 200
+      queueRollfiIdSelect();
+      axiosMock.post
+        .mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO })
+        .mockResolvedValueOnce({ data: UPLOAD_SUCCESS });
+      const res = await postSign(makeApp());
+      expect(res.status).toBe(200);
+    });
+
   });
 
 });
