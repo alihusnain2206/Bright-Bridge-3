@@ -508,6 +508,11 @@ export function SignaturesSection({ companyId }: { companyId: string }) {
       fetch(`/api/rollfi/pending-signatures?companyId=${companyId}`, { credentials: "include" })
         .then(r => r.json() as Promise<PendingSignaturesResp>),
     staleTime: 60_000,
+    // Poll every 10 s while Form 8655 is pending upload; stop once it resolves.
+    refetchInterval: (query) => {
+      const status = query.state.data?.signedForms?.["8655"]?.uploadStatus;
+      return status === "pending" ? 10_000 : false;
+    },
   });
 
   const handleSigned = (record: SignedFormRecord) => {
