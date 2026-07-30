@@ -32,21 +32,26 @@ Full Form 8655 in-app e-sign feature (uploadDocument deferred).
 - `address1`, `city`, `state`, `zipcode`, `ssn`, `dateOfBirth`
 - No `title` field — signer provides their own title
 
-## uploadDocument (deferred)
+## uploadDocument — BLOCKED, method name unknown
 
-**NOT called** — user instruction: don't call uploadDocument while connected to production Rollfi. Records persist with `uploadStatus: "pending"`.
+The `uploadDocument` method returns HTTP 400 with empty body on Rollfi sandbox. Every method name variant tried (uploadDocument, uploadFile, addDocument, addIrsForm, addForm8655, submitIrsForm, etc.) and every path variant (/reports, /companyOnboarding, /kyb, /documents, /irs, /forms, etc.) all return HTTP 400. Rollfi's sandbox appears to not expose a document upload API, or uses an undocumented method name.
 
-Expected call shape (to implement when switching to sandbox):
+**The endpoint IS wired** — `POST /rollfi/companies/:companyId/sign-8655` calls uploadDocument after the DB persist. Upload failure is caught and stored as `uploadStatus: "failed"`, `uploadError: <message>`. Signing always succeeds regardless.
+
+**To unblock:** Ask Rollfi for:
+1. The correct method name for uploading a Form 8655 PDF
+2. Field names — is PDF sent as `fileBase64`, `file`, multipart?
+3. Is it available in sandbox or production-only?
+
+Once known, fix is one block in `company-settings.ts` around the `uploadDocument` call (search for `method: "uploadDocument"`).
+
+**Known working upload request shape (best guess, unconfirmed):**
 ```json
-{ "method": "uploadDocument", "companyId": "<rollfiCompanyId>",
+{ "method": "<TBD>", "companyId": "<rollfiCompanyId>",
   "fileName": "Form8655_<name>_<date>.pdf", "documentType": "8655Form",
   "fileBase64": "<base64>" }
 ```
 After successful upload, set `upload_status = 'uploaded'`, `rollfi_document_id = response.documentId`.
-
-**Why:**
-- uploadDocument against production Rollfi with test data would create a real IRS authorization document
-- Safe to complete after switching ROLLFI_ENV to sandbox, testing, then switching back
 
 ## PDF notes
 

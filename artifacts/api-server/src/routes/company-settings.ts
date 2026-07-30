@@ -1042,7 +1042,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
         signerName:   signerName.trim(),
         signerTitle:  signerTitle.trim(),
         signedAt:     signedAtIso,
-        uploadStatus: "pending",   // uploadDocument deferred to sandbox→prod switch
+        uploadStatus: "pending",
         createdAt,
       })
       .onConflictDoUpdate({
@@ -1053,6 +1053,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
           signedAt:     signedAtIso,
           uploadStatus: "pending",
           uploadError:  null,
+          rollfiDocumentId: null,
         },
       });
   } catch (err) {
@@ -1061,7 +1062,82 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
   }
 
   req.log.info({ companyId, signerName, signerTitle }, "sign-8655: form signed and persisted");
-  res.json({ id, signerName: signerName.trim(), signerTitle: signerTitle.trim(), signedAt: signedAtIso, uploadStatus: "pending" });
+
+  // ── Upload PDF to Rollfi ───────────────────────────────────────────────────
+  let uploadStatus: string  = "pending";
+  let uploadError:  string | null = null;
+  let rollfiDocumentId: string | null = null;
+
+  try {
+    const dateStr  = signedAt.toISOString().slice(0, 10).replace(/-/g, "");
+    const safeName = signerName.trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
+    const fileName = `Form8655_${safeName}_${dateStr}.pdf`;
+    const fileBase64 = Buffer.from(pdfBytes).toString("base64");
+
+    const uploadResp = await axios.post(
+      `${getBaseUrl()}/reports#uploadDocument`,
+      {
+        method:       "uploadDocument",
+        companyId:    rollfiCompanyId,
+        fileName,
+        documentType: "8655Form",
+        fileBase64,
+      },
+      { headers: rollfiHeaders() },
+    );
+
+    req.log.info({ uploadResp: uploadResp.data }, "sign-8655: uploadDocument response");
+
+    // Rollfi returns { success, documentId } or { error }
+    const upData = uploadResp.data as Record<string, unknown>;
+    if (upData?.documentId) {
+      rollfiDocumentId = upData.documentId as string;
+      uploadStatus = "uploaded";
+    } else if (upData?.error || upData?.success === false) {
+      throw new Error(String(upData?.error ?? "uploadDocument returned success=false"));
+    } else {
+      // Treat any 2xx with no explicit error as uploaded
+      uploadStatus = "uploaded";
+    }
+
+    // Persist the upload outcome
+    await db.update(companySignedForms)
+      .set({ uploadStatus, rollfiDocumentId, uploadError: null })
+      .where(
+        and(
+          eq(companySignedForms.companyId, companyId),
+          eq(companySignedForms.formType, "8655"),
+        ),
+      );
+
+    req.log.info({ companyId, rollfiDocumentId }, "sign-8655: upload succeeded");
+  } catch (uploadErr) {
+    const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+    uploadError  = msg;
+    uploadStatus = "failed";
+    req.log.warn({ err: uploadErr }, "sign-8655: uploadDocument failed — signing still complete");
+
+    // Record the failure so the UI can surface a retry prompt
+    await db.update(companySignedForms)
+      .set({ uploadStatus: "failed", uploadError: msg })
+      .where(
+        and(
+          eq(companySignedForms.companyId, companyId),
+          eq(companySignedForms.formType, "8655"),
+        ),
+      )
+      .catch((dbErr) => req.log.warn({ dbErr }, "sign-8655: failed to persist upload error"));
+  }
+
+  res.json({
+    id,
+    signerName:       signerName.trim(),
+    signerTitle:      signerTitle.trim(),
+    signedAt:         signedAtIso,
+    uploadStatus,
+    uploadError,
+    rollfiDocumentId,
+  });
 });
 
 export default router;
