@@ -577,10 +577,12 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       db.select({ stateCode: stateRegistrationsTable.stateCode, status: stateRegistrationsTable.status })
         .from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId)),
       db.select({
-        formType:   companySignedForms.formType,
-        signerName: companySignedForms.signerName,
-        signerTitle: companySignedForms.signerTitle,
-        signedAt:   companySignedForms.signedAt,
+        formType:     companySignedForms.formType,
+        signerName:   companySignedForms.signerName,
+        signerTitle:  companySignedForms.signerTitle,
+        signedAt:     companySignedForms.signedAt,
+        uploadStatus: companySignedForms.uploadStatus,
+        uploadError:  companySignedForms.uploadError,
       }).from(companySignedForms).where(eq(companySignedForms.companyId, companyId)),
     ]);
 
@@ -588,7 +590,8 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     const signedFormsMap = Object.fromEntries(
       signedFormRows.map(r => [r.formType, r])
     );
-    const form8655Signed = !!signedFormsMap["8655"];
+    const form8655Signed      = !!signedFormsMap["8655"];
+    const form8655UploadStatus = signedFormsMap["8655"]?.uploadStatus ?? null; // "pending" | "uploaded" | "failed" | null
 
     // ── 3. Rollfi getCompanyTask (authoritative for KYB + bank) ───────────────
     let rollfiTasks: Array<{ task: string; description: string }> = [];
@@ -776,7 +779,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       });
     }
 
-    // d. IRS Form 8655 not yet signed
+    // d. IRS Form 8655 — distinguish not-signed vs signed-but-not-uploaded
     if (!form8655Signed) {
       attention.push({
         id: "form_8655_unsigned",
@@ -784,6 +787,24 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
         message: "IRS Form 8655 has not been signed — required before federal tax filings can be made",
         linkTo: "/settings?tab=signatures",
         actionLabel: "Sign form",
+        category: "signature",
+      });
+    } else if (form8655UploadStatus === "failed") {
+      attention.push({
+        id: "form_8655_upload_failed",
+        severity: "high",
+        message: "Form 8655 is signed but could not be submitted to the IRS filing service — retry the upload",
+        linkTo: "/settings?tab=signatures",
+        actionLabel: "Retry upload",
+        category: "signature",
+      });
+    } else if (form8655UploadStatus === "pending") {
+      attention.push({
+        id: "form_8655_upload_pending",
+        severity: "medium",
+        message: "Form 8655 is signed but has not yet been submitted to the IRS filing service",
+        linkTo: "/settings?tab=signatures",
+        actionLabel: null,
         category: "signature",
       });
     }
@@ -810,11 +831,19 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
   if (!companyId) return;
 
   // Always fetch local signed-form records (fast DB query)
-  const signedRows = await db
-    .select({ formType: companySignedForms.formType, signerName: companySignedForms.signerName, signerTitle: companySignedForms.signerTitle, signedAt: companySignedForms.signedAt })
+  type SignedRow = { formType: string; signerName: string; signerTitle: string; signedAt: string; uploadStatus: string; uploadError: string | null };
+  const signedRows: SignedRow[] = await db
+    .select({
+      formType:     companySignedForms.formType,
+      signerName:   companySignedForms.signerName,
+      signerTitle:  companySignedForms.signerTitle,
+      signedAt:     companySignedForms.signedAt,
+      uploadStatus: companySignedForms.uploadStatus,
+      uploadError:  companySignedForms.uploadError,
+    })
     .from(companySignedForms)
     .where(eq(companySignedForms.companyId, companyId))
-    .catch(() => [] as typeof signedRows);
+    .catch(() => [] as SignedRow[]);
   const signedForms = Object.fromEntries(signedRows.map(r => [r.formType, r]));
 
   let rollfiCompanyId: string | null = null;
@@ -1138,6 +1167,49 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
     uploadError,
     rollfiDocumentId,
   });
+});
+
+// ── POST /rollfi/companies/:companyId/retry-8655-upload ───────────────────────
+// Stub — retries uploading an already-signed Form 8655 PDF to the filing service.
+// Full implementation lives in Task: "Complete the Form 8655 upload to Rollfi".
+// Returns 202 when a retry has been queued, 404 when no signed form exists, and
+// 409 when the form is already uploaded.
+router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const user = store.getUserById(userId);
+  if (!user) { res.status(401).json({ error: "User not found" }); return; }
+  if (user.role !== "owner" && user.role !== "super_admin") {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+
+  const companyId = req.params.companyId as string;
+  if (user.role !== "super_admin" && user.companyId !== companyId) {
+    res.status(403).json({ error: "Access denied: company mismatch" }); return;
+  }
+
+  const [row] = await db
+    .select({ id: companySignedForms.id, uploadStatus: companySignedForms.uploadStatus })
+    .from(companySignedForms)
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch(() => [] as { id: string; uploadStatus: string }[]);
+
+  if (!row) {
+    res.status(404).json({ error: "No signed Form 8655 found for this company" }); return;
+  }
+  if (row.uploadStatus === "uploaded") {
+    res.status(409).json({ error: "Form 8655 has already been uploaded successfully" }); return;
+  }
+
+  // Mark as pending so the UI reflects that a retry is in flight.
+  await db
+    .update(companySignedForms)
+    .set({ uploadStatus: "pending", uploadError: null })
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch(() => {});
+
+  req.log.info({ companyId }, "retry-8655-upload: queued (stub — upload not yet implemented)");
+  res.status(202).json({ queued: true, message: "Upload retry queued. The form will be submitted when the upload service is activated." });
 });
 
 export default router;

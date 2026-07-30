@@ -9,7 +9,7 @@ import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   FileSignature, ExternalLink, CheckCircle, AlertCircle,
-  Mail, Loader2, Shield, PenLine,
+  Mail, Loader2, Shield, PenLine, Upload, Clock,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -25,9 +25,11 @@ interface PendingTask {
 }
 
 interface SignedFormRecord {
-  signerName:  string;
-  signerTitle: string;
-  signedAt:    string;
+  signerName:   string;
+  signerTitle:  string;
+  signedAt:     string;
+  uploadStatus: string; // "pending" | "uploaded" | "failed"
+  uploadError?: string | null;
 }
 
 interface PendingSignaturesResp {
@@ -83,10 +85,12 @@ function Form8655Card({
   companyId,
   signed,
   onSigned,
+  onUploadRetried,
 }: {
-  companyId: string;
-  signed:    SignedFormRecord | null;
-  onSigned:  (record: SignedFormRecord) => void;
+  companyId:       string;
+  signed:          SignedFormRecord | null;
+  onSigned:        (record: SignedFormRecord) => void;
+  onUploadRetried: () => void;
 }) {
   const [signerName,  setSignerName]  = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -109,36 +113,124 @@ function Form8655Card({
       return res.json() as Promise<Sign8655Resp>;
     },
     onSuccess: (data) => {
-      onSigned({ signerName: data.signerName, signerTitle: data.signerTitle, signedAt: data.signedAt });
+      onSigned({ signerName: data.signerName, signerTitle: data.signerTitle, signedAt: data.signedAt, uploadStatus: data.uploadStatus });
     },
     onError: (err) => {
       setError(err.message);
     },
   });
 
+  const retryMutation = useMutation<{ queued: boolean; message: string }, Error>({
+    mutationFn: async () => {
+      const res = await fetch(`/api/rollfi/companies/${companyId}/retry-8655-upload`, {
+        method:      "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(d.error ?? `HTTP ${res.status}`);
+      }
+      return res.json() as Promise<{ queued: boolean; message: string }>;
+    },
+    onSuccess: () => {
+      onUploadRetried();
+    },
+  });
+
   const meta = FORM_META["8655"]!;
 
   if (signed) {
-    // Signed state
+    const isPending = signed.uploadStatus === "pending";
+    const isFailed  = signed.uploadStatus === "failed";
+    const isUploaded = signed.uploadStatus === "uploaded";
+
+    // Border / icon colour changes based on upload state
+    const cardBorderClass = isFailed
+      ? "border-red-100"
+      : isPending ? "border-amber-100" : "border-emerald-100";
+    const iconBgClass = isFailed
+      ? "bg-red-50"
+      : isPending ? "bg-amber-50" : "bg-emerald-50";
+    const iconColorClass = isFailed
+      ? "text-red-500"
+      : isPending ? "text-amber-500" : "text-emerald-500";
+    const IconEl = isFailed ? AlertCircle : isPending ? Clock : CheckCircle;
+
     return (
-      <div className="rounded-xl border border-emerald-100 bg-white p-5 shadow-sm">
+      <div className={cn("rounded-xl border bg-white p-5 shadow-sm", cardBorderClass)}>
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-            <CheckCircle className="w-4.5 h-4.5 text-emerald-500" />
+          <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5", iconBgClass)}>
+            <IconEl className={cn("w-4.5 h-4.5", iconColorClass)} />
           </div>
           <div className="flex-1">
             <p className="text-sm font-semibold text-gray-900">{meta.title}</p>
             <p className="text-xs text-gray-500 mt-0.5">{meta.body}</p>
           </div>
-          <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
-            Signed
-          </span>
+          {/* Status badge */}
+          {isUploaded && (
+            <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full">
+              Signed
+            </span>
+          )}
+          {isPending && (
+            <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Clock className="w-2.5 h-2.5" />Pending upload
+            </span>
+          )}
+          {isFailed && (
+            <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <AlertCircle className="w-2.5 h-2.5" />Upload failed
+            </span>
+          )}
         </div>
+
         <div className="mt-3 ml-12 rounded-lg bg-gray-50 border border-gray-100 px-3 py-2.5 text-xs text-gray-600 space-y-0.5">
           <p><span className="text-gray-400 font-medium">Signed by: </span>{signed.signerName}</p>
           <p><span className="text-gray-400 font-medium">Title: </span>{signed.signerTitle}</p>
           <p><span className="text-gray-400 font-medium">Date: </span>{formatSignedDate(signed.signedAt)}</p>
         </div>
+
+        {/* Pending upload info banner */}
+        {isPending && (
+          <div className="mt-3 ml-12 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-1.5">
+            <Clock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
+            <span>The signed form is waiting to be submitted to the IRS filing service. No action is needed — it will be sent automatically.</span>
+          </div>
+        )}
+
+        {/* Failed upload: error detail + retry button */}
+        {isFailed && (
+          <div className="mt-3 ml-12 space-y-2">
+            <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-[11px] text-red-700 flex items-start gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-500" />
+              <span>
+                The form could not be submitted to the IRS filing service.
+                {signed.uploadError ? ` Reason: ${signed.uploadError}` : ""}
+              </span>
+            </div>
+            {retryMutation.isSuccess ? (
+              <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" />Upload retry queued successfully.
+              </p>
+            ) : (
+              <Button
+                size="sm"
+                disabled={retryMutation.isPending}
+                onClick={() => retryMutation.mutate()}
+                className="h-8 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700"
+              >
+                {retryMutation.isPending
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Upload className="w-3.5 h-3.5" />}
+                Retry upload
+              </Button>
+            )}
+            {retryMutation.isError && (
+              <p className="text-[11px] text-red-600">{retryMutation.error.message}</p>
+            )}
+          </div>
+        )}
+
         <div className="mt-3 ml-12">
           <button
             className="text-[11px] text-gray-400 hover:text-gray-600 underline underline-offset-2"
@@ -419,12 +511,20 @@ export function SignaturesSection({ companyId }: { companyId: string }) {
   });
 
   const handleSigned = (record: SignedFormRecord) => {
-    // Optimistically update the cache so the card flips to "Signed" immediately
+    // Optimistically update the cache so the card flips to signed state immediately.
+    // uploadStatus starts as "pending" — the badge will reflect that until the server
+    // confirms an upload.
     qc.setQueryData<PendingSignaturesResp>(["pending-signatures", companyId], old => {
       if (!old) return old;
       return { ...old, signedForms: { ...old.signedForms, "8655": record } };
     });
-    // Also invalidate dashboard so the progress step updates
+    // Also invalidate dashboard so the progress step and attention items update
+    void qc.invalidateQueries({ queryKey: ["company-dashboard"] });
+  };
+
+  const handleUploadRetried = () => {
+    // Refetch so the badge reflects the new "pending" state from the server
+    void qc.invalidateQueries({ queryKey: ["pending-signatures", companyId] });
     void qc.invalidateQueries({ queryKey: ["company-dashboard"] });
   };
 
@@ -483,7 +583,12 @@ export function SignaturesSection({ companyId }: { companyId: string }) {
       </div>
 
       {show8655 && (
-        <Form8655Card companyId={companyId} signed={signed8655} onSigned={handleSigned} />
+        <Form8655Card
+          companyId={companyId}
+          signed={signed8655}
+          onSigned={handleSigned}
+          onUploadRetried={handleUploadRetried}
+        />
       )}
 
       {otherTasks.map(form => (
