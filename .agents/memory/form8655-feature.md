@@ -32,26 +32,24 @@ Full Form 8655 in-app e-sign feature (uploadDocument deferred).
 - `address1`, `city`, `state`, `zipcode`, `ssn`, `dateOfBirth`
 - No `title` field — signer provides their own title
 
-## uploadDocument — BLOCKED, method name unknown
+## uploadDocument — CONFIRMED WORKING
 
-The `uploadDocument` method returns HTTP 400 with empty body on Rollfi sandbox. Every method name variant tried (uploadDocument, uploadFile, addDocument, addIrsForm, addForm8655, submitIrsForm, etc.) and every path variant (/reports, /companyOnboarding, /kyb, /documents, /irs, /forms, etc.) all return HTTP 400. Rollfi's sandbox appears to not expose a document upload API, or uses an undocumented method name.
+**URL:** `POST ${baseUrl}/adminPortal/uploadDocument` (NOT `/reports#uploadDocument` — that always 400s)
 
-**The endpoint IS wired** — `POST /rollfi/companies/:companyId/sign-8655` calls uploadDocument after the DB persist. Upload failure is caught and stored as `uploadStatus: "failed"`, `uploadError: <message>`. Signing always succeeds regardless.
-
-**To unblock:** Ask Rollfi for:
-1. The correct method name for uploading a Form 8655 PDF
-2. Field names — is PDF sent as `fileBase64`, `file`, multipart?
-3. Is it available in sandbox or production-only?
-
-Once known, fix is one block in `company-settings.ts` around the `uploadDocument` call (search for `method: "uploadDocument"`).
-
-**Known working upload request shape (best guess, unconfirmed):**
+**Request shape (confirmed against sandbox):**
 ```json
-{ "method": "<TBD>", "companyId": "<rollfiCompanyId>",
-  "fileName": "Form8655_<name>_<date>.pdf", "documentType": "8655Form",
-  "fileBase64": "<base64>" }
+{ "method": "uploadDocument", "companyId": "<rollfiCompanyId>",
+  "fileName": "Form8655_<name>_<YYYYMMDD>.pdf",
+  "documentType": "8655Form", "fileBase64": "<base64>" }
 ```
-After successful upload, set `upload_status = 'uploaded'`, `rollfi_document_id = response.documentId`.
+For Company 8655: only `companyId` required (no `employeeId` or `payPeriodId`).
+
+**Response 200:**
+```json
+{ "documentId": "<UUID>", "fileName": "...", "success": true, "message": "Document uploaded successfully" }
+```
+
+**Why `/reports` didn't work:** Rollfi routes document uploads through `/adminPortal/`, not `/reports`. The `#methodName` fragment pattern only applies to their reports/onboarding endpoints. Docs: https://developer.rollfi.xyz/api-reference/adminportal/uploadDocument
 
 ## PDF notes
 

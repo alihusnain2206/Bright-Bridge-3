@@ -1115,7 +1115,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
     const fileBase64 = Buffer.from(pdfBytes).toString("base64");
 
     const uploadResp = await axios.post(
-      `${getBaseUrl()}/reports#uploadDocument`,
+      `${getBaseUrl()}/adminPortal/uploadDocument`,
       {
         method:       "uploadDocument",
         companyId:    rollfiCompanyId,
@@ -1334,7 +1334,7 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
     const fileBase64 = Buffer.from(pdfBytes).toString("base64");
 
     const uploadResp = await axios.post(
-      `${getBaseUrl()}/reports#uploadDocument`,
+      `${getBaseUrl()}/adminPortal/uploadDocument`,
       {
         method:       "uploadDocument",
         companyId:    rollfiCompanyId,
