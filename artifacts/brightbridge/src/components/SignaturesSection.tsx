@@ -101,11 +101,14 @@ function SignatureCanvas({
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Scale canvas for device pixel ratio so the stroke is crisp on retina
+    // Scale canvas for device pixel ratio so the stroke is crisp on retina.
+    // Uses requestAnimationFrame so the browser has finished CSS layout before
+    // we read offsetWidth — avoids a 0×0 canvas when the form first opens.
     const resize = () => {
       const ratio  = Math.max(window.devicePixelRatio ?? 1, 1);
       const w      = canvas.offsetWidth;
       const h      = canvas.offsetHeight;
+      if (w === 0 || h === 0) return; // layout not ready yet — skip
       canvas.width  = w * ratio;
       canvas.height = h * ratio;
       const ctx = canvas.getContext("2d");
@@ -124,9 +127,11 @@ function SignatureCanvas({
       setHasDrawn(!padRef.current?.isEmpty());
     });
 
-    resize();
+    // Defer resize by one animation frame so CSS layout has settled
+    const raf = requestAnimationFrame(resize);
 
     return () => {
+      cancelAnimationFrame(raf);
       padRef.current?.off();
     };
   }, []);

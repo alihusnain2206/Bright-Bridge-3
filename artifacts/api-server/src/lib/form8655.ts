@@ -220,6 +220,9 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
       // Scale the image to fit the signature line (max 220pt wide, 44pt tall)
       // while preserving its natural aspect ratio.
       const natural = sigImg.scale(1);
+      if (natural.width === 0 || natural.height === 0) {
+        throw new Error("Embedded PNG has zero dimensions — falling back to typed name");
+      }
       const maxW = 220;
       const maxH = 44;
       const ratio = Math.min(maxW / natural.width, maxH / natural.height);
