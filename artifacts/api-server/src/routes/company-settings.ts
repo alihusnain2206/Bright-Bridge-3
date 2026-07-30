@@ -30,13 +30,14 @@ import { requireAuth } from "../lib/auth-middleware.js";
 import { store } from "../store.js";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { extractRollfiError } from "../lib/rollfi-employee-sync.js";
+import { FORM_8655_STALE_THRESHOLD_MS } from "../lib/form8655-constants.js";
 
 const router: IRouter = Router();
 
 /** Single source of truth for the Form 8655 upload staleness threshold.
  *  Included in the /rollfi/pending-signatures response so the UI never
  *  needs its own copy of this value. */
-const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+const STALE_THRESHOLD_MS = FORM_8655_STALE_THRESHOLD_MS;
 
 // States that legitimately need no Rollfi state-level registration.
 // Mirrors the constants in rollfi-employee-sync.ts so they stay in sync.

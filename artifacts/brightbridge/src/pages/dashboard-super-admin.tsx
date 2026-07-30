@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
   Building2, Users, MapPin, Shield,
   Terminal, RefreshCw, Play, Clock, CalendarDays, Calendar,
   CheckCircle2, AlertTriangle, Scale, Zap, UserPlus, X, Loader2,
-  ShieldCheck, Copy, Eye, EyeOff,
+  ShieldCheck, Copy, Eye, EyeOff, Upload, AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +40,158 @@ interface CreatedManager { id: string; name: string; email: string; companyId: s
 
 function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
+}
+
+// ── Stale Form 8655 Uploads Panel ─────────────────────────────
+
+interface StaleUpload {
+  companyId:         string;
+  companyName:       string;
+  signerName:        string;
+  uploadAttemptedAt: string | null;
+  staleForMs:        number;
+}
+
+interface StaleUploadsResp {
+  staleUploads: StaleUpload[];
+  thresholdMs:  number;
+}
+
+function formatStaleDuration(ms: number): string {
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  const remMins = mins % 60;
+  return remMins > 0 ? `${hrs}h ${remMins}m` : `${hrs}h`;
+}
+
+function StaleUploadsPanel() {
+  const queryClient = useQueryClient();
+
+  const { data, isLoading, isError, refetch, isFetching } = useQuery<StaleUploadsResp>({
+    queryKey: ["admin", "stale-8655-uploads"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/stale-8655-uploads", { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json() as Promise<StaleUploadsResp>;
+    },
+    refetchInterval: 60_000, // refresh every minute
+  });
+
+  const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [retryResults, setRetryResults] = useState<Record<string, "ok" | "error">>({});
+
+  const handleRetry = async (companyId: string) => {
+    setRetryingId(companyId);
+    try {
+      const res = await fetch(`/api/rollfi/companies/${companyId}/retry-8655-upload`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRetryResults(prev => ({ ...prev, [companyId]: "ok" }));
+      // Refetch after a short delay so the row may have cleared
+      setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ["admin", "stale-8655-uploads"] });
+      }, 3000);
+    } catch {
+      setRetryResults(prev => ({ ...prev, [companyId]: "error" }));
+    } finally {
+      setRetryingId(null);
+    }
+  };
+
+  const staleUploads = data?.staleUploads ?? [];
+
+  return (
+    <div className="rounded-2xl border border-red-100 bg-white shadow-sm overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-4 border-b border-red-100 bg-red-50">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center">
+            <AlertCircle className="h-4 w-4 text-red-500" />
+          </div>
+          <div>
+            <h2 className="font-bold text-gray-900 text-sm">Stuck Form 8655 Uploads</h2>
+            <p className="text-[11px] text-gray-500">
+              {isLoading ? "Loading…" : `${staleUploads.length} compan${staleUploads.length === 1 ? "y" : "ies"} with pending uploads older than ${data ? Math.round(data.thresholdMs / 60_000) : 15} minutes`}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={() => void refetch()}
+          disabled={isFetching}
+          className="text-gray-400 hover:text-gray-700 transition-colors p-1.5 rounded hover:bg-red-100"
+          title="Refresh"
+        >
+          <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {/* Body */}
+      {isError && (
+        <div className="px-5 py-4 text-sm text-red-600 flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Failed to load stale uploads. Check your connection and try refreshing.
+        </div>
+      )}
+
+      {!isLoading && !isError && staleUploads.length === 0 && (
+        <div className="px-5 py-8 flex flex-col items-center justify-center gap-2 text-center">
+          <CheckCircle2 className="h-8 w-8 text-emerald-400" />
+          <p className="text-sm font-medium text-gray-700">All clear</p>
+          <p className="text-xs text-gray-400">No stuck Form 8655 uploads at this time.</p>
+        </div>
+      )}
+
+      {staleUploads.length > 0 && (
+        <div className="divide-y divide-gray-100">
+          {staleUploads.map((row) => {
+            const retryResult = retryResults[row.companyId];
+            const isRetrying  = retryingId === row.companyId;
+            return (
+              <div key={row.companyId} className="px-5 py-3.5 flex items-center gap-4">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">{row.companyName}</p>
+                  <p className="text-[11px] text-gray-400 mt-0.5">
+                    Signed by <span className="text-gray-600">{row.signerName}</span>
+                    {row.uploadAttemptedAt && (
+                      <> · attempted {new Date(row.uploadAttemptedAt).toLocaleString()}</>
+                    )}
+                  </p>
+                </div>
+                <span className="shrink-0 text-[10px] font-bold text-red-600 bg-red-50 border border-red-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                  <Clock className="w-2.5 h-2.5" />
+                  Stuck {formatStaleDuration(row.staleForMs)}
+                </span>
+                {retryResult === "ok" ? (
+                  <span className="shrink-0 text-[11px] text-emerald-600 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />Retried
+                  </span>
+                ) : retryResult === "error" ? (
+                  <span className="shrink-0 text-[11px] text-red-500 flex items-center gap-1">
+                    <AlertTriangle className="w-3.5 h-3.5" />Failed
+                  </span>
+                ) : (
+                  <Button
+                    size="sm"
+                    disabled={isRetrying}
+                    onClick={() => void handleRetry(row.companyId)}
+                    className="shrink-0 h-7 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700 border-0"
+                  >
+                    {isRetrying
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : <Upload className="w-3 h-3" />}
+                    Retry
+                  </Button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Create Manager Modal ──────────────────────────────────────
@@ -357,6 +510,9 @@ export default function SuperAdminDashboard() {
           ))}
         </div>
       </div>
+
+      {/* Stale 8655 Uploads */}
+      <StaleUploadsPanel />
 
       {/* EasyTeam section */}
       <div className="rounded-2xl overflow-hidden border" style={PANEL}>
