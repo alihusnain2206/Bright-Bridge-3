@@ -17,6 +17,7 @@ import {
   complianceItems,
   timesheetShifts,
   companies as companiesTable,
+  companySignedForms,
 } from "@workspace/db";
 import { eq, and, lt, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import axios from "axios";
@@ -233,6 +234,56 @@ router.get("/notifications", requireAuth, async (req: Request, res: Response) =>
           link: "/people/compliance",
         });
       }
+    } catch { /* non-fatal */ }
+  }
+
+  // ── 5. Form 8655 — unsigned, upload-failed, or stuck-pending ────────────────
+  if (canSeePayroll && companyId) {
+    try {
+      const [record] = await db
+        .select({
+          uploadStatus: companySignedForms.uploadStatus,
+          signedAt:     companySignedForms.signedAt,
+          uploadError:  companySignedForms.uploadError,
+        })
+        .from(companySignedForms)
+        .where(
+          and(
+            eq(companySignedForms.companyId, companyId),
+            eq(companySignedForms.formType, "8655"),
+          ),
+        )
+        .limit(1);
+
+      if (!record) {
+        // Never signed at all
+        items.push({
+          id:     "form-8655-unsigned",
+          level:  "red",
+          title:  "IRS Form 8655 needs your signature",
+          detail: "Required before payroll can run. Sign it in Company Settings.",
+          link:   "/settings?tab=signatures",
+        });
+      } else if (record.uploadStatus === "failed") {
+        items.push({
+          id:     "form-8655-upload-failed",
+          level:  "red",
+          title:  "Form 8655 upload to IRS filing service failed",
+          detail: record.uploadError
+            ? `Error: ${record.uploadError}. Retry in Company Settings.`
+            : "Upload failed. Retry in Company Settings → Signatures.",
+          link:   "/settings?tab=signatures",
+        });
+      } else if (record.uploadStatus === "pending") {
+        items.push({
+          id:     "form-8655-upload-pending",
+          level:  "yellow",
+          title:  "Form 8655 upload still pending",
+          detail: "The form was signed but hasn't been confirmed by the IRS filing service yet.",
+          link:   "/settings?tab=signatures",
+        });
+      }
+      // uploadStatus === "uploaded" → all good, no notification
     } catch { /* non-fatal */ }
   }
 

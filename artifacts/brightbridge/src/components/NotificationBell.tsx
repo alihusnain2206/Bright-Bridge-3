@@ -42,6 +42,20 @@ export function NotificationBell() {
     }
   }, []);
 
+  // Fetch on mount (slight delay so it doesn't block initial paint)
+  // so the red dot is visible before the user opens the panel
+  useEffect(() => {
+    const t = setTimeout(() => void fetchNotifications(), 1500);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refresh every 5 minutes while the page is open
+  useEffect(() => {
+    const id = setInterval(() => void fetchNotifications(), 5 * 60_000);
+    return () => clearInterval(id);
+  }, [fetchNotifications]);
+
   // Fetch when opened
   useEffect(() => {
     if (open) void fetchNotifications();
