@@ -33,6 +33,11 @@ import { extractRollfiError } from "../lib/rollfi-employee-sync.js";
 
 const router: IRouter = Router();
 
+/** Single source of truth for the Form 8655 upload staleness threshold.
+ *  Included in the /rollfi/pending-signatures response so the UI never
+ *  needs its own copy of this value. */
+const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+
 // States that legitimately need no Rollfi state-level registration.
 // Mirrors the constants in rollfi-employee-sync.ts so they stay in sync.
 const STATES_USING_FEDERAL_W4 = new Set(["ND", "PA", "UT"]);
@@ -869,7 +874,6 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       });
     } else if (form8655UploadStatus === "pending") {
       // Escalate to "high" once the upload attempt is older than the staleness threshold.
-      const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
       const attemptedAt = signedFormsMap["8655"]?.uploadAttemptedAt ?? null;
       const isStale = attemptedAt
         ? (Date.now() - new Date(attemptedAt).getTime()) > STALE_THRESHOLD_MS
@@ -953,7 +957,7 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
   }
 
   if (!rollfiCompanyId || !getRollfiConfig().credentialsPresent) {
-    res.json({ signatures: [], signedForms }); return;
+    res.json({ signatures: [], signedForms, uploadStaleThresholdMs: STALE_THRESHOLD_MS }); return;
   }
 
   try {
@@ -963,7 +967,7 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
       { headers: rollfiHeaders() },
     );
     const tasks = ((r.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description: string }>;
-    res.json({ signatures: tasks.filter(t => /signature request/i.test(t.task)), signedForms });
+    res.json({ signatures: tasks.filter(t => /signature request/i.test(t.task)), signedForms, uploadStaleThresholdMs: STALE_THRESHOLD_MS });
   } catch (err) {
     req.log.error({ err }, "GET /rollfi/pending-signatures failed");
     res.status(500).json({ error: "Failed to fetch pending signatures" });

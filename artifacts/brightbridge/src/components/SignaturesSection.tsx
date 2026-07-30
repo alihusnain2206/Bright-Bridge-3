@@ -34,12 +34,11 @@ interface SignedFormRecord {
   uploadAttemptedAt?: string | null;
 }
 
-/** 15 minutes in ms — after this the pending badge turns red and the message escalates. */
-const STALE_THRESHOLD_MS = 15 * 60 * 1000;
-
 interface PendingSignaturesResp {
-  signatures:  PendingTask[];
-  signedForms: Record<string, SignedFormRecord>; // formType → record
+  signatures:             PendingTask[];
+  signedForms:            Record<string, SignedFormRecord>; // formType → record
+  /** Milliseconds after which a pending upload is considered stuck (server-authoritative). */
+  uploadStaleThresholdMs?: number;
 }
 
 interface SigningLinkResp {
@@ -189,13 +188,16 @@ function SignatureCanvas({
 function Form8655Card({
   companyId,
   signed,
+  staleThresholdMs,
   onSigned,
   onUploadRetried,
 }: {
-  companyId:       string;
-  signed:          SignedFormRecord | null;
-  onSigned:        (record: SignedFormRecord) => void;
-  onUploadRetried: () => void;
+  companyId:        string;
+  signed:           SignedFormRecord | null;
+  /** Server-provided staleness threshold in ms (falls back to 15 min if missing). */
+  staleThresholdMs: number;
+  onSigned:         (record: SignedFormRecord) => void;
+  onUploadRetried:  () => void;
 }) {
   const [signerName,  setSignerName]  = useState("");
   const [signerTitle, setSignerTitle] = useState("");
@@ -268,9 +270,9 @@ function Form8655Card({
     const isFailed   = signed.uploadStatus === "failed";
     const isUploaded = signed.uploadStatus === "uploaded";
 
-    // Determine staleness: pending uploads older than STALE_THRESHOLD_MS turn red.
+    // Determine staleness: pending uploads older than staleThresholdMs turn red.
     const isStale = isPending && signed.uploadAttemptedAt
-      ? (Date.now() - new Date(signed.uploadAttemptedAt).getTime()) > STALE_THRESHOLD_MS
+      ? (Date.now() - new Date(signed.uploadAttemptedAt).getTime()) > staleThresholdMs
       : false;
     const isPendingStale  = isPending && isStale;
     const isPendingFresh  = isPending && !isStale;
@@ -824,6 +826,7 @@ export function SignaturesSection({ companyId }: { companyId: string }) {
         <Form8655Card
           companyId={companyId}
           signed={signed8655}
+          staleThresholdMs={data?.uploadStaleThresholdMs ?? 15 * 60 * 1000}
           onSigned={handleSigned}
           onUploadRetried={handleUploadRetried}
         />
