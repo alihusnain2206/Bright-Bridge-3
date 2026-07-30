@@ -23,6 +23,7 @@ import {
   companySignedForms,
 } from "@workspace/db";
 import { buildForm8655Pdf, getForm8655AuthDates } from "../lib/form8655.js";
+import { buildDashboardSteps } from "../lib/dashboard-steps.js";
 import { randomUUID } from "node:crypto";
 import { eq, and } from "drizzle-orm";
 import { requireAuth } from "../lib/auth-middleware.js";
@@ -647,88 +648,22 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     const payrollReadyCount = activeEmps.length - notReadyEmps.length;
 
     // ── 6. Build configuration progress steps ─────────────────────────────────
-    const payScheduleSet   = (co.payScheduleAdded === true) && !!(co.payFrequency);
-    const form8655Submitted = form8655UploadStatus === "uploaded";
-    const stepsAllDone      = !!resolvedRollfiCompanyId && kybApproved && bankLinked &&
-      payScheduleSet && gaps.length === 0 && employeeCount > 0 && notReadyEmps.length === 0 &&
-      form8655Signed && form8655Submitted;
+    const payScheduleSet = (co.payScheduleAdded === true) && !!(co.payFrequency);
 
-    const steps = [
-      {
-        id: "company_registered", number: 1, label: "Company registered",
-        done: !!resolvedRollfiCompanyId,
-        missingText: "Enroll your company in the payroll service",
-        linkTo: "/settings?tab=company-info",
-      },
-      {
-        id: "business_verified", number: 2, label: "Business verified",
-        done: kybApproved,
-        missingText: kybStatus === "pending" ? "Business verification is pending review"
-          : kybStatus === "failed" ? "Business verification failed — contact support"
-          : "Submit your business verification documents",
-        linkTo: "/settings?tab=company-info",
-      },
-      {
-        id: "funding_account", number: 3, label: "Funding account",
-        done: bankLinked,
-        missingText: "Connect a bank account for payroll funding",
-        linkTo: null,
-      },
-      {
-        id: "pay_schedule", number: 4, label: "Pay schedule",
-        done: payScheduleSet,
-        missingText: co.payScheduleAdded && !co.payFrequency
-          ? "Select a pay frequency to finalize your pay schedule"
-          : "Set up a pay schedule for your employees",
-        linkTo: "/payroll",
-      },
-      {
-        id: "state_tax", number: 5, label: "State tax registered",
-        done: gaps.length === 0,
-        missingText: gaps.length === 1
-          ? `${gaps[0].state} state tax registration is missing`
-          : `${gaps.length} states need tax registration`,
-        linkTo: "/settings?tab=state-tax",
-      },
-      {
-        id: "employees_added", number: 6, label: "Employees added",
-        done: employeeCount > 0,
-        missingText: "Add at least one employee before running payroll",
-        linkTo: "/people/new",
-      },
-      {
-        id: "employees_ready", number: 7, label: "Employees payroll-ready",
-        done: employeeCount > 0 && notReadyEmps.length === 0,
-        missingText: notReadyEmps.length > 0
-          ? `${notReadyEmps.length} employee${notReadyEmps.length > 1 ? "s are" : " is"} not yet activated for payroll`
-          : "Add employees first",
-        linkTo: "/people",
-      },
-      {
-        id: "form_8655_signed", number: 8, label: "IRS Form 8655 signed",
-        done: form8655Signed,
-        missingText: "Sign Form 8655 to authorize federal tax filing",
-        linkTo: "/settings?tab=signatures",
-      },
-      {
-        id: "form_8655_submitted", number: 9, label: "Form 8655 submitted to IRS filing service",
-        done: form8655Submitted,
-        missingText: !form8655Signed
-          ? "Sign Form 8655 first"
-          : form8655UploadStatus === "failed"
-            ? "Submission failed — retry the upload on the Signatures tab"
-            : "Form 8655 has not yet been submitted to the IRS filing service",
-        linkTo: "/settings?tab=signatures",
-      },
-      {
-        id: "ready_to_run", number: 10, label: "Ready to run payroll",
-        done: stepsAllDone,
-        missingText: "Complete all steps above to unlock payroll",
-        linkTo: null,
-      },
-    ];
-
-    const completedCount = steps.filter(s => s.done).length;
+    const { steps, stepsAllDone, completedCount } = buildDashboardSteps({
+      resolvedRollfiCompanyId,
+      kybApproved,
+      kybStatus,
+      bankLinked,
+      payScheduleSet,
+      payScheduleAdded: co.payScheduleAdded ?? null,
+      payFrequency: co.payFrequency,
+      gaps,
+      employeeCount,
+      notReadyEmpsCount: notReadyEmps.length,
+      form8655Signed,
+      form8655UploadStatus,
+    });
 
     // ── 7. Attention Required items ────────────────────────────────────────────
     const PROVIDER_RE = /\brollfi\b/gi;
