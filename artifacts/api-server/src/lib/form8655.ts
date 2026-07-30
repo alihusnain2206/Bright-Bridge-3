@@ -176,21 +176,41 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
   tf(fn("f1_25"),  data.quarterly941);  // 941  (x=259)
   // 720, 943, 944, 945 and second row left blank
 
-  // ── Sign Here section ─────────────────────────────────────────────────────
-  tf(fn("f1_36"),  formatDate(data.signedAt));  // Date
-  tf(fn("f1_37"),  data.signerTitle);           // Title
-  tf(fn("f1_38"),  formatPhone(data.phone));    // Phone (taxpayer)
+  // ── Line 18 — Disclosure Authorization (optional; fill 18a for W-2 series) ──
+  // f1_36=18a (W-2/W-2c/W-2G), f1_37=18b (1099 series), f1_38=18c (3921/3922)
+  // Rollfi handles payroll/W-2; authorize W-2 disclosure starting current year.
+  tf(fn("f1_36"),  data.annual940);   // 18a: W-2 series, tax years beginning YYYY
+  // f1_37, f1_38 — leave blank (Rollfi doesn't handle 1099 or 3921/3922)
 
-  // Overlay signer name as typed text at the signature line
-  // (the actual "Signature of taxpayer" line is drawn, not an AcroForm field)
+  // ── Line 17 — Request duplicate notices from IRS → check box ─────────────
+  // (c1_2 at y=279; useful so Rollfi receives IRS correspondence)
+  try { form.getCheckBox(fn("c1_2")).check(); } catch { /* XFA-only, ignore */ }
+
+  // ── Line 19 — Authorize state/local returns → check box ──────────────────
+  // (c1_3 at y=170; Rollfi handles state payroll taxes)
+  try { form.getCheckBox(fn("c1_3")).check(); } catch { /* XFA-only, ignore */ }
+
+  // ── Sign Here — overlay typed text onto the signature lines ───────────────
+  // The signature/title/date fields in the Sign Here box are XFA-only (no
+  // AcroForm equivalents). We overlay drawText at the correct y-position.
+  // Sign Here box occupies y≈65–155; signing row is at the bottom (~y=83).
   const pages = doc.getPages();
   const page  = pages[0];
-  const font  = await doc.embedFont(StandardFonts.HelveticaBold);
+  const bold  = await doc.embedFont(StandardFonts.HelveticaBold);
+  const reg   = await doc.embedFont(StandardFonts.Helvetica);
+
+  // Signature of taxpayer (left column, wide)
+  // y=83 lands on the "I certify…" text; the actual signing lines are ~13pt lower.
   page.drawText(data.signerName.trim(), {
-    x: 36, y: 246,   // just above the signature line (y≈240)
-    size: 11,
-    font,
-    color: rgb(0, 0, 0),
+    x: 50, y: 70, size: 10, font: bold, color: rgb(0, 0, 0),
+  });
+  // Title (middle column)
+  page.drawText(data.signerTitle.trim(), {
+    x: 322, y: 70, size: 9, font: reg, color: rgb(0, 0, 0),
+  });
+  // Date (right column)
+  page.drawText(formatDate(data.signedAt), {
+    x: 466, y: 70, size: 9, font: reg, color: rgb(0, 0, 0),
   });
 
   // Flatten so the filled values are baked in and can't be edited

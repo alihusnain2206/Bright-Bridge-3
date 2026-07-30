@@ -49,12 +49,18 @@ All 42 fields are on Page1, sorted top→bottom. Key mappings:
 | f1_24 | 336 | L16 940 (x=173) | annual940 |
 | f1_25 | 336 | L16 941 (x=259) | quarterly941 |
 | f1_26–f1_35 | 336–324 | L16 others | blank |
-| f1_36 | 240 | Sign: Date | MM/DD/YYYY |
-| f1_37 | 216 | Sign: Title | signerTitle |
-| f1_38 | 192 | Sign: Phone | taxpayer phone |
+| f1_36 | 240 | Line 18a — W-2 disclosure auth year | annual940 (e.g. "2026") |
+| f1_37 | 216 | Line 18b — 1099 disclosure | blank (Rollfi does payroll, not 1099) |
+| f1_38 | 192 | Line 18c — 3921/3922 disclosure | blank |
+| c1_2  | 279 | Line 17 — duplicate notices checkbox | checked |
+| c1_3  | 170 | Line 19 — state/local auth checkbox | checked |
 | f1_39 | 60  | Footer area | blank |
 
-Signer name overlaid as drawText at x=36, y=246 (signature line position) since there is no AcroForm text field for the signature itself.
+**Sign Here section** — no AcroForm fields (XFA-only), filled via `drawText` overlay:
+- Signer name:  x=50,  y=70, size=10, bold
+- Title:        x=322, y=70, size=9
+- Date:         x=466, y=70, size=9
+y=83 lands on the "I certify…" certification text (wrong). y=70 lands on the actual signing lines. Verified via pdftoppm render + screenshot.
 
 ## getForm8655AuthDates — return type (updated)
 
