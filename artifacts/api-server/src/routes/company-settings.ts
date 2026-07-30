@@ -541,6 +541,102 @@ router.put("/company-info/kyb", requireAuth, async (req: Request, res: Response)
   }
 });
 
+// ── reconcile8655UploadInline ─────────────────────────────────────────────────
+// Internal helper called by GET /dashboard and GET /rollfi/pending-signatures.
+// Checks whether a stored "uploaded" Form 8655 is still present in Rollfi.
+// Returns:
+//   "uploaded"    — document confirmed present, no DB change
+//   "failed"      — document confirmed missing, DB flipped to "failed"
+//   "unavailable" — couldn't determine (network error / unexpected shape), no change
+//
+// Callers must only invoke this when uploadStatus === "uploaded" and a
+// rollfiCompanyId is available.  The function never throws.
+async function reconcile8655UploadInline(
+  companyId: string,
+  rollfiCompanyId: string,
+  rollfiDocumentId: string | null,
+  logger: { warn: (obj: Record<string, unknown>, msg: string) => void },
+): Promise<"uploaded" | "failed" | "unavailable"> {
+  if (!getRollfiConfig().credentialsPresent) return "unavailable";
+
+  let documentPresent: boolean | null = null;
+
+  // Attempt 1 — adminPortal/getCompanyDocuments
+  try {
+    const r = await axios.post(
+      `${getBaseUrl()}/adminPortal/getCompanyDocuments`,
+      { method: "getCompanyDocuments", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders(), timeout: 10_000 },
+    );
+    const docs = r.data as Record<string, unknown>;
+    const list: unknown[] =
+      Array.isArray(docs.documents) ? docs.documents :
+      Array.isArray(docs.Documents) ? docs.Documents :
+      Array.isArray(docs.data)      ? docs.data       : [];
+    if (list.length > 0 || !extractRollfiError(r.data)) {
+      if (rollfiDocumentId) {
+        documentPresent = list.some(
+          d => (d as Record<string, unknown>).documentId === rollfiDocumentId ||
+               (d as Record<string, unknown>).DocumentId === rollfiDocumentId,
+        );
+      } else {
+        documentPresent = list.some(d => {
+          const dt = ((d as Record<string, unknown>).documentType ??
+                      (d as Record<string, unknown>).DocumentType ?? "") as string;
+          return /8655/i.test(dt);
+        });
+      }
+    }
+  } catch { /* try next */ }
+
+  // Attempt 2 — reports#getCompanyDocuments
+  if (documentPresent === null) {
+    try {
+      const r = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyDocuments`,
+        { method: "getCompanyDocuments", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders(), timeout: 10_000 },
+      );
+      const docs = r.data as Record<string, unknown>;
+      const list: unknown[] =
+        Array.isArray(docs.documents) ? docs.documents :
+        Array.isArray(docs.Documents) ? docs.Documents :
+        Array.isArray(docs.data)      ? docs.data       : [];
+      if (list.length > 0 || !extractRollfiError(r.data)) {
+        if (rollfiDocumentId) {
+          documentPresent = list.some(
+            d => (d as Record<string, unknown>).documentId === rollfiDocumentId ||
+                 (d as Record<string, unknown>).DocumentId === rollfiDocumentId,
+          );
+        } else {
+          documentPresent = list.some(d => {
+            const dt = ((d as Record<string, unknown>).documentType ??
+                        (d as Record<string, unknown>).DocumentType ?? "") as string;
+            return /8655/i.test(dt);
+          });
+        }
+      }
+    } catch { /* unavailable */ }
+  }
+
+  if (documentPresent === null) {
+    logger.warn({ companyId, rollfiDocumentId }, "reconcile8655UploadInline: could not determine document status from Rollfi");
+    return "unavailable";
+  }
+
+  if (documentPresent) return "uploaded";
+
+  // Document confirmed missing — flip to failed
+  const errorMsg = "Form 8655 document was no longer found in the filing service. Please retry the upload.";
+  await db.update(companySignedForms)
+    .set({ uploadStatus: "failed", uploadError: errorMsg, rollfiDocumentId: null })
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch((dbErr: unknown) => logger.warn({ dbErr } as Record<string, unknown>, "reconcile8655UploadInline: failed to persist status update"));
+
+  logger.warn({ companyId, rollfiDocumentId }, "reconcile8655UploadInline: document missing from Rollfi — flipped to failed");
+  return "failed";
+}
+
 // ── GET /dashboard ───────────────────────────────────────────────────────────
 // Single-fetch endpoint for the Company Settings landing page.
 // Returns: configuration progress (8 steps), attention items, and registration count.
@@ -578,12 +674,13 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       db.select({ stateCode: stateRegistrationsTable.stateCode, status: stateRegistrationsTable.status })
         .from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId)),
       db.select({
-        formType:     companySignedForms.formType,
-        signerName:   companySignedForms.signerName,
-        signerTitle:  companySignedForms.signerTitle,
-        signedAt:     companySignedForms.signedAt,
-        uploadStatus: companySignedForms.uploadStatus,
-        uploadError:  companySignedForms.uploadError,
+        formType:         companySignedForms.formType,
+        signerName:       companySignedForms.signerName,
+        signerTitle:      companySignedForms.signerTitle,
+        signedAt:         companySignedForms.signedAt,
+        uploadStatus:     companySignedForms.uploadStatus,
+        uploadError:      companySignedForms.uploadError,
+        rollfiDocumentId: companySignedForms.rollfiDocumentId,
       }).from(companySignedForms).where(eq(companySignedForms.companyId, companyId)),
     ]);
 
@@ -591,8 +688,25 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     const signedFormsMap = Object.fromEntries(
       signedFormRows.map(r => [r.formType, r])
     );
-    const form8655Signed      = !!signedFormsMap["8655"];
-    const form8655UploadStatus = signedFormsMap["8655"]?.uploadStatus ?? null; // "pending" | "uploaded" | "failed" | null
+    const form8655Signed = !!signedFormsMap["8655"];
+    // "pending" | "uploaded" | "failed" | null
+    let form8655UploadStatus: string | null = signedFormsMap["8655"]?.uploadStatus ?? null;
+
+    // ── 2b. Reconcile "uploaded" status before using it ───────────────────
+    // If the stored status is "uploaded", confirm Rollfi still has the document.
+    // If it's gone, flip the local record to "failed" and update our variable so
+    // the same response carries the corrected status — no extra round-trip needed.
+    if (form8655UploadStatus === "uploaded" && resolvedRollfiCompanyId) {
+      const reconcileResult = await reconcile8655UploadInline(
+        companyId,
+        resolvedRollfiCompanyId,
+        signedFormsMap["8655"]?.rollfiDocumentId ?? null,
+        req.log,
+      ).catch(() => "unavailable" as const);
+      if (reconcileResult === "failed") {
+        form8655UploadStatus = "failed";
+      }
+    }
 
     // ── 3. Rollfi getCompanyTask (authoritative for KYB + bank) ───────────────
     let rollfiTasks: Array<{ task: string; description: string }> = [];
@@ -777,15 +891,16 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
   if (!companyId) return;
 
   // Always fetch local signed-form records (fast DB query)
-  type SignedRow = { formType: string; signerName: string; signerTitle: string; signedAt: string; uploadStatus: string; uploadError: string | null };
+  type SignedRow = { formType: string; signerName: string; signerTitle: string; signedAt: string; uploadStatus: string; uploadError: string | null; rollfiDocumentId: string | null };
   const signedRows: SignedRow[] = await db
     .select({
-      formType:     companySignedForms.formType,
-      signerName:   companySignedForms.signerName,
-      signerTitle:  companySignedForms.signerTitle,
-      signedAt:     companySignedForms.signedAt,
-      uploadStatus: companySignedForms.uploadStatus,
-      uploadError:  companySignedForms.uploadError,
+      formType:         companySignedForms.formType,
+      signerName:       companySignedForms.signerName,
+      signerTitle:      companySignedForms.signerTitle,
+      signedAt:         companySignedForms.signedAt,
+      uploadStatus:     companySignedForms.uploadStatus,
+      uploadError:      companySignedForms.uploadError,
+      rollfiDocumentId: companySignedForms.rollfiDocumentId,
     })
     .from(companySignedForms)
     .where(eq(companySignedForms.companyId, companyId))
@@ -803,6 +918,21 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
       rollfiCompanyId = leg?.rollfiCompanyId ?? null;
     }
   } catch { /* fall through */ }
+
+  // Reconcile "uploaded" Form 8655 before building the response — if Rollfi no
+  // longer has the document, flip the status so the retry prompt appears on this
+  // same page load without an extra round-trip.
+  if (rollfiCompanyId && signedForms["8655"]?.uploadStatus === "uploaded") {
+    const reconcileResult = await reconcile8655UploadInline(
+      companyId,
+      rollfiCompanyId,
+      signedForms["8655"].rollfiDocumentId,
+      req.log,
+    ).catch(() => "unavailable" as const);
+    if (reconcileResult === "failed") {
+      signedForms["8655"] = { ...signedForms["8655"], uploadStatus: "failed", uploadError: "Form 8655 document was no longer found in the filing service. Please retry the upload." };
+    }
+  }
 
   if (!rollfiCompanyId || !getRollfiConfig().credentialsPresent) {
     res.json({ signatures: [], signedForms }); return;
