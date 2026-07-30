@@ -25,12 +25,16 @@ interface PendingTask {
 }
 
 interface SignedFormRecord {
-  signerName:   string;
-  signerTitle:  string;
-  signedAt:     string;
-  uploadStatus: string; // "pending" | "uploaded" | "failed"
-  uploadError?: string | null;
+  signerName:        string;
+  signerTitle:       string;
+  signedAt:          string;
+  uploadStatus:      string; // "pending" | "uploaded" | "failed"
+  uploadError?:      string | null;
+  uploadAttemptedAt?: string | null;
 }
+
+/** 15 minutes in ms — after this the pending badge turns red and the message escalates. */
+const STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 interface PendingSignaturesResp {
   signatures:  PendingTask[];
@@ -140,21 +144,28 @@ function Form8655Card({
   const meta = FORM_META["8655"]!;
 
   if (signed) {
-    const isPending = signed.uploadStatus === "pending";
-    const isFailed  = signed.uploadStatus === "failed";
+    const isPending  = signed.uploadStatus === "pending";
+    const isFailed   = signed.uploadStatus === "failed";
     const isUploaded = signed.uploadStatus === "uploaded";
 
-    // Border / icon colour changes based on upload state
-    const cardBorderClass = isFailed
+    // Determine staleness: pending uploads older than STALE_THRESHOLD_MS turn red.
+    const isStale = isPending && signed.uploadAttemptedAt
+      ? (Date.now() - new Date(signed.uploadAttemptedAt).getTime()) > STALE_THRESHOLD_MS
+      : false;
+    const isPendingStale  = isPending && isStale;
+    const isPendingFresh  = isPending && !isStale;
+
+    // Border / icon colour changes based on upload state (stale-pending → red)
+    const cardBorderClass = (isFailed || isPendingStale)
       ? "border-red-100"
-      : isPending ? "border-amber-100" : "border-emerald-100";
-    const iconBgClass = isFailed
+      : isPendingFresh ? "border-amber-100" : "border-emerald-100";
+    const iconBgClass = (isFailed || isPendingStale)
       ? "bg-red-50"
-      : isPending ? "bg-amber-50" : "bg-emerald-50";
-    const iconColorClass = isFailed
+      : isPendingFresh ? "bg-amber-50" : "bg-emerald-50";
+    const iconColorClass = (isFailed || isPendingStale)
       ? "text-red-500"
-      : isPending ? "text-amber-500" : "text-emerald-500";
-    const IconEl = isFailed ? AlertCircle : isPending ? Clock : CheckCircle;
+      : isPendingFresh ? "text-amber-500" : "text-emerald-500";
+    const IconEl = (isFailed || isPendingStale) ? AlertCircle : isPendingFresh ? Clock : CheckCircle;
 
     return (
       <div className={cn("rounded-xl border bg-white p-5 shadow-sm", cardBorderClass)}>
@@ -172,9 +183,14 @@ function Form8655Card({
               Signed
             </span>
           )}
-          {isPending && (
+          {isPendingFresh && (
             <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Clock className="w-2.5 h-2.5" />Pending upload
+            </span>
+          )}
+          {isPendingStale && (
+            <span className="flex-shrink-0 text-[10px] font-bold uppercase tracking-wide bg-red-50 text-red-600 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <AlertCircle className="w-2.5 h-2.5" />Upload stuck
             </span>
           )}
           {isFailed && (
@@ -191,7 +207,7 @@ function Form8655Card({
         </div>
 
         {/* Pending upload info banner + retry affordance */}
-        {isPending && (
+        {isPendingFresh && (
           <div className="mt-3 ml-12 space-y-2">
             <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-[11px] text-amber-700 flex items-start gap-1.5">
               <Clock className="w-3.5 h-3.5 shrink-0 mt-0.5 text-amber-500" />
@@ -205,6 +221,38 @@ function Form8655Card({
               disabled={retryMutation.isPending}
               onClick={() => { retryMutation.reset(); retryMutation.mutate(); }}
               className="h-8 px-3 text-xs text-white gap-1.5 bg-amber-600 hover:bg-amber-700"
+            >
+              {retryMutation.isPending
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <Upload className="w-3.5 h-3.5" />}
+              Retry upload
+            </Button>
+            {retryMutation.isSuccess && (
+              <p className="text-[11px] text-emerald-600 flex items-center gap-1">
+                <CheckCircle className="w-3.5 h-3.5" />Retry submitted — waiting for confirmation.
+              </p>
+            )}
+            {retryMutation.isError && (
+              <p className="text-[11px] text-red-600">{retryMutation.error.message}</p>
+            )}
+          </div>
+        )}
+
+        {/* Stale pending: >15 min stuck — treat like a failure */}
+        {isPendingStale && (
+          <div className="mt-3 ml-12 space-y-2">
+            <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-[11px] text-red-700 flex items-start gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-500" />
+              <span>
+                The upload has been pending for more than 15 minutes and appears to be stuck.
+                Please retry to resubmit the form to the IRS filing service.
+              </span>
+            </div>
+            <Button
+              size="sm"
+              disabled={retryMutation.isPending}
+              onClick={() => { retryMutation.reset(); retryMutation.mutate(); }}
+              className="h-8 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700"
             >
               {retryMutation.isPending
                 ? <Loader2 className="w-3.5 h-3.5 animate-spin" />

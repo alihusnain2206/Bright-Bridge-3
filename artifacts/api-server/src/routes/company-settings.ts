@@ -674,13 +674,14 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       db.select({ stateCode: stateRegistrationsTable.stateCode, status: stateRegistrationsTable.status })
         .from(stateRegistrationsTable).where(eq(stateRegistrationsTable.companyId, companyId)),
       db.select({
-        formType:         companySignedForms.formType,
-        signerName:       companySignedForms.signerName,
-        signerTitle:      companySignedForms.signerTitle,
-        signedAt:         companySignedForms.signedAt,
-        uploadStatus:     companySignedForms.uploadStatus,
-        uploadError:      companySignedForms.uploadError,
-        rollfiDocumentId: companySignedForms.rollfiDocumentId,
+        formType:          companySignedForms.formType,
+        signerName:        companySignedForms.signerName,
+        signerTitle:       companySignedForms.signerTitle,
+        signedAt:          companySignedForms.signedAt,
+        uploadStatus:      companySignedForms.uploadStatus,
+        uploadError:       companySignedForms.uploadError,
+        rollfiDocumentId:  companySignedForms.rollfiDocumentId,
+        uploadAttemptedAt: companySignedForms.uploadAttemptedAt,
       }).from(companySignedForms).where(eq(companySignedForms.companyId, companyId)),
     ]);
 
@@ -859,10 +860,18 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
         category: "signature",
       });
     } else if (form8655UploadStatus === "pending") {
+      // Escalate to "high" once the upload attempt is older than the staleness threshold.
+      const STALE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+      const attemptedAt = signedFormsMap["8655"]?.uploadAttemptedAt ?? null;
+      const isStale = attemptedAt
+        ? (Date.now() - new Date(attemptedAt).getTime()) > STALE_THRESHOLD_MS
+        : false;
       attention.push({
         id: "form_8655_upload_pending",
-        severity: "medium",
-        message: "Form 8655 is signed but has not yet been submitted to the IRS filing service — if it has been pending for more than a few minutes, retry the upload",
+        severity: isStale ? "high" : "medium",
+        message: isStale
+          ? "Form 8655 upload appears stuck — it has been pending for more than 15 minutes. Please retry the upload."
+          : "Form 8655 is signed but has not yet been submitted to the IRS filing service — if it has been pending for more than a few minutes, retry the upload",
         linkTo: "/settings?tab=signatures",
         actionLabel: "Retry upload",
         category: "signature",
@@ -891,16 +900,17 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
   if (!companyId) return;
 
   // Always fetch local signed-form records (fast DB query)
-  type SignedRow = { formType: string; signerName: string; signerTitle: string; signedAt: string; uploadStatus: string; uploadError: string | null; rollfiDocumentId: string | null };
+  type SignedRow = { formType: string; signerName: string; signerTitle: string; signedAt: string; uploadStatus: string; uploadError: string | null; rollfiDocumentId: string | null; uploadAttemptedAt: string | null };
   const signedRows: SignedRow[] = await db
     .select({
-      formType:         companySignedForms.formType,
-      signerName:       companySignedForms.signerName,
-      signerTitle:      companySignedForms.signerTitle,
-      signedAt:         companySignedForms.signedAt,
-      uploadStatus:     companySignedForms.uploadStatus,
-      uploadError:      companySignedForms.uploadError,
-      rollfiDocumentId: companySignedForms.rollfiDocumentId,
+      formType:          companySignedForms.formType,
+      signerName:        companySignedForms.signerName,
+      signerTitle:       companySignedForms.signerTitle,
+      signedAt:          companySignedForms.signedAt,
+      uploadStatus:      companySignedForms.uploadStatus,
+      uploadError:       companySignedForms.uploadError,
+      rollfiDocumentId:  companySignedForms.rollfiDocumentId,
+      uploadAttemptedAt: companySignedForms.uploadAttemptedAt,
     })
     .from(companySignedForms)
     .where(eq(companySignedForms.companyId, companyId))
@@ -1137,28 +1147,32 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
   const createdAt = signedAt.toISOString();
   const signedAtIso = signedAt.toISOString();
 
+  const uploadAttemptedAt = signedAt.toISOString();
+
   try {
     await db
       .insert(companySignedForms)
       .values({
         id,
         companyId,
-        formType:     "8655",
-        signerName:   signerName.trim(),
-        signerTitle:  signerTitle.trim(),
-        signedAt:     signedAtIso,
-        uploadStatus: "pending",
+        formType:          "8655",
+        signerName:        signerName.trim(),
+        signerTitle:       signerTitle.trim(),
+        signedAt:          signedAtIso,
+        uploadStatus:      "pending",
+        uploadAttemptedAt,
         createdAt,
       })
       .onConflictDoUpdate({
         target: [companySignedForms.companyId, companySignedForms.formType],
         set: {
-          signerName:   signerName.trim(),
-          signerTitle:  signerTitle.trim(),
-          signedAt:     signedAtIso,
-          uploadStatus: "pending",
-          uploadError:  null,
-          rollfiDocumentId: null,
+          signerName:        signerName.trim(),
+          signerTitle:       signerTitle.trim(),
+          signedAt:          signedAtIso,
+          uploadStatus:      "pending",
+          uploadAttemptedAt,
+          uploadError:       null,
+          rollfiDocumentId:  null,
         },
       });
   } catch (err) {
@@ -1315,9 +1329,10 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
   }
 
   // ── 3. Mark as pending while the retry is in flight ───────────────────────
+  const retryAttemptedAt = new Date().toISOString();
   await db
     .update(companySignedForms)
-    .set({ uploadStatus: "pending", uploadError: null })
+    .set({ uploadStatus: "pending", uploadError: null, uploadAttemptedAt: retryAttemptedAt })
     .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
     .catch(() => {});
 
