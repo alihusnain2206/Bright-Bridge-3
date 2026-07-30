@@ -551,6 +551,10 @@ router.put("/company-info/kyb", requireAuth, async (req: Request, res: Response)
 //
 // Callers must only invoke this when uploadStatus === "uploaded" and a
 // rollfiCompanyId is available.  The function never throws.
+//
+// Both Rollfi endpoints are queried in parallel (Promise.any) with a 5-second
+// timeout each, so a slow/down Rollfi adds at most ~5 s to the response — not
+// the previous worst-case of 20 s (2 sequential × 10 s).
 async function reconcile8655UploadInline(
   companyId: string,
   rollfiCompanyId: string,
@@ -559,64 +563,68 @@ async function reconcile8655UploadInline(
 ): Promise<"uploaded" | "failed" | "unavailable"> {
   if (!getRollfiConfig().credentialsPresent) return "unavailable";
 
-  let documentPresent: boolean | null = null;
-
-  // Attempt 1 — adminPortal/getCompanyDocuments
-  try {
-    const r = await axios.post(
-      `${getBaseUrl()}/adminPortal/getCompanyDocuments`,
-      { method: "getCompanyDocuments", companyId: rollfiCompanyId },
-      { headers: rollfiHeaders(), timeout: 10_000 },
-    );
-    const docs = r.data as Record<string, unknown>;
+  /** Parse a Rollfi getCompanyDocuments response into a doc list, or null if unusable. */
+  function parseDocList(data: unknown): unknown[] | null {
+    const docs = data as Record<string, unknown>;
     const list: unknown[] =
       Array.isArray(docs.documents) ? docs.documents :
       Array.isArray(docs.Documents) ? docs.Documents :
       Array.isArray(docs.data)      ? docs.data       : [];
-    if (list.length > 0 || !extractRollfiError(r.data)) {
-      if (rollfiDocumentId) {
-        documentPresent = list.some(
-          d => (d as Record<string, unknown>).documentId === rollfiDocumentId ||
-               (d as Record<string, unknown>).DocumentId === rollfiDocumentId,
-        );
-      } else {
-        documentPresent = list.some(d => {
-          const dt = ((d as Record<string, unknown>).documentType ??
-                      (d as Record<string, unknown>).DocumentType ?? "") as string;
-          return /8655/i.test(dt);
-        });
-      }
-    }
-  } catch { /* try next */ }
+    if (list.length > 0 || !extractRollfiError(data)) return list;
+    return null;
+  }
 
-  // Attempt 2 — reports#getCompanyDocuments
-  if (documentPresent === null) {
+  /** Return true/false based on doc list + our document ID / type filter. */
+  function checkList(list: unknown[]): boolean {
+    if (rollfiDocumentId) {
+      return list.some(
+        d => (d as Record<string, unknown>).documentId === rollfiDocumentId ||
+             (d as Record<string, unknown>).DocumentId === rollfiDocumentId,
+      );
+    }
+    return list.some(d => {
+      const dt = ((d as Record<string, unknown>).documentType ??
+                  (d as Record<string, unknown>).DocumentType ?? "") as string;
+      return /8655/i.test(dt);
+    });
+  }
+
+  /** Fetch one endpoint and resolve to boolean (present/absent) or null (unusable). */
+  async function fetchEndpoint(url: string): Promise<boolean | null> {
     try {
       const r = await axios.post(
-        `${getBaseUrl()}/reports#getCompanyDocuments`,
+        url,
         { method: "getCompanyDocuments", companyId: rollfiCompanyId },
-        { headers: rollfiHeaders(), timeout: 10_000 },
+        { headers: rollfiHeaders(), timeout: 5_000 },
       );
-      const docs = r.data as Record<string, unknown>;
-      const list: unknown[] =
-        Array.isArray(docs.documents) ? docs.documents :
-        Array.isArray(docs.Documents) ? docs.Documents :
-        Array.isArray(docs.data)      ? docs.data       : [];
-      if (list.length > 0 || !extractRollfiError(r.data)) {
-        if (rollfiDocumentId) {
-          documentPresent = list.some(
-            d => (d as Record<string, unknown>).documentId === rollfiDocumentId ||
-                 (d as Record<string, unknown>).DocumentId === rollfiDocumentId,
-          );
-        } else {
-          documentPresent = list.some(d => {
-            const dt = ((d as Record<string, unknown>).documentType ??
-                        (d as Record<string, unknown>).DocumentType ?? "") as string;
-            return /8655/i.test(dt);
-          });
-        }
-      }
-    } catch { /* unavailable */ }
+      const list = parseDocList(r.data);
+      if (list === null) return null;
+      return checkList(list);
+    } catch {
+      return null;
+    }
+  }
+
+  // Fire both endpoints in parallel, then reconcile:
+  // - adminPortal is the preferred/authoritative source (original precedence)
+  // - If either usable result says "present", the document exists — never flip to failed
+  // - Only flip to "failed" when every usable endpoint reports the document absent
+  const [adminResult, reportsResult] = await Promise.all([
+    fetchEndpoint(`${getBaseUrl()}/adminPortal/getCompanyDocuments`),
+    fetchEndpoint(`${getBaseUrl()}/reports#getCompanyDocuments`),
+  ]);
+
+  // Determine presence: "present" from any source wins (conservative); absence requires
+  // all usable sources to agree so we never falsely invalidate a document.
+  let documentPresent: boolean | null;
+  if (adminResult === null && reportsResult === null) {
+    documentPresent = null; // both unusable
+  } else if (adminResult === true || reportsResult === true) {
+    documentPresent = true; // at least one source confirms presence
+  } else {
+    // At least one usable result and none returned true — document is absent.
+    // Prefer the adminPortal determination when available; fall back to reports.
+    documentPresent = adminResult !== null ? adminResult : reportsResult;
   }
 
   if (documentPresent === null) {
