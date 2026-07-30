@@ -220,6 +220,8 @@ function Form8655Card({
       return res.json() as Promise<Sign8655Resp>;
     },
     onSuccess: (data) => {
+      setShowForm(false);
+      setConfirmedSig(null);
       onSigned({ signerName: data.signerName, signerTitle: data.signerTitle, signedAt: data.signedAt, uploadStatus: data.uploadStatus });
     },
     onError: (err) => {
