@@ -1321,6 +1321,163 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
   res.json({ uploadStatus, uploadError, rollfiDocumentId });
 });
 
+// ── POST /rollfi/companies/:companyId/reconcile-8655-upload ──────────────────
+// Verifies that a stored "uploaded" Form 8655 document still exists in the
+// filing service.  If Rollfi can no longer locate the document, the local
+// uploadStatus is flipped to "failed" so the retry prompt re-surfaces.
+//
+// Safe to call at any time:
+//   • uploadStatus !== "uploaded"  → 200 { reconciled: false, reason: "not_uploaded" }
+//   • No rollfiCompanyId           → 200 { reconciled: false, reason: "no_rollfi_id" }
+//   • Rollfi unreachable           → 200 { reconciled: false, reason: "rollfi_unavailable" }
+//     (we never flip to "failed" based on a network error alone)
+//   • Document confirmed present   → 200 { reconciled: false, reason: "document_present" }
+//   • Document missing             → 200 { reconciled: true,  uploadStatus: "failed" }
+
+router.post("/rollfi/companies/:companyId/reconcile-8655-upload", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  const user = store.getUserById(userId);
+  if (!user) { res.status(401).json({ error: "User not found" }); return; }
+  if (user.role !== "owner" && user.role !== "super_admin") {
+    res.status(403).json({ error: "Access denied" }); return;
+  }
+
+  const companyId = req.params.companyId as string;
+  if (user.role !== "super_admin" && user.companyId !== companyId) {
+    res.status(403).json({ error: "Access denied: company mismatch" }); return;
+  }
+
+  // ── 1. Load signed-form record ────────────────────────────────────────────
+  const [row] = await db
+    .select({
+      uploadStatus:     companySignedForms.uploadStatus,
+      rollfiDocumentId: companySignedForms.rollfiDocumentId,
+    })
+    .from(companySignedForms)
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch(() => [] as { uploadStatus: string; rollfiDocumentId: string | null }[]);
+
+  if (!row || row.uploadStatus !== "uploaded") {
+    res.json({ reconciled: false, reason: "not_uploaded" }); return;
+  }
+
+  // ── 2. Resolve Rollfi company ID ──────────────────────────────────────────
+  let rollfiCompanyId: string | null = null;
+  try {
+    const [co] = await db.select({ rid: companiesTable.rollfiCompanyId })
+      .from(companiesTable).where(eq(companiesTable.id, companyId));
+    rollfiCompanyId = co?.rid ?? null;
+    if (!rollfiCompanyId) {
+      const [leg] = await db
+        .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).catch(() => [undefined]);
+      rollfiCompanyId = leg?.rollfiCompanyId ?? null;
+    }
+  } catch { /* fall through */ }
+
+  if (!rollfiCompanyId) {
+    res.json({ reconciled: false, reason: "no_rollfi_id" }); return;
+  }
+
+  if (!getRollfiConfig().credentialsPresent) {
+    res.json({ reconciled: false, reason: "rollfi_unavailable" }); return;
+  }
+
+  // ── 3. Ask Rollfi whether the document still exists ───────────────────────
+  // Strategy: try document-listing endpoints; if a list comes back and our
+  // documentId is absent, the document has been dropped.  If the call itself
+  // fails (network / 5xx / unexpected shape), treat as "unavailable" and
+  // never flip to failed — we only flip on a *confirmed* absence.
+  const storedDocId = row.rollfiDocumentId;
+
+  let documentPresent: boolean | null = null; // null = can't determine
+
+  // Attempt 1 — getCompanyDocuments (adminPortal)
+  try {
+    const r = await axios.post(
+      `${getBaseUrl()}/adminPortal/getCompanyDocuments`,
+      { method: "getCompanyDocuments", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders(), timeout: 10_000 },
+    );
+    const docs = (r.data as Record<string, unknown>);
+    const list: unknown[] =
+      Array.isArray(docs.documents)  ? docs.documents  :
+      Array.isArray(docs.Documents)  ? docs.Documents  :
+      Array.isArray(docs.data)       ? docs.data        : [];
+
+    if (list.length > 0 || !extractRollfiError(r.data)) {
+      // We got a meaningful response — check whether our doc is in it.
+      if (storedDocId) {
+        documentPresent = list.some(
+          d => (d as Record<string, unknown>).documentId === storedDocId ||
+               (d as Record<string, unknown>).DocumentId === storedDocId,
+        );
+      } else {
+        // No documentId was stored (success=true path) — treat any non-empty
+        // list of "8655Form" docs as present; empty list → missing.
+        documentPresent = list.some(d => {
+          const dt = ((d as Record<string, unknown>).documentType ??
+                      (d as Record<string, unknown>).DocumentType ?? "") as string;
+          return /8655/i.test(dt);
+        });
+      }
+    }
+  } catch { /* try next */ }
+
+  // Attempt 2 — getCompanyDocuments (reports endpoint)
+  if (documentPresent === null) {
+    try {
+      const r = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyDocuments`,
+        { method: "getCompanyDocuments", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders(), timeout: 10_000 },
+      );
+      const docs = (r.data as Record<string, unknown>);
+      const list: unknown[] =
+        Array.isArray(docs.documents) ? docs.documents :
+        Array.isArray(docs.Documents) ? docs.Documents :
+        Array.isArray(docs.data)      ? docs.data       : [];
+
+      if (list.length > 0 || !extractRollfiError(r.data)) {
+        if (storedDocId) {
+          documentPresent = list.some(
+            d => (d as Record<string, unknown>).documentId === storedDocId ||
+                 (d as Record<string, unknown>).DocumentId === storedDocId,
+          );
+        } else {
+          documentPresent = list.some(d => {
+            const dt = ((d as Record<string, unknown>).documentType ??
+                        (d as Record<string, unknown>).DocumentType ?? "") as string;
+            return /8655/i.test(dt);
+          });
+        }
+      }
+    } catch { /* unavailable */ }
+  }
+
+  // ── 4. Act on result ──────────────────────────────────────────────────────
+  if (documentPresent === null) {
+    // Couldn't reach Rollfi or couldn't parse response — do nothing
+    req.log.warn({ companyId, storedDocId }, "reconcile-8655-upload: could not determine document status from Rollfi");
+    res.json({ reconciled: false, reason: "rollfi_unavailable" }); return;
+  }
+
+  if (documentPresent) {
+    res.json({ reconciled: false, reason: "document_present" }); return;
+  }
+
+  // Document is confirmed missing — flip to failed
+  const errorMsg = "Form 8655 document was no longer found in the filing service. Please retry the upload.";
+  await db.update(companySignedForms)
+    .set({ uploadStatus: "failed", uploadError: errorMsg, rollfiDocumentId: null })
+    .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+    .catch((dbErr) => req.log.warn({ dbErr }, "reconcile-8655-upload: failed to persist status update"));
+
+  req.log.warn({ companyId, storedDocId }, "reconcile-8655-upload: document missing from Rollfi — flipped to failed");
+  res.json({ reconciled: true, uploadStatus: "failed", uploadError: errorMsg });
+});
+
 // ── GET /rollfi/companies/:companyId/form-8655.pdf ────────────────────────────
 // Regenerates and returns the signed Form 8655 as a PDF file download.
 // Requires an existing signed record in company_signed_forms (form must have been
