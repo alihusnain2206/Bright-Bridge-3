@@ -13,8 +13,61 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { inflateSync } from "node:zlib";
 import express, { type Request, type Response, type NextFunction } from "express";
 import request from "supertest";
+
+// ── PDF content-stream helper ─────────────────────────────────────────────────
+//
+// pdf-lib writes content streams with FlateDecode compression and encodes
+// drawn text as PDF hex strings (<4A616E…>) rather than literal PDF strings.
+// This helper:
+//   1. Finds every stream…endstream block and inflates it (FlateDecode).
+//   2. Replaces PDF hex-string literals (<HEX>) with their decoded ASCII so
+//      callers can do a plain toContain("Jane Doe") assertion.
+//   3. Silently skips streams that fail to inflate (XRef, ObjStm, etc.).
+function decompressedPdfContent(pdfBuffer: Buffer): string {
+  const startMarkers = [Buffer.from("stream\r\n"), Buffer.from("stream\n")];
+  const endMarker    = Buffer.from("\nendstream");
+
+  const texts: string[] = [];
+  let pos = 0;
+
+  while (pos < pdfBuffer.length) {
+    let streamStart = -1;
+    let markerLen   = 0;
+    for (const marker of startMarkers) {
+      const idx = pdfBuffer.indexOf(marker, pos);
+      if (idx !== -1 && (streamStart === -1 || idx < streamStart)) {
+        streamStart = idx;
+        markerLen   = marker.length;
+      }
+    }
+    if (streamStart === -1) break;
+
+    const dataStart = streamStart + markerLen;
+    const endStream = pdfBuffer.indexOf(endMarker, dataStart);
+    if (endStream === -1) break;
+
+    const chunk = pdfBuffer.subarray(dataStart, endStream);
+    try {
+      // Inflate the FlateDecode-compressed stream
+      let decoded = inflateSync(chunk).toString("latin1");
+      // Expand PDF hex string literals so text is human-readable:
+      // <4A616E6520446F65> → "Jane Doe"
+      decoded = decoded.replace(/<([0-9A-Fa-f]+)>/g, (_m, hex: string) =>
+        Buffer.from(hex, "hex").toString("latin1"),
+      );
+      texts.push(decoded);
+    } catch {
+      // Not a FlateDecode stream — skip
+    }
+
+    pos = endStream + endMarker.length;
+  }
+
+  return texts.join("\n");
+}
 
 // ── Hoisted mutable state ────────────────────────────────────────────────────
 // vi.hoisted ensures these are initialised before any mock factory runs.
@@ -414,6 +467,25 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       expect(buildPdfSpy).toHaveBeenCalledWith(
         expect.objectContaining({ taxpayerName: "Rollfi Daycare Inc" }),
       );
+    });
+
+    it("PDF bytes contain the signer name as legible text (text-only fallback is readable)", async () => {
+      // pdf-lib compresses content streams with FlateDecode; decompressedPdfContent
+      // inflates every stream so we can assert the drawn text is present.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("Jane Doe");
+    });
+
+    it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
+      // When no signature image is provided, buildForm8655Pdf must take the
+      // drawText() branch.  pdf-lib only writes '/Subtype /Image' into the xobject
+      // resource dictionary when drawImage() is called; its absence in the raw
+      // bytes (the resource dict is not FlateDecode-compressed) confirms the
+      // text-only path was taken.
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).not.toContain("/Image");
     });
   });
 
