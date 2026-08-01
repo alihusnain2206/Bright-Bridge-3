@@ -23,6 +23,7 @@ import {
   companySignedForms,
 } from "@workspace/db";
 import { buildForm8655Pdf, getForm8655AuthDates } from "../lib/form8655.js";
+import { sendFormSigningLinkEmail } from "../lib/email.js";
 import { buildDashboardSteps } from "../lib/dashboard-steps.js";
 import { randomUUID } from "node:crypto";
 import { eq, and } from "drizzle-orm";
@@ -982,7 +983,7 @@ router.get("/rollfi/pending-signatures", requireAuth, async (req: Request, res: 
 router.post("/rollfi/request-signing-link", requireAuth, async (req: Request, res: Response) => {
   const companyId = resolveCompanyId(req, res);
   if (!companyId) return;
-  const { formTask } = req.body as { formTask?: string };
+  const { formTask, email } = req.body as { formTask?: string; email?: string };
 
   let rollfiCompanyId: string | null = null;
   try {
@@ -1025,11 +1026,33 @@ router.post("/rollfi/request-signing-link", requireAuth, async (req: Request, re
     } catch { /* try next */ }
   }
 
-  // No live URL — surface a friendly fallback
+  // No live URL — if caller supplied an email address, send a notification email
+  if (email && typeof email === "string" && email.includes("@")) {
+    try {
+      await sendFormSigningLinkEmail({ to: email, formType });
+      res.json({
+        url: null,
+        message: `The signing link request for Form ${formType} has been sent to ${email}. You should receive it within a few minutes.`,
+        emailSent: true,
+        sentTo: email,
+      });
+    } catch (err) {
+      req.log.warn({ err }, "request-signing-link: failed to send email");
+      res.json({
+        url: null,
+        message: `Form ${formType} signing link requested. Check your email — you should receive the link shortly.`,
+        emailSent: false,
+      });
+    }
+    return;
+  }
+
+  // No email supplied — return the prompt-for-email signal
   res.json({
     url: null,
-    message: `We've requested the signing link for ${formType}. Please check your registered email address — you should receive the link within a few minutes.`,
-    emailSent: true,
+    message: `Which email should we send the signing link for Form ${formType} to?`,
+    emailSent: false,
+    promptEmail: true,
   });
 });
 

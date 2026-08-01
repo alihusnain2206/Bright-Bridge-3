@@ -35,6 +35,45 @@ function createTransport() {
   });
 }
 
+export async function sendFormSigningLinkEmail(opts: {
+  to:       string;
+  formType: string;
+}): Promise<void> {
+  const { to, formType } = opts;
+
+  const html = `
+    <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;color:#111">
+      <h2 style="margin:0 0 8px;font-size:20px">Form ${formType} — Signing Link</h2>
+      <p style="color:#555;margin:0 0 16px">
+        Your payroll service has been notified to send you the signing link for
+        <strong>Form ${formType}</strong>. If you do not receive it within a few minutes,
+        please contact your payroll service provider directly.
+      </p>
+      <p style="color:#888;font-size:13px;margin:0">
+        This request was made from your BrightBridge Organization Settings page.
+      </p>
+      <hr style="border:none;border-top:1px solid #eee;margin:28px 0" />
+      <p style="color:#aaa;font-size:12px;margin:0">BrightBridge · Payroll &amp; HR Platform</p>
+    </div>
+  `;
+
+  const text = `Form ${formType} — Signing Link\n\nYour payroll service has been notified to send you the signing link for Form ${formType}. If you do not receive it within a few minutes, please contact your payroll service provider directly.`;
+
+  if (!isConfigured()) {
+    console.warn(`[email] SMTP not configured — would have sent Form ${formType} signing link email to: ${to}`);
+    return;
+  }
+
+  const transporter = createTransport();
+  await transporter.sendMail({
+    from:    `BrightBridge <${SMTP_FROM}>`,
+    to,
+    subject: `Action required: Sign Form ${formType}`,
+    text,
+    html,
+  });
+}
+
 export async function sendPasswordResetEmail(opts: {
   to:        string;
   name:      string;

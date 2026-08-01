@@ -7,6 +7,7 @@
  */
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/hooks/useAuth";
 import {
   FileSignature, ExternalLink, CheckCircle, AlertCircle,
   Mail, Loader2, Shield, PenLine, Upload, Clock, Download, RotateCcw,
@@ -42,9 +43,11 @@ interface PendingSignaturesResp {
 }
 
 interface SigningLinkResp {
-  url: string | null;
-  message: string;
-  emailSent?: boolean;
+  url:          string | null;
+  message:      string;
+  emailSent?:   boolean;
+  sentTo?:      string;
+  promptEmail?: boolean;
 }
 
 interface Sign8655Resp {
@@ -677,14 +680,25 @@ function Form8655SignForm({
 
 // ── External-link card (TR-2000 + others) ─────────────────────────────────────
 
-type CardState = "idle" | "loading" | "success" | "email" | "error";
+type CardState = "idle" | "loading" | "ask-email" | "sending" | "sent" | "success" | "error";
 
-function ExternalLinkCard({ form, companyId }: { form: PendingTask; companyId: string }) {
-  const [state,   setState]   = useState<CardState>("idle");
-  const [message, setMessage] = useState<string>("");
+function ExternalLinkCard({
+  form,
+  companyId,
+  defaultEmail,
+}: {
+  form:          PendingTask;
+  companyId:     string;
+  defaultEmail?: string;
+}) {
+  const [state,      setState]      = useState<CardState>("idle");
+  const [message,    setMessage]    = useState<string>("");
+  const [email,      setEmail]      = useState<string>(defaultEmail ?? "");
+  const [sentTo,     setSentTo]     = useState<string>("");
   const match = matchMeta(form.task);
   const meta  = match?.meta;
 
+  // Step 1: probe Rollfi for a live URL (no email yet)
   const handleGetLink = async () => {
     setState("loading");
     try {
@@ -696,16 +710,38 @@ function ExternalLinkCard({ form, companyId }: { form: PendingTask; companyId: s
       });
       const data: SigningLinkResp = await res.json();
       if (data.url) {
+        // Live URL returned — open it directly
         window.open(data.url, "_blank", "noopener,noreferrer");
         setState("success");
         setMessage("Signing page opened in a new tab.");
       } else {
-        setState("email");
-        setMessage(data.message || "We'll send the signing link to your registered email address.");
+        // No live URL — ask which email to send to
+        setState("ask-email");
       }
     } catch {
       setState("error");
       setMessage("Something went wrong. Please try again or contact support.");
+    }
+  };
+
+  // Step 2: send the signing link to the chosen email
+  const handleSendEmail = async () => {
+    if (!email.trim() || !email.includes("@")) return;
+    setState("sending");
+    try {
+      const res = await fetch("/api/rollfi/request-signing-link", {
+        method:      "POST",
+        credentials: "include",
+        headers:     { "Content-Type": "application/json" },
+        body:        JSON.stringify({ companyId, formTask: form.task, email: email.trim() }),
+      });
+      const data: SigningLinkResp = await res.json();
+      setSentTo(data.sentTo ?? email.trim());
+      setState("sent");
+      setMessage(data.message ?? `Signing link sent to ${email.trim()}.`);
+    } catch {
+      setState("error");
+      setMessage("Could not send the email. Please try again.");
     }
   };
 
@@ -737,30 +773,87 @@ function ExternalLinkCard({ form, companyId }: { form: PendingTask; companyId: s
             Get signing link
           </Button>
         )}
+
         {state === "loading" && (
           <div className="flex items-center gap-2 text-xs text-gray-500">
             <Loader2 className="w-3.5 h-3.5 animate-spin" />Fetching your signing link…
           </div>
         )}
+
+        {state === "ask-email" && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50 p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <Mail className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-semibold text-blue-800">Where should we send the signing link?</p>
+                <p className="text-[11px] text-blue-600 mt-0.5">
+                  We'll email you a link to sign this form. Confirm or change the address below.
+                </p>
+              </div>
+            </div>
+            <input
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full h-9 rounded-lg border border-blue-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+              onKeyDown={e => { if (e.key === "Enter") void handleSendEmail(); }}
+              autoFocus
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                disabled={!email.trim() || !email.includes("@")}
+                onClick={() => void handleSendEmail()}
+                className="h-8 px-4 text-xs text-white bg-[#284362] hover:bg-[#1e3250]"
+              >
+                <Mail className="w-3.5 h-3.5 mr-1.5" />
+                Send link
+              </Button>
+              <button
+                className="text-xs text-gray-400 hover:text-gray-600"
+                onClick={() => setState("idle")}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {state === "sending" && (
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />Sending signing link…
+          </div>
+        )}
+
+        {state === "sent" && (
+          <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-xs space-y-1">
+            <div className="flex items-center gap-2 text-emerald-700 font-medium">
+              <CheckCircle className="w-3.5 h-3.5" />Signing link sent
+            </div>
+            <p className="text-emerald-600">
+              We sent the signing link to <strong>{sentTo}</strong>. Check your inbox — it should arrive within a few minutes.
+            </p>
+            <button
+              className="text-[11px] text-emerald-700 underline underline-offset-2 mt-1"
+              onClick={() => { setState("ask-email"); }}
+            >
+              Send to a different email
+            </button>
+          </div>
+        )}
+
         {state === "success" && (
           <div className="flex items-center gap-2 text-xs text-emerald-600 font-medium">
             <CheckCircle className="w-3.5 h-3.5" />{message}
           </div>
         )}
-        {state === "email" && (
-          <div className={cn("rounded-lg p-3 text-xs leading-relaxed", "bg-blue-50 border border-blue-100")}>
-            <div className="flex items-start gap-2">
-              <Mail className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium text-blue-800">Check your email</p>
-                <p className="text-blue-600 mt-0.5">{message}</p>
-              </div>
-            </div>
-          </div>
-        )}
+
         {state === "error" && (
           <div className="flex items-start gap-2 text-xs text-red-600">
-            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{message}</span>
+            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>{message}</span>
+            <button className="underline" onClick={() => setState("idle")}>Try again</button>
           </div>
         )}
       </div>
@@ -772,6 +865,7 @@ function ExternalLinkCard({ form, companyId }: { form: PendingTask; companyId: s
 
 export function SignaturesSection({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
+  const { user } = useAuth();
 
   const { data, isLoading, isError } = useQuery<PendingSignaturesResp>({
     queryKey: ["pending-signatures", companyId],
@@ -869,7 +963,12 @@ export function SignaturesSection({ companyId }: { companyId: string }) {
       )}
 
       {otherTasks.map(form => (
-        <ExternalLinkCard key={form.task} form={form} companyId={companyId} />
+        <ExternalLinkCard
+          key={form.task}
+          form={form}
+          companyId={companyId}
+          defaultEmail={user?.email}
+        />
       ))}
     </div>
   );
