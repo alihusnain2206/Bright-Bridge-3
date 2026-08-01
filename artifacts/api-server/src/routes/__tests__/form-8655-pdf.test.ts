@@ -321,6 +321,51 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Rollfi path: drawn signature preserved when Rollfi data is used ─────────
+  //
+  // Regression guard for the case where merging Rollfi company data into the
+  // PDF payload inadvertently dropped `signatureImageBase64`, causing the
+  // downloaded PDF to show a blank signature line even though the user had
+  // drawn one.
+
+  describe("when Rollfi API returns company data and the signed record has a drawn signature", () => {
+    beforeEach(() => {
+      rollfiCreds.present = true;
+      // Queue signed form record WITH the image column populated
+      dbState.callQueue.push([SIGNED_RECORD_WITH_IMAGE]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      // No DB company fallback needed — Rollfi call succeeds
+      axiosMock.post.mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO });
+    });
+
+    it("passes signatureImageBase64 to buildForm8655Pdf (not dropped when Rollfi data is merged)", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ signatureImageBase64: SIGNATURE_PNG_B64 }),
+      );
+    });
+
+    it("also uses Rollfi company name (both sources are active simultaneously)", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taxpayerName: "Rollfi Daycare Inc" }),
+      );
+    });
+
+    it("PDF bytes contain an embedded image object (not text-only output)", async () => {
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).toContain("/Image");
+    });
+
+    it("returns HTTP 200 and a valid PDF", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+  });
+
   // ── Fallback path: credentials absent ─────────────────────────────────────
 
   describe("when Rollfi credentials are absent", () => {
