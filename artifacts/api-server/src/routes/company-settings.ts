@@ -1667,9 +1667,10 @@ router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req
   // ── Load signed form record ───────────────────────────────────────────────
   const [signedRecord] = await db
     .select({
-      signerName:  companySignedForms.signerName,
-      signerTitle: companySignedForms.signerTitle,
-      signedAt:    companySignedForms.signedAt,
+      signerName:     companySignedForms.signerName,
+      signerTitle:    companySignedForms.signerTitle,
+      signedAt:       companySignedForms.signedAt,
+      signatureImage: companySignedForms.signatureImage,
     })
     .from(companySignedForms)
     .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
@@ -1753,6 +1754,8 @@ router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req
       signedAt,
       annual940,
       quarterly941,
+      // Re-use the stored drawn signature so the downloaded PDF matches what was signed
+      signatureImageBase64: signedRecord.signatureImage ?? undefined,
     });
   } catch (err) {
     req.log.error({ err }, "form-8655.pdf: PDF generation failed");
