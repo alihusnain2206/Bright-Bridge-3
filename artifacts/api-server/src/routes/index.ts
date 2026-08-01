@@ -11,6 +11,7 @@ import notificationsRouter from "./notifications";
 import companySettingsRouter from "./company-settings";
 import accountRouter from "./account";
 import adminRouter from "./admin";
+import dashboardPayrollRouter from "./dashboard-payroll";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(notificationsRouter);
 router.use(companySettingsRouter);
 router.use(accountRouter);
 router.use(adminRouter);
+router.use(dashboardPayrollRouter);
 
 export default router;

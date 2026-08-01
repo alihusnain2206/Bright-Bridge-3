@@ -18,3 +18,4 @@
 - [Company Settings dashboard endpoint](company-settings-dashboard.md) — companySettingsRouter mounted WITHOUT prefix; GET /dashboard is at /api/dashboard not /api/company-settings/dashboard
 - [Form 8655 e-sign feature](form8655-feature.md) — in-app signing, pdf-lib standard fonts, uploadDocument deferred; confirmed Rollfi API shapes; dashboard now 9 steps
 - [Password reset flow](password-reset-flow.md) — forgot/reset endpoints in auth.ts; passwordResetTokens table; nodemailer email lib; isNull() for used_at check; APP_URL needed for prod link
+- [Dashboard Phase 1 — shared components + consolidated endpoint](dashboard-phase1.md) — 6 widgets extracted to components/dashboard/; GET /dashboard/payroll with 60s cache
