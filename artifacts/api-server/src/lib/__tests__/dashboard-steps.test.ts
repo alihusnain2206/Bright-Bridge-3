@@ -45,9 +45,9 @@ describe("uploadStatus = pending", () => {
     expect(step(result, "form_8655_submitted").done).toBe(false);
   });
 
-  it("form_8655_submitted missingText says not yet submitted", () => {
+  it("form_8655_submitted missingText says submission is in progress", () => {
     expect(step(result, "form_8655_submitted").missingText).toMatch(
-      /has not yet been submitted/i,
+      /in progress/i,
     );
   });
 
