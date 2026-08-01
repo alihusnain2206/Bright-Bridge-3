@@ -594,6 +594,40 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Cross-company access: owner may not download another company's PDF ──────
+  //
+  // Security regression guard.  The URL param (:companyId) must be validated
+  // against the session-resolved company.  If they diverge, the route must
+  // return 403 — never serve another company's PDF.
+
+  describe("when the session belongs to company A but the URL targets company B", () => {
+    it("returns 403 (not 200 with another company's PDF)", async () => {
+      // No DB queue needed — the guard fires before any DB query.
+      const res = await request(makeApp())
+        .get("/rollfi/companies/ORG-OTHER/form-8655.pdf");
+      expect(res.status).toBe(403);
+    });
+
+    it("response body contains an error field", async () => {
+      const res = await request(makeApp())
+        .get("/rollfi/companies/ORG-OTHER/form-8655.pdf");
+      expect(res.body).toHaveProperty("error");
+    });
+
+    it("does not return a PDF body", async () => {
+      const res = await request(makeApp())
+        .get("/rollfi/companies/ORG-OTHER/form-8655.pdf")
+        .buffer(true)
+        .parse((_r, cb) => {
+          const chunks: Buffer[] = [];
+          _r.on("data", (c: Buffer) => chunks.push(c));
+          _r.on("end", () => cb(null, Buffer.concat(chunks)));
+        });
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).not.toBe("%PDF");
+    });
+  });
+
   // ── Re-sign overwrites: downloaded PDF always reflects the latest image ───
 
   describe("when the drawn signature is overwritten by a second signing", () => {
