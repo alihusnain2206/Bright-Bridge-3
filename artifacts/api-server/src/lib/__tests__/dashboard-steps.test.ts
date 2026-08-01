@@ -153,6 +153,11 @@ describe("ready_to_run gate", () => {
 // ── completedCount ─────────────────────────────────────────────────────────────
 
 describe("completedCount", () => {
+  it("equals totalCount when all steps are done — guards against silent step-count drift from a newly added step whose done is hard-coded to false", () => {
+    const result = buildDashboardSteps(allDone);
+    expect(result.completedCount).toBe(result.totalCount);
+  });
+
   it("equals 10 when all steps are done", () => {
     expect(buildDashboardSteps(allDone).completedCount).toBe(10);
   });
