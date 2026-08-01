@@ -366,6 +366,57 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Rollfi path: null signatureImage handled correctly (text-only fallback) ─
+  //
+  // When the user completes the signing flow without drawing a signature (rare
+  // but permitted — the form still records signerName/signerTitle), signatureImage
+  // is stored as NULL in the DB.  The route must convert that to `undefined` so
+  // pdf-lib receives no image argument and produces a text-only signature line
+  // without throwing (passing `null` or `""` would confuse pdf-lib).
+
+  describe("when Rollfi API returns company data and the signed record has no image (signatureImage: null)", () => {
+    beforeEach(() => {
+      rollfiCreds.present = true;
+      // Queue signed form record with signatureImage explicitly null
+      dbState.callQueue.push([{ ...SIGNED_RECORD, signatureImage: null }]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      // No DB company fallback needed — Rollfi call succeeds
+      axiosMock.post.mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO });
+    });
+
+    it("passes signatureImageBase64: undefined (not null) to buildForm8655Pdf", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ signatureImageBase64: undefined }),
+      );
+    });
+
+    it("does not pass signatureImageBase64 as null or empty string", async () => {
+      await getPdf(makeApp());
+      const callArg = buildPdfSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg.signatureImageBase64).not.toBe(null);
+      expect(callArg.signatureImageBase64).not.toBe("");
+    });
+
+    it("returns HTTP 200", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("response body is a valid PDF (starts with %PDF)", async () => {
+      const res = await getPdf(makeApp());
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+
+    it("still uses Rollfi company name even when there is no signature image", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taxpayerName: "Rollfi Daycare Inc" }),
+      );
+    });
+  });
+
   // ── Fallback path: credentials absent ─────────────────────────────────────
 
   describe("when Rollfi credentials are absent", () => {
