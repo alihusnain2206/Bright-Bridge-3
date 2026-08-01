@@ -131,10 +131,12 @@ router.post("/auth/forgot-password", async (req, res) => {
   const user = store.getUserByEmail(email.trim().toLowerCase());
   if (!user) { res.json(ok); return; }
 
-  // Invalidate any existing unused tokens for this user by marking them used
+  let token: string | null = null;
+
+  // ── 1. Persist the token ──────────────────────────────────────
   try {
     const now = new Date().toISOString();
-    const token = crypto.randomBytes(32).toString("hex");
+    token = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
 
     await db.insert(passwordResetTokens).values({
@@ -144,15 +146,26 @@ router.post("/auth/forgot-password", async (req, res) => {
       usedAt:    null,
       createdAt: now,
     });
+  } catch (err) {
+    req.log.error({ err, userId: user.id }, "forgot-password: failed to persist reset token");
+    res.json(ok);
+    return;
+  }
 
+  // ── 2. Send the email ─────────────────────────────────────────
+  try {
     const resetLink = APP_URL
       ? `${APP_URL}/reset-password?token=${token}`
       : `https://your-app/reset-password?token=${token}`;
 
+    if (!APP_URL) {
+      req.log.warn({ userId: user.id }, "forgot-password: APP_URL not set — reset link uses placeholder domain");
+    }
+
     await sendPasswordResetEmail({ to: user.email, name: user.name, resetLink });
-    req.log.info({ userId: user.id }, "forgot-password: reset token issued");
+    req.log.info({ userId: user.id }, "forgot-password: reset email sent");
   } catch (err) {
-    req.log.error({ err }, "forgot-password: failed to create or send token");
+    req.log.error({ err, userId: user.id }, "forgot-password: reset token persisted but email delivery failed");
   }
 
   res.json(ok);

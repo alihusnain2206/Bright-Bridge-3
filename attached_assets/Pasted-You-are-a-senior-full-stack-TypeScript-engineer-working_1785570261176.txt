@@ -1,0 +1,112 @@
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist. We are in
+PRODUCTION with live payroll data. This is PHASE 1 of the new owner Dashboard build, based
+on the audit you just completed. Phase 1 is foundation only — component extraction + one new
+consolidated endpoint. The new dashboard PAGE is NOT built in this phase.
+
+## GOAL
+
+Two deliverables:
+A) Extract the existing payroll widgets into shared, exported components — with ZERO visual
+   or behavioral change to the pages that currently use them
+B) Build a consolidated GET /api/dashboard/payroll endpoint that batches the expensive
+   Rollfi calls server-side with a short cache, so the future dashboard loads fast
+
+## PART A — COMPONENT EXTRACTION
+
+Extract the following into shared files (e.g. components/dashboard/ or components/ui/ —
+follow whatever convention the codebase already leans toward):
+
+1. **WidgetCard** (PayrollWidgets.tsx lines ~82–105) → export as shared card shell
+2. **KpiCard** (manager-payroll.tsx lines ~95–121) → export as shared component, keep the
+   exact prop interface: { icon, label, value, sub1?, sub2?, accent?, loading?, onAction?,
+   actionLabel? }
+3. **FundingForecastWidget** (PayrollWidgets.tsx ~107–183) → export; keep props
+   (history, payPeriod), no own fetch
+4. **VarianceWidget** (PayrollWidgets.tsx ~185–283) → export; keeps its own secondary fetch
+   (previous-period details via React Query key rollfi-period-details)
+5. **RecentActivityWidget** (PayrollWidgets.tsx ~358–456) → export; keeps its own fetch
+   (/api/activity?companyId=..., 30s refresh)
+6. **FundingAccountWidget** (PayrollWidgets.tsx ~458–537) → export; keep props
+   (selectedCompanyId, companies, payPeriod, currentDetails)
+
+Then update PayrollWidgets.tsx and manager-payroll.tsx to IMPORT these from the shared
+location instead of defining them locally.
+
+### CRITICAL CONSTRAINT FOR PART A
+The Payroll screens (manager-payroll.tsx, payroll.tsx, PayrollWidgets wrapper) must render
+EXACTLY as they do today — pixel-identical, behavior-identical. This is a pure
+move-and-export refactor: do not rename props, do not "improve" styling, do not change fetch
+logic, do not alter React Query keys (changing keys would break cache sharing). If you spot
+something you think should be improved, note it in your summary — do not change it.
+
+Do NOT extract in this phase (deferred to a later phase):
+- The inline Computed Totals JSX in payroll.tsx
+- The Compliance Score ring from the People hub
+
+## PART B — CONSOLIDATED DASHBOARD ENDPOINT
+
+New endpoint: GET /api/dashboard/payroll (company derived from session, same pattern as the
+existing GET /api/dashboard used by Settings).
+
+It should batch, server-side, the data the future dashboard needs:
+- Current pay period (what /rollfi/payperiod resolves)
+- Current period details (what /rollfi/payperiod/details returns — payrollLineItems, totals,
+  employeeTaxSum, employerTaxSum) — this also yields the authoritative "employees to pay"
+  count from payrollLineItems.length
+- Pay period history (what /rollfi/payperiod/history returns — needed by Funding Forecast
+  and Variance)
+- Company tasks / onboarding status (what /rollfi/company-tasks returns)
+
+Response shape suggestion (adjust to fit existing conventions):
+{
+  payPeriod: {...} | null,
+  details: {...} | null,
+  history: [...],
+  companyTasks: [...],
+  employeesToPay: number | null,
+  fetchedAt: ISO timestamp,
+  errors: { payPeriod?: string, details?: string, history?: string, companyTasks?: string }
+}
+
+Requirements:
+- **Server-side cache ~60 seconds per company** (in-memory keyed by companyId is fine,
+  consistent with existing store.ts patterns). Include fetchedAt so the UI can show
+  freshness. Provide a cache-bypass mechanism (?refresh=true) for an explicit refresh action
+  later.
+- **Partial-failure tolerant**: if one Rollfi call fails, return the others plus the error
+  in the errors map — do NOT fail the whole endpoint because one upstream call failed.
+- **Company-scoped**: session company only, same guard pattern as /api/dashboard. A user
+  must never receive another company's payroll data from cache — cache key MUST include
+  companyId.
+- Reuse the existing internal functions that the current /rollfi/* routes use to call
+  Rollfi — do not duplicate Rollfi request logic. If those routes wrap logic that isn't
+  importable, extract the shared logic into a service function both can call (again: no
+  behavior change to existing routes).
+- Do NOT modify or remove the existing /rollfi/* endpoints — the payroll screens keep using
+  them unchanged. This endpoint is additive.
+
+## SCOPE BOUNDARY — DO NOT TOUCH
+- Payroll submission/processing logic
+- Rollfi sync chains, wizard, EasyTeam integration
+- The existing /api/dashboard (settings) endpoint
+- /dashboard/owner page (replaced in Phase 2, untouched now)
+- No new database tables
+
+## TESTING CHECKLIST
+- [ ] Payroll screen (owner + super_admin views) renders identically to before the refactor —
+      compare visually, verify all widgets load with real data
+- [ ] No duplicate network calls introduced on the payroll screens (check dev tools — same
+      request pattern as before)
+- [ ] React Query cache keys unchanged (verify variance widget still shares cache correctly)
+- [ ] GET /api/dashboard/payroll returns complete data for a company with an active pay
+      period
+- [ ] Second call within 60s returns cached data (same fetchedAt); ?refresh=true bypasses
+- [ ] Cache isolation: two different companies get different data (verify with two test
+      companies)
+- [ ] Simulate one upstream failure → endpoint still returns the rest + errors map populated
+- [ ] Build clean, no TypeScript errors
+
+## DELIVERABLE SUMMARY
+Report: files created/changed, confirmation payroll screens are visually unchanged, the
+final response shape of /api/dashboard/payroll, cache behavior confirmation, and anything
+you noticed but deliberately did not change.
