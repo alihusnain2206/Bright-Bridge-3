@@ -53,6 +53,8 @@ interface PayrollDashboardData {
   details: Record<string, unknown> | null;
   history: ProcessedPeriod[];
   companyTasks: { tasks: Array<{ task: string; description: string }>; kybStatus: string; bankLinked: boolean } | null;
+  /** Active funding source from Rollfi getCompanyInfo → FundingSources[]. */
+  fundingSource: Record<string, unknown> | null;
   employeesToPay: number | null;
   fetchedAt: string;
   errors: Record<string, string | undefined>;
@@ -129,21 +131,21 @@ export default function OwnerDashboard() {
       enabled: !!companyId,
     });
 
-  // Fetch company details for funding account info
-  const { data: companyDetail } = useQuery<Record<string, unknown>>({
-    queryKey: ["company-detail", companyId],
-    queryFn: () =>
-      fetch(`/api/companies/${companyId}`, { credentials: "include" }).then(r => r.json()),
-    staleTime: 120_000,
-    enabled: !!companyId,
-  });
-  const fundingLast4      = companyDetail?.fundingAccountLast4 as string | null ?? null;
-  const fundingAcctType   = companyDetail?.fundingAccountType as string | null ?? null;
+  // Funding source details come from payrollData.fundingSource (Rollfi getCompanyInfo).
+  // Try multiple field-name variants since Rollfi's response shape varies.
+  const fs = payrollData?.fundingSource ?? null;
+  const fundingBankName  = (fs?.bankName ?? fs?.bank_name ?? fs?.institutionName ?? null) as string | null;
+  const fundingAcctType  = (fs?.accountType ?? fs?.account_type ?? fs?.type ?? null) as string | null;
+  const fundingLast4     = (fs?.last4 ?? fs?.accountLast4 ?? fs?.lastFour ?? fs?.accountNumber ?? null) as string | null;
+  const fundingStatus    = (fs?.status ?? null) as string | null;
 
   // ── Derived payroll values ───────────────────────────────────────────────────
   const pp      = payrollData?.payPeriod ?? null;
   const det     = payrollData?.details as { payPeriod?: Array<Record<string, unknown>> } | null;
   const detRow  = det?.payPeriod?.[0] ?? null;
+  // debitAmount is the exact amount Rollfi will pull from the bank for this payroll run
+  const debitAmount: number | null = typeof (detRow as Record<string, unknown> | null)?.debitAmount === "number"
+    ? (detRow as Record<string, unknown>).debitAmount as number : null;
   const lineItems: RollfiLineItem[] = Array.isArray((detRow as Record<string, unknown> | null)?.payrollLineItems)
     ? ((detRow as Record<string, unknown>).payrollLineItems as RollfiLineItem[])
     : [];
@@ -503,9 +505,12 @@ export default function OwnerDashboard() {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {lineItems.map((item, i) => {
+                      // Rollfi payrollLineItems carry `userName` ("First Last"),
+                      // not separate firstName/lastName fields.
+                      const rawName = (item.userName as string | undefined)?.trim();
                       const name = item.firstName && item.lastName
-                        ? `${item.firstName} ${item.lastName}`
-                        : `Employee ${String(item.userId ?? i + 1)}`;
+                        ? `${item.firstName} ${item.lastName}`.trim()
+                        : rawName || `Employee ${String(item.userId ?? i + 1)}`;
                       return (
                         <tr key={String(item.userId ?? i)}>
                           <td className="py-2.5 text-gray-800 font-medium">{name}</td>
@@ -647,17 +652,21 @@ export default function OwnerDashboard() {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <FundingForecastWidget history={historyForForecast} payPeriod={payPeriodForForecast} />
 
-          {/* Bank Balance Verification — funding account info from company record */}
+          {/* Bank Balance Verification — live data from Rollfi getCompanyInfo */}
           <WidgetCard
-            title="Bank Balance Verification"
-            subtitle={bankLinked && fundingLast4
-              ? `${fundingAcctType ?? "Business Checking"} ···· ${fundingLast4}`
-              : bankLinked ? "Business Checking linked" : "No bank account linked"}
+            title="Funding Account"
+            subtitle={
+              !bankLinked ? "No bank account linked" :
+              fundingBankName && fundingAcctType ? `${fundingBankName} · ${fundingAcctType}` :
+              fundingBankName ? fundingBankName :
+              fundingAcctType ? fundingAcctType :
+              "Business checking linked"
+            }
           >
             {!bankLinked ? (
               <div className="py-4 text-center">
                 <Wallet className="h-6 w-6 text-white/20 mx-auto mb-2" />
-                <p className="text-white/40 text-xs">Link a bank account to verify balance</p>
+                <p className="text-white/40 text-xs">Link a bank account to fund payroll</p>
                 <Link href="/company-settings">
                   <span className="text-[11px] text-[#0EA5C9] flex items-center gap-0.5 justify-center mt-3 cursor-pointer">
                     Link account <ChevronRight className="h-3 w-3" />
@@ -666,28 +675,53 @@ export default function OwnerDashboard() {
               </div>
             ) : (
               <div className="space-y-3">
-                {fundingLast4 ? (
-                  <>
-                    <p className="text-white text-xl font-bold">···· {fundingLast4}</p>
-                    <p className="text-white/50 text-xs capitalize">
-                      {fundingAcctType ?? "Checking"} account
+                {/* Account identifier */}
+                <div>
+                  {fundingLast4 ? (
+                    <p className="text-white text-xl font-bold tracking-widest">···· {fundingLast4}</p>
+                  ) : (
+                    <p className="text-white text-base font-semibold">Account linked</p>
+                  )}
+                  {(fundingBankName || fundingAcctType) && (
+                    <p className="text-white/50 text-xs mt-0.5 capitalize">
+                      {[fundingBankName, fundingAcctType].filter(Boolean).join(" · ")}
                     </p>
-                  </>
-                ) : (
-                  <p className="text-white text-xl font-bold">Bank linked</p>
-                )}
-                {cashRequired != null && (
+                  )}
+                  {fundingStatus && (
+                    <p className={`text-xs mt-1 capitalize font-medium ${
+                      fundingStatus.toLowerCase().includes("active") || fundingStatus.toLowerCase().includes("verified") || fundingStatus.toLowerCase().includes("ready")
+                        ? "text-emerald-400" : "text-amber-400"
+                    }`}>
+                      {fundingStatus}
+                    </p>
+                  )}
+                </div>
+
+                {/* Debit amount — the exact amount Rollfi will pull for this payroll run */}
+                {(debitAmount ?? cashRequired) != null && (
                   <div className="rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.06)" }}>
-                    <p className="text-white/40 text-[10px] uppercase tracking-wide">Required to fund</p>
-                    <p className="text-white font-semibold text-sm mt-0.5">{fmtCurrency(cashRequired)}</p>
+                    <p className="text-white/40 text-[10px] uppercase tracking-wide">
+                      {debitAmount != null ? "Payroll debit amount" : "Est. cash required"}
+                    </p>
+                    <p className="text-white font-bold text-lg mt-0.5">
+                      {fmtCurrency(debitAmount ?? cashRequired)}
+                    </p>
+                    {debitAmount != null && cashRequired != null && debitAmount !== cashRequired && (
+                      <p className="text-white/30 text-[10px] mt-0.5">
+                        Gross total: {fmtCurrency(cashRequired)}
+                      </p>
+                    )}
                   </div>
                 )}
+
                 <div className="flex items-center gap-1.5 text-emerald-400 text-xs">
                   <CheckCircle2 className="h-3.5 w-3.5" />
-                  Sufficient for payroll funding
+                  Ready for payroll funding
                 </div>
                 <p className="text-white/30 text-[10px]">
-                  Last updated: Today, {new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  Via Rollfi · Updated {payrollData?.fetchedAt
+                    ? new Date(payrollData.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                    : "recently"}
                 </p>
               </div>
             )}

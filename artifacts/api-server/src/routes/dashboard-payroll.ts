@@ -74,6 +74,12 @@ interface PayrollDashboardResponse {
     kybStatus: string;
     bankLinked: boolean;
   } | null;
+  /**
+   * Active funding source from Rollfi getCompanyInfo → FundingSources[].
+   * Contains whatever Rollfi returns: bankName, accountType, last4, status, etc.
+   * Null if the company has no linked funding account or the call fails.
+   */
+  fundingSource: Record<string, unknown> | null;
   employeesToPay: number | null;
   fetchedAt: string;
   errors: {
@@ -81,6 +87,7 @@ interface PayrollDashboardResponse {
     details?: string;
     history?: string;
     companyTasks?: string;
+    fundingSource?: string;
   };
 }
 
@@ -188,6 +195,33 @@ async function fetchHistory(rollfiCompanyId: string): Promise<Record<string, unk
     .slice(0, 20);
 }
 
+/**
+ * Fetches the company's active funding source (bank account) from Rollfi.
+ * Uses getCompanyInfo → Company[0].FundingSources[] and returns the first
+ * non-deactivated entry.  The returned object contains whatever Rollfi
+ * provides: bankName, accountType, last4, status, accountBalance, etc.
+ */
+async function fetchFundingSource(rollfiCompanyId: string): Promise<Record<string, unknown> | null> {
+  const r = await axios.post(
+    `${getBaseUrl()}/reports#getCompanyInfo`,
+    { method: "getCompanyInfo", companyId: rollfiCompanyId },
+    { headers: rollfiHeaders() },
+  );
+  const raw = r.data as Record<string, unknown>;
+  const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+  const co = companies[0] ?? {};
+  const sources = Array.isArray(co.FundingSources)
+    ? co.FundingSources as Record<string, unknown>[]
+    : [];
+  // Prefer an active/verified source; fall back to first entry
+  const active =
+    sources.find((f) => ["active", "verified", "ready"].includes(String(f.status ?? "").toLowerCase())) ??
+    sources.find((f) => String(f.status ?? "").toLowerCase() !== "deactivated") ??
+    sources[0] ??
+    null;
+  return active;
+}
+
 async function fetchCompanyTasks(rollfiCompanyId: string) {
   const r = await axios.post(
     `${getBaseUrl()}/reports#getCompanyTask`,
@@ -254,15 +288,16 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     req.log.warn({ err, companyId }, "dashboard/payroll: payPeriod fetch failed");
   }
 
-  // ── Step 2: fan out the remaining three calls in parallel ────────────────
+  // ── Step 2: fan out the remaining calls in parallel ─────────────────────
   const payPeriodId = payPeriod?.payPeriodId as string | undefined;
 
-  const [detailsResult, historyResult, tasksResult] = await Promise.allSettled([
+  const [detailsResult, historyResult, tasksResult, fundingResult] = await Promise.allSettled([
     payPeriodId
       ? fetchDetails(rollfiCompanyId, payPeriodId)
       : Promise.reject(new Error("No payPeriodId — skipping details")),
     fetchHistory(rollfiCompanyId),
     fetchCompanyTasks(rollfiCompanyId),
+    fetchFundingSource(rollfiCompanyId),
   ]);
 
   let details: Record<string, unknown> | null = null;
@@ -293,6 +328,14 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     req.log.warn({ err: tasksResult.reason, companyId }, "dashboard/payroll: companyTasks fetch failed");
   }
 
+  let fundingSource: Record<string, unknown> | null = null;
+  if (fundingResult.status === "fulfilled") {
+    fundingSource = fundingResult.value;
+  } else {
+    errors.fundingSource = String(fundingResult.reason);
+    req.log.warn({ err: fundingResult.reason, companyId }, "dashboard/payroll: fundingSource fetch failed");
+  }
+
   // ── Derive employeesToPay from details payrollLineItems ──────────────────
   let employeesToPay: number | null = null;
   if (details) {
@@ -306,6 +349,7 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     details,
     history,
     companyTasks,
+    fundingSource,
     employeesToPay,
     fetchedAt,
     errors,

@@ -172,19 +172,11 @@ function SignatureCanvas({
     const srcCanvas = canvasRef.current;
     if (!srcCanvas) return;
 
-    // Composite onto an opaque white canvas before export.
-    // The signature canvas has a transparent background; PDF viewers render
-    // transparent-PNG soft masks inconsistently. A white-filled copy produces
-    // a solid RGB PNG that embeds reliably in pdf-lib.
-    const flat = document.createElement("canvas");
-    flat.width  = srcCanvas.width;
-    flat.height = srcCanvas.height;
-    const ctx = flat.getContext("2d")!;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, flat.width, flat.height);
-    ctx.drawImage(srcCanvas, 0, 0);
-
-    onConfirm(flat.toDataURL("image/png"));
+    // Export with a transparent background so the embedded PNG does not
+    // paint a white rectangle over the IRS form's printed "Sign Here" label.
+    // The signature strokes are solid black, so they are fully visible against
+    // the form's white paper regardless of the canvas alpha channel.
+    onConfirm(srcCanvas.toDataURL("image/png"));
   }, [onConfirm]);
 
   return (

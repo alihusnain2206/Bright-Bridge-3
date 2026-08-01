@@ -228,8 +228,9 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
       const ratio = Math.min(maxW / natural.width, maxH / natural.height);
       const drawW = natural.width  * ratio;
       const drawH = natural.height * ratio;
-      // Align the bottom of the image to the signature line (~y=70)
-      page.drawImage(sigImg, { x: 50, y: 70, width: drawW, height: drawH });
+      // Start at x=90 — safely to the right of the "Sign Here" label that
+      // is printed in the left margin of the IRS form (~x=35–85).
+      page.drawImage(sigImg, { x: 90, y: 70, width: drawW, height: drawH });
     } catch {
       // Corrupted or unsupported image — fall back to typed name
       page.drawText(data.signerName.trim(), {
