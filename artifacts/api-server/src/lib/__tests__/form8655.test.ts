@@ -2,7 +2,7 @@
  * Unit tests for buildForm8655Pdf and getForm8655AuthDates (lib/form8655.ts)
  *
  * Coverage goals:
- * 1. Image path   — signatureImageBase64 present → image drawn at x=50 y=70
+ * 1. Image path   — signatureImageBase64 present → image drawn at x=90 y=70
  *                   with dimensions ≤ maxW=220 / maxH=44
  * 2. Text path    — signatureImageBase64 absent → signer name drawn as text;
  *                   no image placement at the signature position
@@ -10,7 +10,8 @@
  * 4. Wide PNG  (400×50) → width-constrained to ≤ 220 pt
  * 5. Tall PNG  (50×200) → height-constrained to ≤ 44 pt
  * 6. Square PNG (100×100) → both within bounds
- * 7. getForm8655AuthDates returns correct YYYY and YYYY/MM strings per quarter
+ * 7. Retina PNG (880×176) → survives round-trip; /Image in PDF; no text fallback
+ * 8. getForm8655AuthDates returns correct YYYY and YYYY/MM strings per quarter
  *
  * PDF content-stream format (observed from pdf-lib output):
  *
@@ -128,7 +129,7 @@ function textInStreams(text: string, streams: string[]): boolean {
  *   /Image-XXXX Do
  *   Q
  *
- * This function locates the translation anchor at (x≈50, y≈70) and then
+ * This function locates the translation anchor at (x≈90, y≈70) and then
  * reads the scale matrix that follows before the Do operator.
  * Returns null if no such placement is found.
  */
@@ -143,7 +144,7 @@ function findSignatureDrawParams(
   while ((transMatch = transRe.exec(combined)) !== null) {
     const x = parseFloat(transMatch[1]!);
     const y = parseFloat(transMatch[2]!);
-    if (Math.abs(x - 50) > 1 || Math.abs(y - 70) > 1) continue;
+    if (Math.abs(x - 90) > 1 || Math.abs(y - 70) > 1) continue;
 
     // Look at the next 300 characters for the scale matrix followed by Do
     const after = combined.slice(transMatch.index + transMatch[0].length,
@@ -166,9 +167,18 @@ function findSignatureDrawParams(
   return null;
 }
 
-/** Returns true when an image is drawn at the signature position (x≈50, y≈70). */
+/** Returns true when an image is drawn at the signature position (x≈90, y≈70). */
 function hasSignatureImagePlacement(streams: string[]): boolean {
   return findSignatureDrawParams(streams) !== null;
+}
+
+/**
+ * Returns true when the raw PDF bytes contain a /Subtype /Image XObject entry,
+ * indicating at least one image was embedded in the document.
+ */
+function rawPdfHasImageXObject(pdfBytes: Uint8Array): boolean {
+  const str = Buffer.from(pdfBytes).toString("latin1");
+  return str.includes("/Subtype /Image") || str.includes("/Subtype/Image");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,10 +202,13 @@ const BASE_DATA: Form8655Data = {
 // Wide  (400×50): ratio = min(220/400, 44/50) = 0.55 → drawW≈220, drawH≈27.5
 // Tall  (50×200): ratio = min(220/50,  44/200) = 0.22 → drawH≈44,  drawW≈11
 // Square(100×100): ratio = min(2.2, 0.44)      = 0.44 → drawW=drawH≈44
+// Retina(880×176): 4× the 220×44 max box — ratio = min(220/880, 44/176) = 0.25
+//                  → drawW=220, drawH=44 (both limits hit simultaneously)
 const PNG_1x1    = makeRgbPng(1, 1);
 const PNG_WIDE   = makeRgbPng(400, 50);
 const PNG_TALL   = makeRgbPng(50, 200);
 const PNG_SQUARE = makeRgbPng(100, 100);
+const PNG_RETINA = makeRgbPng(880, 176); // 2× retina of a 440×88 canvas
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — text path (no drawn signature image)
@@ -252,9 +265,9 @@ describe("buildForm8655Pdf — image path (1×1 PNG)", () => {
     expect(hasSignatureImagePlacement(streams)).toBe(true);
   });
 
-  it("signature x-coordinate is 50 pt", () => {
+  it("signature x-coordinate is 90 pt", () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.x).toBeCloseTo(50, 0);
+    expect(p.x).toBeCloseTo(90, 0);
   });
 
   it("signature y-coordinate is 70 pt — on the signature line", () => {
@@ -391,13 +404,87 @@ describe("buildForm8655Pdf — aspect-ratio scaling across canvas sizes", () => 
 
   // ── Common position: all sizes land at the same baseline ───────────────────
 
-  it("wide PNG x-coordinate is 50 pt", ()   => { expect(wideP!.x).toBeCloseTo(50, 0); });
-  it("tall PNG x-coordinate is 50 pt", ()   => { expect(tallP!.x).toBeCloseTo(50, 0); });
-  it("square PNG x-coordinate is 50 pt", () => { expect(squareP!.x).toBeCloseTo(50, 0); });
+  it("wide PNG x-coordinate is 90 pt", ()   => { expect(wideP!.x).toBeCloseTo(90, 0); });
+  it("tall PNG x-coordinate is 90 pt", ()   => { expect(tallP!.x).toBeCloseTo(90, 0); });
+  it("square PNG x-coordinate is 90 pt", () => { expect(squareP!.x).toBeCloseTo(90, 0); });
 
   it("wide PNG y-coordinate is 70 pt (signature line)",   () => { expect(wideP!.y).toBeCloseTo(70, 0); });
   it("tall PNG y-coordinate is 70 pt (signature line)",   () => { expect(tallP!.y).toBeCloseTo(70, 0); });
   it("square PNG y-coordinate is 70 pt (signature line)", () => { expect(squareP!.y).toBeCloseTo(70, 0); });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — retina display PNG round-trip (880×176 px = 4× the 220×44 pt cap)
+//
+// A high-DPI canvas captures signatures at 2× (or more) device pixel ratio.
+// At the common "retina" 2× factor, a 440×88 visual canvas yields an 880×176
+// raw PNG. buildForm8655Pdf must:
+//   • embed the image (PDF bytes must contain /Image XObject)
+//   • not throw
+//   • not fall back to typing the signer name as text
+//   • scale the image to fit within maxW=220 / maxH=44 pt
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildForm8655Pdf — retina PNG round-trip (880×176)", () => {
+  let pdfBytes: Uint8Array;
+  let streams:  string[];
+
+  beforeAll(async () => {
+    pdfBytes = await buildForm8655Pdf({ ...BASE_DATA, signatureImageBase64: PNG_RETINA });
+    streams  = extractPdfStreams(pdfBytes);
+  });
+
+  it("does not throw when given a retina-sized PNG", () => {
+    expect(pdfBytes).toBeDefined();
+  });
+
+  it("produces valid PDF bytes (starts with %PDF)", () => {
+    expect(Buffer.from(pdfBytes.slice(0, 4)).toString("ascii")).toBe("%PDF");
+  });
+
+  it("raw PDF bytes contain an /Image XObject entry", () => {
+    expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
+  });
+
+  it("image is placed at the signature position (x≈90, y≈70)", () => {
+    expect(hasSignatureImagePlacement(streams)).toBe(true);
+  });
+
+  it("signer name does NOT appear as typed text (image path taken, no fallback)", () => {
+    expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  it("drawn width does not exceed maxW = 220 pt", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeLessThanOrEqual(220 + 0.5);
+  });
+
+  it("drawn height does not exceed maxH = 44 pt", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeLessThanOrEqual(44 + 0.5);
+  });
+
+  it("x-coordinate is 90 pt (to the right of the 'Sign Here' label)", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.x).toBeCloseTo(90, 0);
+  });
+
+  it("y-coordinate is 70 pt (on the signature line)", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.y).toBeCloseTo(70, 0);
+  });
+
+  // Scaling: 880×176 → ratio = min(220/880, 44/176) = min(0.25, 0.25) = 0.25
+  // Both axes hit their limit simultaneously → drawW=220, drawH=44
+  it("drawn width is ≈ 220 pt (width limit reached at 4× scale)", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeCloseTo(220, 0);
+  });
+
+  it("drawn height is ≈ 44 pt (height limit reached at 4× scale)", () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeCloseTo(44, 0);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
