@@ -4,7 +4,7 @@ import { useAuth, dashboardPath, type UserRole } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, AlertTriangle, FlaskConical, LogIn, Zap } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, FlaskConical, LogIn, X, Zap } from "lucide-react";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 
 const QUICK_LOGINS = [
@@ -147,14 +147,110 @@ function MeshCanvas() {
   );
 }
 
+// ── Forgot-password modal ─────────────────────────────────────
+
+function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
+  const [fpEmail, setFpEmail]   = useState("");
+  const [fpPending, setFpPending] = useState(false);
+  const [fpError, setFpError]   = useState("");
+  const [fpSent, setFpSent]     = useState(false);
+
+  const handleSend = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFpError("");
+    setFpPending(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: fpEmail.trim().toLowerCase() }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string };
+        setFpError(d.error ?? "Something went wrong. Please try again.");
+      } else {
+        setFpSent(true);
+      }
+    } catch {
+      setFpError("Network error. Please try again.");
+    } finally {
+      setFpPending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-sm rounded-2xl p-6 space-y-4"
+        style={{
+          background: "rgba(15,20,35,0.97)",
+          border: "1px solid rgba(255,255,255,0.1)",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.7)",
+        }}>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold" style={{ color: "rgba(255,255,255,0.85)" }}>Reset password</h3>
+            <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.35)" }}>
+              We'll email you a secure link
+            </p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
+            style={{ color: "rgba(255,255,255,0.4)" }}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {fpSent ? (
+          <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-3"
+            style={{ background: "rgba(34,197,94,0.1)", border: "1px solid rgba(34,197,94,0.25)", color: "#86efac" }}>
+            <CheckCircle2 className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>If that email is registered you'll receive a reset link shortly. Check your inbox.</span>
+          </div>
+        ) : (
+          <form onSubmit={handleSend} className="space-y-3">
+            <div className="space-y-1">
+              <Label htmlFor="fp-email" className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>
+                Your email address
+              </Label>
+              <Input
+                id="fp-email" type="email" value={fpEmail}
+                onChange={(e) => setFpEmail(e.target.value)}
+                placeholder="you@example.com"
+                autoFocus autoComplete="email" required
+                className="dark-input h-9 text-sm rounded-lg"
+              />
+            </div>
+            {fpError && (
+              <div className="flex items-center gap-2 text-xs rounded-lg px-3 py-2"
+                style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.25)", color: "#f87171" }}>
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />{fpError}
+              </div>
+            )}
+            <button type="submit" disabled={fpPending || !fpEmail}
+              className="sign-btn w-full h-9 rounded-lg text-sm font-semibold text-white flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50">
+              {fpPending ? "Sending…" : "Send reset link"}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main login page ───────────────────────────────────────────
+
 export default function Login() {
   const { user, isLoading, login } = useAuth();
   const [, navigate] = useLocation();
-  const [email, setEmail]     = useState("");
+  const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError]     = useState("");
-  const [pending, setPending] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const [error, setError]       = useState("");
+  const [pending, setPending]   = useState(false);
+  const [mounted, setMounted]   = useState(false);
+  const [showFP, setShowFP]     = useState(false);
   const rollfiEnv = useRollfiEnv();
 
   useEffect(() => { const t = setTimeout(() => setMounted(true), 80); return () => clearTimeout(t); }, []);
@@ -183,6 +279,7 @@ export default function Login() {
 
   return (
     <>
+      {showFP && <ForgotPasswordModal onClose={() => setShowFP(false)} />}
       <style>{`
         @keyframes fadeUp {
           from { opacity:0; transform:translateY(18px); }
@@ -307,7 +404,14 @@ export default function Login() {
                     className="dark-input h-9 text-sm rounded-lg" />
                 </div>
                 <div className="space-y-1">
-                  <Label htmlFor="password" className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>Password</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password" className="text-xs" style={{ color: "rgba(255,255,255,0.45)" }}>Password</Label>
+                    <button type="button" onClick={() => setShowFP(true)}
+                      className="text-[11px] hover:opacity-80 transition-opacity"
+                      style={{ color: "rgba(232,98,42,0.8)" }}>
+                      Forgot password?
+                    </button>
+                  </div>
                   <Input id="password" type="password" value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••" autoComplete="current-password" required

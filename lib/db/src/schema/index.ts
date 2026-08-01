@@ -387,6 +387,15 @@ export const companySignedForms = pgTable("company_signed_forms", {
 // null + WARN logged when the UUID is not in our registry.
 // Thresholds (missedPunch / extendedBreak / longShift) are computed at read time
 // by GET /api/timesheets/shifts and will become configurable later.
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id:        serial("id").primaryKey(),
+  userId:    text("user_id").notNull(),
+  token:     text("token").notNull().unique(),
+  expiresAt: text("expires_at").notNull(),
+  usedAt:    text("used_at"),
+  createdAt: text("created_at").notNull(),
+});
+
 export const timesheetShifts = pgTable("timesheet_shifts", {
   easyteamShiftId:     text("easyteam_shift_id").primaryKey(),
   employeeId:          text("employee_id"),

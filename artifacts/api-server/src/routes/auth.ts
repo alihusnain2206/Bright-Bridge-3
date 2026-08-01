@@ -1,11 +1,13 @@
 import { Router, type IRouter } from "express";
 import * as jwt from "jsonwebtoken";
 import * as bcrypt from "bcryptjs";
+import * as crypto from "crypto";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
-import { db, companies, userAccounts, employees as employeesTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, companies, userAccounts, employees as employeesTable, passwordResetTokens } from "@workspace/db";
+import { eq, and, gt, isNull } from "drizzle-orm";
+import { sendPasswordResetEmail, APP_URL } from "../lib/email.js";
 
 declare module "express-session" {
   interface SessionData {
@@ -113,6 +115,102 @@ router.post("/auth/login", async (req, res) => {
   const company = await resolveUserCompany(user.companyId);
   const location = await resolveUserLocation(user.id);
   res.json({ user: safeUser, company, location });
+});
+
+// ── Forgot password ──────────────────────────────────────────
+
+router.post("/auth/forgot-password", async (req, res) => {
+  const { email } = req.body as { email?: string };
+  if (!email?.trim()) {
+    res.status(400).json({ error: "Email is required" }); return;
+  }
+
+  // Always respond with the same message to prevent email enumeration
+  const ok = { message: "If that email is registered you will receive a reset link shortly." };
+
+  const user = store.getUserByEmail(email.trim().toLowerCase());
+  if (!user) { res.json(ok); return; }
+
+  // Invalidate any existing unused tokens for this user by marking them used
+  try {
+    const now = new Date().toISOString();
+    const token = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+
+    await db.insert(passwordResetTokens).values({
+      userId:    user.id,
+      token,
+      expiresAt,
+      usedAt:    null,
+      createdAt: now,
+    });
+
+    const resetLink = APP_URL
+      ? `${APP_URL}/reset-password?token=${token}`
+      : `https://your-app/reset-password?token=${token}`;
+
+    await sendPasswordResetEmail({ to: user.email, name: user.name, resetLink });
+    req.log.info({ userId: user.id }, "forgot-password: reset token issued");
+  } catch (err) {
+    req.log.error({ err }, "forgot-password: failed to create or send token");
+  }
+
+  res.json(ok);
+});
+
+// ── Reset password ───────────────────────────────────────────
+
+router.post("/auth/reset-password", async (req, res) => {
+  const { token, password } = req.body as { token?: string; password?: string };
+  if (!token?.trim()) {
+    res.status(400).json({ error: "Reset token is required" }); return;
+  }
+  if (!password || password.length < 8) {
+    res.status(400).json({ error: "Password must be at least 8 characters" }); return;
+  }
+
+  const now = new Date().toISOString();
+
+  // Find a valid (unused, unexpired) token
+  const [row] = await db
+    .select()
+    .from(passwordResetTokens)
+    .where(
+      and(
+        eq(passwordResetTokens.token, token.trim()),
+        isNull(passwordResetTokens.usedAt),
+        gt(passwordResetTokens.expiresAt, now),
+      ),
+    )
+    .catch(() => [undefined]);
+
+  if (!row) {
+    res.status(400).json({ error: "Reset link is invalid or has expired. Please request a new one." });
+    return;
+  }
+
+  const hashed = await bcrypt.hash(password, 12);
+
+  // Update the password in DB
+  await db
+    .update(userAccounts)
+    .set({ password: hashed })
+    .where(eq(userAccounts.id, row.userId));
+
+  // Also update in-memory store so active sessions pick up the new password immediately
+  const memUser = store.getUserById(row.userId);
+  if (memUser) {
+    (memUser as unknown as Record<string, unknown>).password = hashed;
+  }
+
+  // Mark token as used
+  await db
+    .update(passwordResetTokens)
+    .set({ usedAt: now })
+    .where(eq(passwordResetTokens.id, row.id));
+
+  req.log.info({ userId: row.userId }, "reset-password: password updated");
+  res.json({ success: true });
 });
 
 // ── Logout ───────────────────────────────────────────────────

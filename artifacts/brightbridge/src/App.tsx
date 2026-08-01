@@ -7,6 +7,7 @@ import { AuthProvider, useAuth, dashboardPath, type UserRole } from "@/hooks/use
 
 import { AppLayout } from "@/components/layout";
 import Login from "@/pages/login";
+import ResetPassword from "@/pages/reset-password";
 import Home from "@/pages/home";
 import Clients from "@/pages/clients";
 import ClientsNew from "@/pages/clients-new";
@@ -115,6 +116,7 @@ function Router() {
     <Switch>
       {/* Public */}
       <Route path="/login" component={Login} />
+      <Route path="/reset-password" component={ResetPassword} />
 
       {/* Standalone pages (no AppLayout sidebar) */}
       <Route path="/paystub/:companyId/:employeeId/:payPeriodId" component={Paystub} />
