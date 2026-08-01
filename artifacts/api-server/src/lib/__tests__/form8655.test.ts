@@ -27,6 +27,7 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import zlib from "node:zlib";
 import { buildForm8655Pdf, getForm8655AuthDates, type Form8655Data } from "../form8655.js";
+import { SIG_X, SIG_Y, SIG_MAX_W, SIG_MAX_H } from "../form8655-constants.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PNG generator
@@ -144,7 +145,7 @@ function findSignatureDrawParams(
   while ((transMatch = transRe.exec(combined)) !== null) {
     const x = parseFloat(transMatch[1]!);
     const y = parseFloat(transMatch[2]!);
-    if (Math.abs(x - 90) > 1 || Math.abs(y - 70) > 1) continue;
+    if (Math.abs(x - SIG_X) > 1 || Math.abs(y - SIG_Y) > 1) continue;
 
     // Look at the next 300 characters for the scale matrix followed by Do
     const after = combined.slice(transMatch.index + transMatch[0].length,
@@ -261,28 +262,28 @@ describe("buildForm8655Pdf — image path (1×1 PNG)", () => {
     expect(pdfBytes.length).toBeGreaterThan(10 * 1024);
   });
 
-  it("an image is placed at the signature position (x≈50, y≈70)", () => {
+  it(`an image is placed at the signature position (x≈${SIG_X}, y≈${SIG_Y})`, () => {
     expect(hasSignatureImagePlacement(streams)).toBe(true);
   });
 
-  it("signature x-coordinate is 90 pt", () => {
+  it(`signature x-coordinate is ${SIG_X} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.x).toBeCloseTo(90, 0);
+    expect(p.x).toBeCloseTo(SIG_X, 0);
   });
 
-  it("signature y-coordinate is 70 pt — on the signature line", () => {
+  it(`signature y-coordinate is ${SIG_Y} pt — on the signature line`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.y).toBeCloseTo(70, 0);
+    expect(p.y).toBeCloseTo(SIG_Y, 0);
   });
 
-  it("drawn width does not exceed maxW = 220 pt", () => {
+  it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawW).toBeLessThanOrEqual(220 + 0.5);
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
   });
 
-  it("drawn height does not exceed maxH = 44 pt", () => {
+  it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawH).toBeLessThanOrEqual(44 + 0.5);
+    expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
   });
 
   it("signer name does NOT appear as drawn text (image replaced the typed overlay)", () => {
@@ -329,8 +330,8 @@ describe("buildForm8655Pdf — corrupted image falls back to typed name", () => 
 //
 // The server replicates the concern the task title calls out: a signature
 // captured on a wide screen might be 400×50 px, a portrait phone 50×200, etc.
-// buildForm8655Pdf must scale every PNG to fit within maxW=220 / maxH=44 while
-// always landing at x=50 y=70.
+// buildForm8655Pdf must scale every PNG to fit within maxW=SIG_MAX_W / maxH=SIG_MAX_H
+// while always landing at x=SIG_X y=SIG_Y.
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("buildForm8655Pdf — aspect-ratio scaling across canvas sizes", () => {
@@ -350,71 +351,71 @@ describe("buildForm8655Pdf — aspect-ratio scaling across canvas sizes", () => 
   });
 
   // ── Wide PNG (400×50): width-limited ───────────────────────────────────────
-  // ratio = min(220/400, 44/50) = min(0.55, 0.88) = 0.55 → drawW=220, drawH≈27.5
+  // ratio = min(SIG_MAX_W/400, SIG_MAX_H/50) = min(0.55, 0.88) = 0.55 → drawW=SIG_MAX_W, drawH≈27.5
 
   it("wide PNG (400×50): image is placed at signature position", () => {
     expect(wideP).not.toBeNull();
   });
 
-  it("wide PNG (400×50): drawn width is ≈ 220 pt (width limit reached)", () => {
-    expect(wideP!.drawW).toBeCloseTo(220, 0);
+  it(`wide PNG (400×50): drawn width is ≈ ${SIG_MAX_W} pt (width limit reached)`, () => {
+    expect(wideP!.drawW).toBeCloseTo(SIG_MAX_W, 0);
   });
 
-  it("wide PNG (400×50): drawn height is < 44 pt (height not the constraint)", () => {
-    expect(wideP!.drawH).toBeLessThan(44);
+  it(`wide PNG (400×50): drawn height is < ${SIG_MAX_H} pt (height not the constraint)`, () => {
+    expect(wideP!.drawH).toBeLessThan(SIG_MAX_H);
   });
 
-  it("wide PNG (400×50): drawn height does not overflow maxH = 44 pt", () => {
-    expect(wideP!.drawH).toBeLessThanOrEqual(44 + 0.5);
+  it(`wide PNG (400×50): drawn height does not overflow maxH = ${SIG_MAX_H} pt`, () => {
+    expect(wideP!.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
   });
 
   // ── Tall PNG (50×200): height-limited ──────────────────────────────────────
-  // ratio = min(220/50, 44/200) = min(4.4, 0.22) = 0.22 → drawH=44, drawW≈11
+  // ratio = min(SIG_MAX_W/50, SIG_MAX_H/200) = min(4.4, 0.22) = 0.22 → drawH=SIG_MAX_H, drawW≈11
 
   it("tall PNG (50×200): image is placed at signature position", () => {
     expect(tallP).not.toBeNull();
   });
 
-  it("tall PNG (50×200): drawn height is ≈ 44 pt (height limit reached)", () => {
-    expect(tallP!.drawH).toBeCloseTo(44, 0);
+  it(`tall PNG (50×200): drawn height is ≈ ${SIG_MAX_H} pt (height limit reached)`, () => {
+    expect(tallP!.drawH).toBeCloseTo(SIG_MAX_H, 0);
   });
 
-  it("tall PNG (50×200): drawn width is < 220 pt (width not the constraint)", () => {
-    expect(tallP!.drawW).toBeLessThan(220);
+  it(`tall PNG (50×200): drawn width is < ${SIG_MAX_W} pt (width not the constraint)`, () => {
+    expect(tallP!.drawW).toBeLessThan(SIG_MAX_W);
   });
 
-  it("tall PNG (50×200): drawn width does not overflow maxW = 220 pt", () => {
-    expect(tallP!.drawW).toBeLessThanOrEqual(220 + 0.5);
+  it(`tall PNG (50×200): drawn width does not overflow maxW = ${SIG_MAX_W} pt`, () => {
+    expect(tallP!.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
   });
 
   // ── Square PNG (100×100): height-limited ───────────────────────────────────
-  // ratio = min(220/100, 44/100) = 0.44 → drawW=drawH=44
+  // ratio = min(SIG_MAX_W/100, SIG_MAX_H/100) = 0.44 → drawW=drawH=SIG_MAX_H
 
   it("square PNG (100×100): image is placed at signature position", () => {
     expect(squareP).not.toBeNull();
   });
 
-  it("square PNG (100×100): drawn width ≤ 220 pt", () => {
-    expect(squareP!.drawW).toBeLessThanOrEqual(220 + 0.5);
+  it(`square PNG (100×100): drawn width ≤ ${SIG_MAX_W} pt`, () => {
+    expect(squareP!.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
   });
 
-  it("square PNG (100×100): drawn height ≤ 44 pt", () => {
-    expect(squareP!.drawH).toBeLessThanOrEqual(44 + 0.5);
+  it(`square PNG (100×100): drawn height ≤ ${SIG_MAX_H} pt`, () => {
+    expect(squareP!.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
   });
 
   // ── Common position: all sizes land at the same baseline ───────────────────
 
-  it("wide PNG x-coordinate is 90 pt", ()   => { expect(wideP!.x).toBeCloseTo(90, 0); });
-  it("tall PNG x-coordinate is 90 pt", ()   => { expect(tallP!.x).toBeCloseTo(90, 0); });
-  it("square PNG x-coordinate is 90 pt", () => { expect(squareP!.x).toBeCloseTo(90, 0); });
+  it(`wide PNG x-coordinate is ${SIG_X} pt`, ()   => { expect(wideP!.x).toBeCloseTo(SIG_X, 0); });
+  it(`tall PNG x-coordinate is ${SIG_X} pt`, ()   => { expect(tallP!.x).toBeCloseTo(SIG_X, 0); });
+  it(`square PNG x-coordinate is ${SIG_X} pt`, () => { expect(squareP!.x).toBeCloseTo(SIG_X, 0); });
 
-  it("wide PNG y-coordinate is 70 pt (signature line)",   () => { expect(wideP!.y).toBeCloseTo(70, 0); });
-  it("tall PNG y-coordinate is 70 pt (signature line)",   () => { expect(tallP!.y).toBeCloseTo(70, 0); });
-  it("square PNG y-coordinate is 70 pt (signature line)", () => { expect(squareP!.y).toBeCloseTo(70, 0); });
+  it(`wide PNG y-coordinate is ${SIG_Y} pt (signature line)`,   () => { expect(wideP!.y).toBeCloseTo(SIG_Y, 0); });
+  it(`tall PNG y-coordinate is ${SIG_Y} pt (signature line)`,   () => { expect(tallP!.y).toBeCloseTo(SIG_Y, 0); });
+  it(`square PNG y-coordinate is ${SIG_Y} pt (signature line)`, () => { expect(squareP!.y).toBeCloseTo(SIG_Y, 0); });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests — retina display PNG round-trip (880×176 px = 4× the 220×44 pt cap)
+// Tests — retina display PNG round-trip (880×176 px = 4× the SIG_MAX_W×SIG_MAX_H pt cap)
 //
 // A high-DPI canvas captures signatures at 2× (or more) device pixel ratio.
 // At the common "retina" 2× factor, a 440×88 visual canvas yields an 880×176
@@ -422,7 +423,7 @@ describe("buildForm8655Pdf — aspect-ratio scaling across canvas sizes", () => 
 //   • embed the image (PDF bytes must contain /Image XObject)
 //   • not throw
 //   • not fall back to typing the signer name as text
-//   • scale the image to fit within maxW=220 / maxH=44 pt
+//   • scale the image to fit within maxW=SIG_MAX_W / maxH=SIG_MAX_H pt
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("buildForm8655Pdf — retina PNG round-trip (880×176)", () => {
@@ -446,7 +447,7 @@ describe("buildForm8655Pdf — retina PNG round-trip (880×176)", () => {
     expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
   });
 
-  it("image is placed at the signature position (x≈90, y≈70)", () => {
+  it(`image is placed at the signature position (x≈${SIG_X}, y≈${SIG_Y})`, () => {
     expect(hasSignatureImagePlacement(streams)).toBe(true);
   });
 
@@ -454,36 +455,36 @@ describe("buildForm8655Pdf — retina PNG round-trip (880×176)", () => {
     expect(textInStreams("Jane Doe", streams)).toBe(false);
   });
 
-  it("drawn width does not exceed maxW = 220 pt", () => {
+  it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawW).toBeLessThanOrEqual(220 + 0.5);
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
   });
 
-  it("drawn height does not exceed maxH = 44 pt", () => {
+  it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawH).toBeLessThanOrEqual(44 + 0.5);
+    expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
   });
 
-  it("x-coordinate is 90 pt (to the right of the 'Sign Here' label)", () => {
+  it(`x-coordinate is ${SIG_X} pt (to the right of the 'Sign Here' label)`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.x).toBeCloseTo(90, 0);
+    expect(p.x).toBeCloseTo(SIG_X, 0);
   });
 
-  it("y-coordinate is 70 pt (on the signature line)", () => {
+  it(`y-coordinate is ${SIG_Y} pt (on the signature line)`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.y).toBeCloseTo(70, 0);
+    expect(p.y).toBeCloseTo(SIG_Y, 0);
   });
 
-  // Scaling: 880×176 → ratio = min(220/880, 44/176) = min(0.25, 0.25) = 0.25
-  // Both axes hit their limit simultaneously → drawW=220, drawH=44
-  it("drawn width is ≈ 220 pt (width limit reached at 4× scale)", () => {
+  // Scaling: 880×176 → ratio = min(SIG_MAX_W/880, SIG_MAX_H/176) = min(0.25, 0.25) = 0.25
+  // Both axes hit their limit simultaneously → drawW=SIG_MAX_W, drawH=SIG_MAX_H
+  it(`drawn width is ≈ ${SIG_MAX_W} pt (width limit reached at 4× scale)`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawW).toBeCloseTo(220, 0);
+    expect(p.drawW).toBeCloseTo(SIG_MAX_W, 0);
   });
 
-  it("drawn height is ≈ 44 pt (height limit reached at 4× scale)", () => {
+  it(`drawn height is ≈ ${SIG_MAX_H} pt (height limit reached at 4× scale)`, () => {
     const p = findSignatureDrawParams(streams)!;
-    expect(p.drawH).toBeCloseTo(44, 0);
+    expect(p.drawH).toBeCloseTo(SIG_MAX_H, 0);
   });
 });
 

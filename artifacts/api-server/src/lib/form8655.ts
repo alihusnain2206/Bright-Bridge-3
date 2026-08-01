@@ -11,6 +11,7 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 // esbuild loader:.pdf=base64 embeds the official IRS form at build time
 import f8655Base64 from "../assets/f8655.pdf";
+import { SIG_X, SIG_Y, SIG_MAX_W, SIG_MAX_H } from "./form8655-constants.js";
 
 // ── Rollfi reporting agent constants ─────────────────────────────────────────
 
@@ -223,14 +224,12 @@ export async function buildForm8655Pdf(data: Form8655Data): Promise<Uint8Array> 
       if (natural.width === 0 || natural.height === 0) {
         throw new Error("Embedded PNG has zero dimensions — falling back to typed name");
       }
-      const maxW = 220;
-      const maxH = 44;
-      const ratio = Math.min(maxW / natural.width, maxH / natural.height);
+      const ratio = Math.min(SIG_MAX_W / natural.width, SIG_MAX_H / natural.height);
       const drawW = natural.width  * ratio;
       const drawH = natural.height * ratio;
-      // Start at x=90 — safely to the right of the "Sign Here" label that
+      // Start at SIG_X — safely to the right of the "Sign Here" label that
       // is printed in the left margin of the IRS form (~x=35–85).
-      page.drawImage(sigImg, { x: 90, y: 70, width: drawW, height: drawH });
+      page.drawImage(sigImg, { x: SIG_X, y: SIG_Y, width: drawW, height: drawH });
     } catch {
       // Corrupted or unsupported image — fall back to typed name
       page.drawText(data.signerName.trim(), {
