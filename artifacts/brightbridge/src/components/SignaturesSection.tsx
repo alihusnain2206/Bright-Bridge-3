@@ -92,29 +92,46 @@ function SignatureCanvas({
   onConfirm: (dataUrl: string) => void;
   onClear:   () => void;
 }) {
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const padRef     = useRef<SignaturePad | null>(null);
+  const canvasRef    = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const padRef       = useRef<SignaturePad | null>(null);
   const [hasDrawn, setHasDrawn] = useState(false);
 
-  // Initialize SignaturePad once the canvas is in the DOM
+  // Initialize SignaturePad once the canvas is in the DOM.
+  // A ResizeObserver on the container re-applies DPR scaling whenever the
+  // container width changes (window resize, panel open/close, mobile rotation)
+  // and restores existing strokes so the owner never loses their signature.
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const canvas    = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
-    // Scale canvas for device pixel ratio so the stroke is crisp on retina.
-    // Uses requestAnimationFrame so the browser has finished CSS layout before
-    // we read offsetWidth — avoids a 0×0 canvas when the form first opens.
-    const resize = () => {
-      const ratio  = Math.max(window.devicePixelRatio ?? 1, 1);
-      const w      = canvas.offsetWidth;
-      const h      = canvas.offsetHeight;
+    // Apply DPR scaling to the canvas backing store.
+    // Saves any existing stroke data beforehand and redraws it afterwards so
+    // resizing the window does not wipe the signature.
+    const applyDprScale = (preserveStrokes: boolean) => {
+      const ratio = Math.max(window.devicePixelRatio ?? 1, 1);
+      const w     = canvas.offsetWidth;
+      const h     = canvas.offsetHeight;
       if (w === 0 || h === 0) return; // layout not ready yet — skip
+
+      // Capture stroke data before resetting the canvas dimensions (which clears it).
+      const savedData = preserveStrokes ? padRef.current?.toData() : undefined;
+
       canvas.width  = w * ratio;
       canvas.height = h * ratio;
       const ctx = canvas.getContext("2d");
       if (ctx) ctx.scale(ratio, ratio);
-      padRef.current?.clear();
-      setHasDrawn(false);
+
+      if (savedData && savedData.length > 0) {
+        // fromData() redraws the bezier points at the new canvas size, keeping
+        // strokes pixel-perfect at the updated dimensions.
+        padRef.current?.fromData(savedData);
+        // hasDrawn stays true — strokes were preserved
+      } else {
+        padRef.current?.clear();
+        setHasDrawn(false);
+      }
     };
 
     padRef.current = new SignaturePad(canvas, {
@@ -127,11 +144,19 @@ function SignatureCanvas({
       setHasDrawn(!padRef.current?.isEmpty());
     });
 
-    // Defer resize by one animation frame so CSS layout has settled
-    const raf = requestAnimationFrame(resize);
+    // Defer the initial scale by one animation frame so CSS layout has settled.
+    const raf = requestAnimationFrame(() => applyDprScale(false));
+
+    // Watch the container for size changes (resize, orientation, panel transitions).
+    // preserveStrokes=true so an owner who has already drawn doesn't lose their work.
+    const observer = new ResizeObserver(() => {
+      applyDprScale(true);
+    });
+    observer.observe(container);
 
     return () => {
       cancelAnimationFrame(raf);
+      observer.disconnect();
       padRef.current?.off();
     };
   }, []);
@@ -176,7 +201,7 @@ function SignatureCanvas({
         </button>
       </div>
       {/* Canvas area */}
-      <div className="relative rounded-lg border border-gray-300 bg-white overflow-hidden" style={{ height: 90 }}>
+      <div ref={containerRef} className="relative rounded-lg border border-gray-300 bg-white overflow-hidden" style={{ height: 90 }}>
         <canvas
           ref={canvasRef}
           style={{ width: "100%", height: "100%", touchAction: "none", cursor: "crosshair" }}
