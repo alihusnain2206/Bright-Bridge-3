@@ -42,19 +42,53 @@ vi.mock("drizzle-orm", () => ({
 
 // @workspace/db — returns queued results in FIFO order; .catch() just wraps
 // the promise so it behaves like Drizzle's lazy promise.
+//
+// The `select()` call now accepts the projection object and filters each
+// queued row to only the keys that appear in the projection (matching Drizzle's
+// real behaviour).  This means a test will fail if a column is removed from the
+// select, which is the regression this file exists to guard against.
 vi.mock("@workspace/db", () => {
-  const makeChain = () => {
+  const makeChain = (projection?: Record<string, unknown>) => {
+    // Build the list of output keys from the projection.
+    // Only include keys whose value is not undefined — omitting a column from
+    // the route's select() causes its value in the projection to be undefined
+    // (because the column object doesn't exist on the table mock).
+    const projectedKeys =
+      projection && Object.keys(projection).length > 0
+        ? Object.keys(projection).filter((k) => projection[k] !== undefined)
+        : null;
+
     const chain: Record<string, unknown> = {};
     chain.from  = () => chain;
     chain.where = () => {
-      const result: unknown[] = dbState.callQueue.shift() ?? [];
-      return Promise.resolve(result);
+      const rawResult: unknown[] = dbState.callQueue.shift() ?? [];
+      if (projectedKeys && projectedKeys.length > 0) {
+        return Promise.resolve(
+          rawResult.map((row) => {
+            if (typeof row !== "object" || row === null) return row;
+            const out: Record<string, unknown> = {};
+            for (const k of projectedKeys) {
+              out[k] = (row as Record<string, unknown>)[k];
+            }
+            return out;
+          }),
+        );
+      }
+      // No projection (db.select() with no args) — return the full row.
+      return Promise.resolve(rawResult);
     };
     return chain;
   };
   return {
-    db: { select: () => makeChain() },
-    companySignedForms:   { companyId: {}, formType: {}, signerName: {}, signerTitle: {}, signedAt: {} },
+    db: { select: (proj?: unknown) => makeChain(proj as Record<string, unknown> | undefined) },
+    companySignedForms: {
+      companyId:      {},
+      formType:       {},
+      signerName:     {},
+      signerTitle:    {},
+      signedAt:       {},
+      signatureImage: {}, // ← must be present so the route's select projection includes it
+    },
     // Route imports `companies` and aliases it to `companiesTable` locally.
     companies:            { id: {}, rollfiCompanyId: {}, name: {}, ein: {}, address1: {}, address2: {}, city: {}, state: {}, zipcode: {}, phone: {} },
     rollfiCompanyRecords: { companyId: {}, rollfiCompanyId: {} },
@@ -133,6 +167,27 @@ const ROLLFI_COMPANY_INFO = {
     KYBInformations: [{ ein: "987654321", phoneNumber: "5125559999" }],
     CompanyLocations: [{ address1: "99 Provider Ave", city: "Dallas", state: "TX", zipcode: "75201" }],
   }],
+};
+
+/**
+ * Minimal 1×1 transparent PNG (base64, no data: prefix).
+ * Small enough to keep tests fast; real enough that pdf-lib can embed it.
+ */
+const SIGNATURE_PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/** A second, distinct PNG used to simulate an overwrite after re-signing. */
+const SIGNATURE_PNG_B64_V2 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEElEQVR42mNk+M9QDwADAgEAAkYBGMIAAAAASUVORK5CYII=";
+
+/** Signed record that includes a drawn signature image. */
+const SIGNED_RECORD_WITH_IMAGE = {
+  ...{
+    signerName:  "Jane Doe",
+    signerTitle: "CEO",
+    signedAt:    "2026-07-01T12:00:00.000Z",
+  },
+  signatureImage: SIGNATURE_PNG_B64,
 };
 
 /** DB record for a company — used as the fallback data source */
@@ -393,6 +448,82 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       expect(res.status).toBe(200);
       const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
       expect(magic).toBe("%PDF");
+    });
+  });
+
+  // ── Drawn signature image is preserved in the downloaded PDF ─────────────
+  //
+  // Regression guard for the bug where `signatureImage` was omitted from the
+  // DB select, causing the downloaded PDF to show a blank line even after a
+  // successful in-app signing.
+
+  describe("when the signed record contains a drawn signature image", () => {
+    beforeEach(() => {
+      rollfiCreds.present = false;
+      // Queue signed form record WITH the image column populated
+      dbState.callQueue.push([SIGNED_RECORD_WITH_IMAGE]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      dbState.callQueue.push([DB_COMPANY]);
+    });
+
+    it("passes signatureImageBase64 to buildForm8655Pdf (route reads the signatureImage column)", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ signatureImageBase64: SIGNATURE_PNG_B64 }),
+      );
+    });
+
+    it("does not fall back to the typed signer name when an image is present", async () => {
+      await getPdf(makeApp());
+      // The spy must have received a non-empty signatureImageBase64, confirming
+      // the route did NOT drop it and trigger the text-only fallback.
+      const callArg = buildPdfSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(typeof callArg.signatureImageBase64).toBe("string");
+      expect((callArg.signatureImageBase64 as string).length).toBeGreaterThan(0);
+    });
+
+    it("PDF bytes contain an embedded image object (not text-only output)", async () => {
+      const res = await getPdf(makeApp());
+      // pdf-lib writes '/Subtype /Image' into the PDF content stream when
+      // drawImage() is called.  Its presence confirms the image path was taken.
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).toContain("/Image");
+    });
+
+    it("returns HTTP 200 and a valid PDF", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+  });
+
+  // ── Re-sign overwrites: downloaded PDF always reflects the latest image ───
+
+  describe("when the drawn signature is overwritten by a second signing", () => {
+    it("downloaded PDF uses the new signature image, not the original one", async () => {
+      // Simulate a second sign: the DB record now holds SIGNATURE_PNG_B64_V2
+      rollfiCreds.present = false;
+      dbState.callQueue.push([{ ...SIGNED_RECORD_WITH_IMAGE, signatureImage: SIGNATURE_PNG_B64_V2 }]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      dbState.callQueue.push([DB_COMPANY]);
+
+      await getPdf(makeApp());
+
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ signatureImageBase64: SIGNATURE_PNG_B64_V2 }),
+      );
+    });
+
+    it("PDF bytes still contain an embedded image after re-sign", async () => {
+      rollfiCreds.present = false;
+      dbState.callQueue.push([{ ...SIGNED_RECORD_WITH_IMAGE, signatureImage: SIGNATURE_PNG_B64_V2 }]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      dbState.callQueue.push([DB_COMPANY]);
+
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).toContain("/Image");
     });
   });
 });
