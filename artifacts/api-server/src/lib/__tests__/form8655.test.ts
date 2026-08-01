@@ -75,6 +75,28 @@ function makeRgbPng(width: number, height: number): string {
   ]).toString("base64");
 }
 
+/**
+ * Returns a base64-encoded all-transparent RGBA PNG with the given pixel dimensions.
+ * Color type 6 (RGBA), 8-bit depth. Every pixel has alpha=0 — visually blank
+ * but structurally a valid PNG with non-zero dimensions (like an accidental tap
+ * on a touch-screen signature canvas).
+ */
+function makeTransparentPng(width: number, height: number): string {
+  const sig = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const ihdr = Buffer.allocUnsafe(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0; // color type 6 = RGBA
+  // Each row: 1 filter byte + 4 bytes per pixel (R G B A), all zero → alpha=0
+  const raw = Buffer.alloc((1 + width * 4) * height, 0);
+  return Buffer.concat([
+    sig,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]).toString("base64");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF content-stream inspector
 //
@@ -210,6 +232,9 @@ const PNG_WIDE   = makeRgbPng(400, 50);
 const PNG_TALL   = makeRgbPng(50, 200);
 const PNG_SQUARE = makeRgbPng(100, 100);
 const PNG_RETINA = makeRgbPng(880, 176); // 2× retina of a 440×88 canvas
+// A 1×1 all-transparent RGBA PNG — simulates a near-blank canvas (one accidental tap).
+// Valid, non-zero dimensions, but carries no visible ink.
+const PNG_TRANSPARENT_1x1 = makeTransparentPng(1, 1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — text path (no drawn signature image)
@@ -485,6 +510,54 @@ describe("buildForm8655Pdf — retina PNG round-trip (880×176)", () => {
   it(`drawn height is ≈ ${SIG_MAX_H} pt (height limit reached at 4× scale)`, () => {
     const p = findSignatureDrawParams(streams)!;
     expect(p.drawH).toBeCloseTo(SIG_MAX_H, 0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — near-blank canvas signature (1×1 all-transparent RGBA PNG)
+//
+// A user who barely grazes the canvas with a stylus produces a valid PNG with
+// non-zero dimensions (so the zero-dimension guard does NOT fire) but no visible
+// ink (alpha=0 everywhere). buildForm8655Pdf must still embed it as an image —
+// it must NOT silently drop to the typed-name text fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildForm8655Pdf — near-blank canvas (1×1 all-transparent RGBA PNG)", () => {
+  let pdfBytes: Uint8Array;
+  let streams:  string[];
+
+  beforeAll(async () => {
+    pdfBytes = await buildForm8655Pdf({
+      ...BASE_DATA,
+      signatureImageBase64: PNG_TRANSPARENT_1x1,
+    });
+    streams = extractPdfStreams(pdfBytes);
+  });
+
+  it("produces valid PDF bytes (starts with %PDF)", () => {
+    expect(Buffer.from(pdfBytes.slice(0, 4)).toString("ascii")).toBe("%PDF");
+  });
+
+  it("raw PDF bytes contain an /Image XObject entry (image path taken, not text fallback)", () => {
+    expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
+  });
+
+  it(`an image is placed at the signature position (x≈${SIG_X}, y≈${SIG_Y})`, () => {
+    expect(hasSignatureImagePlacement(streams)).toBe(true);
+  });
+
+  it("signer name does NOT appear as typed text (near-blank image is still embedded, no fallback)", () => {
+    expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
+  });
+
+  it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
   });
 });
 
