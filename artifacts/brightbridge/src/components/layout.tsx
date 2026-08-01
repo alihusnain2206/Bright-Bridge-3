@@ -32,18 +32,10 @@ const PEOPLE_SUBNAV: NavSubItem[] = [
   { href: "/people/directory",    label: "Employee Directory" },
   { href: "/people/new-hires",    label: "New Hires" },
   { href: "/people/onboarding",   label: "Onboarding" },
-  { href: "/people",              label: "Job & Compensation",   soon: true },
   { href: "/people/documents",    label: "Documents" },
-  { href: "/people",              label: "Benefits",             soon: true },
   { href: "/timesheets",          label: "Time & Attendance" },
-  { href: "/people",              label: "Training",             soon: true },
-  { href: "/people",              label: "Performance",          soon: true },
-  { href: "/people",              label: "Assets",               soon: true },
   { href: "/people/contacts",     label: "Emergency Contacts" },
-  { href: "/people",              label: "Certifications",       soon: true },
   { href: "/people/compliance",   label: "Compliance" },
-  { href: "/people",              label: "Employment History",   soon: true },
-  { href: "/people",              label: "Offboarding",         soon: true },
 ];
 
 function getNavItems(role: string | undefined): NavItem[] {
