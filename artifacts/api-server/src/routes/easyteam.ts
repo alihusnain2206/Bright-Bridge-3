@@ -45,7 +45,10 @@ const EASYTEAM_API_KEY = normalizePemKey(process.env.EASYTEAM_API_KEY);
 const EASYTEAM_PARTNER_ID = process.env.EASYTEAM_PARTNER_ID;
 const EASYTEAM_SANDBOX_URL = "https://www.easyteam.io/embed";
 
-const CONVOY_WEBHOOK_SECRET = process.env.CONVOY_WEBHOOK_SECRET;
+// Prefer the service-specific secret; fall back to the shared legacy one so
+// the rename from CONVOY_WEBHOOK_SECRET → EASYTEAM_WEBHOOK_SECRET is zero-downtime.
+const CONVOY_WEBHOOK_SECRET =
+  process.env.EASYTEAM_WEBHOOK_SECRET ?? process.env.CONVOY_WEBHOOK_SECRET;
 
 function verifyConvoySignature(rawBody: string, signatureHeader: string | undefined, secret: string): boolean {
   if (!signatureHeader) return false;
@@ -1333,17 +1336,19 @@ router.post("/easyteam/webhook/export", async (req, res) => {
   const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
   const isProd = process.env.NODE_ENV === "production";
 
-  // ── Environment-aware HMAC verification (hard-reject enforced) ────────────
+  // ── HMAC verification (EasyTeam always signs; hard-reject enforced) ────────
+  // EasyTeam signs every export webhook via Convoy.  EASYTEAM_WEBHOOK_SECRET
+  // (or legacy CONVOY_WEBHOOK_SECRET) must be set.  Missing/invalid → 401 in
+  // all environments including production.
   let signatureValid = false;
   if (!CONVOY_WEBHOOK_SECRET) {
-    if (isProd) {
-      // Misconfiguration in production — never process unverified webhooks.
-      req.log.error("CONVOY_WEBHOOK_SECRET is not set in production — rejecting unverified export webhook");
-      res.status(401).json({ error: "Webhook signature verification not configured" });
-      return;
-    }
-    // Non-production without secret — sandbox convenience, log loudly.
-    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification (non-production sandbox mode)");
+    // Secret is missing — this is a misconfiguration regardless of environment.
+    req.log.error(
+      { path: req.path },
+      "EASYTEAM_WEBHOOK_SECRET not set — rejecting unverified EasyTeam export webhook (EasyTeam always signs)",
+    );
+    res.status(401).json({ error: "Webhook signature verification not configured" });
+    return;
   } else {
     // Secret is set — full verification; hard-reject on any failure.
     if (!signatureHeader) {

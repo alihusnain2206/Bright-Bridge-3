@@ -14,7 +14,10 @@ import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 import crypto from "crypto";
 
 // ── Rollfi / Convoy webhook HMAC verification ─────────────────────────────────
-const CONVOY_WEBHOOK_SECRET = process.env.CONVOY_WEBHOOK_SECRET;
+// Prefer the service-specific secret; fall back to the shared legacy one so
+// the rename from CONVOY_WEBHOOK_SECRET → ROLLFI_WEBHOOK_SECRET is zero-downtime.
+const CONVOY_WEBHOOK_SECRET =
+  process.env.ROLLFI_WEBHOOK_SECRET ?? process.env.CONVOY_WEBHOOK_SECRET;
 
 function verifyConvoySignature(rawBody: string, signatureHeader: string | undefined, secret: string): boolean {
   if (!signatureHeader) return false;
@@ -4851,16 +4854,20 @@ function resolveCompanyId(rollfiCompanyId: string | null): string | null {
 router.post("/rollfi/webhook", async (req, res) => {
   const rawBody = JSON.stringify(req.body);
   const signatureHeader = req.headers["x-convoy-signature"] as string | undefined;
-  const isProd = process.env.NODE_ENV === "production";
 
   // ── HMAC signature verification ───────────────────────────────────────────
+  // When ROLLFI_WEBHOOK_SECRET (or legacy CONVOY_WEBHOOK_SECRET) is set,
+  // enforce full HMAC verification — missing or invalid signature → 401.
+  // When neither secret is set, accept the event and emit a WARN on every
+  // request (all environments, including production).  This matches Rollfi's
+  // current behaviour: signing is disabled on their side, so no secret will
+  // ever be present.  Setting ROLLFI_WEBHOOK_SECRET later re-enables strict
+  // enforcement automatically with no code change.
   if (!CONVOY_WEBHOOK_SECRET) {
-    if (isProd) {
-      req.log.error("CONVOY_WEBHOOK_SECRET is not set in production — rejecting unverified Rollfi webhook");
-      res.status(401).json({ error: "Webhook signature verification not configured" });
-      return;
-    }
-    req.log.warn("CONVOY_WEBHOOK_SECRET not set — skipping signature verification (non-production mode)");
+    req.log.warn(
+      { path: req.path },
+      "Rollfi webhook accepted without signature verification — ROLLFI_WEBHOOK_SECRET not set (Rollfi signing disabled for this account)",
+    );
   } else {
     if (!signatureHeader) {
       req.log.warn({ path: req.path }, "Rollfi webhook rejected: missing x-convoy-signature header");
