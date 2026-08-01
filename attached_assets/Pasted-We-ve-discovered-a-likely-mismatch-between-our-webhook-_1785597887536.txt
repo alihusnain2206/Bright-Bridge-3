@@ -1,0 +1,25 @@
+We've discovered a likely mismatch between our webhook verification and Rollfi's actual behavior. Rollfi's team has confirmed to us that signed webhooks are switched OFF for our account — they send webhook events with NO signature. But per your earlier audit, our production webhook receiver hard-rejects (401) any request that's missing the x-convoy-signature header or when CONVOY_WEBHOOK_SECRET is unset. If both are true, every production webhook Rollfi has sent us since they pointed production at our URL has been rejected.
+
+STEP 1 — VERIFY FIRST (report only, no changes yet)
+Check the production rollfi_webhook_events table: how many events exist, and what's the most recent event date? (Rollfi flipped our production webhook destination on ~July 28.)
+Check production server/deployment logs for 401 responses on POST /api/rollfi/webhook — are incoming requests arriving and being rejected?
+Confirm whether CONVOY_WEBHOOK_SECRET is currently set in the production deployment environment, and whether it's set in the dev/workspace environment.
+Report findings before changing anything.
+STEP 2 — FIX (only if Step 1 confirms the rejection)
+
+Change the webhook verification logic in /api/rollfi/webhook (and the EasyTeam export endpoint if it shares the logic) to:
+
+If CONVOY_WEBHOOK_SECRET is set → enforce full HMAC verification exactly as today (missing/invalid signature → 401). No weakening of this path.
+If CONVOY_WEBHOOK_SECRET is NOT set → accept the event, but log a clear WARN on every event ("webhook accepted without signature verification — signing not enabled") in ALL environments including production. This matches Rollfi's current reality: they are sending unsigned events.
+
+This means enabling signing later is purely an env-var change: the moment we set the secret, enforcement resumes automatically with no code change.
+
+Do NOT remove or weaken the HMAC verification code itself — the secret-is-set path must remain exactly as strict as it is now.
+
+STEP 3 — CONFIRM END-TO-END
+
+After deploying the fix, we'll trigger a real event from Rollfi's dashboard. Confirm it arrives, passes through, and is written to rollfi_webhook_events in production with the correct companyId scoping.
+
+DELIVERABLE
+
+Report: Step 1 findings (event counts/dates, 401 evidence, env var status), what was changed, and confirmation the strict path is untouched.
