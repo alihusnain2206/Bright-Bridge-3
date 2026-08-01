@@ -1,0 +1,33 @@
+⚠️ AUDIT ONLY — DO NOT BUILD, MODIFY, REFACTOR, OR IMPLEMENT ANYTHING. This is a read-and-report task only. No code changes of any kind.
+
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist. We are planning to build the main owner Dashboard screen — the final assembly screen of the platform. Before any building happens, we need a complete audit of what already exists.
+
+CONTEXT
+
+The current owner dashboard (/dashboard/owner) is a simple quick-links + team access page. We plan to replace it with a full Payroll Command Center dashboard per the client's PRD. The design intent: KPI cards across the top (Payroll Status, Next Payroll Date, Employees to Pay, Cash Required, Payroll Exceptions, Compliance Score), a central Payroll Processing Center area, a right rail (Payroll Alerts + smart insights), and bottom widgets (Funding Forecast, Variance, Recent Activity).
+
+Critically: most of these widgets already exist elsewhere in the app (mainly the Payroll screen and People hub). The future build should be primarily an ASSEMBLY of existing components — "one component, many doors" — not a rebuild. This audit tells us what's reusable.
+
+AUDIT QUESTIONS
+
+For each item below, report: (a) does it exist, (b) exact file/component name, (c) is it reusable as-is on another page or is it coupled to its current page (props, context, fetch logic), (d) which endpoint(s) feed it.
+
+Payroll screen KPI cards (status, next payroll, cash required) — component names, data sources, reusability
+Rollfi Computed Totals display (gross/net/taxes/debit from getPayPeriodDetails) — where does this logic live, is there a shared hook/endpoint the dashboard can call
+Funding Forecast widget — component, reusable?
+Payroll Variance widget — component, reusable?
+Recent Activity widget (webhook events feed) — component, reusable, company-scoped?
+Funding Account info card — component, reusable?
+Compliance/Workforce Score rings (People hub) — component, reusable, and which endpoint computes the score
+Configuration Progress + Attention Required (Settings landing) — endpoints behind them, could Attention Required items also feed a dashboard "Payroll Alerts" panel?
+Employees to Pay data — is there an existing endpoint returning the current pay period roster with counts (active, new hires, excluded)?
+Exceptions data — what exists today that could aggregate into a Payroll Exceptions count: missing W-4/I-9 (compliance items?), missing punches (timesheet data?), unapproved hours (approvals queue?), invalid/missing bank accounts (Rollfi employee records?)? List which of these are queryable today and which have no data source.
+Current /dashboard/owner page — file name, what routes to it, what would be replaced vs kept (e.g. the Team Access panel — where should it move, or does it already exist in Settings → Users & Access making the dashboard copy redundant?)
+Layout/grid patterns — is there an existing dashboard-grid layout component (People hub? Payroll screen?) we should reuse for consistent card styling?
+ALSO REPORT
+Any widget above whose data would require NEW Rollfi API calls we don't currently make
+Any performance concern: the dashboard will load many widgets at once — do existing endpoints support being called together efficiently, or would we need a consolidated dashboard endpoint (similar to the existing /api/dashboard used by Settings)?
+Confirm all candidate endpoints are company-scoped
+REMINDER
+
+This is an AUDIT ONLY. Do not modify any files, do not install anything, do not refactor, do not "fix" anything you find along the way — even small things. Report findings as a structured list and stop there. We will plan the build in phases after reviewing your report.
