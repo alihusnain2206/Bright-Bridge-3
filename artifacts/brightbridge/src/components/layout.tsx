@@ -581,9 +581,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <div className="px-3 py-4 sm:px-6 sm:py-6">
             {children}
           </div>
-          <footer className="text-center py-4 text-xs text-muted-foreground border-t border-gray-100">
-            BrightBridge Assist · EasyTeam Embedded SDK Integration Test
-          </footer>
         </main>
 
       </div>
