@@ -134,5 +134,5 @@ export function buildDashboardSteps(p: DashboardStepsParams): DashboardStepsResu
 
   const completedCount = steps.filter(s => s.done).length;
 
-  return { steps, stepsAllDone, completedCount, totalCount: 10 };
+  return { steps, stepsAllDone, completedCount, totalCount: steps.length };
 }

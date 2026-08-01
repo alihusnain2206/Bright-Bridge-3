@@ -26,9 +26,14 @@ function step(result: ReturnType<typeof buildDashboardSteps>, id: string) {
 // ── totalCount ────────────────────────────────────────────────────────────────
 
 describe("totalCount", () => {
-  it("is always 10", () => {
-    expect(buildDashboardSteps(allDone).totalCount).toBe(10);
-    expect(buildDashboardSteps({ ...allDone, form8655UploadStatus: null }).totalCount).toBe(10);
+  it("equals the number of steps (derived, not hard-coded)", () => {
+    const result = buildDashboardSteps(allDone);
+    expect(result.totalCount).toBe(result.steps.length);
+  });
+
+  it("stays consistent regardless of upload status", () => {
+    const result = buildDashboardSteps({ ...allDone, form8655UploadStatus: null });
+    expect(result.totalCount).toBe(result.steps.length);
   });
 });
 

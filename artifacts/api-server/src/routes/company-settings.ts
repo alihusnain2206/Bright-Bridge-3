@@ -779,7 +779,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     // ── 6. Build configuration progress steps ─────────────────────────────────
     const payScheduleSet = (co.payScheduleAdded === true) && !!(co.payFrequency);
 
-    const { steps, stepsAllDone, completedCount } = buildDashboardSteps({
+    const { steps, stepsAllDone, completedCount, totalCount } = buildDashboardSteps({
       resolvedRollfiCompanyId,
       kybApproved,
       kybStatus,
@@ -893,7 +893,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 
     res.json({
       company: { id: co.id, name: co.name },
-      progress: { completedCount, totalCount: 10, steps },
+      progress: { completedCount, totalCount, steps },
       attention,
       registrationCount: activeRegStates.size,
       // Debug summary (stripped in prod UI)
