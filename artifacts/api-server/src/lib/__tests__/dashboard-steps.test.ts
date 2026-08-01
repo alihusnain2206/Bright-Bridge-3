@@ -150,6 +150,43 @@ describe("ready_to_run gate", () => {
   });
 });
 
+// ── stepsAllDone structural invariant ─────────────────────────────────────────
+//
+// `stepsAllDone` is derived directly from the prerequisite steps array, so any
+// step whose `done` flag is false automatically blocks the gate.  The test
+// below verifies the invariant itself: `stepsAllDone` must always equal
+// "every prerequisite step (i.e. every step except ready_to_run) is done".
+//
+// This catches a regression where a new step is added to the array but its
+// condition is somehow disconnected from the structural derivation — regardless
+// of whether an explicit boolean expression or a test case list is updated.
+
+describe("stepsAllDone structural invariant", () => {
+  const representativeParams: Array<[string, Partial<DashboardStepsParams>]> = [
+    ["all done",                              {}],
+    ["resolvedRollfiCompanyId is null",       { resolvedRollfiCompanyId: null }],
+    ["kybApproved is false",                  { kybApproved: false, kybStatus: "pending" }],
+    ["bankLinked is false",                   { bankLinked: false }],
+    ["payScheduleSet is false",               { payScheduleSet: false }],
+    ["gaps is non-empty",                     { gaps: [{ state: "CA" }] }],
+    ["employeeCount is 0",                    { employeeCount: 0 }],
+    ["notReadyEmpsCount is > 0",              { notReadyEmpsCount: 1 }],
+    ["form8655Signed is false",               { form8655Signed: false }],
+    ["form8655UploadStatus is not uploaded",  { form8655UploadStatus: "pending" }],
+  ];
+
+  it.each(representativeParams)(
+    "stepsAllDone === every prereq step done (%s)",
+    (_label, override) => {
+      const result = buildDashboardSteps({ ...allDone, ...override });
+      const prereqsDone = result.steps
+        .filter(s => s.id !== "ready_to_run")
+        .every(s => s.done);
+      expect(result.stepsAllDone).toBe(prereqsDone);
+    },
+  );
+});
+
 // ── completedCount ─────────────────────────────────────────────────────────────
 
 describe("completedCount", () => {

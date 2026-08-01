@@ -43,18 +43,11 @@ export interface DashboardStepsResult {
 export function buildDashboardSteps(p: DashboardStepsParams): DashboardStepsResult {
   const form8655Submitted = p.form8655UploadStatus === "uploaded";
 
-  const stepsAllDone =
-    !!p.resolvedRollfiCompanyId &&
-    p.kybApproved &&
-    p.bankLinked &&
-    p.payScheduleSet &&
-    p.gaps.length === 0 &&
-    p.employeeCount > 0 &&
-    p.notReadyEmpsCount === 0 &&
-    p.form8655Signed &&
-    form8655Submitted;
-
-  const steps: DashboardStep[] = [
+  // Build the prerequisite steps first so stepsAllDone can be derived
+  // structurally from them.  Any new step added here is automatically
+  // included in the gate — there is no separate boolean expression to keep
+  // in sync.
+  const prereqSteps: DashboardStep[] = [
     {
       id: "company_registered", number: 1, label: "Company registered",
       done: !!p.resolvedRollfiCompanyId,
@@ -124,6 +117,13 @@ export function buildDashboardSteps(p: DashboardStepsParams): DashboardStepsResu
             : "Form 8655 has not yet been submitted to the IRS filing service",
       linkTo: "/settings?tab=signatures",
     },
+  ];
+
+  // Derived structurally — no separate boolean expression to drift out of sync.
+  const stepsAllDone = prereqSteps.every(s => s.done);
+
+  const steps: DashboardStep[] = [
+    ...prereqSteps,
     {
       id: "ready_to_run", number: 10, label: "Ready to run payroll",
       done: stepsAllDone,
