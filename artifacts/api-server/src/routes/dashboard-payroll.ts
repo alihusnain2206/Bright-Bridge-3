@@ -344,6 +344,31 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     if (Array.isArray(items)) employeesToPay = items.length;
   }
 
+  // ── Augment history with the current pay period if it has an amount ─────────
+  // getProcessedPayperiodsDetails only returns fully ACH-processed payrolls.
+  // A submitted-but-not-yet-processed period carries payrollAmount in the
+  // getPayPeriod response but may not appear in the history list with an amount.
+  // Synthesise an entry so the Funding Forecast widget has data on the first run.
+  if (payPeriod && (payPeriod.payrollAmount as number | undefined)) {
+    const currentId = String(payPeriod.payPeriodId ?? "");
+    const alreadyPresent = currentId
+      ? history.some((h) => String(h.payPeriodId ?? "") === currentId)
+      : false;
+    if (!alreadyPresent) {
+      history = [
+        {
+          payPeriodId:   payPeriod.payPeriodId,
+          payBeginDate:  payPeriod.payBeginDate,
+          payEndDate:    payPeriod.payEndDate,
+          payDate:       payPeriod.payDate,
+          payrollAmount: payPeriod.payrollAmount,
+          payPeriodStatus: payPeriod.payPeriodStatus,
+        },
+        ...history,
+      ];
+    }
+  }
+
   const responseData: PayrollDashboardResponse = {
     payPeriod,
     details,
