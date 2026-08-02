@@ -683,6 +683,17 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
       expect(magic).toBe("%PDF");
     });
+
+    it("PDF bytes contain the signer name as legible text even when company has no EIN or address", async () => {
+      // The signed record always carries signerName regardless of sparse company
+      // data.  If buildForm8655Pdf silently crashes on null EIN/address and
+      // falls back to an empty page, the signer name would be missing.
+      // decompressedPdfContent inflates every FlateDecode stream so we can do
+      // a plain string assertion.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain(SIGNED_RECORD.signerName);
+    });
   });
 
   // ── Drawn signature image is preserved in the downloaded PDF ─────────────
