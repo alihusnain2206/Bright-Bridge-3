@@ -8,7 +8,7 @@ import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
-import { desc, eq, inArray, and } from "drizzle-orm";
+import { desc, eq, inArray, and, isNull, isNotNull } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 import crypto from "crypto";
@@ -5186,6 +5186,29 @@ router.get("/activity", async (req, res) => {
     .slice(0, limit);
 
   res.json({ events: merged });
+});
+
+// GET /unmatched-webhooks — webhook events with a rollfi_company_id but no matched company_id
+// These events arrived before (or without) a company being registered in our DB.
+router.get("/unmatched-webhooks", async (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const rows = await db
+      .select({
+        id:             rollfiWebhookEvents.id,
+        eventType:      rollfiWebhookEvents.eventType,
+        rollfiCompanyId: rollfiWebhookEvents.rollfiCompanyId,
+        receivedAt:     rollfiWebhookEvents.receivedAt,
+      })
+      .from(rollfiWebhookEvents)
+      .where(and(isNotNull(rollfiWebhookEvents.rollfiCompanyId), isNull(rollfiWebhookEvents.companyId)))
+      .orderBy(desc(rollfiWebhookEvents.receivedAt))
+      .limit(50);
+    res.json({ count: rows.length, events: rows });
+  } catch (err) {
+    req.log.error({ err }, "GET /unmatched-webhooks failed");
+    res.status(500).json({ error: "Failed to load unmatched webhook events" });
+  }
 });
 
 // GET /rollfi/webhook/events — return stored events (requires session)
