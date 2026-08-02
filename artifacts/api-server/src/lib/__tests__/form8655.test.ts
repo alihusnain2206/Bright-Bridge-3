@@ -97,6 +97,47 @@ function makeTransparentPng(width: number, height: number): string {
   ]).toString("base64");
 }
 
+/**
+ * Returns a base64-encoded 440×88 RGBA PNG that simulates a real stylus
+ * signature: the majority of pixels are fully transparent (canvas background)
+ * but a horizontal band of pixels through the centre of the image is fully
+ * opaque black (the ink stroke).  This is the realistic "mixed-alpha" case
+ * that a touch-screen signature canvas produces.
+ *
+ * Dimensions: 440×88 px  (typical 1× CSS canvas size for a signature pad)
+ * Opaque region: rows 30–57, columns 100–339  (a wide centre stroke)
+ * Scaling: ratio = min(220/440, 44/88) = 0.5  → drawW=220, drawH=44 (both limits)
+ */
+function makeMixedAlphaPng(): string {
+  const width  = 440;
+  const height = 88;
+  const sig    = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+  const ihdr   = Buffer.allocUnsafe(13);
+  ihdr.writeUInt32BE(width,  0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0; // RGBA
+
+  // Build raw image data: 1 filter byte + 4 bytes/pixel per row, all zero initially.
+  const rowBytes = 1 + width * 4;
+  const raw      = Buffer.alloc(rowBytes * height, 0);
+
+  // Paint a horizontal black stroke through the centre.
+  for (let row = 30; row <= 57; row++) {
+    for (let col = 100; col <= 339; col++) {
+      const offset = rowBytes * row + 1 + col * 4;
+      // R=0 G=0 B=0 A=255 → opaque black pixel
+      raw[offset + 3] = 255;
+    }
+  }
+
+  return Buffer.concat([
+    sig,
+    pngChunk("IHDR", ihdr),
+    pngChunk("IDAT", zlib.deflateSync(raw)),
+    pngChunk("IEND", Buffer.alloc(0)),
+  ]).toString("base64");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF content-stream inspector
 //
@@ -241,6 +282,12 @@ const PNG_TRANSPARENT_1x1 = makeTransparentPng(1, 1);
 // touch-screen signature pad sends when only a tiny area is tapped.
 // Scaling: ratio = min(220/440, 44/88) = 0.5 → drawW=220, drawH=44 (both limits)
 const PNG_TRANSPARENT_440x88 = makeTransparentPng(440, 88);
+// A 440×88 RGBA PNG with mixed alpha — most pixels are transparent but a
+// horizontal band through the centre is fully opaque (R=0 G=0 B=0 A=255).
+// This is the realistic case produced by a stylus drawing a single stroke on
+// a signature canvas.  Same pixel dimensions as PNG_TRANSPARENT_440x88, so
+// both axes hit the SIG_MAX_W/SIG_MAX_H limits at the same 0.5× scale factor.
+const PNG_MIXED_ALPHA_440x88 = makeMixedAlphaPng();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — text path (no drawn signature image)
@@ -604,6 +651,68 @@ describe("buildForm8655Pdf — full-size transparent canvas (440×88 all-transpa
   });
 
   it("signer name does NOT appear as typed text (full-canvas transparent image is still embedded, no fallback)", () => {
+    expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  // 440×88 → ratio = min(SIG_MAX_W/440, SIG_MAX_H/88) = min(0.5, 0.5) = 0.5
+  // → drawW = 220 = SIG_MAX_W, drawH = 44 = SIG_MAX_H (both limits hit exactly)
+  it(`drawn width is ≈ ${SIG_MAX_W} pt (width limit reached at 0.5× scale)`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeCloseTo(SIG_MAX_W, 0);
+  });
+
+  it(`drawn height is ≈ ${SIG_MAX_H} pt (height limit reached at 0.5× scale)`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeCloseTo(SIG_MAX_H, 0);
+  });
+
+  it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
+  });
+
+  it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — real mixed-alpha signature PNG (440×88, opaque ink + transparent bg)
+//
+// A real stylus signature produces a PNG where some pixels are opaque (the ink
+// strokes drawn on the canvas) and the rest are transparent (the canvas
+// background). This test verifies that buildForm8655Pdf:
+//   • embeds the PNG as an image (raw PDF contains /Image XObject)
+//   • takes the image path — does NOT fall back to typing the signer name
+//   • scales the image to fit within maxW=SIG_MAX_W / maxH=SIG_MAX_H pt
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildForm8655Pdf — real mixed-alpha signature PNG (440×88 px, opaque stroke + transparent bg)", () => {
+  let pdfBytes: Uint8Array;
+  let streams:  string[];
+
+  beforeAll(async () => {
+    pdfBytes = await buildForm8655Pdf({
+      ...BASE_DATA,
+      signatureImageBase64: PNG_MIXED_ALPHA_440x88,
+    });
+    streams = extractPdfStreams(pdfBytes);
+  });
+
+  it("produces valid PDF bytes (starts with %PDF)", () => {
+    expect(Buffer.from(pdfBytes.slice(0, 4)).toString("ascii")).toBe("%PDF");
+  });
+
+  it("raw PDF bytes contain an /Image XObject entry (image path taken, not text fallback)", () => {
+    expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
+  });
+
+  it(`an image is placed at the signature position (x≈${SIG_X}, y≈${SIG_Y})`, () => {
+    expect(hasSignatureImagePlacement(streams)).toBe(true);
+  });
+
+  it("signer name does NOT appear as typed text (drawn image replaces the typed overlay)", () => {
     expect(textInStreams("Jane Doe", streams)).toBe(false);
   });
 
