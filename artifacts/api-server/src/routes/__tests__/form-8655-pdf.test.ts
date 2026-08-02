@@ -560,6 +560,23 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
         expect.objectContaining({ taxpayerEin: DB_COMPANY.ein }),
       );
     });
+
+    it("PDF bytes contain the signer name as legible text (text-only fallback is readable)", async () => {
+      // pdf-lib compresses content streams with FlateDecode; decompressedPdfContent
+      // inflates every stream so we can assert the drawn text is present.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("Jane Doe");
+    });
+
+    it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
+      // signatureImage is absent from SIGNED_RECORD so the route takes the
+      // drawText() branch.  pdf-lib only writes '/Subtype /Image' when
+      // drawImage() is called; its absence confirms the text-only path.
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).not.toContain("/Image");
+    });
   });
 
   // ── Fallback path: Rollfi API throws ──────────────────────────────────────
@@ -610,6 +627,23 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
           cityStateZip: `${DB_COMPANY.city}, ${DB_COMPANY.state}, ${DB_COMPANY.zipcode}`,
         }),
       );
+    });
+
+    it("PDF bytes contain the signer name as legible text (text-only fallback is readable)", async () => {
+      // pdf-lib compresses content streams with FlateDecode; decompressedPdfContent
+      // inflates every stream so we can assert the drawn text is present.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("Jane Doe");
+    });
+
+    it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
+      // signatureImage is absent from SIGNED_RECORD so the route takes the
+      // drawText() branch.  pdf-lib only writes '/Subtype /Image' when
+      // drawImage() is called; its absence confirms the text-only path.
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).not.toContain("/Image");
     });
   });
 
