@@ -589,6 +589,24 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       expect(decompressed).toContain("Jane Doe");
     });
 
+    it("PDF bytes contain the signer title as legible text (DB-fallback title field is populated)", async () => {
+      // buildForm8655Pdf draws signerTitle via a separate drawText() call.
+      // Confirming it appears in the decompressed content stream catches any
+      // regression that accidentally blanks the title field in the DB-fallback path.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("CEO");
+    });
+
+    it("PDF bytes contain the formatted date as legible text (DB-fallback date field is populated)", async () => {
+      // signedAt "2026-07-01T12:00:00.000Z" → "07/01/2026".
+      // Confirming it appears in the decompressed content stream catches any
+      // regression that accidentally blanks the date field in the DB-fallback path.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("07/01/2026");
+    });
+
     it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
       // signatureImage is absent from SIGNED_RECORD so the route takes the
       // drawText() branch.  pdf-lib only writes '/Subtype /Image' when
@@ -655,6 +673,24 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       const res = await getPdf(makeApp());
       const decompressed = decompressedPdfContent(res.body as Buffer);
       expect(decompressed).toContain("Jane Doe");
+    });
+
+    it("PDF bytes contain the signer title as legible text (API-error fallback title field is populated)", async () => {
+      // buildForm8655Pdf draws signerTitle via a separate drawText() call.
+      // Confirming it appears in the decompressed content stream catches any
+      // regression that accidentally blanks the title field when the Rollfi API throws.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("CEO");
+    });
+
+    it("PDF bytes contain the formatted date as legible text (API-error fallback date field is populated)", async () => {
+      // signedAt "2026-07-01T12:00:00.000Z" → "07/01/2026".
+      // Confirming it appears in the decompressed content stream catches any
+      // regression that accidentally blanks the date field when the Rollfi API throws.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("07/01/2026");
     });
 
     it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
