@@ -66,7 +66,7 @@ export async function sendFormSigningLinkEmail(opts: {
 
   const transporter = createTransport();
   await transporter.sendMail({
-    from:    `BrightBridge <${SMTP_FROM}>`,
+    from:    SMTP_FROM,
     to,
     subject: `Action required: Sign Form ${formType}`,
     text,
@@ -112,7 +112,7 @@ export async function sendPasswordResetEmail(opts: {
 
   const transporter = createTransport();
   await transporter.sendMail({
-    from:    `BrightBridge <${SMTP_FROM}>`,
+    from:    SMTP_FROM,
     to,
     subject: "Reset your BrightBridge password",
     text,
