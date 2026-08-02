@@ -700,6 +700,54 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Empty-string signatureImage is normalised to undefined ───────────────
+  //
+  // The route uses `||` (falsy-coalescing) so that an empty string stored by a
+  // client bug is treated identically to NULL and does NOT reach pdf-lib.
+  // pdf-lib would throw a runtime error if it received "" as an image argument,
+  // returning HTTP 500 instead of a graceful text-only PDF.
+
+  describe("when the signed record has signatureImage: '' (empty string)", () => {
+    beforeEach(() => {
+      rollfiCreds.present = true;
+      // Queue signed form record with signatureImage explicitly set to ""
+      dbState.callQueue.push([{ ...SIGNED_RECORD, signatureImage: "" }]);
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      axiosMock.post.mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO });
+    });
+
+    it("returns HTTP 200 (does not crash the PDF builder)", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("response body is a valid PDF (starts with %PDF)", async () => {
+      const res = await getPdf(makeApp());
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+
+    it("passes signatureImageBase64: undefined to buildForm8655Pdf (not the empty string)", async () => {
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ signatureImageBase64: undefined }),
+      );
+    });
+
+    it("does not pass signatureImageBase64 as empty string or null", async () => {
+      await getPdf(makeApp());
+      const callArg = buildPdfSpy.mock.calls[0][0] as Record<string, unknown>;
+      expect(callArg.signatureImageBase64).not.toBe("");
+      expect(callArg.signatureImageBase64).not.toBe(null);
+    });
+
+    it("PDF bytes do NOT contain an /Image object (text-only path was taken)", async () => {
+      const res = await getPdf(makeApp());
+      const pdfText = (res.body as Buffer).toString("binary");
+      expect(pdfText).not.toContain("/Image");
+    });
+  });
+
   // ── Re-sign overwrites: downloaded PDF always reflects the latest image ───
 
   describe("when the drawn signature is overwritten by a second signing", () => {

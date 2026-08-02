@@ -1777,8 +1777,11 @@ router.get("/rollfi/companies/:companyId/form-8655.pdf", requireAuth, async (req
       signedAt,
       annual940,
       quarterly941,
-      // Re-use the stored drawn signature so the downloaded PDF matches what was signed
-      signatureImageBase64: signedRecord.signatureImage ?? undefined,
+      // Re-use the stored drawn signature so the downloaded PDF matches what was signed.
+      // Use || (falsy-coalescing) not ?? (nullish-coalescing) so that an empty string
+      // stored by a client bug is also normalised to undefined — pdf-lib would throw
+      // if it received "" as an image argument.
+      signatureImageBase64: signedRecord.signatureImage || undefined,
     });
   } catch (err) {
     req.log.error({ err }, "form-8655.pdf: PDF generation failed");
