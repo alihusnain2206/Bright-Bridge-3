@@ -4838,15 +4838,32 @@ async function loadEventsFromDb(log: { warn: (...a: unknown[]) => void }) {
   }
 }
 
-const KNOWN_COMPANY_IDS = ["ORG-SUNSHINE", "ORG-RAINBOW"];
-
-function resolveCompanyId(rollfiCompanyId: string | null): string | null {
+/**
+ * Resolve the internal company UUID from a Rollfi company ID.
+ *
+ * Searches the in-memory store first (fast path), then falls back to a DB
+ * lookup so every company on the platform is covered — not just those whose
+ * IDs are hard-coded.  Returns null when no match is found.
+ */
+async function resolveCompanyIdAsync(rollfiCompanyId: string | null): Promise<string | null> {
   if (!rollfiCompanyId) return null;
-  for (const cid of KNOWN_COMPANY_IDS) {
-    const rec = store.getRollfiCompany(cid);
-    if (rec?.rollfiCompanyId === rollfiCompanyId) return cid;
+  // Fast path: in-memory store (populated during boot and on company register)
+  const allCompanies = store.getCompanies();
+  for (const c of allCompanies) {
+    const rec = store.getRollfiCompany(c.id);
+    if (rec?.rollfiCompanyId === rollfiCompanyId) return c.id;
   }
-  return null;
+  // Slow path: DB lookup (handles companies not yet in the in-memory store)
+  try {
+    const [row] = await db
+      .select({ id: companiesTable.id })
+      .from(companiesTable)
+      .where(eq(companiesTable.rollfiCompanyId, rollfiCompanyId))
+      .limit(1);
+    return row?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // POST /rollfi/webhook — public endpoint called by Rollfi via Convoy.
@@ -4887,6 +4904,11 @@ router.post("/rollfi/webhook", async (req, res) => {
 
   const body = req.body as Record<string, unknown>;
 
+  // DEBUG: log the full raw payload so field names are visible in logs.
+  // This is intentionally verbose — it helps diagnose mismatches when Rollfi
+  // changes their payload structure without notice.
+  req.log.debug({ rawWebhookBody: body }, "Rollfi webhook raw payload");
+
   // Rollfi nests the event type at body.trigger.eventType — check that first,
   // then fall back to legacy flat fields for older event shapes.
   const trigger = body.trigger as Record<string, unknown> | undefined;
@@ -4897,15 +4919,37 @@ router.post("/rollfi/webhook", async (req, res) => {
     (body.eventType as string) ||
     "unknown";
 
-  const rollfiCompanyId =
-    (body.companyId as string) || (body.company_id as string) || null;
-  const payPeriodId =
-    (body.payPeriodId as string) || (body.pay_period_id as string) || null;
+  // Rollfi's live payloads nest company/period IDs at multiple levels.
+  // Priority order (most specific → least specific):
+  //   1. body.trigger.companyId / body.trigger.payPeriodId  (nested trigger object)
+  //   2. body.companyId / body.payPeriodId                  (flat top-level)
+  //   3. body.company_id / body.pay_period_id               (snake_case variants)
+  //   4. body.payload[0].companyId / body.payload[0].payPeriodId (first payload entry)
+  const payloadArr = (body.payload as Array<Record<string, unknown>> | undefined) ?? [];
+  const firstPayload = payloadArr[0] ?? {};
+  const rollfiCompanyId: string | null =
+    (trigger?.companyId as string | undefined) ||
+    (trigger?.company_id as string | undefined) ||
+    (body.companyId as string | undefined) ||
+    (body.company_id as string | undefined) ||
+    (firstPayload.companyId as string | undefined) ||
+    (firstPayload.company_id as string | undefined) ||
+    null;
+  const payPeriodId: string | null =
+    (trigger?.payPeriodId as string | undefined) ||
+    (trigger?.pay_period_id as string | undefined) ||
+    (body.payPeriodId as string | undefined) ||
+    (body.pay_period_id as string | undefined) ||
+    (firstPayload.payPeriodId as string | undefined) ||
+    (firstPayload.pay_period_id as string | undefined) ||
+    null;
+
+  const resolvedCompanyId = await resolveCompanyIdAsync(rollfiCompanyId);
 
   const event: RollfiWebhookEvent = {
     id: Date.now().toString(),
     eventType,
-    companyId: resolveCompanyId(rollfiCompanyId),
+    companyId: resolvedCompanyId,
     rollfiCompanyId,
     payPeriodId,
     payload: JSON.stringify(body),
