@@ -235,6 +235,12 @@ const PNG_RETINA = makeRgbPng(880, 176); // 2× retina of a 440×88 canvas
 // A 1×1 all-transparent RGBA PNG — simulates a near-blank canvas (one accidental tap).
 // Valid, non-zero dimensions, but carries no visible ink.
 const PNG_TRANSPARENT_1x1 = makeTransparentPng(1, 1);
+// A 440×88 all-transparent RGBA PNG — simulates a realistic full-size canvas
+// (e.g. 440×88 px viewport) where the user barely touches the surface. Pixels
+// are all alpha=0 but the image has full canvas dimensions, matching what a
+// touch-screen signature pad sends when only a tiny area is tapped.
+// Scaling: ratio = min(220/440, 44/88) = 0.5 → drawW=220, drawH=44 (both limits)
+const PNG_TRANSPARENT_440x88 = makeTransparentPng(440, 88);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — text path (no drawn signature image)
@@ -548,6 +554,69 @@ describe("buildForm8655Pdf — near-blank canvas (1×1 all-transparent RGBA PNG)
 
   it("signer name does NOT appear as typed text (near-blank image is still embedded, no fallback)", () => {
     expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
+  });
+
+  it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — full-size transparent canvas (440×88 all-transparent RGBA PNG)
+//
+// A realistic "accidental-tap" scenario: the user opens the signing panel on a
+// 440×88-px canvas, touches it once or not at all, and the client still sends
+// the full-resolution PNG (all pixels have alpha=0).  Unlike the 1×1 case,
+// these non-trivial dimensions should survive the zero-dimension guard AND be
+// scaled to exactly the SIG_MAX_W × SIG_MAX_H pt box (ratio = 0.5, so both
+// axes hit their limit simultaneously).  The image path must be taken — no
+// typed-name text fallback.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildForm8655Pdf — full-size transparent canvas (440×88 all-transparent RGBA PNG)", () => {
+  let pdfBytes: Uint8Array;
+  let streams:  string[];
+
+  beforeAll(async () => {
+    pdfBytes = await buildForm8655Pdf({
+      ...BASE_DATA,
+      signatureImageBase64: PNG_TRANSPARENT_440x88,
+    });
+    streams = extractPdfStreams(pdfBytes);
+  });
+
+  it("produces valid PDF bytes (starts with %PDF)", () => {
+    expect(Buffer.from(pdfBytes.slice(0, 4)).toString("ascii")).toBe("%PDF");
+  });
+
+  it("raw PDF bytes contain an /Image XObject entry (image path taken, not text fallback)", () => {
+    expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
+  });
+
+  it(`an image is placed at the signature position (x≈${SIG_X}, y≈${SIG_Y})`, () => {
+    expect(hasSignatureImagePlacement(streams)).toBe(true);
+  });
+
+  it("signer name does NOT appear as typed text (full-canvas transparent image is still embedded, no fallback)", () => {
+    expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  // 440×88 → ratio = min(SIG_MAX_W/440, SIG_MAX_H/88) = min(0.5, 0.5) = 0.5
+  // → drawW = 220 = SIG_MAX_W, drawH = 44 = SIG_MAX_H (both limits hit exactly)
+  it(`drawn width is ≈ ${SIG_MAX_W} pt (width limit reached at 0.5× scale)`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawW).toBeCloseTo(SIG_MAX_W, 0);
+  });
+
+  it(`drawn height is ≈ ${SIG_MAX_H} pt (height limit reached at 0.5× scale)`, () => {
+    const p = findSignatureDrawParams(streams)!;
+    expect(p.drawH).toBeCloseTo(SIG_MAX_H, 0);
   });
 
   it(`drawn width does not exceed maxW = ${SIG_MAX_W} pt`, () => {
