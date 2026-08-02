@@ -732,6 +732,50 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Fallback when the DB company row does not exist at all ───────────────
+  //
+  // The sparse-data tests above cover a row whose columns are null.  This block
+  // covers the case where the DB query for the companies table returns [] — the
+  // row is completely absent.  The route's `if (dbCo)` guard silently skips all
+  // company-data population when dbCo is undefined, leaving taxpayerName as "".
+  // buildForm8655Pdf replaces an empty taxpayerName with the "Company" placeholder
+  // (line: `taxpayerName.trim() || "Company"`), so the PDF must still render.
+  // Crucially, signerName comes from the signed-form record, not from the company
+  // row, so it must appear in the decompressed content stream regardless.
+
+  describe("when Rollfi is down and the DB company row is completely missing (query returns [])", () => {
+    beforeEach(() => {
+      rollfiCreds.present = false;
+      // signed form record → present (signer name comes from here)
+      dbState.callQueue.push([SIGNED_RECORD]);
+      // companies.rollfiCompanyId lookup → present (a rollfiCompanyId is found but
+      // Rollfi is unreachable, so the DB fallback path is entered)
+      dbState.callQueue.push([{ rid: "rollfi-co-001" }]);
+      // DB company fallback query → empty array (row does not exist)
+      dbState.callQueue.push([]);
+    });
+
+    it("returns HTTP 200 (PDF is generated even when the company row is missing)", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("response body starts with %PDF magic bytes (PDF is valid)", async () => {
+      const res = await getPdf(makeApp());
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+
+    it("decompressed PDF content contains the signer name from the signed record", async () => {
+      // signerName is sourced from companySignedForms, not the companies row.
+      // Even when the companies row is completely absent, signerName must still
+      // appear in the rendered PDF so the document is legally identifiable.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain(SIGNED_RECORD.signerName);
+    });
+  });
+
   // ── Drawn signature image is preserved in the downloaded PDF ─────────────
   //
   // Regression guard for the bug where `signatureImage` was omitted from the
