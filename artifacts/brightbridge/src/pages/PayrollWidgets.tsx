@@ -99,7 +99,8 @@ export interface PayrollWidgetsProps {
 
 export function PayrollWidgets({
   selectedCompanyId, history, currentPeriodDetails, payPeriod, companies,
-}: PayrollWidgetsProps) {
+  bankBalance, bankBalanceUpdatedAt,
+}: PayrollWidgetsProps & { bankBalance?: number | null; bankBalanceUpdatedAt?: string | null }) {
   const periods = history?.periods ?? [];
   const lastPeriodId = periods[0]?.payPeriodId;
 
@@ -128,6 +129,8 @@ export function PayrollWidgets({
           companies={companies}
           payPeriod={payPeriod}
           currentDetails={currentPeriodDetails}
+          bankBalance={bankBalance}
+          bankBalanceUpdatedAt={bankBalanceUpdatedAt}
         />
         <div className="lg:col-span-2">
           <RecentActivityWidget selectedCompanyId={selectedCompanyId} companies={companies} />

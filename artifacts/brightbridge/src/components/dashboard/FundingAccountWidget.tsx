@@ -5,12 +5,14 @@ import { fmtD, fmtDate } from "./helpers";
 import type { CompanyState, PayPeriod, PeriodDetailsResponse } from "./types";
 
 export function FundingAccountWidget({
-  selectedCompanyId, companies, payPeriod, currentDetails,
+  selectedCompanyId, companies, payPeriod, currentDetails, bankBalance, bankBalanceUpdatedAt,
 }: {
   selectedCompanyId: string;
   companies: CompanyState[];
   payPeriod: PayPeriod | null;
   currentDetails: PeriodDetailsResponse | undefined;
+  bankBalance?: number | null;
+  bankBalanceUpdatedAt?: string | null;
 }) {
   const company = companies.find((c) => c.id === selectedCompanyId);
   const isOnboarded = !!company?.rollfi;
@@ -60,23 +62,31 @@ export function FundingAccountWidget({
             </div>
           )}
 
-          <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
-            <Info className="h-3.5 w-3.5 text-white/25 mt-0.5 shrink-0" />
-            <p className="text-white/35 text-[10px] leading-relaxed">
-              Please verify your bank account has sufficient funds before approving payroll.
-              BrightBridge does not currently check your live balance automatically.
-            </p>
-          </div>
+          {/* Live balance */}
+          {bankBalance != null ? (
+            <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 space-y-0.5">
+              <p className="text-white/40 text-[10px] uppercase font-semibold tracking-wide">Bank Balance</p>
+              <p className="text-white font-bold text-lg leading-tight">
+                {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(bankBalance)}
+              </p>
+              {bankBalanceUpdatedAt && (
+                <p className="text-white/25 text-[10px]">
+                  Last updated {fmtDate(bankBalanceUpdatedAt)}
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-start gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2.5">
+              <Info className="h-3.5 w-3.5 text-white/25 mt-0.5 shrink-0" />
+              <p className="text-white/35 text-[10px] leading-relaxed">
+                Please verify your bank account has sufficient funds before approving payroll.
+              </p>
+            </div>
+          )}
 
           <button className="w-full py-2 rounded-lg border border-white/10 text-white/50 hover:text-white/70 hover:border-white/20 text-xs font-medium transition-colors flex items-center justify-center gap-1">
             Manage Funding Account <ChevronRight className="h-3 w-3" />
           </button>
-
-          <p className="text-center">
-            <span className="text-[9px] text-white/20 border border-white/10 rounded px-2 py-0.5">
-              Live Balance — Coming Soon
-            </span>
-          </p>
         </div>
       )}
     </WidgetCard>

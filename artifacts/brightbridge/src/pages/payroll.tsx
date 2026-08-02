@@ -923,6 +923,16 @@ export default function Payroll() {
     retry: false,
   });
 
+  // Bank balance — reuses the dashboard/payroll cache key so fetches are deduplicated
+  const { data: payrollDashData } = useQuery<{ bankBalance: number | null; bankBalanceUpdatedAt: string | null }>({
+    queryKey: ["dashboard-payroll", selectedCompanyId],
+    queryFn: () => api.get(`/dashboard/payroll${selectedCompanyId !== "all" ? `?companyId=${selectedCompanyId}` : ""}`),
+    enabled: tab === 2 && !!selectedCompanyId && selectedCompanyId !== "all",
+    staleTime: 60_000,
+    retry: false,
+    select: (d) => ({ bankBalance: d.bankBalance ?? null, bankBalanceUpdatedAt: d.bankBalanceUpdatedAt ?? null }),
+  });
+
   const activePeriodId = selectedHistoryPeriodId ?? payPeriod?.payPeriodId;
   const { data: payPeriodDetails } = useQuery<RollfiPeriodDetailsResponse>({
     queryKey: ["rollfi-period-details", selectedCompanyId, activePeriodId],
@@ -2137,6 +2147,8 @@ export default function Payroll() {
                   currentPeriodDetails={payPeriodDetails}
                   payPeriod={payPeriod}
                   companies={companies}
+                  bankBalance={payrollDashData?.bankBalance}
+                  bankBalanceUpdatedAt={payrollDashData?.bankBalanceUpdatedAt}
                 />
               </>
             )}

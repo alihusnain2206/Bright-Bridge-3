@@ -29,6 +29,7 @@ interface GapEntry {
 interface CompanyData {
   id: string;
   rollfiCompanyId?: string | null;
+  rollfi?: { rollfiCompanyId?: string | null } | null;
 }
 
 const STATE_NAMES: Record<string, string> = {
@@ -182,7 +183,7 @@ export default function SettingsHubPage() {
   });
 
   const company = companyResp?.companies?.find(c => c.id === companyId);
-  const hasRollfi = !!(company?.rollfiCompanyId);
+  const hasRollfi = !!(company?.rollfiCompanyId ?? company?.rollfi?.rollfiCompanyId);
 
   const setTab = (id: TabId) => navigate(`/settings?tab=${id}`, { replace: true });
 

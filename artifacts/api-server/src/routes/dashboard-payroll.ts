@@ -80,6 +80,10 @@ interface PayrollDashboardResponse {
    * Null if the company has no linked funding account or the call fails.
    */
   fundingSource: Record<string, unknown> | null;
+  /** Live bank account balance in dollars. Null when unavailable. */
+  bankBalance: number | null;
+  /** ISO timestamp of when Rollfi last refreshed the balance. Null when unavailable. */
+  bankBalanceUpdatedAt: string | null;
   employeesToPay: number | null;
   fetchedAt: string;
   errors: {
@@ -88,6 +92,7 @@ interface PayrollDashboardResponse {
     history?: string;
     companyTasks?: string;
     fundingSource?: string;
+    bankBalance?: string;
   };
 }
 
@@ -222,6 +227,57 @@ async function fetchFundingSource(rollfiCompanyId: string): Promise<Record<strin
   return active;
 }
 
+// Balance field names Rollfi might use inside a FundingSource or balance response
+const BALANCE_KEYS = ["balance", "currentBalance", "availableBalance", "bankBalance",
+  "balanceAmount", "totalBalance", "availableFunds", "available", "current", "accountBalance"];
+
+function extractBalance(obj: Record<string, unknown>): { balance: number | null; updatedAt: string | null } {
+  for (const key of BALANCE_KEYS) {
+    if (typeof obj[key] === "number") {
+      const ts = (obj.updatedAt ?? obj.lastUpdated ?? obj.balanceUpdatedAt ?? obj.timestamp ?? null) as string | null;
+      return { balance: obj[key] as number, updatedAt: ts };
+    }
+  }
+  return { balance: null, updatedAt: null };
+}
+
+async function fetchBankBalance(
+  rollfiCompanyId: string,
+  fundingSource: Record<string, unknown> | null,
+): Promise<{ balance: number | null; updatedAt: string | null }> {
+  // 1. Try to extract balance from the already-fetched FundingSource object
+  if (fundingSource) {
+    const from = extractBalance(fundingSource);
+    if (from.balance !== null) return from;
+  }
+
+  // 2. Try dedicated Rollfi balance endpoints
+  const attempts: Array<[string, Record<string, unknown>]> = [
+    ["/reports#getBalance",         { method: "getBalance",         companyId: rollfiCompanyId }],
+    ["/reports#getBankBalance",     { method: "getBankBalance",     companyId: rollfiCompanyId }],
+    ["/reports#getCompanyBalance",  { method: "getCompanyBalance",  companyId: rollfiCompanyId }],
+    ["/reports#getAccountBalance",  { method: "getAccountBalance",  companyId: rollfiCompanyId }],
+  ];
+
+  for (const [path, body] of attempts) {
+    try {
+      const r = await axios.post(`${getBaseUrl()}${path}`, body, { headers: rollfiHeaders() });
+      const d = r.data as Record<string, unknown>;
+      const from = extractBalance(d);
+      if (from.balance !== null) return from;
+      // Also check one level nested (e.g. d.data or d.balance object)
+      for (const v of Object.values(d)) {
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          const nested = extractBalance(v as Record<string, unknown>);
+          if (nested.balance !== null) return nested;
+        }
+      }
+    } catch { /* try next */ }
+  }
+
+  return { balance: null, updatedAt: null };
+}
+
 async function fetchCompanyTasks(rollfiCompanyId: string) {
   const r = await axios.post(
     `${getBaseUrl()}/reports#getCompanyTask`,
@@ -336,6 +392,19 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     req.log.warn({ err: fundingResult.reason, companyId }, "dashboard/payroll: fundingSource fetch failed");
   }
 
+  // ── Bank balance — probe FundingSource fields then dedicated endpoints ──────
+  let bankBalance: number | null = null;
+  let bankBalanceUpdatedAt: string | null = null;
+  try {
+    const bal = await fetchBankBalance(rollfiCompanyId, fundingSource);
+    bankBalance = bal.balance;
+    bankBalanceUpdatedAt = bal.updatedAt;
+    req.log.info({ bankBalance, bankBalanceUpdatedAt, companyId }, "dashboard/payroll: bankBalance resolved");
+  } catch (err) {
+    errors.bankBalance = String(err);
+    req.log.warn({ err, companyId }, "dashboard/payroll: bankBalance fetch failed");
+  }
+
   // ── Derive employeesToPay from details payrollLineItems ──────────────────
   let employeesToPay: number | null = null;
   if (details) {
@@ -375,6 +444,8 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     history,
     companyTasks,
     fundingSource,
+    bankBalance,
+    bankBalanceUpdatedAt,
     employeesToPay,
     fetchedAt,
     errors,

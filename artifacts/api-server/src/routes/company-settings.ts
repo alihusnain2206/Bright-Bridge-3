@@ -729,6 +729,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     let kybStatusFromProvider: string | null = null;
     let bankLinked: boolean = co.bankAccountAdded ?? false;
 
+    let rollfiTasksFetched = false;
     if (resolvedRollfiCompanyId) {
       try {
         const r = await axios.post(
@@ -738,6 +739,7 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
         );
         const raw = r.data as Record<string, unknown>;
         rollfiTasks = (raw.tasks ?? []) as Array<{ task: string; description: string }>;
+        rollfiTasksFetched = true;
         const kybTask  = rollfiTasks.find(t => t.task === "KYB verification");
         const bankTask = rollfiTasks.find(t => t.task === "Connect bank account");
         if (!kybTask) {
@@ -855,8 +857,14 @@ router.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       });
     }
 
-    // d. IRS Form 8655 — distinguish not-signed vs signed-but-not-uploaded
-    if (!form8655Signed) {
+    // d. IRS Form 8655 — only warn if Rollfi itself lists it as an outstanding task
+    //    (or if we couldn't reach Rollfi at all, to stay conservative).
+    //    Suppresses the notification when Rollfi considers 8655 already done.
+    const rollfi8655Task = rollfiTasks.some(t =>
+      /8655/i.test(t.task) || /8655/i.test(t.description ?? "")
+    );
+    const show8655Warning = !form8655Signed && (!rollfiTasksFetched || rollfi8655Task);
+    if (show8655Warning) {
       attention.push({
         id: "form_8655_unsigned",
         severity: "high",

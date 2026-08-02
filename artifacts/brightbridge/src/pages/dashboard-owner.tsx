@@ -67,6 +67,10 @@ interface PayrollDashboardData {
   companyTasks: { tasks: Array<{ task: string; description: string }>; kybStatus: string; bankLinked: boolean } | null;
   /** Active funding source from Rollfi getCompanyInfo → FundingSources[]. */
   fundingSource: Record<string, unknown> | null;
+  /** Live bank balance in dollars from Rollfi, or null if unavailable. */
+  bankBalance: number | null;
+  /** ISO timestamp of when Rollfi last refreshed the balance. */
+  bankBalanceUpdatedAt: string | null;
   employeesToPay: number | null;
   fetchedAt: string;
   errors: Record<string, string | undefined>;
@@ -212,6 +216,8 @@ export default function OwnerDashboard() {
     complianceScore >= 60   ? "Good" : "Needs Attention";
 
   const bankLinked = payrollData?.companyTasks?.bankLinked ?? false;
+  const bankBalance = payrollData?.bankBalance ?? null;
+  const bankBalanceUpdatedAt = payrollData?.bankBalanceUpdatedAt ?? null;
 
   // Readiness checklist
   const readinessItems = [
@@ -287,6 +293,44 @@ export default function OwnerDashboard() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Bank Balance Hero (shown when Rollfi returns a live balance) ─────── */}
+      {bankBalance != null && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {/* Bank Balance — primary */}
+          <div className="bg-white rounded-2xl border shadow-sm px-6 py-5 flex flex-col justify-between sm:col-span-1">
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1">Bank Balance</p>
+            <p className="text-3xl font-bold text-gray-900 leading-tight">
+              {fmtCurrency(bankBalance)}
+            </p>
+            {bankBalanceUpdatedAt && (
+              <p className="text-gray-400 text-[11px] mt-2">
+                Last updated {fmtDate(bankBalanceUpdatedAt)}
+              </p>
+            )}
+          </div>
+          {/* Next payroll debit */}
+          <div className="bg-white rounded-2xl border shadow-sm px-6 py-5 flex flex-col justify-between">
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1">Next Payroll</p>
+            <p className="text-3xl font-bold text-gray-900 leading-tight">
+              {fmtCurrency(cashRequired)}
+            </p>
+            {nextPayDate && (
+              <p className="text-gray-400 text-[11px] mt-2">Debit on {fmtDate(nextPayDate)}</p>
+            )}
+          </div>
+          {/* Last payroll */}
+          <div className="bg-white rounded-2xl border shadow-sm px-6 py-5 flex flex-col justify-between">
+            <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1">Last Payroll</p>
+            <p className="text-3xl font-bold text-gray-900 leading-tight">
+              {history.length > 0 ? fmtCurrency(history[0].payrollAmount as number ?? null) : "—"}
+            </p>
+            {history.length > 0 && history[0].payDate && (
+              <p className="text-gray-400 text-[11px] mt-2">For {fmtDate(history[0].payDate as string)}</p>
+            )}
+          </div>
         </div>
       )}
 

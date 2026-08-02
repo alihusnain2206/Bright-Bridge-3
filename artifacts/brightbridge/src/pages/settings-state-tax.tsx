@@ -23,6 +23,7 @@ interface GapEntry {
 interface CompanyData {
   id: string;
   rollfiCompanyId?: string | null;
+  rollfi?: { rollfiCompanyId?: string | null } | null;
 }
 
 // US state code → full name (used for human-readable gap messages)
@@ -101,7 +102,7 @@ export default function SettingsStateTaxPage() {
   });
 
   const company = companyResp?.companies?.find(c => c.id === companyId);
-  const hasRollfi = !!(company?.rollfiCompanyId);
+  const hasRollfi = !!(company?.rollfiCompanyId ?? company?.rollfi?.rollfiCompanyId);
 
   return (
     <div className="max-w-3xl space-y-6">
