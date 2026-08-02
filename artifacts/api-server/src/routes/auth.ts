@@ -154,13 +154,13 @@ router.post("/auth/forgot-password", async (req, res) => {
 
   // ── 2. Send the email ─────────────────────────────────────────
   try {
-    const resetLink = APP_URL
-      ? `${APP_URL}/reset-password?token=${token}`
-      : `https://your-app/reset-password?token=${token}`;
-
     if (!APP_URL) {
-      req.log.warn({ userId: user.id }, "forgot-password: APP_URL not set — reset link uses placeholder domain");
+      req.log.error({ userId: user.id }, "forgot-password: APP_URL environment variable is not set — cannot build reset link; email not sent. Set APP_URL to the production base URL (e.g. https://app.brightbridgeassist.com).");
+      res.json(ok);
+      return;
     }
+
+    const resetLink = `${APP_URL}/reset-password?token=${token}`;
 
     await sendPasswordResetEmail({ to: user.email, name: user.name, resetLink });
     req.log.info({ userId: user.id }, "forgot-password: reset email sent");
