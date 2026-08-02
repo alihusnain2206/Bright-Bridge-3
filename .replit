@@ -44,3 +44,7 @@ APP_URL = "https://app.brightbridgeassist.com"
 
 [userenv.production]
 APP_URL = "https://app.brightbridgeassist.com"
+SMTP_FROM = "BrightBridge Assist <noreply@brightbridgeassist.com>"
+SMTP_HOST = "smtp.resend.com"
+SMTP_PORT = "465"
+SMTP_USER = "resend"
