@@ -489,6 +489,26 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       expect(decompressed).toContain("Jane Doe");
     });
 
+    it("PDF bytes contain the signer title as legible text (text-only title field is populated)", async () => {
+      // buildForm8655Pdf draws signerTitle at x=322, y=70 via a separate drawText()
+      // call.  A bug (wrong variable, empty string, missing call) would produce a
+      // blank title field silently.  Decompressing and checking the content stream
+      // confirms the value reaches the PDF.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("CEO");
+    });
+
+    it("PDF bytes contain the formatted date as legible text (text-only date field is populated)", async () => {
+      // buildForm8655Pdf draws formatDate(signedAt) at x=466, y=70.
+      // signedAt "2026-07-01T12:00:00.000Z" → "07/01/2026".
+      // A bug in formatDate or a wrong variable reference would produce a blank
+      // date field silently.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain("07/01/2026");
+    });
+
     it("PDF bytes do NOT contain an /Image object (text-only path was taken, not image path)", async () => {
       // When no signature image is provided, buildForm8655Pdf must take the
       // drawText() branch.  pdf-lib only writes '/Subtype /Image' into the xobject
