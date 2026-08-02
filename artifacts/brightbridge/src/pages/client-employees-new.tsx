@@ -224,7 +224,7 @@ export default function ClientEmployeesNew() {
     firstName: "", lastName: "", email: "", phone: "",
     position: "", employmentType: "Full Time (30+ Hours per week)", workerType: "W2", startDate: today(),
     department: "", managerId: "", managerName: "",
-    payType: "hourly", wageAmount: 18, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
+    payType: "hourly", wageAmount: 0, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
     ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "NJ", homeZip: "",
     w4FilingStatus: "Single", w4MultipleJobs: false, w4Dependents: 0, w4ExtraWithholding: 0,
     stateW4Fields: {},
@@ -489,7 +489,7 @@ export default function ClientEmployeesNew() {
           <ChevronLeft className="h-4 w-4" />Back to {company?.name ?? "Client"}
         </Link>
         <h1 className="text-2xl font-bold" style={{ color: NAVY }}>Add Employee</h1>
-        {company && <p className="text-sm text-gray-500 mt-0.5">For: <strong>{company.name}</strong> · Step {step} of 4 — {STEPS[step - 1].label}</p>}
+        <p className="text-sm text-gray-500 mt-0.5">{company ? <><span>For: <strong>{company.name}</strong> · </span></> : ""}Step {step} of 4 — {STEPS[step - 1].label}</p>
       </div>
 
       {/* Step indicator */}
@@ -669,6 +669,7 @@ export default function ClientEmployeesNew() {
                       set("payType", value);
                       if (value === "salary") set("overtimeEligible", false);
                       else set("overtimeEligible", true);
+                      set("wageAmount", 0);
                     }}
                   />
                   {label}
@@ -679,7 +680,19 @@ export default function ClientEmployeesNew() {
               <Label>{form.payType === "hourly" ? "Hourly Rate" : "Annual Salary"} ($ USD) *</Label>
               <div className="flex items-center gap-2">
                 <span className="text-gray-400">$</span>
-                <Input value={form.wageAmount} onChange={(e) => set("wageAmount", parseFloat(e.target.value) || 0)} type="number" step={form.payType === "hourly" ? "0.01" : "1"} min="0" placeholder={form.payType === "hourly" ? "18.00" : "52000"} className="max-w-[160px]" />
+                <Input
+                  value={form.wageAmount === 0 ? "" : form.wageAmount}
+                  onChange={(e) => {
+                    const raw = e.target.value.replace(/^0+(?=\d)/, "");
+                    set("wageAmount", raw === "" ? 0 : parseFloat(raw) || 0);
+                  }}
+                  onBlur={(e) => {
+                    const v = parseFloat(e.target.value);
+                    if (!isNaN(v)) set("wageAmount", v);
+                  }}
+                  type="number" step={form.payType === "hourly" ? "0.01" : "1"} min="0"
+                  placeholder={form.payType === "hourly" ? "e.g. 19.00" : "e.g. 52000"}
+                  className="max-w-[160px]" />
                 <span className="text-gray-400 text-sm">{form.payType === "hourly" ? "/hr" : "/yr"}</span>
               </div>
             </div>
@@ -726,16 +739,18 @@ export default function ClientEmployeesNew() {
                     value={form.ssn}
                     onChange={(e) => { set("ssn", e.target.value); if (step3Attempted) setStep3Attempted(false); }}
                     placeholder="XXX-XX-XXXX"
-                    type={showSsn ? "text" : "password"}
-                    className={`pr-9 ${step3Attempted && !form.ssn.replace(/\D/g, "") ? "border-red-500 focus-visible:ring-red-400" : ""}`}
+                    type="text"
+                    autoComplete="off"
+                    data-1p-ignore
+                    className={`pr-9 ${step3Attempted && form.ssn.replace(/\D/g, "").length !== 9 ? "border-red-500 focus-visible:ring-red-400" : ""}`}
                   />
                   <button type="button" onClick={() => setShowSsn(!showSsn)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
                     {showSsn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
-                {step3Attempted && !form.ssn.replace(/\D/g, "") && (
+                {step3Attempted && form.ssn.replace(/\D/g, "").length !== 9 && (
                   <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3" />SSN is required for payroll setup
+                    <AlertTriangle className="h-3 w-3" />{form.ssn.replace(/\D/g, "").length === 0 ? "SSN is required for payroll setup" : "SSN must be exactly 9 digits"}
                   </p>
                 )}
               </div>
@@ -867,7 +882,7 @@ export default function ClientEmployeesNew() {
           {step < 4 ? (
             <Button
               onClick={() => {
-                if (step === 3 && !form.ssn.replace(/\D/g, "")) {
+                if (step === 3 && form.ssn.replace(/\D/g, "").length !== 9) {
                   setStep3Attempted(true);
                   return;
                 }

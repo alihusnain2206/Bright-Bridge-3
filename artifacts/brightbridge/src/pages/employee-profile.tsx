@@ -563,7 +563,9 @@ function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: strin
         <InfoRow label="Overtime Eligible" value={emp.overtimeEligible === true ? "Yes" : emp.overtimeEligible === false ? "No" : null} />
         {emp.rollfiUserId && (
           <div className="mt-2 pt-2 border-t border-gray-50">
-            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">Payroll Connected</span>
+            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${emp.kycStatus === "verified" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"}`}>
+              {emp.kycStatus === "verified" ? "Payroll Connected" : "Payroll Registered — KYC Pending"}
+            </span>
           </div>
         )}
       </Card>
@@ -599,6 +601,7 @@ interface ComplianceItemP { id: string; type: string; name: string; status: stri
 
 const PAYROLL_ITEMS = [
   { type: "w4",             label: "W-4 Form" },
+  { type: "state_w4",       label: "State Tax Form" },
   { type: "direct_deposit", label: "Direct Deposit" },
   { type: "i9",             label: "I-9 Verification" },
 ];

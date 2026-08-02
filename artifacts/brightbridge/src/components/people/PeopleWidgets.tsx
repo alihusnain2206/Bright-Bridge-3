@@ -52,7 +52,10 @@ function scoreColor(s: number) {
 }
 
 function relTime(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
+  if (!iso) return "—";
+  const ms = new Date(iso).getTime();
+  if (isNaN(ms)) return "—";
+  const diff = Date.now() - ms;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -62,7 +65,10 @@ function relTime(iso: string) {
 }
 
 function fmtDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 // ── Pipeline Widget ────────────────────────────────────────────

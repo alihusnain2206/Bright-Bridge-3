@@ -1,0 +1,205 @@
+A QA regression test verified your 
+previous fixes. Several did NOT land or 
+were only fixed on one surface. This 
+prompt lists each remaining defect WITH 
+the tester's evidence. For EACH fix: 
+implement it, then VERIFY it yourself by 
+reproducing the tester's exact steps, and 
+report what you observed — do not report 
+"done" without reproducing the fix 
+working.
+
+SCOPE: frontend/form/status fixes only. 
+Do NOT touch the Rollfi call sequence, 
+payroll math, KYC/KYB logic, or EasyTeam.
+
+==========================================
+CRITICAL SECURITY (fix first)
+==========================================
+
+FIX 1 (NEW-C1) — Company wizard owner SSN 
+captures the admin password:
+On Add Company Step 3 (Owner Details), 
+the SSN field is type="password" with no 
+autocomplete attribute. Chrome's password 
+manager fills it with the logged-in 
+admin's password (verified: it contained 
+"Admin123!"), treating the adjacent DOB 
+field as the username (DOB contained the 
+admin's email).
+- Stop using type="password" for SSN. Use 
+  a masked text input with an explicit 
+  reveal toggle.
+- Set autocomplete="off" (or 
+  "new-password" where needed) on EVERY 
+  sensitive input across BOTH wizards and 
+  ALL forms: SSN, DOB, bank account 
+  number, routing number, EIN. The 
+  previous fix only covered the employee 
+  wizard — apply the same treatment to 
+  the company wizard, owner details, and 
+  any other surface.
+- Add the same 9-digit SSN format 
+  validation to the owner SSN field.
+
+FIX 2 (NEW-C2) — Create Owner Login form 
+pre-fills the super admin's credentials:
+The post-creation "Create Owner Login" 
+panel arrived with Email = the super 
+admin's email and Password = the super 
+admin's password (autofilled), while Full 
+Name was empty.
+- Pre-fill Full Name and Email from the 
+  OWNER DETAILS entered in wizard Step 3 
+  (Karen Mitchell's data), NOT from the 
+  browser.
+- autocomplete="off" on these fields; 
+  generate a random temporary password 
+  server-side shown once (not a fixed 
+  default, not plaintext editable).
+- Also fix NEW-M7: after Cancel, provide 
+  a visible way to re-open the Create 
+  Owner Login panel (e.g. a button on the 
+  client overview "Create owner login").
+
+==========================================
+DATA CORRUPTION (verified still broken)
+==========================================
+
+FIX 3 (R2) — SSN accepts arbitrary text:
+"abc123" was accepted into the employee 
+SSN field, retained on blur, displayed 
+unmasked, and the wizard advanced to the 
+next step. Enforce: digits only, exactly 
+9 after stripping dashes, block Next 
+with a clear inline error when invalid. 
+Apply to employee SSN AND owner SSN.
+
+FIX 4 (R3) — Salary carryover:
+Typing hourly rate 19.00 then switching 
+to Salary (Annual) produced Annual Salary 
+$19.00/yr. CLEAR the wage amount field 
+whenever pay type changes (both 
+directions). Verify by reproducing the 
+tester's exact sequence.
+
+FIX 5 (R4) — Leading zeros:
+Triple-click + Delete leaves a residual 
+0; typing produces "019.00" / "066000". 
+Fix the numeric inputs so clear-and-
+retype yields clean values; strip leading 
+zeros on input/blur. Applies to hourly 
+rate, annual salary, dependents amount.
+Also FIX NEW-L3: remove the magic default 
+"18" pre-filled in Hourly Rate — it 
+should start empty.
+
+FIX 6 (R5) — Late re-render discards 
+input:
+Typing into First Name immediately on 
+employee Step 1 load is wiped when the 
+header re-renders (~2s later, when "For: 
+[Company] · Step 1 of N" appears). Fix 
+the layout shift / preserve input: render 
+the header context on initial load or 
+ensure the re-render never resets form 
+state. Verify by typing immediately on 
+load.
+
+==========================================
+STATUS TRUTH (the lying indicators — 
+fix as ONE derived state, not per-widget 
+patches)
+==========================================
+
+FIX 7 (R6/R7/R8/R9 cluster) — Create ONE 
+derived provisioning state per employee 
+from the ACTUAL Rollfi call results 
+(e.g. kycStatus + bankAccountAdded 
+outcomes stored at provisioning time), 
+and make EVERY surface render from it:
+
+- Job & Pay tab: currently shows 
+  "Payroll Connected", "Payroll Provider: 
+  Synced ✓", "Bank Account: Added ✓" even 
+  though initiateUserKyc and 
+  addUserBankAccount FAILED. Must show 
+  failed/incomplete state.
+- Onboarding task "Direct Deposit Setup": 
+  marked Completed even though the bank 
+  call was REJECTED. Only auto-complete 
+  when addUserBankAccount succeeded. Also 
+  correct the compliance item + company 
+  compliance rollup currently showing 
+  Direct Deposit 100%.
+- Client Payroll Status page: all green 
+  with no KYB row and no warning about 
+  failed employees. Add a truthful 
+  employee-provisioning summary (e.g. "2 
+  employees pending verification") and a 
+  KYB status row.
+- Company bank contradiction: 
+  confirmation page says "Connect company 
+  bank account" (unchecked) while 
+  dashboard says "connected ✓". Pick the 
+  real status and render it consistently.
+
+FIX 8 (NEW-H2) — State Tax Form 
+contradiction:
+Onboarding tab says "State Tax Form — 
+Completed" while the Compliance tab says 
+"STATE W4 0/1 — not started" on the same 
+employee. The state W-4 WAS submitted in 
+the wizard. Sync the compliance item with 
+the task completion (this is the 
+task→compliance linking that exists for 
+other items — find why State Tax Form is 
+not linked).
+
+==========================================
+SMALLER VERIFIED DEFECTS
+==========================================
+
+FIX 9 (R10) — Salaried employees show 
+"$0.00/hr" in the client Employees 
+roster; Job & Pay shows the correct 
+$66,000/yr. Fix the roster's rate 
+formatter to render salary employees as 
+"$X/yr".
+
+FIX 10 (R11 + NEW-M3) — Active-count 
+inconsistency: /people says "Active 
+Employees 2" while both employees are 
+Onboarding and the client tab says "0 
+active". Find the source of each count 
+and derive all three from actual status. 
+(The manager dropdown correctly filters 
+to active; the counts lying is the bug.)
+
+FIX 11 (R14) — Activity timestamps 
+render "NaNd ago · Invalid Date" on 
+employee activity rows. Fix the date 
+parsing/formatting.
+
+FIX 12 (NEW-M1/NEW-M2) — 
+/clients/[ORG-ID]/employees returns a 
+router 404 (route unregistered), and the 
+roster's ACTIONS column is empty with 
+non-clickable rows. Register the route 
+and make roster rows link to the 
+employee profile.
+
+FIX 13 (NEW-H1) — First Pay Date 
+validation: a pay date BEFORE the pay 
+period start was accepted despite helper 
+text saying it must be after the period 
+ends. Enforce the stated rule.
+
+==========================================
+FOR EACH FIX: report the file(s) changed, 
+what you changed, AND the reproduction 
+you performed to verify it now behaves 
+correctly. If you cannot verify one, say 
+so explicitly rather than marking it 
+done.
+==========================================

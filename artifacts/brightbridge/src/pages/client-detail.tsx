@@ -28,7 +28,7 @@ interface Company {
 interface Employee {
   id: string; companyId: string; firstName: string; lastName: string; email: string;
   phone: string; position: string; employmentType: string; workerType: string;
-  payType: string; hourlyWage: number; status: string;
+  payType: string; hourlyWage: number; annualSalary?: number | null; status: string;
   easyteamSynced: boolean; rollfiUserId?: string; kycStatus?: string; bankAccountAdded: boolean;
   syncStatus: string; createdAt: string;
 }
@@ -155,8 +155,12 @@ const STATUS_CFG: Record<string, { label: string; color: string; dot: string }> 
 };
 
 
-function formatWage(cents: number): string {
-  return `$${(cents / 100).toFixed(2)}/hr`;
+function formatWage(emp: Pick<Employee, "payType" | "hourlyWage" | "annualSalary">): string {
+  if (emp.payType === "salary" || emp.payType?.startsWith("salary_")) {
+    if (!emp.annualSalary) return "$—/yr";
+    return `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr`;
+  }
+  return `$${((emp.hourlyWage ?? 0) / 100).toFixed(2)}/hr`;
 }
 
 function SyncDot({ done, label }: { done: boolean; label: string }) {
@@ -442,7 +446,7 @@ function EmployeesTab({ company }: { company: Company }) {
                         <div className="text-[11px] text-gray-400">{emp.position}</div>
                       </td>
                       <td className="px-4 py-3"><span className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] font-medium">{emp.workerType}</span></td>
-                      <td className="px-4 py-3 text-gray-700 font-mono text-xs">{formatWage(emp.hourlyWage)}</td>
+                      <td className="px-4 py-3 text-gray-700 font-mono text-xs">{formatWage(emp)}</td>
                       <td className="px-4 py-3"><SyncDot done={emp.easyteamSynced} label="ET" /></td>
                       <td className="px-4 py-3"><SyncDot done={hasRollfi} label="Rollfi" /></td>
                       <td className="px-4 py-3"><SyncDot done={emp.kycStatus === "verified"} label="KYC" /></td>
@@ -481,6 +485,12 @@ function EmployeesTab({ company }: { company: Company }) {
                               </button>
                             </>
                           )}
+                          <a
+                            href={`/people/employee/${emp.id}`}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-[#284362] hover:text-[#1a2f47] border border-[#284362]/30 hover:border-[#284362] rounded-lg px-2.5 py-1 transition-colors"
+                          >
+                            View Profile
+                          </a>
                           {!hasRollfi && !isTerminated && (
                             <span className="text-[10px] text-gray-300 italic">Not on Rollfi</span>
                           )}

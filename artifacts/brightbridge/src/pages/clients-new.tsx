@@ -96,6 +96,8 @@ export default function ClientsNew() {
   const [, navigate] = useLocation();
   const [step, setStep] = useState(1);
   const [showSsn, setShowSsn] = useState(false);
+  const [ownerSsnAttempted, setOwnerSsnAttempted] = useState(false);
+  const [payDateError, setPayDateError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [created, setCreated] = useState<{ id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number } | null>(null);
@@ -323,16 +325,16 @@ export default function ClientsNew() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label className="text-xs text-gray-500">Full Name</Label>
-                    <Input value={loginForm.name} onChange={(e) => setLoginForm((f) => ({ ...f, name: e.target.value }))} className="h-8 text-sm" placeholder="Jane Smith" />
+                    <Input value={loginForm.name} onChange={(e) => setLoginForm((f) => ({ ...f, name: e.target.value }))} className="h-8 text-sm" placeholder="Jane Smith" autoComplete="off" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs text-gray-500">Email (login)</Label>
-                    <Input value={loginForm.email} onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" />
+                    <Input value={loginForm.email} onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" autoComplete="off" />
                   </div>
                   <div className="col-span-2 space-y-1">
-                    <Label className="text-xs text-gray-500">Password</Label>
+                    <Label className="text-xs text-gray-500">Temporary Password <span className="font-normal text-gray-400">(auto-generated — share once)</span></Label>
                     <div className="relative">
-                      <Input type={showLoginPw ? "text" : "password"} value={loginForm.password} onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9" placeholder="Min 8 characters" />
+                      <Input type={showLoginPw ? "text" : "password"} value={loginForm.password} onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9 font-mono" autoComplete="new-password" />
                       <button type="button" onClick={() => setShowLoginPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
                         {showLoginPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
                       </button>
@@ -348,7 +350,26 @@ export default function ClientsNew() {
                   </Button>
                 </div>
               </div>
-            ) : null}
+            ) : (
+              <Button
+                size="sm"
+                className="gap-1.5 text-white border-0"
+                style={{ background: NAVY }}
+                onClick={() => {
+                  const chars = "ABCDEFGHJKMNPQRSTWXYZabcdefghjkmnpqrstwxyz0123456789!@#$";
+                  const pwd = Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+                  setLoginForm({
+                    name: `${form.ownerFirstName} ${form.ownerLastName}`.trim(),
+                    email: form.ownerEmail,
+                    password: pwd,
+                  });
+                  setShowLoginPw(false);
+                  setShowLoginForm(true);
+                }}
+              >
+                <UserPlus className="h-3.5 w-3.5" />Create Owner Login
+              </Button>
+            )}
           </div>
 
           <div className="px-8 py-4 border-t flex gap-3">
@@ -573,16 +594,29 @@ export default function ClientsNew() {
               </div>
               <div className="space-y-1.5">
                 <Label>Date of Birth *</Label>
-                <Input value={form.ownerDob} onChange={(e) => set("ownerDob", e.target.value)} placeholder="MM/DD/YYYY" />
+                <Input value={form.ownerDob} onChange={(e) => set("ownerDob", e.target.value)} placeholder="MM/DD/YYYY" autoComplete="off" />
               </div>
               <div className="space-y-1.5">
                 <Label>SSN * <span className="text-[10px] text-gray-400 font-normal">Encrypted — KYB only</span></Label>
                 <div className="relative">
-                  <Input value={form.ownerSsn} onChange={(e) => set("ownerSsn", e.target.value)} placeholder="XXX-XX-XXXX" type={showSsn ? "text" : "password"} className="pr-9" />
+                  <Input
+                    value={form.ownerSsn}
+                    onChange={(e) => { set("ownerSsn", e.target.value); if (ownerSsnAttempted) setOwnerSsnAttempted(false); }}
+                    placeholder="XXX-XX-XXXX"
+                    type="text"
+                    autoComplete="off"
+                    data-1p-ignore
+                    className={`pr-9 ${ownerSsnAttempted && form.ownerSsn.replace(/\D/g, "").length !== 9 ? "border-red-500 focus-visible:ring-red-400" : ""}`}
+                  />
                   <button type="button" onClick={() => setShowSsn(!showSsn)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
                     {showSsn ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
                 </div>
+                {ownerSsnAttempted && form.ownerSsn.replace(/\D/g, "").length !== 9 && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                    <AlertTriangle className="h-3 w-3" />{form.ownerSsn.replace(/\D/g, "").length === 0 ? "SSN is required" : "SSN must be exactly 9 digits"}
+                  </p>
+                )}
               </div>
               <div className="col-span-2 space-y-1.5">
                 <Label>Home Address *</Label>
@@ -703,8 +737,14 @@ export default function ClientsNew() {
               </div>
               <div className="space-y-1.5">
                 <Label>First Pay Date *</Label>
-                <Input value={form.payDate} onChange={(e) => set("payDate", e.target.value)} type="date" />
+                <Input
+                  value={form.payDate}
+                  onChange={(e) => { set("payDate", e.target.value); setPayDateError(""); }}
+                  type="date"
+                  className={payDateError ? "border-red-500 focus-visible:ring-red-400" : ""}
+                />
                 <p className="text-[11px] text-gray-400 leading-tight">The date employees receive their first paycheck — must be after the pay period ends.</p>
+                {payDateError && <p className="text-xs text-red-600 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />{payDateError}</p>}
               </div>
             </div>
             <div className="space-y-1.5">
@@ -919,7 +959,21 @@ export default function ClientsNew() {
             <ChevronLeft className="h-4 w-4" />{step > 1 ? "Back" : "Cancel"}
           </Button>
           {step < STEPS.length ? (
-            <Button onClick={() => setStep(step + 1)} className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
+            <Button onClick={() => {
+              if (step === 3 && form.ownerSsn.replace(/\D/g, "").length !== 9) {
+                setOwnerSsnAttempted(true);
+                return;
+              }
+              if (step === 5) {
+                const periodEnd = new Date(form.payBeginDate).getTime() + (payDateOffsetDays[form.payFrequency] ?? 14) * 86400000;
+                if (form.payBeginDate && form.payDate && new Date(form.payDate).getTime() <= periodEnd) {
+                  setPayDateError("Pay date must be after the pay period ends");
+                  return;
+                }
+                setPayDateError("");
+              }
+              setStep(step + 1);
+            }} className="gap-1.5 text-white border-0" style={{ background: ORANGE }}
               disabled={
                 (step === 1 && (!form.companyName || !form.phone)) ||
                 (step === 2 && (!form.address1 || !form.city || !form.zipcode)) ||

@@ -111,8 +111,8 @@ export default function PeopleKpiCards({
     enabled: !!companyId, staleTime: 60_000,
   });
 
-  // Card 1: All non-terminated employees (active + onboarding + pending)
-  const activeEmps = employees.filter(e => e.status !== "terminated");
+  // Card 1: Truly active employees only
+  const activeEmps = employees.filter(e => e.status === "active");
   const now = new Date();
   const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
   const thisMonthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime();
