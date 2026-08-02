@@ -84,6 +84,13 @@ const axiosMock = vi.hoisted(() => ({
   post: vi.fn<() => Promise<unknown>>(),
 }));
 
+/** Controls which user the store mock returns — mutate in tests to simulate different roles. */
+const userState = vi.hoisted(() => ({
+  id:        "USER-TEST",
+  role:      "owner" as string,
+  companyId: "ORG-TEST" as string,
+}));
+
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
 // drizzle-orm helpers — the mocked db.where() ignores arguments, so these
@@ -160,13 +167,14 @@ vi.mock("../../lib/rollfi-config.js", () => ({
   }),
 }));
 
-// In-memory user store
+// In-memory user store — reads from the mutable `userState` so tests can
+// change role / companyId without re-importing the module.
 vi.mock("../../store.js", () => ({
   store: {
     getUserById: (_id: string) => ({
-      id:        "USER-TEST",
-      role:      "owner",
-      companyId: "ORG-TEST",
+      id:        userState.id,
+      role:      userState.role,
+      companyId: userState.companyId,
     }),
   },
 }));
@@ -283,6 +291,10 @@ beforeEach(() => {
   dbState.callQueue.length = 0;
   rollfiCreds.present = true;
   axiosMock.post.mockReset();
+  // Reset user back to default owner session before each test
+  userState.id        = "USER-TEST";
+  userState.role      = "owner";
+  userState.companyId = "ORG-TEST";
   // Restore any spy installed by the previous test before re-installing.
   vi.restoreAllMocks();
   // Spy on buildForm8655Pdf so tests can assert what data the route passes it.
@@ -745,6 +757,84 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
       const res = await getPdf(makeApp());
       const pdfText = (res.body as Buffer).toString("binary");
       expect(pdfText).not.toContain("/Image");
+    });
+  });
+
+  // ── super_admin cross-company access ─────────────────────────────────────
+  //
+  // A super_admin whose session companyId is "ORG-A" must be able to download
+  // the Form 8655 for "ORG-B" without receiving a 403.  The exemption lives in
+  // the route's guard:
+  //   if (caller.role !== "super_admin" && urlCompanyId !== sessionCompanyId) → 403
+  // This describe block covers that exemption path so a future refactor cannot
+  // accidentally remove it silently.
+
+  describe("when a super_admin downloads a different company's Form 8655 (cross-company)", () => {
+    /** Helper: hit the PDF endpoint for ORG-B while session belongs to ORG-A. */
+    function getSuperAdminPdf(app: ReturnType<typeof makeApp>) {
+      return request(app)
+        .get("/rollfi/companies/ORG-B/form-8655.pdf")
+        .buffer(true)
+        .parse((_res, callback) => {
+          const chunks: Buffer[] = [];
+          _res.on("data", (chunk: Buffer) => chunks.push(chunk));
+          _res.on("end",  () => callback(null, Buffer.concat(chunks)));
+        });
+    }
+
+    beforeEach(() => {
+      // Flip session user to super_admin whose home company is ORG-A
+      userState.role      = "super_admin";
+      userState.companyId = "ORG-A";
+
+      // Rollfi reachable — use the happy path so we get a real PDF back
+      rollfiCreds.present = true;
+
+      // DB queue for the ORG-B signed-form lookup + rollfiCompanyId lookup
+      dbState.callQueue.push([SIGNED_RECORD]);
+      dbState.callQueue.push([{ rid: "rollfi-co-002" }]);
+
+      // Rollfi returns valid company info for ORG-B
+      axiosMock.post.mockResolvedValueOnce({ data: ROLLFI_COMPANY_INFO });
+    });
+
+    it("returns HTTP 200 (not 403)", async () => {
+      const res = await getSuperAdminPdf(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("response Content-Type is application/pdf", async () => {
+      const res = await getSuperAdminPdf(makeApp());
+      expect(res.headers["content-type"]).toMatch(/application\/pdf/);
+    });
+
+    it("response body is a valid PDF (starts with %PDF)", async () => {
+      const res = await getSuperAdminPdf(makeApp());
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+
+    it("PDF body is non-trivially large (> 1 KB)", async () => {
+      const res = await getSuperAdminPdf(makeApp());
+      expect((res.body as Buffer).length).toBeGreaterThan(1024);
+    });
+
+    it("uses ORG-B's company data, not ORG-A's (URL param governs the query)", async () => {
+      // buildForm8655Pdf should receive Rollfi's company name for ORG-B
+      await getSuperAdminPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taxpayerName: ROLLFI_COMPANY_INFO.Company[0].company }),
+      );
+    });
+
+    it("returns 403 for an owner whose session company differs from the URL param", async () => {
+      // Confirm the 403 guard still fires for non-super_admin roles — verifying
+      // the exemption is role-scoped and not accidentally widened.
+      userState.role      = "owner";
+      userState.companyId = "ORG-A";
+      dbState.callQueue.length = 0; // guard fires before any DB query
+      const res = await getSuperAdminPdf(makeApp());
+      expect(res.status).toBe(403);
     });
   });
 
