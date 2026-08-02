@@ -145,7 +145,15 @@ function makeMixedAlphaPng(): string {
 // decompress every stream in the PDF bytes, then search for drawing operators.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Extracts all PDF stream bodies (FlateDecode-decompressed, or raw if uncompressed). */
+/**
+ * Extracts all PDF stream bodies (FlateDecode-decompressed, or raw if uncompressed).
+ *
+ * Uses the /Length value from each stream's dictionary header to determine the
+ * exact byte range of the stream data.  Falling back to scanning for "endstream"
+ * is intentionally avoided for the data slice: compressed streams can contain the
+ * ASCII bytes for "endstream" within their payload, which would silently truncate
+ * the data and cause inflateSync to fail with "unexpected end of file".
+ */
 function extractPdfStreams(pdfBytes: Uint8Array): string[] {
   const buf = Buffer.from(pdfBytes);
   const out: string[] = [];
@@ -158,15 +166,39 @@ function extractPdfStreams(pdfBytes: Uint8Array): string[] {
     if      (buf[kw + 6] === 0x0D && buf[kw + 7] === 0x0A) dataStart = kw + 8;
     else if (buf[kw + 6] === 0x0A)                          dataStart = kw + 7;
     else { pos = kw + 6; continue; }
-    const endKw = buf.indexOf("endstream", dataStart);
-    if (endKw === -1) break;
-    let dataEnd = endKw;
-    if (buf[dataEnd - 1] === 0x0A) dataEnd--;
-    if (buf[dataEnd - 1] === 0x0D) dataEnd--;
+
+    // Parse /Length from the stream dictionary header (up to 512 bytes before
+    // the "stream" keyword).  This avoids false-positive "endstream" matches
+    // that can occur inside compressed stream data.
+    // Use the LAST /Length match in the window — it belongs to the stream whose
+    // dict header ends immediately before the "stream" keyword, not an earlier one.
+    const dictHeader = buf.slice(Math.max(0, kw - 512), kw).toString("latin1");
+    const lenMatches = [...dictHeader.matchAll(/\/Length\s+(\d+)/g)];
+    const lenMatch = lenMatches.at(-1) ?? null;
+
+    let dataEnd: number;
+    let nextPos: number;
+    if (lenMatch) {
+      const length = parseInt(lenMatch[1]!, 10);
+      dataEnd = dataStart + length;
+      // Find the "endstream" that follows the data (not inside it)
+      const endKwActual = buf.indexOf("endstream", dataEnd);
+      if (endKwActual === -1) break;
+      nextPos = endKwActual + 9;
+    } else {
+      // Fallback for streams with no /Length (e.g. XFA metadata blobs)
+      const endKw = buf.indexOf("endstream", dataStart);
+      if (endKw === -1) break;
+      dataEnd = endKw;
+      if (buf[dataEnd - 1] === 0x0A) dataEnd--;
+      if (buf[dataEnd - 1] === 0x0D) dataEnd--;
+      nextPos = endKw + 9;
+    }
+
     const raw = buf.slice(dataStart, dataEnd);
     try { out.push(zlib.inflateSync(raw).toString("latin1")); }
     catch { out.push(raw.toString("latin1")); }
-    pos = endKw + 9;
+    pos = nextPos;
   }
   return out;
 }
@@ -237,6 +269,45 @@ function hasSignatureImagePlacement(streams: string[]): boolean {
 }
 
 /**
+ * Like findSignatureDrawParams but relaxes the "drawH > 1" guard so it can
+ * locate extremely thin images (e.g. 4000×1 px) where drawH is a sub-1 value
+ * such as 0.055 pt.  Only drawW > 1 is required (width is always ≥ SIG_MAX_H
+ * for width-constrained images).
+ *
+ * This is intentionally separate from findSignatureDrawParams to avoid
+ * false-positive scale-matrix matches in tests that check for normal images.
+ */
+function findSignatureScaleLoose(
+  streams: string[],
+): { drawW: number; drawH: number; x: number; y: number } | null {
+  const combined = streams.join("\n");
+  const transRe = /1\s+0\s+0\s+1\s+([\d.]+)\s+([\d.]+)\s+cm/g;
+  let transMatch: RegExpExecArray | null;
+  while ((transMatch = transRe.exec(combined)) !== null) {
+    const x = parseFloat(transMatch[1]!);
+    const y = parseFloat(transMatch[2]!);
+    if (Math.abs(x - SIG_X) > 1 || Math.abs(y - SIG_Y) > 1) continue;
+    const after = combined.slice(
+      transMatch.index + transMatch[0].length,
+      transMatch.index + transMatch[0].length + 300,
+    );
+    if (!/\bDo\b/.test(after)) continue;
+    const scaleRe = /([\d.]+(?:\.\d+)?)\s+0\s+0\s+([\d.]+(?:\.\d+)?)\s+0\s+0\s+cm/g;
+    let scaleMatch: RegExpExecArray | null;
+    while ((scaleMatch = scaleRe.exec(after)) !== null) {
+      const drawW = parseFloat(scaleMatch[1]!);
+      const drawH = parseFloat(scaleMatch[2]!);
+      // Relaxed: only width must be > 1; drawH may be sub-1 for thin images
+      if (drawW > 1) {
+        return { drawW, drawH, x, y };
+      }
+    }
+  }
+  return null;
+}
+
+
+/**
  * Returns true when the raw PDF bytes contain a /Subtype /Image XObject entry,
  * indicating at least one image was embedded in the document.
  */
@@ -288,6 +359,11 @@ const PNG_TRANSPARENT_440x88 = makeTransparentPng(440, 88);
 // a signature canvas.  Same pixel dimensions as PNG_TRANSPARENT_440x88, so
 // both axes hit the SIG_MAX_W/SIG_MAX_H limits at the same 0.5× scale factor.
 const PNG_MIXED_ALPHA_440x88 = makeMixedAlphaPng();
+// An extremely thin (degenerate) canvas PNG — 4000 px wide, 1 px tall.
+// ratio = min(SIG_MAX_W/4000, SIG_MAX_H/1) = min(0.055, 44) = 0.055
+// → drawW = 220 pt (= SIG_MAX_W), drawH ≈ 0.055 pt (positive but sub-1)
+// Tests that the scaling formula never produces a zero (or negative) height.
+const PNG_THIN_4000x1 = makeRgbPng(4000, 1);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests — text path (no drawn signature image)
@@ -736,6 +812,74 @@ describe("buildForm8655Pdf — real mixed-alpha signature PNG (440×88 px, opaqu
   it(`drawn height does not exceed maxH = ${SIG_MAX_H} pt`, () => {
     const p = findSignatureDrawParams(streams)!;
     expect(p.drawH).toBeLessThanOrEqual(SIG_MAX_H + 0.5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tests — extremely thin canvas PNG (4000×1 px)
+//
+// The aspect-ratio scaling formula applies the same ratio to both axes:
+//   ratio  = min(SIG_MAX_W / 4000, SIG_MAX_H / 1) = min(0.055, 44) = 0.055
+//   drawW  = 4000 * 0.055 = 220 pt  (= SIG_MAX_W — width limit reached)
+//   drawH  =    1 * 0.055 = 0.055 pt (positive but sub-1)
+//
+// This ensures a degenerate canvas PNG never produces a zero-height image
+// (which would be invisible) or trigger the zero-dimension guard that falls
+// back to the typed name.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("buildForm8655Pdf — extremely thin canvas PNG (4000×1 px)", () => {
+  let pdfBytes: Uint8Array;
+  let streams:  string[];
+
+  beforeAll(async () => {
+    pdfBytes = await buildForm8655Pdf({
+      ...BASE_DATA,
+      signatureImageBase64: PNG_THIN_4000x1,
+    });
+    streams = extractPdfStreams(pdfBytes);
+  });
+
+  it("produces valid PDF bytes (starts with %PDF)", () => {
+    expect(Buffer.from(pdfBytes.slice(0, 4)).toString("ascii")).toBe("%PDF");
+  });
+
+  it("raw PDF bytes contain an /Image XObject entry (image path taken, not text fallback)", () => {
+    expect(rawPdfHasImageXObject(pdfBytes)).toBe(true);
+  });
+
+  it("signer name does NOT appear as typed text (drawn image replaces the typed overlay)", () => {
+    expect(textInStreams("Jane Doe", streams)).toBe(false);
+  });
+
+  // For 4000×1:
+  //   ratio  = min(SIG_MAX_W / 4000, SIG_MAX_H / 1) = min(0.055, 44) = 0.055
+  //   drawW  = 4000 * 0.055 = 220 pt  (= SIG_MAX_W — width-constrained)
+  //   drawH  =    1 * 0.055 = 0.055 pt (strictly positive, but sub-1)
+  //
+  // findSignatureScaleLoose reads the actual scale matrix from the PDF content
+  // stream (via the fixed /Length-aware extractPdfStreams).  A regression that
+  // rounds drawH to 0 would still embed the image XObject and omit the typed
+  // name, but the scale matrix in the content stream would carry a zero 'd'
+  // component — and this assertion would catch that.
+
+  it("an image is placed at the signature position (image path taken)", () => {
+    expect(findSignatureScaleLoose(streams)).not.toBeNull();
+  });
+
+  it("drawH is strictly greater than zero (thin PNG did not collapse to a zero-height image)", () => {
+    const p = findSignatureScaleLoose(streams)!;
+    expect(p.drawH).toBeGreaterThan(0);
+  });
+
+  it(`drawW does not exceed maxW = ${SIG_MAX_W} pt`, () => {
+    const p = findSignatureScaleLoose(streams)!;
+    expect(p.drawW).toBeLessThanOrEqual(SIG_MAX_W + 0.5);
+  });
+
+  it(`drawW is ≈ ${SIG_MAX_W} pt (width limit reached, not height)`, () => {
+    const p = findSignatureScaleLoose(streams)!;
+    expect(p.drawW).toBeCloseTo(SIG_MAX_W, 0);
   });
 });
 
