@@ -37,6 +37,15 @@ const STEPS = [
 
 const POSITION_SUGGESTIONS = ["Teacher","Assistant Teacher","Daycare Director","Cook","Administrative Assistant","Security","Janitor","Other"];
 
+// Exact Rollfi enum values with IRS-standard user-facing labels
+const W4_FILING_OPTIONS = [
+  { label: "Single",                      value: "Single" },
+  { label: "Married filing jointly",      value: "Married filing jointly" },
+  { label: "Married filing separately",   value: "Married Filing Separately" },
+  { label: "Head of household",           value: "Head of household" },
+  { label: "Qualifying surviving spouse", value: "Married Qualifying widow(er)" },
+] as const;
+
 interface FormData {
   // Step 1
   firstName: string; lastName: string; email: string; phone: string;
@@ -48,7 +57,12 @@ interface FormData {
   // Step 3
   ssn: string; dateOfBirth: string;
   homeAddress: string; homeCity: string; homeState: string; homeZip: string;
-  w4FilingStatus: string; w4MultipleJobs: boolean; w4Dependents: number; w4ExtraWithholding: number;
+  w4FilingStatus: string; w4MultipleJobs: boolean;
+  w4Dependents: number;            // COUNT of qualifying children under 17
+  w4DependentsAbove18: number;     // COUNT of other dependents
+  w4ExtraWithholding: number;
+  w4OtherIncome: number; w4OtherDeduction: number;
+  w4MilitarySpouseExemption: boolean; w4IsNonResident: boolean; w4AzDeductionPercent: number;
   stateW4Fields: Record<string, string>;
   // Step 4
   bankSetupMethod: "invite" | "manual";
@@ -226,7 +240,10 @@ export default function ClientEmployeesNew() {
     department: "", managerId: "", managerName: "",
     payType: "hourly", wageAmount: 0, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
     ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "NJ", homeZip: "",
-    w4FilingStatus: "Single", w4MultipleJobs: false, w4Dependents: 0, w4ExtraWithholding: 0,
+    w4FilingStatus: "Single", w4MultipleJobs: false,
+    w4Dependents: 0, w4DependentsAbove18: 0, w4ExtraWithholding: 0,
+    w4OtherIncome: 0, w4OtherDeduction: 0,
+    w4MilitarySpouseExemption: false, w4IsNonResident: false, w4AzDeductionPercent: 0,
     stateW4Fields: {},
     bankSetupMethod: "invite", bankName: "", routingNumber: "", accountNumber: "", accountType: "checking",
   });
@@ -279,6 +296,7 @@ export default function ClientEmployeesNew() {
   const [showCreateDept, setShowCreateDept] = useState(false);
   const [newDeptName, setNewDeptName] = useState("");
   const [creatingDept, setCreatingDept] = useState(false);
+  const [showAdvancedW4, setShowAdvancedW4] = useState(false);
 
   const handleCreateDept = async () => {
     if (!newDeptName.trim() || creatingDept) return;
@@ -774,19 +792,98 @@ export default function ClientEmployeesNew() {
                 <div className="space-y-1.5"><Label>Zip Code *</Label><Input value={form.homeZip} onChange={(e) => set("homeZip", e.target.value)} placeholder="07101" maxLength={5} /></div>
               </div>
             </div>
-            <div className="border-t pt-4">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Federal W-4 Withholding</p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2 space-y-1.5">
-                  <Label>Filing Status</Label>
-                  <div className="flex gap-4">
-                    {["Single","Married","Head of Household"].map((s) => (
-                      <label key={s} className="flex items-center gap-1.5 text-sm cursor-pointer"><input type="radio" name="w4fs" value={s} checked={form.w4FilingStatus === s} onChange={() => set("w4FilingStatus", s)} />{s}</label>
-                    ))}
+            <div className="border-t pt-4 space-y-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Federal W-4 Withholding</p>
+
+              {/* Filing Status — all 5 Rollfi-accepted values */}
+              <div className="space-y-1.5">
+                <Label>Filing Status</Label>
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  {W4_FILING_OPTIONS.map(({ label, value }) => (
+                    <label key={value} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                      <input type="radio" name="w4fs" value={value} checked={form.w4FilingStatus === value} onChange={() => set("w4FilingStatus", value)} />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Step 2(c) — Multiple Jobs */}
+              <label className="flex items-start gap-2 text-sm cursor-pointer">
+                <input type="checkbox" className="mt-0.5" checked={form.w4MultipleJobs} onChange={(e) => set("w4MultipleJobs", e.target.checked)} />
+                <span><strong>Step 2(c):</strong> Employee holds more than one job, or is married filing jointly and spouse also works</span>
+              </label>
+
+              {/* Step 3 — Dependents (counts, not dollars) */}
+              <div>
+                <p className="text-xs text-gray-500 font-medium mb-2">Step 3 — Dependents <span className="text-gray-400">(enter counts, not dollar amounts)</span></p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>Qualifying children under 17</Label>
+                    <Input value={form.w4Dependents} onChange={(e) => set("w4Dependents", Math.max(0, Math.round(Number(e.target.value))))} type="number" min="0" step="1" placeholder="0" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Other dependents</Label>
+                    <Input value={form.w4DependentsAbove18} onChange={(e) => set("w4DependentsAbove18", Math.max(0, Math.round(Number(e.target.value))))} type="number" min="0" step="1" placeholder="0" />
                   </div>
                 </div>
-                <div className="space-y-1.5"><Label>Dependents Amount ($)</Label><Input value={form.w4Dependents} onChange={(e) => set("w4Dependents", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" /></div>
-                <div className="space-y-1.5"><Label>Extra Withholding ($)</Label><Input value={form.w4ExtraWithholding} onChange={(e) => set("w4ExtraWithholding", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" /></div>
+                {(form.w4Dependents > 0 || form.w4DependentsAbove18 > 0) && (
+                  <p className="text-xs text-gray-400 mt-1.5">
+                    Estimated W-4 Step 3 credit: <strong>${(form.w4Dependents * 2000 + form.w4DependentsAbove18 * 500).toLocaleString()}</strong>
+                    <span className="ml-1">({form.w4Dependents}×$2,000 + {form.w4DependentsAbove18}×$500)</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Extra Withholding */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Extra Withholding ($)</Label>
+                  <Input value={form.w4ExtraWithholding} onChange={(e) => set("w4ExtraWithholding", Number(e.target.value))} type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
+              </div>
+
+              {/* Advanced withholding — collapsible */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvancedW4((v) => !v)}
+                  className="flex items-center gap-1 text-xs font-semibold text-[#284362] hover:text-[#1a2f48]"
+                >
+                  <ChevronRight className={`h-3.5 w-3.5 transition-transform ${showAdvancedW4 ? "rotate-90" : ""}`} />
+                  Advanced withholding (optional)
+                </button>
+                {showAdvancedW4 && (
+                  <div className="mt-3 grid grid-cols-2 gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                    <div className="space-y-1.5">
+                      <Label>Other income — Step 4a ($)</Label>
+                      <Input value={form.w4OtherIncome} onChange={(e) => set("w4OtherIncome", Number(e.target.value))} type="number" min="0" step="1" placeholder="0" />
+                      <p className="text-[10px] text-gray-400">Interest, dividends, or retirement income not subject to withholding</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Deductions — Step 4b ($)</Label>
+                      <Input value={form.w4OtherDeduction} onChange={(e) => set("w4OtherDeduction", Number(e.target.value))} type="number" min="0" step="1" placeholder="0" />
+                      <p className="text-[10px] text-gray-400">Itemized deductions exceeding the standard deduction</p>
+                    </div>
+                    <div className="col-span-2 space-y-2">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" checked={form.w4MilitarySpouseExemption} onChange={(e) => set("w4MilitarySpouseExemption", e.target.checked)} />
+                        Military spouse withholding exemption
+                      </label>
+                      <label className="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" checked={form.w4IsNonResident} onChange={(e) => set("w4IsNonResident", e.target.checked)} />
+                        Non-resident alien withholding adjustment
+                      </label>
+                    </div>
+                    {form.homeState === "AZ" && (
+                      <div className="col-span-2 space-y-1.5">
+                        <Label>Arizona withholding percentage (%)</Label>
+                        <Input value={form.w4AzDeductionPercent || ""} onChange={(e) => set("w4AzDeductionPercent", e.target.value === "" ? 0 : Number(e.target.value))} type="number" min="0" max="100" step="1" placeholder="e.g. 1, 2, 3…" />
+                        <p className="text-[10px] text-gray-400">Arizona employees select a flat percentage rate for state income tax withholding</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 

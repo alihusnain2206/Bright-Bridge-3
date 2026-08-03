@@ -1,0 +1,134 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer fixing TAX 
+CORRECTNESS issues in the Federal W-4 
+step. Rollfi's addW4Information API 
+documentation has been verified — exact 
+accepted values are below. Audit first, 
+then fix.
+
+ROLLFI'S DOCUMENTED SCHEMA 
+(addW4Information → w4Information):
+- userId (uuid, required)
+- w4FilingStatus (required, string 
+  enum, EXACTLY these five values):
+  "Single"
+  "Married filing jointly"
+  "Head of household"
+  "Married Qualifying widow(er)"
+  "Married Filing Separately"
+- haveMultipleJob (boolean)
+- dependents (integer)
+- dependentsAbove18 (integer)
+- otherIncome (integer)
+- otherDeduction (integer)
+- extraWithholding (integer)
+- hasMiltarySpouseExemption (boolean)
+- stateAdditionalDeduction (integer)
+- isNonResident (boolean)
+- azDeductionPercent (integer, only 
+  when employee address state is 
+  Arizona)
+Rollfi's own example: dependents: 3, 
+dependentsAbove18: 2 — these are 
+COUNTS, not dollar amounts.
+
+PART 1 — AUDIT FIRST (report before 
+changing anything):
+1. Show the exact w4Information payload 
+   we currently send: which fields, and 
+   what value each UI input maps to.
+2. CRITICAL CHECK: our UI collects 
+   "Dependents Amount ($)" (users enter 
+   dollar values like 2000, per the 
+   real W-4 Step 3). What do we send in 
+   Rollfi's "dependents" field — the 
+   dollar amount or a count? Per 
+   Rollfi's example, "dependents" is a 
+   COUNT. If we are sending 2000 as 
+   dependents, report this as a 
+   critical mis-mapping.
+3. What filing status strings do we 
+   currently send? Our UI offers 
+   Single / Married / Head of Household 
+   — "Married" is NOT in Rollfi's enum. 
+   Report what actually gets sent and 
+   whether Rollfi has been 
+   accepting/erroring on it.
+
+PART 2 — FIX:
+1. FILING STATUS: update the UI to 
+   offer all five Rollfi statuses with 
+   user-friendly labels, sending the 
+   EXACT enum strings:
+   - Single → "Single"
+   - Married filing jointly → 
+     "Married filing jointly"
+   - Married filing separately → 
+     "Married Filing Separately"
+   - Head of household → 
+     "Head of household"
+   - Qualifying surviving spouse → 
+     "Married Qualifying widow(er)"
+2. MULTIPLE JOBS: add the Step 2(c) 
+   checkbox ("Check if you hold more 
+   than one job, or are married filing 
+   jointly and your spouse also works") 
+   → send as haveMultipleJob boolean.
+3. DEPENDENTS: fix the semantics per 
+   the audit finding. The W-4 Step 3 
+   collects dollar amounts, Rollfi 
+   wants counts. Recommended UI: two 
+   count inputs — "Qualifying children 
+   under 17 (count)" and "Other 
+   dependents (count)" — mapping to 
+   dependents and dependentsAbove18. 
+   Show the computed W-4 dollar 
+   equivalent as helper text 
+   (children × $2,000 + others × $500) 
+   so admins entering from a paper W-4 
+   can cross-check. If the audit shows 
+   we were sending dollar amounts as 
+   counts, flag any existing employees 
+   affected (report, do not auto-fix 
+   their data).
+4. ADD the remaining W-4 fields as 
+   optional inputs in an "Advanced 
+   withholding (optional)" collapsible: 
+   otherIncome (Step 4a), 
+   otherDeduction (Step 4b), 
+   extraWithholding (already exists — 
+   keep), hasMiltarySpouseExemption, 
+   isNonResident. Show azDeductionPercent 
+   ONLY when the employee's state is 
+   Arizona.
+5. Send only fields the user provided; 
+   userId + w4FilingStatus always.
+
+RULES:
+- Do not change the Rollfi call 
+  sequence — only the payload contents 
+  per the documented schema
+- Do not modify any existing employee's 
+  stored W-4 data (report affected 
+  employees only)
+- TypeScript; existing form styling
+
+TESTING CHECKLIST:
+- Married filing jointly + multiple 
+  jobs + 2 children under 17 → payload 
+  shows w4FilingStatus "Married filing 
+  jointly", haveMultipleJob true, 
+  dependents 2 (COUNT) — report the 
+  masked payload
+- Single, no extras → minimal correct 
+  payload
+- Arizona employee → azDeductionPercent 
+  field appears; non-AZ → hidden
+- Existing employees unaffected
+- State W-4 step unaffected
+
+DELIVERABLE: audit findings (especially 
+the dependents count-vs-dollars 
+answer + any affected existing 
+employees), UI→API mapping table, 
+files changed, verified test payloads.

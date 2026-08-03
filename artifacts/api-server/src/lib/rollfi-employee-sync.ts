@@ -45,15 +45,33 @@ export interface OnboardingStepError {
 // IMPORTANT: if a value is unrecognised it is passed through AS-IS so Rollfi surfaces an
 // explicit rejection — we do NOT silently fall back to "Single".  A silent fallback would
 // attach the wrong filing status to an employee's tax record without any visible error.
-const VALID_W4_STATUSES = ["Single", "Married", "Head of Household"] as const;
+// Rollfi's exact accepted enum values for w4FilingStatus
+const VALID_W4_STATUSES = [
+  "Single",
+  "Married filing jointly",
+  "Married Filing Separately",
+  "Head of household",
+  "Married Qualifying widow(er)",
+] as const;
+
+// Maps legacy / BrightBridge UI labels → Rollfi canonical enum values
 const W4_LEGACY_MAP: Record<string, string> = {
-  "Married Filing Jointly": "Married",
-  "Married Filing Jointly or Qualifying Widow(er)": "Married",
-  "Qualifying Widow(er)": "Married",
-  "Married Filing Separately": "Single",
-  "single": "Single",
-  "married": "Married",
-  "head of household": "Head of Household",
+  // Legacy 3-option wizard values
+  "Married":                                         "Married filing jointly",
+  "Head of Household":                               "Head of household",
+  // Employee-edit page values (wrong case)
+  "Married Filing Jointly":                          "Married filing jointly",
+  "Married filing jointly":                          "Married filing jointly",
+  "Married Filing Separately":                       "Married Filing Separately",
+  "Qualifying Surviving Spouse":                     "Married Qualifying widow(er)",
+  "Married Qualifying widow(er)":                    "Married Qualifying widow(er)",
+  "Married Filing Jointly or Qualifying Widow(er)": "Married filing jointly",
+  "Qualifying Widow(er)":                            "Married Qualifying widow(er)",
+  // Lowercase fallbacks
+  "single":                                          "Single",
+  "married":                                         "Married filing jointly",
+  "head of household":                               "Head of household",
+  "married filing separately":                       "Married Filing Separately",
 };
 
 export function normalizeW4FilingStatus(status: string | undefined | null): string {
@@ -71,8 +89,17 @@ export function normalizeW4FilingStatus(status: string | undefined | null): stri
 export interface W4Data {
   filingStatus: string;
   multipleJobs: boolean;
+  /** COUNT of qualifying children under 17 (NOT a dollar amount) */
   dependents: number;
+  /** COUNT of other dependents (age 17+) */
+  dependentsAbove18: number;
   extraWithholding: number;
+  otherIncome: number;
+  otherDeduction: number;
+  militarySpouseExemption: boolean;
+  isNonResident: boolean;
+  /** Only sent when employee home state is AZ */
+  azDeductionPercent?: number | null;
   homeState: string;
   stateW4Fields?: Record<string, string>;
 }
@@ -81,7 +108,13 @@ const DEFAULT_W4: W4Data = {
   filingStatus: "Single",
   multipleJobs: false,
   dependents: 0,
+  dependentsAbove18: 0,
   extraWithholding: 0,
+  otherIncome: 0,
+  otherDeduction: 0,
+  militarySpouseExemption: false,
+  isNonResident: false,
+  azDeductionPercent: null,
   homeState: "NJ",
 };
 
@@ -183,18 +216,25 @@ export async function runEmployeeKycOnboarding(
   const normalizedFilingStatus = normalizeW4FilingStatus(w4.filingStatus);
   log.info({ originalStatus: w4.filingStatus, normalizedStatus: normalizedFilingStatus }, "addW4Information: normalised filing status");
   try {
+    // Build payload: userId + w4FilingStatus always present; send optional fields only when non-default.
+    const w4Payload: Record<string, unknown> = {
+      userId:         rollfiUserId,
+      w4FilingStatus: normalizedFilingStatus,
+      haveMultipleJob: w4.multipleJobs,
+      dependents:      w4.dependents,           // COUNT of qualifying children under 17
+      dependentsAbove18: w4.dependentsAbove18,  // COUNT of other dependents
+      extraWithholding:  w4.extraWithholding,
+    };
+    if (w4.otherIncome)             w4Payload.otherIncome            = w4.otherIncome;
+    if (w4.otherDeduction)          w4Payload.otherDeduction         = w4.otherDeduction;
+    if (w4.militarySpouseExemption) w4Payload.hasMiltarySpouseExemption = w4.militarySpouseExemption;
+    if (w4.isNonResident)           w4Payload.isNonResident          = w4.isNonResident;
+    if (w4.homeState === "AZ" && w4.azDeductionPercent != null) {
+      w4Payload.azDeductionPercent = w4.azDeductionPercent;
+    }
     const r = await axios.post(`${baseUrl}/userOnboarding#addW4Information`, {
       method: "addW4Information",
-      w4Information: {
-        userId: rollfiUserId,
-        w4FilingStatus: normalizedFilingStatus,
-        haveMultipleJob: w4.multipleJobs,
-        dependents: w4.dependents,
-        dependentsAbove18: 0,
-        otherIncome: 0,
-        otherDeduction: 0,
-        extraWithholding: w4.extraWithholding,
-      },
+      w4Information: w4Payload,
     }, { headers });
     log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addW4Information response");
     const errMsg = extractRollfiError(r.data);
@@ -304,8 +344,16 @@ export interface RollfiEmployeeInput {
   dateOfBirth?: string;
   w4FilingStatus?: string;
   w4MultipleJobs?: boolean;
+  /** COUNT of qualifying children under 17 (NOT dollars) */
   w4Dependents?: number;
+  /** COUNT of other dependents age 17+ */
+  w4DependentsAbove18?: number;
   w4ExtraWithholding?: number;
+  w4OtherIncome?: number;
+  w4OtherDeduction?: number;
+  w4MilitarySpouseExemption?: boolean;
+  w4IsNonResident?: boolean;
+  w4AzDeductionPercent?: number | null;
   stateW4Fields?: Record<string, string>;
   bankName?: string;
   routingNumber?: string;
@@ -405,12 +453,18 @@ export async function onboardEmployeeToRollfi(
 
     // ── KYC / W4 / bank chain ─────────────────────────────────────────────────
     const kycResult = await runEmployeeKycOnboarding(rollfiUserId, rollfiCompany.rollfiCompanyId, log, {
-      filingStatus: emp.w4FilingStatus ?? DEFAULT_W4.filingStatus,
-      multipleJobs: emp.w4MultipleJobs ?? DEFAULT_W4.multipleJobs,
-      dependents: emp.w4Dependents ?? DEFAULT_W4.dependents,
-      extraWithholding: emp.w4ExtraWithholding ?? DEFAULT_W4.extraWithholding,
-      homeState: emp.homeState ?? DEFAULT_W4.homeState,
-      stateW4Fields: emp.stateW4Fields,
+      filingStatus:            emp.w4FilingStatus           ?? DEFAULT_W4.filingStatus,
+      multipleJobs:            emp.w4MultipleJobs            ?? DEFAULT_W4.multipleJobs,
+      dependents:              emp.w4Dependents              ?? DEFAULT_W4.dependents,
+      dependentsAbove18:       emp.w4DependentsAbove18       ?? DEFAULT_W4.dependentsAbove18,
+      extraWithholding:        emp.w4ExtraWithholding        ?? DEFAULT_W4.extraWithholding,
+      otherIncome:             emp.w4OtherIncome             ?? DEFAULT_W4.otherIncome,
+      otherDeduction:          emp.w4OtherDeduction          ?? DEFAULT_W4.otherDeduction,
+      militarySpouseExemption: emp.w4MilitarySpouseExemption ?? DEFAULT_W4.militarySpouseExemption,
+      isNonResident:           emp.w4IsNonResident           ?? DEFAULT_W4.isNonResident,
+      azDeductionPercent:      emp.w4AzDeductionPercent      ?? DEFAULT_W4.azDeductionPercent,
+      homeState:               emp.homeState                 ?? DEFAULT_W4.homeState,
+      stateW4Fields:           emp.stateW4Fields,
     }, {
       address1: emp.homeAddress, city: emp.homeCity, state: emp.homeState,
       zipcode: emp.homeZip, ssn: emp.ssn, dateOfBirth: emp.dateOfBirth,

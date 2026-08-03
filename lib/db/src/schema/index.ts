@@ -156,11 +156,17 @@ export const employees = pgTable("employees", {
   homeCity:          text("home_city"),
   homeState:         text("home_state"),
   homeZip:           text("home_zip"),
-  // W4
-  w4FilingStatus:    text("w4_filing_status"),
-  w4MultipleJobs:    boolean("w4_multiple_jobs").default(false),
-  w4Dependents:      integer("w4_dependents").default(0),
-  w4ExtraWithholding: integer("w4_extra_withholding").default(0),
+  // W4 — dependents/dependentsAbove18 are COUNTS (not dollar amounts); extraWithholding is dollars
+  w4FilingStatus:           text("w4_filing_status"),
+  w4MultipleJobs:           boolean("w4_multiple_jobs").default(false),
+  w4Dependents:             integer("w4_dependents").default(0),       // count of qualifying children under 17
+  w4DependentsAbove18:      integer("w4_dependents_above18").default(0), // count of other dependents
+  w4ExtraWithholding:       integer("w4_extra_withholding").default(0),
+  w4OtherIncome:            integer("w4_other_income").default(0),
+  w4OtherDeduction:         integer("w4_other_deduction").default(0),
+  w4MilitarySpouseExemption: boolean("w4_military_spouse_exemption").default(false),
+  w4IsNonResident:          boolean("w4_is_non_resident").default(false),
+  w4AzDeductionPercent:     integer("w4_az_deduction_percent"),
   // Status
   status:            text("status").notNull().default("onboarding"),
   // Rollfi

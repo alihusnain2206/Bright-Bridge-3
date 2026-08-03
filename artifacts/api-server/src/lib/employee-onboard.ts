@@ -31,8 +31,16 @@ export interface EmployeeSyncInput {
   dateOfBirth?: string;
   w4FilingStatus?: string;
   w4MultipleJobs?: boolean;
+  /** COUNT of qualifying children under 17 (NOT dollars) */
   w4Dependents?: number;
+  /** COUNT of other dependents age 17+ */
+  w4DependentsAbove18?: number;
   w4ExtraWithholding?: number;
+  w4OtherIncome?: number;
+  w4OtherDeduction?: number;
+  w4MilitarySpouseExemption?: boolean;
+  w4IsNonResident?: boolean;
+  w4AzDeductionPercent?: number | null;
   /** State-specific W-4 field values from the UI form (built via getStateW4FormFields).
    *  When provided, used directly in addStateW4Information instead of the hardcoded fallback. */
   stateW4Fields?: Record<string, string>;
@@ -101,9 +109,17 @@ export async function syncEmployeeToIntegrations(
         overtimeEligible: emp.overtimeEligible,
         homeState: emp.homeState, homeAddress: emp.homeAddress, homeCity: emp.homeCity, homeZip: emp.homeZip,
         ssn: emp.ssn, dateOfBirth: emp.dateOfBirth,
-        w4FilingStatus: emp.w4FilingStatus, w4MultipleJobs: emp.w4MultipleJobs,
-        w4Dependents: emp.w4Dependents, w4ExtraWithholding: emp.w4ExtraWithholding,
-        stateW4Fields: emp.stateW4Fields,
+        w4FilingStatus:           emp.w4FilingStatus,
+        w4MultipleJobs:           emp.w4MultipleJobs,
+        w4Dependents:             emp.w4Dependents,
+        w4DependentsAbove18:      emp.w4DependentsAbove18,
+        w4ExtraWithholding:       emp.w4ExtraWithholding,
+        w4OtherIncome:            emp.w4OtherIncome,
+        w4OtherDeduction:         emp.w4OtherDeduction,
+        w4MilitarySpouseExemption: emp.w4MilitarySpouseExemption,
+        w4IsNonResident:          emp.w4IsNonResident,
+        w4AzDeductionPercent:     emp.w4AzDeductionPercent,
+        stateW4Fields:            emp.stateW4Fields,
         phone: emp.phone, startDate: emp.startDate,
         bankName: emp.bankName, routingNumber: emp.routingNumber,
         accountNumber: emp.accountNumber, accountType: emp.accountType,

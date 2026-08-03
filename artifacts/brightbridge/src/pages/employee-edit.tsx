@@ -46,7 +46,14 @@ const EMP_TYPES = [
 const WORKER_TYPES = ["W2","1099 Contractor","Volunteer","Intern"];
 const PAY_TYPES    = ["hourly","salary"];
 const PAY_METHODS  = ["Direct Deposit","Check","Cash"];
-const W4_STATUSES  = ["Single","Married Filing Jointly","Married Filing Separately","Head of Household","Qualifying Surviving Spouse"];
+// Exact Rollfi enum values with IRS-standard user-facing labels
+const W4_STATUSES = [
+  { label: "Single",                      value: "Single" },
+  { label: "Married filing jointly",      value: "Married filing jointly" },
+  { label: "Married filing separately",   value: "Married Filing Separately" },
+  { label: "Head of household",           value: "Head of household" },
+  { label: "Qualifying surviving spouse", value: "Married Qualifying widow(er)" },
+] as const;
 const US_STATES = [
   "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
   "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
@@ -546,7 +553,14 @@ export default function EmployeeEditPage() {
         {activeTab === "w4" && (
           <>
             <Field label="Filing Status">
-              <Sel value={form.w4FilingStatus as string} onChange={v => set("w4FilingStatus", v)} options={W4_STATUSES} placeholder="Select…" />
+              <select
+                value={form.w4FilingStatus as string ?? ""}
+                onChange={e => set("w4FilingStatus", e.target.value)}
+                className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-[#0EA5C9] bg-white"
+              >
+                <option value="">Select…</option>
+                {W4_STATUSES.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
             </Field>
             <Field label="Multiple Jobs / Spouse Works">
               <div className="flex items-center gap-2 h-9">
@@ -558,11 +572,19 @@ export default function EmployeeEditPage() {
               </div>
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Dependents ($)" hint="Total annual amount from W4 Step 3">
+              <Field label="Qualifying children under 17 (count)" hint="Step 3 — number of children, not dollars">
                 <Input
-                  type="number" min="0"
+                  type="number" min="0" step="1"
                   value={String(form.w4Dependents)}
-                  onChange={e => set("w4Dependents", Number(e.target.value))}
+                  onChange={e => set("w4Dependents", Math.max(0, Math.round(Number(e.target.value))))}
+                  className="h-9 text-sm"
+                />
+              </Field>
+              <Field label="Other dependents (count)" hint="Step 3 — other dependents age 17+">
+                <Input
+                  type="number" min="0" step="1"
+                  value={String(form.w4ExtraWithholding ?? 0)}
+                  onChange={e => set("w4ExtraWithholding", Math.max(0, Math.round(Number(e.target.value))))}
                   className="h-9 text-sm"
                 />
               </Field>
@@ -576,7 +598,7 @@ export default function EmployeeEditPage() {
               </Field>
             </div>
             <div className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
-              These values update the local record. To update W4 elections in Rollfi, use the W4 submission flow on the employee&apos;s Rollfi onboarding.
+              Dependents fields are counts (e.g., 2 children), not dollar amounts. These update the local record only.
             </div>
           </>
         )}

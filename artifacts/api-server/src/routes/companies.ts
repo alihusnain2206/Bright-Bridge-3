@@ -585,7 +585,10 @@ router.post("/employees", async (req: Request, res: Response) => {
     paymentMethod: string; taxExempt: boolean;
     ssn?: string; dateOfBirth?: string;
     homeAddress?: string; homeCity?: string; homeState?: string; homeZip?: string;
-    w4FilingStatus?: string; w4MultipleJobs?: boolean; w4Dependents?: number; w4ExtraWithholding?: number;
+    w4FilingStatus?: string; w4MultipleJobs?: boolean;
+    w4Dependents?: number; w4DependentsAbove18?: number; w4ExtraWithholding?: number;
+    w4OtherIncome?: number; w4OtherDeduction?: number;
+    w4MilitarySpouseExemption?: boolean; w4IsNonResident?: boolean; w4AzDeductionPercent?: number | null;
     stateW4Fields?: Record<string, string>;
     bankSetupMethod: "invite" | "manual";
     bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
@@ -681,10 +684,16 @@ router.post("/employees", async (req: Request, res: Response) => {
       homeCity: body.homeCity,
       homeState: body.homeState,
       homeZip: body.homeZip,
-      w4FilingStatus: body.w4FilingStatus,
-      w4MultipleJobs: body.w4MultipleJobs ?? false,
-      w4Dependents: body.w4Dependents ?? 0,
-      w4ExtraWithholding: body.w4ExtraWithholding ?? 0,
+      w4FilingStatus:            body.w4FilingStatus,
+      w4MultipleJobs:            body.w4MultipleJobs            ?? false,
+      w4Dependents:              body.w4Dependents              ?? 0,
+      w4DependentsAbove18:       body.w4DependentsAbove18       ?? 0,
+      w4ExtraWithholding:        body.w4ExtraWithholding        ?? 0,
+      w4OtherIncome:             body.w4OtherIncome             ?? 0,
+      w4OtherDeduction:          body.w4OtherDeduction          ?? 0,
+      w4MilitarySpouseExemption: body.w4MilitarySpouseExemption ?? false,
+      w4IsNonResident:           body.w4IsNonResident           ?? false,
+      w4AzDeductionPercent:      body.w4AzDeductionPercent      ?? null,
       department: body.department ?? null,
       managerId: body.managerId ?? null,
       managerName: body.managerName ?? null,
@@ -719,11 +728,17 @@ router.post("/employees", async (req: Request, res: Response) => {
         homeZip: body.homeZip,
         ssn,
         dateOfBirth: dob,
-        w4FilingStatus: body.w4FilingStatus,
-        w4MultipleJobs: body.w4MultipleJobs,
-        w4Dependents: body.w4Dependents,
-        w4ExtraWithholding: body.w4ExtraWithholding,
-        stateW4Fields: body.stateW4Fields,
+        w4FilingStatus:            body.w4FilingStatus,
+        w4MultipleJobs:            body.w4MultipleJobs,
+        w4Dependents:              body.w4Dependents,
+        w4DependentsAbove18:       body.w4DependentsAbove18,
+        w4ExtraWithholding:        body.w4ExtraWithholding,
+        w4OtherIncome:             body.w4OtherIncome,
+        w4OtherDeduction:          body.w4OtherDeduction,
+        w4MilitarySpouseExemption: body.w4MilitarySpouseExemption,
+        w4IsNonResident:           body.w4IsNonResident,
+        w4AzDeductionPercent:      body.w4AzDeductionPercent,
+        stateW4Fields:             body.stateW4Fields,
         phone: body.phone ?? "",
         startDate: body.startDate,
         bankName: body.bankSetupMethod === "manual" ? body.bankName : undefined,
