@@ -455,7 +455,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         )}
 
         {/* ── Sidebar (desktop) ── */}
-        <aside className="hidden md:flex w-56 flex-col shrink-0 overflow-y-auto bg-white border-r border-gray-100">
+        <aside className="hidden md:flex w-64 flex-col shrink-0 overflow-y-auto bg-white border-r border-gray-100">
 
           {/* Nav items */}
           <nav className="flex-1 px-3 py-4 space-y-0.5">
@@ -570,7 +570,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* ── Main content ── */}
         <main className="flex-1 overflow-y-auto bg-white min-w-0">
-          <div className="px-3 py-4 sm:px-6 sm:py-6">
+          <div className="px-3 py-4 sm:px-6 sm:py-6 max-w-screen-2xl mx-auto">
             {children}
           </div>
         </main>
