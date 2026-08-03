@@ -776,6 +776,77 @@ describe("GET /rollfi/companies/:companyId/form-8655.pdf", () => {
     });
   });
 
+  // ── Fallback when BOTH rollfiCompanyId lookups return nothing ───────────────
+  //
+  // The three blocks above cover paths where companies.rollfiCompanyId resolves
+  // to a value (even if the Rollfi API call then fails or creds are absent).
+  // This block covers the fourth gap: BOTH the companies table lookup AND the
+  // rollfiCompanyRecords fallback return [] — no Rollfi ID is found at all —
+  // so the DB company fallback is entered immediately without ever attempting a
+  // Rollfi API call.  The PDF must still render and the signer name (sourced
+  // from the signed-form record, not the company row) must appear.
+
+  describe("when both rollfiCompanyId lookups return nothing AND the DB company row is also missing", () => {
+    beforeEach(() => {
+      // Credentials state is irrelevant — no Rollfi ID is ever found so the
+      // API block is skipped entirely.  Set present=true to confirm it is still
+      // not called.
+      rollfiCreds.present = true;
+
+      // Query 1: signed form record → present (signer name lives here)
+      dbState.callQueue.push([SIGNED_RECORD]);
+      // Query 2: companies.rollfiCompanyId lookup → empty (no row, no ID)
+      dbState.callQueue.push([]);
+      // Query 3: rollfiCompanyRecords fallback → empty (ID not there either)
+      dbState.callQueue.push([]);
+      // Query 4: DB company fallback → empty (row completely absent)
+      dbState.callQueue.push([]);
+    });
+
+    it("does NOT call the Rollfi API (no ID was ever resolved)", async () => {
+      await getPdf(makeApp());
+      expect(axiosMock.post).not.toHaveBeenCalled();
+    });
+
+    it("returns HTTP 200", async () => {
+      const res = await getPdf(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("response body starts with %PDF magic bytes (PDF is valid)", async () => {
+      const res = await getPdf(makeApp());
+      const magic = (res.body as Buffer).slice(0, 4).toString("ascii");
+      expect(magic).toBe("%PDF");
+    });
+
+    it("decompressed PDF content contains the signer name from the signed record", async () => {
+      // signerName is sourced from companySignedForms, not the companies row.
+      // Even when every company lookup returns nothing, signerName must still
+      // appear in the rendered PDF so the document is legally identifiable.
+      const res = await getPdf(makeApp());
+      const decompressed = decompressedPdfContent(res.body as Buffer);
+      expect(decompressed).toContain(SIGNED_RECORD.signerName);
+    });
+
+    it("passes taxpayerName as the 'Company' placeholder (no company data at all)", async () => {
+      // buildForm8655Pdf uses `taxpayerName.trim() || "Company"`.
+      // When both lookups are empty and the DB row is absent, taxpayerName
+      // starts as "" and must be replaced by the placeholder so the PDF is
+      // not rendered with a blank name field.
+      await getPdf(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ taxpayerName: "Company" }),
+      );
+    });
+
+    it("Content-Disposition attachment header is still set correctly", async () => {
+      const res = await getPdf(makeApp());
+      const cd = res.headers["content-disposition"] as string;
+      expect(cd).toMatch(/attachment/i);
+      expect(cd).toMatch(/Form8655_Jane_Doe_2026-07-01\.pdf/);
+    });
+  });
+
   // ── Drawn signature image is preserved in the downloaded PDF ─────────────
   //
   // Regression guard for the bug where `signatureImage` was omitted from the
