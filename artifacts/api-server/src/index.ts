@@ -5,6 +5,7 @@ import { getRollfiConfig } from "./lib/rollfi-config.js";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
 import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts, migrateManagerAccountsToOwner } from "./lib/user-account-persist.js";
+import { restoreActivityFromDb } from "./store.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
@@ -392,6 +393,9 @@ app.listen(port, (err) => {
     bootSeedCompanies().then(() => bootSeedEmployees()),
     loadRollfiStateFromDb().then(({ companies, employees }) => {
       logger.info({ companies, employees }, "Rollfi state restored from DB");
+    }),
+    restoreActivityFromDb().then(({ count }) => {
+      logger.info({ count }, "Activity log restored from DB");
     }),
     loadTimesheetEntriesFromDb().then((count) => {
       logger.info({ count }, "EasyTeam timesheet entries restored from DB");

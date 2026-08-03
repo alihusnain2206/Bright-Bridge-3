@@ -515,7 +515,9 @@ export const store = {
     };
     activityLog.unshift(entry);
     if (activityLog.length > 300) activityLog.splice(300);
-    // Persist async — fire-and-forget so callers are never blocked
+    // Persist async — fire-and-forget so callers are never blocked.
+    // Failures are logged as WARN so they appear in server logs rather than
+    // being silently swallowed (previously .catch(() => {}) hid all errors).
     import("@workspace/db").then(({ db, appActivityLog }) => {
       db.insert(appActivityLog).values({
         id:          entry.id,
@@ -525,8 +527,17 @@ export const store = {
         actorName:   entry.actorName ?? null,
         actorRole:   entry.actorRole ?? null,
         createdAt:   entry.createdAt,
-      }).catch(() => { /* non-fatal — in-memory copy still available */ });
-    }).catch(() => { /* ignore if db module unavailable */ });
+      }).catch((dbErr: unknown) => {
+        console.warn("[store.logActivity] DB insert failed — entry is in-memory only and will be lost on restart", {
+          id: entry.id, companyId: entry.companyId, type: entry.type,
+          error: dbErr instanceof Error ? dbErr.message : String(dbErr),
+        });
+      });
+    }).catch((modErr: unknown) => {
+      console.warn("[store.logActivity] Could not import @workspace/db — activity entry not persisted", {
+        id: entry.id, error: modErr instanceof Error ? modErr.message : String(modErr),
+      });
+    });
   },
   getActivity(companyId: string, limit = 50): ActivityEvent[] {
     return activityLog.filter((e) => e.companyId === companyId).slice(0, limit);
@@ -657,3 +668,43 @@ export const store = {
     return true;
   },
 };
+
+// ── Boot-time restore: populate in-memory activityLog from DB ─────────────────
+// Called once at startup so the in-memory fallback in store.getActivity() is
+// accurate after a restart, not empty. The /activity endpoint already reads from
+// DB first; this just keeps the two sources consistent.
+export async function restoreActivityFromDb(): Promise<{ count: number }> {
+  try {
+    const { db, appActivityLog } = await import("@workspace/db");
+    const { desc } = await import("drizzle-orm");
+    const rows = await db.select().from(appActivityLog).orderBy(desc(appActivityLog.createdAt)).limit(300);
+    // Clear stale in-memory entries (from the current process lifetime) before
+    // adding DB rows, to avoid duplicate ids if logActivity fired before boot finished.
+    const dbIds = new Set(rows.map((r) => r.id));
+    // Remove existing entries that are already in DB (dedup by id)
+    for (let i = activityLog.length - 1; i >= 0; i--) {
+      if (dbIds.has(activityLog[i]!.id)) activityLog.splice(i, 1);
+    }
+    for (const r of rows) {
+      activityLog.push({
+        id:          r.id,
+        companyId:   r.companyId,
+        type:        r.type,
+        description: r.description,
+        actorName:   r.actorName ?? undefined,
+        actorRole:   r.actorRole ?? undefined,
+        createdAt:   r.createdAt,
+      });
+    }
+    // Keep newest-first ordering (DB query is DESC, so push reversed to front isn't needed —
+    // we just sort once after loading).
+    activityLog.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (activityLog.length > 300) activityLog.splice(300);
+    return { count: rows.length };
+  } catch (err) {
+    console.warn("[restoreActivityFromDb] Failed to restore activity log from DB — in-memory fallback will be empty", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { count: 0 };
+  }
+}
