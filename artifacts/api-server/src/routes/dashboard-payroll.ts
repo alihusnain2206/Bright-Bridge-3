@@ -261,8 +261,12 @@ async function fetchBankBalance(
 
   for (const [path, body] of attempts) {
     try {
-      const r = await axios.post(`${getBaseUrl()}${path}`, body, { headers: rollfiHeaders() });
+      const r = await axios.post(`${getBaseUrl()}${path}`, body, { headers: rollfiHeaders(), timeout: 6000 });
       const d = r.data as Record<string, unknown>;
+      // Log the raw response so we can identify the correct field name
+      if (process.env.NODE_ENV === "development") {
+        console.log(`[bankBalance probe] ${path}:`, JSON.stringify(d).slice(0, 500));
+      }
       const from = extractBalance(d);
       if (from.balance !== null) return from;
       // Also check one level nested (e.g. d.data or d.balance object)
@@ -272,7 +276,13 @@ async function fetchBankBalance(
           if (nested.balance !== null) return nested;
         }
       }
-    } catch { /* try next */ }
+    } catch (err) {
+      // Log the error so we can see which endpoints exist vs. which don't
+      const msg = err instanceof Error ? err.message : String(err);
+      if (process.env.NODE_ENV === "development") {
+        console.warn(`[bankBalance probe] ${path} failed:`, msg.slice(0, 200));
+      }
+    }
   }
 
   return { balance: null, updatedAt: null };

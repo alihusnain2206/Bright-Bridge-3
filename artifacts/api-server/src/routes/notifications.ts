@@ -18,6 +18,7 @@ import {
   timesheetShifts,
   companies as companiesTable,
   companySignedForms,
+  rollfiCompanyRecords,
 } from "@workspace/db";
 import { eq, and, lt, gt, isNotNull, isNull, sql } from "drizzle-orm";
 import axios from "axios";
@@ -256,14 +257,56 @@ router.get("/notifications", requireAuth, async (req: Request, res: Response) =>
         .limit(1);
 
       if (!record) {
-        // Never signed at all
-        items.push({
-          id:     "form-8655-unsigned",
-          level:  "red",
-          title:  "IRS Form 8655 needs your signature",
-          detail: "Required before payroll can run. Sign it in Company Settings.",
-          link:   "/settings?tab=signatures",
-        });
+        // Never signed in-app. Only warn if Rollfi itself lists 8655 as a pending task,
+        // OR if we couldn't reach Rollfi to check (conservative fallback).
+        // This prevents a false "needs your signature" for companies where Rollfi
+        // doesn't actually require Form 8655.
+        let rollfi8655Required = true; // conservative default — show warning if we can't check
+
+        try {
+          // Resolve rollfiCompanyId — fall back to rollfi_company_records for legacy companies
+          const [co8655] = await db
+            .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+            .from(companiesTable)
+            .where(eq(companiesTable.id, companyId))
+            .limit(1);
+          let rid = co8655?.rollfiCompanyId ?? null;
+          if (!rid) {
+            const [leg] = await db
+              .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+              .from(rollfiCompanyRecords)
+              .where(eq(rollfiCompanyRecords.companyId, companyId))
+              .limit(1);
+            rid = leg?.rollfiCompanyId ?? null;
+          }
+
+          if (rid) {
+            const cfg = getRollfiConfig();
+            if (cfg.credentialsPresent) {
+              const tr = await axios.post(
+                `${cfg.baseUrl}/reports#getCompanyTask`,
+                { method: "getCompanyTask", companyId: rid },
+                {
+                  headers: { "Content-Type": "application/json", "client-id": cfg.clientId ?? "", "secret-key": cfg.secretKey ?? "" },
+                  timeout: 4000,
+                },
+              );
+              const tasks = ((tr.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description?: string }>;
+              // Rollfi fetched successfully — only warn if it lists 8655
+              rollfi8655Required = tasks.some(t => /8655/i.test(t.task) || /8655/i.test(t.description ?? ""));
+            }
+          }
+        } catch { /* Rollfi unreachable — keep conservative default (show warning) */ }
+
+        if (rollfi8655Required) {
+          items.push({
+            id:     "form-8655-unsigned",
+            level:  "red",
+            title:  "IRS Form 8655 needs your signature",
+            detail: "Required before payroll can run. Sign it in Company Settings.",
+            link:   "/settings?tab=signatures",
+          });
+        }
       } else if (record.uploadStatus === "failed") {
         items.push({
           id:     "form-8655-upload-failed",
