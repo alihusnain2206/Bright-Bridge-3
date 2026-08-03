@@ -461,7 +461,7 @@ export default function OwnerDashboard() {
                         ))}
                         <tr className="border-t-2 border-gray-300">
                           <td className="py-3 text-gray-900 font-bold text-sm">TOTAL CASH REQUIRED</td>
-                          <td className="py-3 text-right text-gray-900 font-bold text-sm">{fmtCurrency(cashRequired)}</td>
+                          <td className="py-3 text-right text-gray-900 font-bold text-sm">{fmtCurrency(debitAmount ?? cashRequired)}</td>
                         </tr>
                       </tbody>
                     </table>

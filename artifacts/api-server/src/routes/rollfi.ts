@@ -5131,11 +5131,20 @@ router.post("/rollfi/admin/seed-statuses", async (req, res) => {
 
 function mapWebhookType(eventType: string): string {
   const labels: Record<string, string> = {
-    "payroll.calculated": "Payroll calculated",
-    "payroll.submitted":  "Payroll submitted",
-    "payroll.processed":  "Payroll completed",
-    "payroll.approved":   "Payroll approved",
-    "payroll.failed":     "Payroll failed",
+    "payroll.initiated":   "Payroll run started",
+    "payroll.inProcess":   "Payroll processing",
+    "payroll.calculated":  "Payroll calculated",
+    "payroll.submitted":   "Payroll submitted for funding",
+    "payroll.processed":   "Payroll completed",
+    "payroll.approved":    "Payroll approved",
+    "payroll.failed":      "Payroll failed",
+    "payroll.cancelled":   "Payroll cancelled",
+    "employee.added":      "Employee added",
+    "employee.updated":    "Employee details updated",
+    "employee.offboarded": "Employee offboarded",
+    "company.updated":     "Company details updated",
+    "tax.filed":           "Tax filing submitted",
+    "document.uploaded":   "Document uploaded",
   };
   return labels[eventType] ?? eventType;
 }
