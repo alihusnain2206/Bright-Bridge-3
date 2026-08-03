@@ -11,6 +11,7 @@ import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } f
 import { desc, eq, inArray, and, isNull, isNotNull } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
+import { safeRollfiLog } from "../lib/safe-rollfi-log.js";
 import crypto from "crypto";
 
 // ── Rollfi / Convoy webhook HMAC verification ─────────────────────────────────
@@ -59,15 +60,7 @@ function formatSsn(n: string): string {
   return `${d.slice(0, 3)}-${d.slice(3, 5)}-${d.slice(5)}`;
 }
 
-function safeRollfiLog(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== "object") return {};
-  const d = data as Record<string, unknown>;
-  const safe: Record<string, unknown> = {};
-  for (const k of ["status", "success", "message", "error", "code", "id", "userId", "companyId", "referenceId", "taskId", "result"]) {
-    if (k in d) safe[k] = d[k];
-  }
-  return safe;
-}
+// safeRollfiLog is imported from lib/safe-rollfi-log.ts (single source of truth)
 
 interface KycOnboardingResult {
   kycInitiated: boolean;
@@ -133,7 +126,7 @@ async function runEmployeeKycOnboarding(
       { method: "acceptTermsAndCondition", userId: rollfiUserId },
       { headers }
     );
-    log.info({ rollfiResponse: r.data }, "Rollfi acceptTermsAndCondition response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi acceptTermsAndCondition response");
   } catch (e) { log.warn({ e }, "acceptTermsAndCondition failed (ignoring)"); }
 
   // Step 2 — KYC identity information (must succeed before initiateUserKyc)
@@ -186,7 +179,7 @@ async function runEmployeeKycOnboarding(
       },
       { headers }
     );
-    log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addW4Information response");
   } catch (e) { log.warn({ e }, "addW4Information failed (ignoring)"); }
 
   // Step 4 — initiate KYC verification (only if KYC info was accepted)
@@ -201,7 +194,7 @@ async function runEmployeeKycOnboarding(
         { method: "initiateUserKyc", userId: rollfiUserId },
         { headers }
       );
-      log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi initiateUserKyc response");
       const raw = r.data as Record<string, unknown>;
       const errMsg = ((raw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
       if (errMsg.toLowerCase().includes("kyb is not initiated") || errMsg.toLowerCase().includes("company kyb")) {
@@ -540,7 +533,7 @@ async function enrollMissingEmployeesInPeriod(
       const enrollRaw = enrollResp.data as Record<string, unknown>;
       const errMsg = extractRollfiError(enrollRaw);
       if (!errMsg) {
-        log.info({ uid, name: empInfo?.name, payPeriodId, response: JSON.stringify(enrollResp.data) }, "Safety net: enrolled successfully");
+        log.info({ uid, name: empInfo?.name, payPeriodId, rollfiResult: safeRollfiLog(enrollResp.data) }, "Safety net: enrolled successfully");
         newlyEnrolled++;
       } else if (errMsg.toLowerCase().includes("already has a payroll line item")) {
         // Guardrail 2: race — desired state already reached
@@ -1317,8 +1310,8 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    // Log the raw response so we can see what Rollfi actually returns
-    req.log.info({ rollfiResponse: response.data }, "Rollfi createBusiness raw response");
+    // safeRollfiLog strips raw fields — never log full response (may echo SSN/bank)
+    req.log.info({ rollfiResult: safeRollfiLog(response.data) }, "Rollfi createBusiness response");
 
     const raw = response.data as Record<string, unknown>;
     assertNoRollfiError(raw, "createBusiness");
@@ -1329,11 +1322,8 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     const rollfiLocationId = (reg.companyLocationId ?? reg.locationId) as string | undefined;
 
     if (!rollfiCompanyId) {
-      req.log.error({ rollfiResponse: raw }, "Rollfi createBusiness returned unexpected shape");
-      res.status(500).json({
-        error: "Rollfi returned an unexpected response — missing companyId",
-        rollfiResponse: raw,
-      });
+      req.log.error({ rollfiResult: safeRollfiLog(raw) }, "Rollfi createBusiness returned unexpected shape — missing companyId");
+      res.status(500).json({ error: "Rollfi returned an unexpected response — missing companyId" });
       return;
     }
 
@@ -1465,7 +1455,7 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
       { method: "initiateCompanyKyb", companyId: rollfiCompanyId },
       { headers }
     );
-    req.log.info({ rollfiResponse: r.data }, "retry-kyb: initiateCompanyKyb response");
+    req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "retry-kyb: initiateCompanyKyb response");
     steps.initiateCompanyKyb = r.data;
   } catch (e) {
     const err = e as { response?: { data: unknown } };
@@ -2031,7 +2021,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    req.log.info({ rollfiResponse: addUserResp.data }, "Rollfi addUser raw response");
+    req.log.info({ rollfiResult: safeRollfiLog(addUserResp.data) }, "Rollfi addUser response");
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
     assertNoRollfiError(addUserRaw, "addUser");
@@ -2039,10 +2029,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     const rollfiUserId = (userObj.userId ?? userObj.id) as string | undefined;
 
     if (!rollfiUserId) {
-      req.log.error({ rollfiResponse: addUserRaw }, "Rollfi addUser returned unexpected shape");
+      req.log.error({ rollfiResult: safeRollfiLog(addUserRaw) }, "Rollfi addUser returned unexpected shape — missing userId");
       res.status(500).json({
         error: "Rollfi returned an unexpected response for addUser — missing userId",
-        rollfiResponse: addUserRaw,
       });
       return;
     }
@@ -2075,7 +2064,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
       { headers: rollfiHeaders() }
     );
 
-    req.log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage raw response");
+    req.log.info({ rollfiResult: safeRollfiLog(addWageResp.data) }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
     assertNoRollfiError(addWageRaw, "addUserWage"); // surface errors instead of silently swallowing
@@ -2135,7 +2124,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
           { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
           { headers: rollfiHeaders() }
         );
-        req.log.info({ rollfiResponse: usersResp.data }, "Rollfi getUsers raw response");
+        req.log.info({ rollfiResult: safeRollfiLog(usersResp.data) }, "Rollfi getUsers response");
 
         type RollfiUser = { userId: string; email?: string; user?: string };
         const users = (usersResp.data as { users?: RollfiUser[] }).users ?? [];
@@ -2179,7 +2168,7 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
               },
               { headers: rollfiHeaders() }
             );
-            req.log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage (recovery) response");
+            req.log.info({ rollfiResult: safeRollfiLog(addWageResp.data) }, "Rollfi addUserWage (recovery) response");
             const wageRaw = addWageResp.data as Record<string, unknown>;
             const wageObj = (wageRaw.userWage ?? wageRaw) as Record<string, unknown>;
             rollfiWageId = (wageObj.userWageId ?? wageObj.id ?? "") as string;
@@ -2247,8 +2236,9 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
     }
 
     const e = err as { response?: { data: unknown; status: number } };
-    req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi employee onboarding failed");
-    res.status(500).json({ error: "Rollfi employee onboarding failed", details: e.response?.data ?? String(err) });
+    // safeRollfiLog strips raw response body — Rollfi error responses may echo submitted KYC/bank data
+    req.log.error({ rollfiResult: safeRollfiLog(e.response?.data), status: e.response?.status, msg: err instanceof Error ? err.message : String(err) }, "Rollfi employee onboarding failed");
+    res.status(500).json({ error: "Rollfi employee onboarding failed", details: safeRollfiLog(e.response?.data) });
   }
 });
 
@@ -2316,7 +2306,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
           body,
           { headers, validateStatus: () => true }
         );
-        req.log.info({ status: r.status, rollfiResponse: r.data, requestBody: JSON.stringify(body) }, "fix-wage: getUserWage attempt");
+        req.log.info({ status: r.status, rollfiResult: safeRollfiLog(r.data) }, "fix-wage: getUserWage attempt");
         if (r.status === 200) {
           const raw = r.data as Record<string, unknown>;
           const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
@@ -2356,7 +2346,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
         },
         { headers }
       );
-      req.log.info({ rollfiResponse: r.data }, "fix-wage: updateUserWage response");
+      req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "fix-wage: updateUserWage response");
       const raw = r.data as Record<string, unknown>;
       const errMsg = (raw.error as Record<string, unknown> | undefined)?.message as string | undefined;
       if (!errMsg) {
@@ -2365,7 +2355,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
           const existing = store.getRollfiEmployee(staffUser.employeeId);
           if (existing) await persistRollfiEmployee(staffUser.employeeId, { ...existing, rollfiWageId: resolvedWageId });
         }
-        res.json({ success: true, method: "updateUserWage", wageRateDollars, rollfiResponse: raw });
+        res.json({ success: true, method: "updateUserWage", wageRateDollars });
         return;
       }
       req.log.warn({ errMsg }, "fix-wage: updateUserWage returned error body");
@@ -2397,7 +2387,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
       },
       { headers }
     );
-    req.log.info({ rollfiResponse: r2.data }, "fix-wage: addUserWage (fallback) response");
+    req.log.info({ rollfiResult: safeRollfiLog(r2.data) }, "fix-wage: addUserWage (fallback) response");
     const raw2 = r2.data as Record<string, unknown>;
     const errMsg2 = (raw2.error as Record<string, unknown> | undefined)?.message as string | undefined;
     if (!errMsg2) {
@@ -2406,7 +2396,7 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
         const existing = store.getRollfiEmployee(staffUser.employeeId);
         if (existing) await persistRollfiEmployee(staffUser.employeeId, { ...existing, rollfiWageId: newWageId });
       }
-      res.json({ success: true, method: "addUserWage", wageRateDollars, rollfiResponse: raw2 });
+      res.json({ success: true, method: "addUserWage", wageRateDollars });
       return;
     }
     req.log.warn({ errMsg2 }, "fix-wage: addUserWage (fallback) returned error body");
@@ -2476,7 +2466,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
             body,
             { headers, validateStatus: () => true }
           );
-          req.log.info({ status: r.status, rollfiResponse: r.data, requestBody: JSON.stringify(body), name: u.name }, "repair-store-wages: getUserWage attempt");
+          req.log.info({ status: r.status, rollfiResult: safeRollfiLog(r.data), name: u.name }, "repair-store-wages: getUserWage attempt");
           if (r.status === 200) {
             const raw = r.data as Record<string, unknown>;
             const wages = Array.isArray(raw.userWages) ? raw.userWages as Array<Record<string, unknown>>
@@ -2515,7 +2505,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
             paymentMethod: "Direct Deposit",
           },
         }, { headers });
-        req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r.data }, "repair-store-wages: updateUserWage response");
+        req.log.info({ rollfiUserId, name: u.name, rollfiResult: safeRollfiLog(r.data) }, "repair-store-wages: updateUserWage response");
         const raw = r.data as Record<string, unknown>;
         const errMsg = (raw.error as Record<string, unknown> | undefined)?.message as string | undefined;
         if (!errMsg) {
@@ -2551,7 +2541,7 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
             paymentMethod: "Direct Deposit",
           },
         }, { headers });
-        req.log.info({ rollfiUserId, name: u.name, rollfiResponse: r2.data }, "repair-store-wages: addUserWage (fallback) response");
+        req.log.info({ rollfiUserId, name: u.name, rollfiResult: safeRollfiLog(r2.data) }, "repair-store-wages: addUserWage (fallback) response");
         const raw2 = r2.data as Record<string, unknown>;
         const errMsg2 = (raw2.error as Record<string, unknown> | undefined)?.message as string | undefined;
         if (!errMsg2) {

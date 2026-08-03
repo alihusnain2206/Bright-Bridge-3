@@ -3,6 +3,7 @@ import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
 import { getRollfiConfig } from "./rollfi-config.js";
 import { getRollfiWageFields } from "./rollfi-wage.js";
+import { safeRollfiLog } from "./safe-rollfi-log.js";
 
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
@@ -93,15 +94,7 @@ interface KycIdentity {
   dateOfBirth?: string;
 }
 
-function safeRollfiLog(data: unknown): Record<string, unknown> {
-  if (!data || typeof data !== "object") return {};
-  const d = data as Record<string, unknown>;
-  const safe: Record<string, unknown> = {};
-  for (const k of ["status", "success", "message", "error", "code", "id", "userId", "companyId", "referenceId", "taskId", "result"]) {
-    if (k in d) safe[k] = d[k];
-  }
-  return safe;
-}
+// safeRollfiLog is imported from ./safe-rollfi-log.ts (single source of truth)
 
 // ── KYC onboarding chain ─────────────────────────────────────────────────────
 /**
@@ -156,7 +149,7 @@ export async function runEmployeeKycOnboarding(
   // ── acceptTermsAndCondition — SOFT ────────────────────────────────────────
   try {
     const r = await axios.put(`${baseUrl}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
-    log.info({ rollfiResponse: r.data }, "Rollfi acceptTermsAndCondition response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi acceptTermsAndCondition response");
     const errMsg = extractRollfiError(r.data);
     if (errMsg) softWarnings.push({ step: "acceptTermsAndCondition", message: errMsg });
   } catch (e) {
@@ -203,7 +196,7 @@ export async function runEmployeeKycOnboarding(
         extraWithholding: w4.extraWithholding,
       },
     }, { headers });
-    log.info({ rollfiResponse: r.data }, "Rollfi addW4Information response");
+    log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addW4Information response");
     const errMsg = extractRollfiError(r.data);
     if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
       hardErrors.push({ step: "addW4Information", message: `Tax withholding rejected: ${errMsg}` });
@@ -223,7 +216,7 @@ export async function runEmployeeKycOnboarding(
         userId: rollfiUserId,
         stateW4Information: stateW4Payload,
       }, { headers });
-      log.info({ rollfiResponse: r.data, homeState: w4.homeState, source: w4.stateW4Fields ? "ui-form" : "fallback" }, "Rollfi addStateW4Information response");
+      log.info({ rollfiResult: safeRollfiLog(r.data), homeState: w4.homeState, source: w4.stateW4Fields ? "ui-form" : "fallback" }, "Rollfi addStateW4Information response");
       const errMsg = extractRollfiError(r.data);
       if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
         softWarnings.push({ step: "addStateW4Information", message: errMsg });
@@ -245,7 +238,7 @@ export async function runEmployeeKycOnboarding(
   } else {
     try {
       const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
-      log.info({ rollfiResponse: r.data }, "Rollfi initiateUserKyc response");
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi initiateUserKyc response");
       const errMsg = extractRollfiError(r.data);
       if (errMsg) hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${errMsg}. This employee cannot be paid until verification completes` });
     } catch (e) {
@@ -403,7 +396,7 @@ export async function onboardEmployeeToRollfi(
         paymentMethod: "Direct Deposit",
       },
     }, { headers });
-    log.info({ rollfiResponse: addWageResp.data }, "Rollfi addUserWage response");
+    log.info({ rollfiResult: safeRollfiLog(addWageResp.data) }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
     const wageErrMsg = extractRollfiError(addWageRaw);
@@ -515,7 +508,7 @@ export async function enrollEmployeeInNewPayPeriods(
       const enrollRaw = enrollResp.data as Record<string, unknown>;
       const errMsg = extractRollfiError(enrollRaw);
       if (!errMsg) {
-        log.info({ rollfiUserId, payPeriodId, response: JSON.stringify(enrollResp.data) }, "enrollEmployeeInNewPayPeriods: enrolled successfully");
+        log.info({ rollfiUserId, payPeriodId, rollfiResult: safeRollfiLog(enrollResp.data) }, "enrollEmployeeInNewPayPeriods: enrolled successfully");
         enrolled++;
       } else if (errMsg.toLowerCase().includes("already has a payroll line item")) {
         // Guardrail 2: race — desired state already reached

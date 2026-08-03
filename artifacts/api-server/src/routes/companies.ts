@@ -8,6 +8,7 @@ import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity, calculateComplianceScore, calculateReadinessFlags } from "./people.js";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
+import { safeRollfiLog } from "../lib/safe-rollfi-log.js";
 
 const router: IRouter = Router();
 
@@ -35,6 +36,8 @@ function assertNoRollfiError(raw: Record<string, unknown>, label: string): void 
 function maskAcct(n: string): string {
   return `****${String(n).slice(-4)}`;
 }
+
+// safeRollfiLog is imported from lib/safe-rollfi-log.ts (single source of truth)
 
 interface CompanyBankInput {
   bankName?: string;
@@ -104,8 +107,8 @@ async function ensureFullOnboarding(
         paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
       }, { headers: rollfiHeaders() });
       const updData = upd.data as Record<string, unknown>;
-      if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update", rollfiResponse: updData }, "Pay schedule set in Rollfi"); }
-      else { log.warn({ rollfiResponse: updData }, "updatePaySchedule returned error body, trying add"); }
+      if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update", rollfiResult: safeRollfiLog(updData) }, "Pay schedule set in Rollfi"); }
+      else { log.warn({ rollfiResult: safeRollfiLog(updData) }, "updatePaySchedule returned error body, trying add"); }
     } catch (_) { /* fall through to add */ }
     if (!scheduleSet) {
       const add = await axios.post(`${getBaseUrl()}/payroll#addPaySchedule`, {
@@ -114,9 +117,9 @@ async function ensureFullOnboarding(
       }, { headers: rollfiHeaders() });
       const addData = add.data as Record<string, unknown>;
       if (addData.error) {
-        log.warn({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, rollfiResponse: addData }, "addPaySchedule returned error body — pay schedule NOT set");
+        log.warn({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, rollfiResult: safeRollfiLog(addData) }, "addPaySchedule returned error body — pay schedule NOT set");
       } else {
-        log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "add", rollfiResponse: addData }, "Pay schedule set in Rollfi");
+        log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "add", rollfiResult: safeRollfiLog(addData) }, "Pay schedule set in Rollfi");
       }
     }
   } catch (e) { log.warn({ e }, "addPaySchedule failed"); }
@@ -297,7 +300,8 @@ router.post("/companies", async (req: Request, res: Response) => {
           businessUser: { firstName: body.ownerFirstName, middleName: "", lastName: body.ownerLastName, phoneNumber: body.ownerPhone, email: body.ownerEmail, address1: body.ownerAddress1, address2: "", city: body.ownerCity, state: body.ownerState, zipcode: body.ownerZip, ssn: ownerSsn, dateOfBirth: body.ownerDob.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2"), payrollAdmin: true, bookkeeper: true, beneficialOwner: true, ownershipPercentage: body.ownershipPercentage ?? 100 },
         }, { headers: rollfiHeaders() });
 
-        req.log.info({ rollfiResponse: response.data }, "Rollfi createBusiness response");
+        // safeRollfiLog strips raw fields — never log full response (may echo SSN/bank)
+        req.log.info({ rollfiResult: safeRollfiLog(response.data) }, "Rollfi createBusiness response");
         const raw = response.data as Record<string, unknown>;
         assertNoRollfiError(raw, "createBusiness");
         const reg = (raw.registration ?? raw) as Record<string, unknown>;

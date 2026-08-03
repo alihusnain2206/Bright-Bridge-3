@@ -265,10 +265,7 @@ async function fetchBankBalance(
     try {
       const r = await axios.post(`${getBaseUrl()}${path}`, body, { headers: rollfiHeaders(), timeout: 6000 });
       const d = r.data as Record<string, unknown>;
-      // Log the raw response so we can identify the correct field name
-      if (process.env.NODE_ENV === "development") {
-        console.log(`[bankBalance probe] ${path}:`, JSON.stringify(d).slice(0, 500));
-      }
+      // Raw response logging removed — balance probe responses may echo bank metadata
       const from = extractBalance(d);
       if (from.balance !== null) return from;
       // Also check one level nested (e.g. d.data or d.balance object)
