@@ -327,7 +327,7 @@ router.get("/notifications", requireAuth, async (req: Request, res: Response) =>
                 level: "yellow",
                 title: `Complete state tax registration${stateLabel}`,
                 detail: t.description ?? "A state payroll tax registration is pending in your payroll account.",
-                link: "/settings/state-tax",
+                link: "/settings?tab=state-tax",
               });
             } else {
               // Generic payroll provider task
