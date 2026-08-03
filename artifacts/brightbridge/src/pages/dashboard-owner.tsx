@@ -7,7 +7,7 @@ import {
   AlertTriangle, Loader2, ShieldCheck, DollarSign,
   RefreshCw, Bell, Zap, ChevronRight,
   FileText, Play, Lock, ArrowRight, BarChart3,
-  Wallet, CircleDot, CreditCard, Download, Radio,
+  Wallet, CircleDot, CreditCard, Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,10 +48,6 @@ interface UnmatchedWebhookEvent {
   receivedAt: string;
 }
 
-interface UnmatchedWebhooksData {
-  count: number;
-  events: UnmatchedWebhookEvent[];
-}
 
 type AlertSeverity = "high" | "medium" | "low";
 interface AttentionItem {
@@ -124,7 +120,6 @@ export default function OwnerDashboard() {
   void qc; // retained for potential future use
 
   const [activeTab, setActiveTab] = useState("overview");
-  const [webhookAlertsExpanded, setWebhookAlertsExpanded] = useState(false);
   const companyId = user?.companyId ?? "";
 
   // ── Queries ─────────────────────────────────────────────────────────────────
@@ -148,15 +143,6 @@ export default function OwnerDashboard() {
       enabled: !!companyId,
     });
 
-  const { data: unmatchedWebhooks } =
-    useQuery<UnmatchedWebhooksData>({
-      queryKey: ["unmatched-webhooks"],
-      queryFn: () =>
-        fetch("/api/unmatched-webhooks", { credentials: "include" })
-          .then(r => r.json()),
-      staleTime: 60_000,
-      refetchInterval: 60_000,
-    });
 
   // Funding source details come from payrollData.fundingSource (Rollfi getCompanyInfo).
   // Try multiple field-name variants since Rollfi's response shape varies.
@@ -252,46 +238,6 @@ export default function OwnerDashboard() {
         </button>
       </div>
 
-      {/* ── Unmatched Webhook Alert ──────────────────────────────────────────── */}
-      {unmatchedWebhooks && unmatchedWebhooks.count > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 overflow-hidden">
-          <button
-            className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-amber-100 transition-colors"
-            onClick={() => setWebhookAlertsExpanded(prev => !prev)}
-          >
-            <Radio className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-semibold text-amber-800">
-                  {unmatchedWebhooks.count} unmatched payroll event{unmatchedWebhooks.count > 1 ? "s" : ""}
-                </span>
-                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-200 text-amber-800">
-                  {unmatchedWebhooks.count}
-                </span>
-              </div>
-              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-                Payroll service events arrived without a matching company record — this may indicate a configuration gap. Click to {webhookAlertsExpanded ? "hide" : "view"} details.
-              </p>
-            </div>
-            <ChevronRight className={`h-4 w-4 text-amber-500 shrink-0 mt-0.5 transition-transform ${webhookAlertsExpanded ? "rotate-90" : ""}`} />
-          </button>
-          {webhookAlertsExpanded && (
-            <div className="border-t border-amber-200 divide-y divide-amber-100">
-              {unmatchedWebhooks.events.map(ev => (
-                <div key={ev.id} className="px-4 py-2.5 flex items-center gap-3 bg-white/60">
-                  <div className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-xs font-medium text-gray-800">{ev.eventType}</span>
-                  </div>
-                  <span className="text-[10px] text-gray-400 shrink-0">
-                    {new Date(ev.receivedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Bank Balance Hero (shown when Rollfi returns a live balance) ─────── */}
       {bankBalance != null && (

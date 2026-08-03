@@ -227,7 +227,12 @@ router.get("/state-registrations/gaps", requireAuth, async (req: Request, res: R
 });
 
 // ── PUT /state-registrations/:id ─────────────────────────────────────────────
-// Calls Rollfi's updateStateRegistrationInfo (previously never called anywhere).
+// Calls Rollfi's updateStateRegistrationInfo.
+// Handles two cases:
+//   1. id is a real DB uuid  → look up existing row, update in place.
+//   2. id starts with "rollfi-{stateCode}" (synthetic Rollfi-synced row that has
+//      no local record yet) → resolve rollfiCompanyId, call Rollfi, then INSERT
+//      a new DB row so the entry becomes a first-class BrightBridge record.
 router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   const user = store.getUserById(userId);
@@ -236,38 +241,95 @@ router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Re
     res.status(403).json({ error: "Access denied" }); return;
   }
 
-  // Express params values are always strings at runtime; cast to satisfy strict TS
-  const id = req.params.id as string;
-  const [reg] = await db.select().from(stateRegistrationsTable)
-    .where(eq(stateRegistrationsTable.id, id)).catch(() => [undefined]);
-  if (!reg) { res.status(404).json({ error: "State registration not found" }); return; }
-
-  // Company scoping — owners may only update their own company's records
-  if (user.role !== "super_admin" && reg.companyId !== user.companyId) {
-    res.status(403).json({ error: "Access denied: company mismatch" }); return;
-  }
-
   const { fieldValues } = req.body as { fieldValues?: Record<string, string> };
   if (!fieldValues || Object.keys(fieldValues).length === 0) {
     res.status(400).json({ error: "fieldValues is required" }); return;
   }
 
-  if (!reg.rollfiCompanyId) {
-    res.status(400).json({ error: "Company not registered with Rollfi" }); return;
+  const id = req.params.id as string;
+  const isSynthetic = id.startsWith("rollfi-");
+
+  // ── Synthetic row: "rollfi-{stateCode}" — no local DB record yet ──────────
+  if (isSynthetic) {
+    const stateCode = id.replace(/^rollfi-/, "");
+    const companyId = user.role === "super_admin"
+      ? ((req.query.companyId as string | undefined) ?? user.companyId)
+      : user.companyId;
+    if (!companyId) { res.status(400).json({ error: "No company associated" }); return; }
+
+    // Resolve rollfiCompanyId (store → companies → rollfi_company_records)
+    let rollfiCompanyId: string | undefined =
+      store.getRollfiCompany(companyId)?.rollfiCompanyId ?? undefined;
+    if (!rollfiCompanyId) {
+      const [dbCo] = await db.select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+        .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+      rollfiCompanyId = dbCo?.rollfiCompanyId ?? undefined;
+    }
+    if (!rollfiCompanyId) {
+      const [rcr] = await db.select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+        .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).limit(1);
+      rollfiCompanyId = rcr?.rollfiCompanyId ?? undefined;
+    }
+    if (!rollfiCompanyId) {
+      res.status(400).json({ error: "Company not registered with payroll provider" }); return;
+    }
+
+    const nowISO = new Date().toISOString();
+    const newId = `SR-${stateCode}-${Date.now()}`;
+    const fieldValuesJson = JSON.stringify(fieldValues);
+    const stateName = STATE_NAMES[stateCode] ?? stateCode;
+
+    try {
+      const response = await axios.post(
+        `${getBaseUrl()}/adminPortal/updateStateRegistrationInfo`,
+        { method: "updateStateRegistrationInfo", companyId: rollfiCompanyId,
+          code: stateCode, companyStateRegistration: fieldValues },
+        { headers: rollfiHeaders() },
+      );
+      const rollfiErr = extractRollfiError(response.data);
+      if (rollfiErr) {
+        req.log.error({ rollfiResponse: response.data, stateCode }, "updateStateRegistrationInfo (synthetic) body error");
+        res.status(400).json({ error: rollfiErr, rollfiResponse: response.data }); return;
+      }
+
+      // Insert as a first-class local record (removes the synthetic entry on next fetch)
+      const [inserted] = await db.insert(stateRegistrationsTable).values({
+        id: newId, companyId, rollfiCompanyId, stateCode, stateName,
+        stateEmployerId: null, suiAccountNumber: null, suiRate: null,
+        fieldValuesJson, status: "active",
+        rollfiResponse: JSON.stringify(response.data),
+        registeredAt: nowISO, updatedAt: nowISO,
+      }).returning();
+
+      res.json({ success: true, registration: inserted });
+    } catch (err: unknown) {
+      const e = err as { response?: { data: unknown } };
+      req.log.error({ err, stateCode }, "updateStateRegistrationInfo (synthetic) failed");
+      res.status(500).json({ error: "Failed to update state registration", details: e.response?.data ?? String(err) });
+    }
+    return;
   }
 
-  const nowISO     = new Date().toISOString();
+  // ── Existing local DB row ──────────────────────────────────────────────────
+  const [reg] = await db.select().from(stateRegistrationsTable)
+    .where(eq(stateRegistrationsTable.id, id)).catch(() => [undefined]);
+  if (!reg) { res.status(404).json({ error: "State registration not found" }); return; }
+
+  if (user.role !== "super_admin" && reg.companyId !== user.companyId) {
+    res.status(403).json({ error: "Access denied: company mismatch" }); return;
+  }
+  if (!reg.rollfiCompanyId) {
+    res.status(400).json({ error: "Company not registered with payroll provider" }); return;
+  }
+
+  const nowISO = new Date().toISOString();
   const fieldValuesJson = JSON.stringify(fieldValues);
 
   try {
     const response = await axios.post(
       `${getBaseUrl()}/adminPortal/updateStateRegistrationInfo`,
-      {
-        method:                    "updateStateRegistrationInfo",
-        companyId:                 reg.rollfiCompanyId,
-        code:                      reg.stateCode,
-        companyStateRegistration:  fieldValues,
-      },
+      { method: "updateStateRegistrationInfo", companyId: reg.rollfiCompanyId,
+        code: reg.stateCode, companyStateRegistration: fieldValues },
       { headers: rollfiHeaders() },
     );
 
@@ -295,10 +357,7 @@ router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Re
              rollfiResponse: JSON.stringify(e.response?.data ?? String(err)),
              updatedAt: nowISO })
       .where(eq(stateRegistrationsTable.id, id)).catch(() => {});
-    res.status(500).json({
-      error:   "Failed to update state registration",
-      details: e.response?.data ?? String(err),
-    });
+    res.status(500).json({ error: "Failed to update state registration", details: e.response?.data ?? String(err) });
   }
 });
 

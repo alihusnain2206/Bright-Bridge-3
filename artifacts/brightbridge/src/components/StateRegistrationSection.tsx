@@ -431,7 +431,7 @@ export function StateRegistrationSection({
                       onSuccess={() => void refetch()}
                     />
                   )}
-                  {reg.source !== "rollfi" && hasRollfi && editingRegId !== reg.id && (
+                  {hasRollfi && editingRegId !== reg.id && (
                     <button
                       onClick={() => startEdit(reg)}
                       className="text-[10px] font-semibold px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 flex items-center gap-1"
