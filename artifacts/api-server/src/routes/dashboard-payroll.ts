@@ -186,6 +186,23 @@ async function fetchHistory(rollfiCompanyId: string): Promise<Record<string, unk
     );
   } catch { /* continue with empty */ }
 
+  // Normalise each record so downstream code can rely on consistent field names.
+  // Rollfi uses different keys across getProcessedPayperiodsDetails vs
+  // getUnProcessedPayPeriod (e.g. totalAmount / payPeriodAmount / payrollAmount).
+  function normalise(p: Record<string, unknown>): Record<string, unknown> {
+    const amount =
+      p.payrollAmount ??
+      p.totalAmount ??
+      p.payPeriodAmount ??
+      p.debitAmount ??
+      p.amount ??
+      p.netPay ??
+      null;
+    const payDate =
+      p.payDate ?? p.PayDate ?? p.paymentDate ?? p.checkDate ?? null;
+    return { ...p, payrollAmount: amount, payDate };
+  }
+
   // Merge + deduplicate + sort newest first
   const seen = new Set<string>();
   const merged: Array<Record<string, unknown>> = [];
@@ -193,7 +210,7 @@ async function fetchHistory(rollfiCompanyId: string): Promise<Record<string, unk
     const id = String(p.payPeriodId ?? p.payBeginDate ?? "");
     if (id && seen.has(id)) continue;
     if (id) seen.add(id);
-    merged.push(p);
+    merged.push(normalise(p));
   }
   return merged
     .sort((a, b) => String(b.payBeginDate ?? b.payDate ?? "").localeCompare(String(a.payBeginDate ?? a.payDate ?? "")))
