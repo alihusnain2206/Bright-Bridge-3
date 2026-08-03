@@ -215,10 +215,12 @@ async function fetchFundingSource(rollfiCompanyId: string): Promise<Record<strin
   const raw = r.data as Record<string, unknown>;
   const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
   const co = companies[0] ?? {};
-  const sources = Array.isArray(co.FundingSources)
-    ? co.FundingSources as Record<string, unknown>[]
-    : [];
-  // Prefer an active/verified source; fall back to first entry
+  // Rollfi returns bank accounts under BankAccounts (not FundingSources)
+  const sources = [
+    ...(Array.isArray(co.FundingSources) ? co.FundingSources as Record<string, unknown>[] : []),
+    ...(Array.isArray(co.BankAccounts)   ? co.BankAccounts   as Record<string, unknown>[] : []),
+  ];
+  // Prefer an active/verified/ready source; fall back to first entry
   const active =
     sources.find((f) => ["active", "verified", "ready"].includes(String(f.status ?? "").toLowerCase())) ??
     sources.find((f) => String(f.status ?? "").toLowerCase() !== "deactivated") ??

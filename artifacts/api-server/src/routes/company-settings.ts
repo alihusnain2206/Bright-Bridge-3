@@ -46,6 +46,19 @@ const STATES_USING_FEDERAL_W4 = new Set(["ND", "PA", "UT"]);
 const STATES_NO_INCOME_TAX    = new Set(["AK", "FL", "NV", "NH", "SD", "TN", "TX", "WA", "WY"]);
 const NO_REGISTRATION_NEEDED  = new Set([...STATES_USING_FEDERAL_W4, ...STATES_NO_INCOME_TAX]);
 
+// US state code → full name (used when mapping Rollfi StateTaxRegistrations)
+const STATE_NAMES: Record<string, string> = {
+  AL:"Alabama",AK:"Alaska",AZ:"Arizona",AR:"Arkansas",CA:"California",CO:"Colorado",
+  CT:"Connecticut",DE:"Delaware",DC:"District of Columbia",FL:"Florida",GA:"Georgia",
+  HI:"Hawaii",ID:"Idaho",IL:"Illinois",IN:"Indiana",IA:"Iowa",KS:"Kansas",KY:"Kentucky",
+  LA:"Louisiana",ME:"Maine",MD:"Maryland",MA:"Massachusetts",MI:"Michigan",MN:"Minnesota",
+  MS:"Mississippi",MO:"Missouri",MT:"Montana",NE:"Nebraska",NV:"Nevada",NH:"New Hampshire",
+  NJ:"New Jersey",NM:"New Mexico",NY:"New York",NC:"North Carolina",ND:"North Dakota",
+  OH:"Ohio",OK:"Oklahoma",OR:"Oregon",PA:"Pennsylvania",RI:"Rhode Island",SC:"South Carolina",
+  SD:"South Dakota",TN:"Tennessee",TX:"Texas",UT:"Utah",VT:"Vermont",VA:"Virginia",
+  WA:"Washington",WV:"West Virginia",WI:"Wisconsin",WY:"Wyoming",
+};
+
 function rollfiHeaders() {
   const { clientId, secretKey } = getRollfiConfig();
   const encoded = Buffer.from(`${clientId ?? ""}:${secretKey ?? ""}`).toString("base64");
@@ -75,9 +88,73 @@ router.get("/state-registrations", requireAuth, async (req: Request, res: Respon
   const companyId = resolveCompanyId(req, res);
   if (!companyId) return;
   try {
+    // 1. Local DB rows (the source of truth for registrations added through BrightBridge)
     const rows = await db.select().from(stateRegistrationsTable)
       .where(eq(stateRegistrationsTable.companyId, companyId));
-    res.json({ registrations: rows });
+
+    // 2. Also pull StateTaxRegistrations from Rollfi (getCompanyInfo) so registrations
+    //    added directly in Rollfi's portal are visible here too.
+    const localStateCodes = new Set(rows.map(r => r.stateCode));
+    const syntheticRows: Array<typeof rows[0] & { source: string }> = [];
+
+    try {
+      // Resolve rollfiCompanyId (store → companies table → rollfi_company_records)
+      let rollfiCompanyId: string | undefined =
+        store.getRollfiCompany(companyId)?.rollfiCompanyId ?? undefined;
+      if (!rollfiCompanyId) {
+        const [dbCo] = await db
+          .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+          .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+        rollfiCompanyId = dbCo?.rollfiCompanyId ?? undefined;
+      }
+      if (!rollfiCompanyId) {
+        const [rcr] = await db
+          .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+          .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).limit(1);
+        rollfiCompanyId = rcr?.rollfiCompanyId ?? undefined;
+      }
+
+      if (rollfiCompanyId) {
+        const r = await axios.post(
+          `${getBaseUrl()}/reports#getCompanyInfo`,
+          { method: "getCompanyInfo", companyId: rollfiCompanyId },
+          { headers: rollfiHeaders(), timeout: 8000 },
+        );
+        const raw = r.data as Record<string, unknown>;
+        const co = (Array.isArray(raw.Company) ? raw.Company[0] : null) as Record<string, unknown> | null ?? {};
+        const stateTaxRegs = Array.isArray(co.StateTaxRegistrations)
+          ? co.StateTaxRegistrations as Record<string, string>[]
+          : [];
+
+        const now = new Date().toISOString();
+        for (const entry of stateTaxRegs) {
+          const stateCode = entry.State;
+          if (!stateCode || localStateCodes.has(stateCode)) continue;
+          // Exclude the "State" key; remaining keys are the field values
+          const { State: _s, ...fields } = entry;
+          syntheticRows.push({
+            id:               `rollfi-${stateCode}`,
+            companyId,
+            rollfiCompanyId,
+            stateCode,
+            stateName:        STATE_NAMES[stateCode] ?? stateCode,
+            stateEmployerId:  null,
+            suiAccountNumber: null,
+            suiRate:          null,
+            fieldValuesJson:  JSON.stringify(fields),
+            status:           "active",
+            rollfiResponse:   null,
+            registeredAt:     now,
+            updatedAt:        now,
+            source:           "rollfi",
+          } as typeof rows[0] & { source: string });
+        }
+      }
+    } catch {
+      // Rollfi unavailable — silently fall back to local DB only
+    }
+
+    res.json({ registrations: [...rows, ...syntheticRows] });
   } catch (err) {
     req.log.error({ err }, "GET /state-registrations failed");
     res.status(500).json({ error: "Failed to retrieve state registrations" });

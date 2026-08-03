@@ -55,6 +55,8 @@ export interface StateRegistration {
   fieldValuesJson?: string | null;
   status: string; rollfiResponse?: string | null;
   registeredAt: string; updatedAt: string;
+  /** "rollfi" when this row was imported from Rollfi and doesn't exist in the local DB. */
+  source?: string | null;
 }
 
 const STATE_REG_STATUS: Record<string, { label: string; color: string }> = {
@@ -421,14 +423,15 @@ export function StateRegistrationSection({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {(reg.status === "failed" || reg.status === "active") && (
+                  {/* Rollfi-sourced rows can't be retried or edited through BrightBridge */}
+                  {reg.source !== "rollfi" && (reg.status === "failed" || reg.status === "active") && (
                     <RetryStateRegButton
                       regId={reg.id}
                       label={reg.status === "failed" ? "Retry" : "Re-submit"}
                       onSuccess={() => void refetch()}
                     />
                   )}
-                  {hasRollfi && editingRegId !== reg.id && (
+                  {reg.source !== "rollfi" && hasRollfi && editingRegId !== reg.id && (
                     <button
                       onClick={() => startEdit(reg)}
                       className="text-[10px] font-semibold px-2 py-0.5 rounded border border-gray-300 text-gray-600 hover:bg-gray-50 flex items-center gap-1"
@@ -436,6 +439,11 @@ export function StateRegistrationSection({
                     >
                       <Pencil className="h-2.5 w-2.5" />Edit
                     </button>
+                  )}
+                  {reg.source === "rollfi" && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-200">
+                      Synced from Rollfi
+                    </span>
                   )}
                   <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${sc.color}`}>
                     {sc.label}
