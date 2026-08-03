@@ -258,7 +258,7 @@ export default function OwnerDashboard() {
           <div className="bg-white rounded-2xl border shadow-sm px-6 py-5 flex flex-col justify-between">
             <p className="text-gray-400 text-xs font-semibold uppercase tracking-wide mb-1">Next Payroll</p>
             <p className="text-3xl font-bold text-gray-900 leading-tight">
-              {fmtCurrency(cashRequired)}
+              {fmtCurrency(debitAmount ?? cashRequired)}
             </p>
             {nextPayDate && (
               <p className="text-gray-400 text-[11px] mt-2">Debit on {fmtDate(nextPayDate)}</p>
@@ -308,7 +308,7 @@ export default function OwnerDashboard() {
         <KpiCard
           icon={<DollarSign className="h-4 w-4" />}
           label="Cash Required"
-          value={payrollLoading ? "…" : fmtCurrency(cashRequired)}
+          value={payrollLoading ? "…" : fmtCurrency(debitAmount ?? cashRequired)}
           sub1={nextPayDate ? `Debit on ${fmtDate(nextPayDate)}` : undefined}
           sub2={bankLinked ? "✓ Funds available" : undefined}
           accent={EMERALD}
