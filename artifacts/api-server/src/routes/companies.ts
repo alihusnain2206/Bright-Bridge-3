@@ -702,8 +702,8 @@ router.post("/employees", async (req: Request, res: Response) => {
       accountType: body.bankSetupMethod === "manual" ? (body.accountType ?? null) : null,
       status: "onboarding",
       kycStatus: "not_started",
-      bankAccountAdded: body.bankSetupMethod === "manual",
-      w4Submitted: !!(body.w4FilingStatus),
+      bankAccountAdded: false,   // updated after sync with actual Rollfi result
+      w4Submitted: false,        // updated after sync with actual Rollfi result
       easyteamSynced: false,
       syncStatus: "pending",
       createdAt: now,
@@ -733,8 +733,8 @@ router.post("/employees", async (req: Request, res: Response) => {
         w4Dependents:              body.w4Dependents,
         w4DependentsAbove18:       body.w4DependentsAbove18,
         w4ExtraWithholding:        body.w4ExtraWithholding,
-        w4OtherIncome:             body.w4OtherIncome,
-        w4OtherDeduction:          body.w4OtherDeduction,
+        w4OtherIncome:             body.w4OtherIncome             ?? 0,
+        w4OtherDeduction:          body.w4OtherDeduction          ?? 0,
         w4MilitarySpouseExemption: body.w4MilitarySpouseExemption,
         w4IsNonResident:           body.w4IsNonResident,
         w4AzDeductionPercent:      body.w4AzDeductionPercent,
@@ -755,6 +755,10 @@ router.post("/employees", async (req: Request, res: Response) => {
     const rollfiFailedSteps = sync.rollfiFailedSteps;
     const rollfiSoftWarnings = sync.rollfiSoftWarnings;
 
+    // Derive actual success per step so downstream surfaces reflect reality
+    const w4Succeeded = !!(body.w4FilingStatus) && !rollfiFailedSteps?.some(f => f.step === "addW4Information");
+    const bankSucceeded = body.bankSetupMethod === "manual" && !rollfiFailedSteps?.some(f => f.step === "addUserBankAccount");
+
     // 3. Update DB with sync results
     // Only mark rollfiOnboardedAt when ALL hard steps succeeded (no failed steps)
     const hasHardFailures = rollfiFailedSteps && rollfiFailedSteps.length > 0;
@@ -768,6 +772,8 @@ router.post("/employees", async (req: Request, res: Response) => {
       rollfiOnboardedAt: rollfiSynced && !hasHardFailures ? now : undefined,
       syncStatus,
       lastSyncError: lastSyncErrorValue,
+      w4Submitted: w4Succeeded,
+      bankAccountAdded: bankSucceeded,
       updatedAt: new Date().toISOString(),
     }).where(eq(employees.id, employeeId));
 
@@ -829,9 +835,9 @@ router.post("/employees", async (req: Request, res: Response) => {
         // Conditionally from wizard data
         if (body.department) await complete("Assign Department");
         if (body.managerId)  await complete("Assign Manager");
-        if (body.w4FilingStatus) await complete("Federal W-4");
+        if (body.w4FilingStatus && w4Succeeded) await complete("Federal W-4");
         if (body.stateW4Fields && Object.keys(body.stateW4Fields).length > 0) await complete("State Tax Form");
-        if (body.bankSetupMethod === "manual") await complete("Direct Deposit Setup");
+        if (body.bankSetupMethod === "manual" && bankSucceeded) await complete("Direct Deposit Setup");
 
         // Re-calculate onboarding progress from tasks and write back
         const allTaskRows = await db.select({ status: onboardingTasksTable.status }).from(onboardingTasksTable).where(eq(onboardingTasksTable.employeeId, employeeId));
@@ -848,8 +854,8 @@ router.post("/employees", async (req: Request, res: Response) => {
 
       // 4d. Seed compliance items in DB, then write compliance score + readiness flags back to employee
       await createComplianceItemsInDb(employeeId, body.companyId, isDaycareEmployee, {
-        w4Submitted: !!(body.w4FilingStatus),
-        bankAccountAdded: body.bankSetupMethod === "manual",
+        w4Submitted: w4Succeeded,
+        bankAccountAdded: bankSucceeded,
         kycStatus: null,
       });
       const compScore = await calculateComplianceScore(employeeId);

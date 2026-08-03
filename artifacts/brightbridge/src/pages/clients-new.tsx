@@ -185,11 +185,11 @@ export default function ClientsNew() {
 
   const [form, setForm] = useState<FormData>({
     companyName: "", doingBusinessAs: "", businessWebsite: "", phone: "", industry: "daycare", package: "full_daycare",
-    address1: "", address2: "", city: "", state: "NJ", zipcode: "", locationName: "",
+    address1: "", address2: "", city: "", state: "", zipcode: "", locationName: "",
     ownerFirstName: "", ownerLastName: "", ownerEmail: "", ownerPhone: "",
-    ownerDob: "", ownerSsn: "", ownerAddress1: "", ownerCity: "", ownerState: "NJ", ownerZip: "",
+    ownerDob: "", ownerSsn: "", ownerAddress1: "", ownerCity: "", ownerState: "", ownerZip: "",
     ownershipPercentage: 100, isPayrollAdmin: true,
-    entityType: "LLC", ein: "", incorporationState: "NJ", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
+    entityType: "LLC", ein: "", incorporationState: "", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
     payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
     fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking",
   });

@@ -1,0 +1,162 @@
+Regression test #3 verified your recent 
+fixes: the input-layer bugs are confirmed 
+fixed. Four blocker clusters remain. For 
+EACH fix: implement, then reproduce the 
+tester's exact steps yourself and report 
+what you observed. Do not report done 
+without reproducing.
+
+SCOPE: Do not touch the Rollfi call 
+sequence, payroll math, or EasyTeam.
+
+FIX 1 (CRITICAL) — W-4 payload sends 
+null; Rollfi rejects every W-4:
+Error on EVERY employee: 
+"addW4Information: Tax withholding 
+rejected: OtherIncome cannot be null."
+Reproduced both with the Advanced section 
+opened (field showed 0) and never opened. 
+The payload serialises otherIncome (and 
+likely otherDeduction / other new fields) 
+as null instead of 0.
+- Fix the serialisation: all numeric W-4 
+  fields default to 0 (integer), booleans 
+  to false — never null/undefined in the 
+  payload.
+- Also fix NEW-BUG-6: the radio DOM 
+  values are stale ("Married Filing 
+  Separately", "Married Qualifying 
+  widow(er)") while labels use modern 
+  wording. The submitted values must be 
+  Rollfi's EXACT enum strings:
+  "Single", "Married filing jointly", 
+  "Married Filing Separately", "Head of 
+  household", "Married Qualifying 
+  widow(er)". Verify each radio's value 
+  attribute matches the enum exactly.
+- Verify by creating a test employee and 
+  confirming addW4Information returns 
+  success (or fails ONLY on the expected 
+  sandbox KYC precondition, not payload 
+  shape).
+
+FIX 2 (CRITICAL) — Status truth must 
+reach the system of record, not just the 
+confirmation page:
+Store the ACTUAL result of each 
+provisioning call (w4Submitted, 
+bankAccountAdded, kycInitiated — 
+success/failed/pending) on the employee 
+record at provisioning time, and derive 
+EVERY surface from those stored results:
+a. Job & Pay SYSTEM STATUS: currently 
+   shows "Payroll Provider: Synced ✓ / 
+   Bank Account: Added ✓ / W-4 
+   Submitted: Yes ✓" after those exact 
+   calls were REJECTED. Must show 
+   failed/pending truthfully.
+b. Onboarding tasks "Direct Deposit 
+   Setup" and "Federal W-4": only 
+   auto-complete when the corresponding 
+   Rollfi call SUCCEEDED. Currently 
+   completed despite rejection — and 
+   this propagates to the employee 
+   Compliance tab and the company 
+   Compliance Overview (Direct Deposit 
+   100% 2/2, W-4 Forms 100% 2/2). All 
+   three surfaces must reflect reality.
+c. NEW-H2: State Tax Form shows 
+   Completed on Onboarding tab and 
+   "not started" on Compliance tab 
+   simultaneously. Find the broken 
+   task↔compliance link for this item 
+   and sync it (same success-only rule).
+d. Client Payroll Status page: add a KYB 
+   status row and an employee 
+   provisioning summary (e.g. "2 
+   employees pending verification / 
+   with failed steps"). No more 
+   unconditional green.
+e. Company bank status: success page, 
+   dashboard checklist, and Payroll 
+   Status must all derive from the same 
+   stored status and agree.
+f. NEW-BUG-4: the success page bullet 
+   "W4 tax withholding configured" 
+   asserts success next to the failure 
+   panel — bullets must reflect the 
+   per-call result.
+
+FIX 3 (HIGH) — Navigation blockers:
+a. NEW-BUG-2: "Add Another" on the 
+   employee success page renders the 
+   provisioning panel with all steps 
+   pre-ticked and never returns to Step 
+   1. Reset the wizard state fully and 
+   navigate to a fresh Step 1.
+b. NEW-BUG-3: roster "View Profile" 
+   links to /people/employee/EMP-… 
+   (404). Correct route is /people/EMP-…. 
+   Fix the link.
+c. NEW-BUG-7: /clients/[id]/employees 
+   should open the Employees tab, not 
+   Overview.
+d. NEW-BUG-5: Create Owner Login panel 
+   renders blank on first open; only 
+   populates after cancel+reopen. Fix 
+   so first render is populated. Also: 
+   make the generated password field 
+   read-only with a copy button (it is 
+   currently editable with no copy).
+
+FIX 4 (MEDIUM batch — verified still 
+broken):
+a. CW6: state dropdowns default to New 
+   Jersey on company location, owner 
+   home, state of incorporation, and 
+   employee address. Default to empty 
+   "Select state…" with required 
+   validation (or inherit company state 
+   for employee address).
+b. R11/NEW-M3: active-count displays 
+   disagree ("2 Active" vs "0 active" 
+   vs both Onboarding). Derive all 
+   counts from actual status. (Manager 
+   dropdown filtering to active is 
+   correct behaviour; add helper text 
+   "Only active employees can be 
+   assigned as managers".)
+c. R14: activity timestamps render 
+   "NaNd ago · Invalid Date" — fix the 
+   date parsing.
+d. R13: add "Account holder name" field 
+   to the employee manual bank form and 
+   include it in the bank payload if 
+   Rollfi's addUserBankAccount supports 
+   an account name field (check the 
+   schema; if unsupported, store it on 
+   the employee bank record).
+e. CW5: add Payroll Admin (default Yes) 
+   and Beneficial Owner (default Yes) 
+   toggles to Owner Details; wire into 
+   the Rollfi admin payload if the 
+   fields exist (audit and report), 
+   else store on the record.
+f. CW1/R2: SSN validation currently 
+   fires only on Next and the value 
+   renders unmasked. Add inline 
+   validation on blur and mask the 
+   display (show last 4, reveal toggle).
+g. NEW-BUG-8: super-admin dashboard 
+   renders a raw error ("Rollfi 
+   getUnProcessedPayPeriod error (404): 
+   Company not found"). Handle 
+   gracefully — skip companies with no 
+   valid Rollfi ID instead of surfacing 
+   provider errors.
+
+DELIVERABLE: per fix — files changed, 
+what changed, and the reproduction you 
+performed proving it now behaves 
+correctly. State explicitly if any item 
+could not be verified.

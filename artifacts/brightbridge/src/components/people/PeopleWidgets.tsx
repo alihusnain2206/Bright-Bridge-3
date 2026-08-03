@@ -51,9 +51,10 @@ function scoreColor(s: number) {
   return "#ef4444";
 }
 
-function relTime(iso: string) {
-  if (!iso) return "—";
-  const ms = new Date(iso).getTime();
+function relTime(iso: string | number | null | undefined) {
+  if (iso == null || iso === "") return "—";
+  // Accept both ISO strings and Unix-ms numbers
+  const ms = typeof iso === "number" ? iso : new Date(iso).getTime();
   if (isNaN(ms)) return "—";
   const diff = Date.now() - ms;
   const mins = Math.floor(diff / 60000);

@@ -2701,6 +2701,14 @@ router.get("/rollfi/payperiod", async (req, res) => {
     res.json(period);
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status: number } };
+    const msg = err instanceof Error ? err.message : String(err);
+    // Rollfi returns "Company not found" when the rollfiCompanyId isn't registered yet
+    // (common in sandbox / newly-created companies). Treat as no-data, not a 500.
+    if (msg.toLowerCase().includes("company not found") || msg.toLowerCase().includes("companyid does not exist")) {
+      req.log.warn({ rollfiCompanyId: rollfiCompany.rollfiCompanyId }, "Rollfi pay period: company not known to Rollfi — returning no-data gracefully");
+      res.status(404).json({ error: "No unprocessed pay periods found for this company" });
+      return;
+    }
     req.log.error({ err, rollfiErrorBody: e.response?.data }, "Rollfi pay period fetch failed");
     res.status(500).json({ error: "Failed to get pay period", details: e.response?.data ?? String(err) });
   }

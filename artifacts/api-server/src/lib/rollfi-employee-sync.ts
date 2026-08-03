@@ -225,8 +225,9 @@ export async function runEmployeeKycOnboarding(
       dependentsAbove18: w4.dependentsAbove18,  // COUNT of other dependents
       extraWithholding:  w4.extraWithholding,
     };
-    if (w4.otherIncome)             w4Payload.otherIncome            = w4.otherIncome;
-    if (w4.otherDeduction)          w4Payload.otherDeduction         = w4.otherDeduction;
+    // Always send otherIncome and otherDeduction — Rollfi rejects the payload if either is absent/null
+    w4Payload.otherIncome    = w4.otherIncome    ?? 0;
+    w4Payload.otherDeduction = w4.otherDeduction ?? 0;
     if (w4.militarySpouseExemption) w4Payload.hasMiltarySpouseExemption = w4.militarySpouseExemption;
     if (w4.isNonResident)           w4Payload.isNonResident          = w4.isNonResident;
     if (w4.homeState === "AZ" && w4.azDeductionPercent != null) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useLocation } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
@@ -486,7 +486,7 @@ function EmployeesTab({ company }: { company: Company }) {
                             </>
                           )}
                           <a
-                            href={`/people/employee/${emp.id}`}
+                            href={`/people/${emp.id}`}
                             className="inline-flex items-center gap-1 text-xs font-medium text-[#284362] hover:text-[#1a2f47] border border-[#284362]/30 hover:border-[#284362] rounded-lg px-2.5 py-1 transition-colors"
                           >
                             View Profile
@@ -552,6 +552,15 @@ function OwnerAccessSection({ company }: { company: Company }) {
   const [createError, setCreateError] = useState("");
   const [newForm, setNewForm] = useState({ name: "", email: "", password: "" });
   const [showPw, setShowPw] = useState(false);
+
+  // Auto-generate a password whenever the creation form opens
+  useEffect(() => {
+    if (showForm) {
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%";
+      const pw = Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+      setNewForm(f => ({ ...f, password: pw }));
+    }
+  }, [showForm]);
   const [createdUser, setCreatedUser] = useState<{ name: string; email: string; password: string } | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [credUser, setCredUser] = useState<CompanyUser | null>(null);
@@ -689,11 +698,16 @@ function OwnerAccessSection({ company }: { company: Company }) {
               <Input value={newForm.email} onChange={(e) => setNewForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" />
             </div>
             <div className="col-span-2 space-y-1">
-              <Label className="text-xs text-gray-500">Password</Label>
-              <div className="relative">
-                <Input type={showPw ? "text" : "password"} value={newForm.password} onChange={(e) => setNewForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9" placeholder="Min 8 characters" />
-                <button type="button" onClick={() => setShowPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
-                  {showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              <Label className="text-xs text-gray-500">Password <span className="text-gray-400 font-normal">(auto-generated)</span></Label>
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1">
+                  <Input readOnly type={showPw ? "text" : "password"} value={newForm.password} className="h-8 text-sm pr-9 bg-gray-50 font-mono" />
+                  <button type="button" onClick={() => setShowPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
+                    {showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+                <button type="button" onClick={() => copyField(newForm.password, "gen-pw")} className="h-8 w-8 flex items-center justify-center rounded border border-gray-200 bg-white hover:bg-gray-50 text-gray-400 hover:text-[#284362] transition-colors shrink-0" title="Copy password">
+                  {copiedField === "gen-pw" ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
                 </button>
               </div>
             </div>
@@ -780,7 +794,8 @@ const STATUS_CFG2: Record<string, { label: string; color: string }> = {
 export default function ClientDetail() {
   const params = useParams<{ companyId: string }>();
   const companyId = params.companyId;
-  const [tab, setTab] = useState<TabId>("overview");
+  const [location] = useLocation();
+  const [tab, setTab] = useState<TabId>(() => location.endsWith("/employees") ? "employees" : "overview");
   const qc = useQueryClient();
 
   const { data, isLoading } = useQuery<Company>({

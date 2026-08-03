@@ -234,12 +234,12 @@ export default function ClientEmployeesNew() {
     img.src = url;
   };
 
-  const [form, setForm] = useState<FormData>({
+  const makeInitialForm = (): FormData => ({
     firstName: "", lastName: "", email: "", phone: "",
     position: "", employmentType: "Full Time (30+ Hours per week)", workerType: "W2", startDate: today(),
     department: "", managerId: "", managerName: "",
     payType: "hourly", wageAmount: 0, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
-    ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "NJ", homeZip: "",
+    ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "", homeZip: "",
     w4FilingStatus: "Single", w4MultipleJobs: false,
     w4Dependents: 0, w4DependentsAbove18: 0, w4ExtraWithholding: 0,
     w4OtherIncome: 0, w4OtherDeduction: 0,
@@ -247,6 +247,8 @@ export default function ClientEmployeesNew() {
     stateW4Fields: {},
     bankSetupMethod: "invite", bankName: "", routingNumber: "", accountNumber: "", accountType: "checking",
   });
+
+  const [form, setForm] = useState<FormData>(makeInitialForm);
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
 
   // Fetch state-specific W-4 fields when employee's home state changes
@@ -467,7 +469,7 @@ export default function ClientEmployeesNew() {
             {created.loginPassword && <p>→ Login created: {form.email} / {created.loginPassword}</p>}
           </div>
           <div className="px-8 py-4 flex gap-3">
-            <Button onClick={() => { setCreated(null); setStep(1); setRetryResult(null); setForm((f) => ({ ...f, firstName: "", lastName: "", email: "", phone: "" })); }} variant="outline" className="flex-1">Add Another</Button>
+            <Button onClick={() => { setCreated(null); setStep(1); setRetryResult(null); setStep3Attempted(false); setPhotoFile(null); setPhotoPreview(null); setForm(makeInitialForm()); }} variant="outline" className="flex-1">Add Another</Button>
             <Button onClick={() => navigate(`/clients/${companyId}`)} className="flex-1 text-white border-0" style={{ background: ORANGE }}>View All Employees →</Button>
           </div>
         </div>
