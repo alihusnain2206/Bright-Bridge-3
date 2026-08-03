@@ -38,6 +38,12 @@ export interface NotificationItem {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+function rollfiHeaders() {
+  const { clientId, secretKey } = getRollfiConfig();
+  const encoded = Buffer.from(`${clientId ?? ""}:${secretKey ?? ""}`).toString("base64");
+  return { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
+}
+
 function nowMs() { return Date.now(); }
 
 /** ISO date string → milliseconds */
@@ -238,96 +244,114 @@ router.get("/notifications", requireAuth, async (req: Request, res: Response) =>
     } catch { /* non-fatal */ }
   }
 
-  // ── 5. Form 8655 — unsigned, upload-failed, or stuck-pending ────────────────
+  // ── 5. Payroll provider tasks + Form 8655 status ─────────────────────────────
+  // Fetches ALL open tasks from the payroll provider and surfaces each as a
+  // notification. Also shows local upload-failed / pending states for Form 8655
+  // (driven from the local DB, always shown regardless of provider reachability).
   if (canSeePayroll && companyId) {
     try {
-      const [record] = await db
-        .select({
-          uploadStatus: companySignedForms.uploadStatus,
-          signedAt:     companySignedForms.signedAt,
-          uploadError:  companySignedForms.uploadError,
-        })
+      // 5a. Local 8655 record — upload-failed / pending shown unconditionally
+      const [form8655] = await db
+        .select({ uploadStatus: companySignedForms.uploadStatus, uploadError: companySignedForms.uploadError })
         .from(companySignedForms)
-        .where(
-          and(
-            eq(companySignedForms.companyId, companyId),
-            eq(companySignedForms.formType, "8655"),
-          ),
-        )
+        .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
         .limit(1);
 
-      if (!record) {
-        // Never signed in-app. Only warn if Rollfi itself lists 8655 as a pending task,
-        // OR if we couldn't reach Rollfi to check (conservative fallback).
-        // This prevents a false "needs your signature" for companies where Rollfi
-        // doesn't actually require Form 8655.
-        let rollfi8655Required = true; // conservative default — show warning if we can't check
-
-        try {
-          // Resolve rollfiCompanyId — fall back to rollfi_company_records for legacy companies
-          const [co8655] = await db
-            .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
-            .from(companiesTable)
-            .where(eq(companiesTable.id, companyId))
-            .limit(1);
-          let rid = co8655?.rollfiCompanyId ?? null;
-          if (!rid) {
-            const [leg] = await db
-              .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
-              .from(rollfiCompanyRecords)
-              .where(eq(rollfiCompanyRecords.companyId, companyId))
-              .limit(1);
-            rid = leg?.rollfiCompanyId ?? null;
-          }
-
-          if (rid) {
-            const cfg = getRollfiConfig();
-            if (cfg.credentialsPresent) {
-              const tr = await axios.post(
-                `${cfg.baseUrl}/reports#getCompanyTask`,
-                { method: "getCompanyTask", companyId: rid },
-                {
-                  headers: { "Content-Type": "application/json", "client-id": cfg.clientId ?? "", "secret-key": cfg.secretKey ?? "" },
-                  timeout: 4000,
-                },
-              );
-              const tasks = ((tr.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description?: string }>;
-              // Rollfi fetched successfully — only warn if it lists 8655
-              rollfi8655Required = tasks.some(t => /8655/i.test(t.task) || /8655/i.test(t.description ?? ""));
-            }
-          }
-        } catch { /* Rollfi unreachable — keep conservative default (show warning) */ }
-
-        if (rollfi8655Required) {
-          items.push({
-            id:     "form-8655-unsigned",
-            level:  "red",
-            title:  "IRS Form 8655 needs your signature",
-            detail: "Required before payroll can run. Sign it in Company Settings.",
-            link:   "/settings?tab=signatures",
-          });
-        }
-      } else if (record.uploadStatus === "failed") {
+      if (form8655?.uploadStatus === "failed") {
         items.push({
-          id:     "form-8655-upload-failed",
-          level:  "red",
-          title:  "Form 8655 upload to IRS filing service failed",
-          detail: record.uploadError
-            ? `Error: ${record.uploadError}. Retry in Company Settings.`
+          id: "form-8655-upload-failed", level: "red",
+          title: "Form 8655 upload to IRS filing service failed",
+          detail: form8655.uploadError
+            ? `Error: ${form8655.uploadError}. Retry in Company Settings.`
             : "Upload failed. Retry in Company Settings → Signatures.",
-          link:   "/settings?tab=signatures",
+          link: "/settings?tab=signatures",
         });
-      } else if (record.uploadStatus === "pending") {
+      } else if (form8655?.uploadStatus === "pending") {
         items.push({
-          id:     "form-8655-upload-pending",
-          level:  "yellow",
-          title:  "Form 8655 upload still pending",
-          detail: "The form was signed but hasn't been confirmed by the IRS filing service yet.",
-          link:   "/settings?tab=signatures",
+          id: "form-8655-upload-pending", level: "yellow",
+          title: "Form 8655 upload still pending",
+          detail: "The form was signed but hasn't been confirmed by the filing service yet.",
+          link: "/settings?tab=signatures",
         });
       }
-      // uploadStatus === "uploaded" → all good, no notification
-    } catch { /* non-fatal */ }
+
+      // 5b. Resolve rollfiCompanyId (companies table → rollfi_company_records fallback)
+      const [coDB] = await db
+        .select({ rollfiCompanyId: companiesTable.rollfiCompanyId })
+        .from(companiesTable).where(eq(companiesTable.id, companyId)).limit(1);
+      let rid: string | null = coDB?.rollfiCompanyId ?? null;
+      if (!rid) {
+        const [rcr] = await db
+          .select({ rollfiCompanyId: rollfiCompanyRecords.rollfiCompanyId })
+          .from(rollfiCompanyRecords).where(eq(rollfiCompanyRecords.companyId, companyId)).limit(1);
+        rid = rcr?.rollfiCompanyId ?? null;
+      }
+
+      // 5c. Fetch all open tasks from the payroll provider and map to notifications
+      if (rid) {
+        const cfg = getRollfiConfig();
+        if (cfg.credentialsPresent) {
+          const tr = await axios.post(
+            `${cfg.baseUrl}/reports#getCompanyTask`,
+            { method: "getCompanyTask", companyId: rid },
+            { headers: rollfiHeaders(), timeout: 5000 },
+          );
+          const tasks = ((tr.data as Record<string, unknown>).tasks ?? []) as Array<{ task: string; description?: string }>;
+
+          for (const t of tasks) {
+            const taskStr = `${t.task} ${t.description ?? ""}`;
+
+            if (/8655/i.test(taskStr)) {
+              // Only show if not already signed+uploaded through BrightBridge
+              if (!form8655 || form8655.uploadStatus !== "uploaded") {
+                items.push({
+                  id: "form-8655-unsigned", level: "red",
+                  title: "IRS Form 8655 needs your signature",
+                  detail: "Required before payroll can run. Sign it in Company Settings.",
+                  link: "/settings?tab=signatures",
+                });
+              }
+            } else if (/TR-?2000/i.test(taskStr)) {
+              items.push({
+                id: "form-tr2000-signature", level: "yellow",
+                title: "Form TR-2000 signature required",
+                detail: t.description ?? "Required to file and pay taxes on your behalf. Sign it in Company Settings.",
+                link: "/settings?tab=signatures",
+              });
+            } else if (/state.*tax|state.*reg|registration.*detail/i.test(taskStr)) {
+              // Extract two-letter state code from description if present ("for NJ", "Details for NJ")
+              const stateMatch = taskStr.match(/\bfor\s+([A-Z]{2})\b/);
+              const stateLabel = stateMatch ? ` for ${stateMatch[1]}` : "";
+              items.push({
+                id: `payroll-state-reg${stateMatch ? `-${stateMatch[1]}` : ""}`,
+                level: "yellow",
+                title: `Complete state tax registration${stateLabel}`,
+                detail: t.description ?? "A state payroll tax registration is pending in your payroll account.",
+                link: "/settings/state-tax",
+              });
+            } else {
+              // Generic payroll provider task
+              const safeId = `payroll-task-${t.task.replace(/[^a-zA-Z0-9]/g, "-").toLowerCase().slice(0, 40)}`;
+              items.push({
+                id: safeId, level: "yellow",
+                title: t.task,
+                detail: t.description ?? "Action required in your payroll account.",
+              });
+            }
+          }
+
+          // If Rollfi is reachable but doesn't list 8655, it's not required — nothing to do.
+        }
+      } else if (!form8655) {
+        // No rollfiCompanyId and no local 8655 record — can't check, show conservative warning
+        items.push({
+          id: "form-8655-unsigned", level: "red",
+          title: "IRS Form 8655 needs your signature",
+          detail: "Required before payroll can run. Sign it in Company Settings.",
+          link: "/settings?tab=signatures",
+        });
+      }
+    } catch { /* non-fatal — skip payroll task notifications if provider unreachable */ }
   }
 
   // Sort: red items first, then yellow

@@ -282,9 +282,6 @@ export default function OwnerDashboard() {
                   <div className="h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <span className="text-xs font-medium text-gray-800">{ev.eventType}</span>
-                    {ev.rollfiCompanyId && (
-                      <span className="ml-2 text-[10px] text-gray-400 font-mono">company: {ev.rollfiCompanyId}</span>
-                    )}
                   </div>
                   <span className="text-[10px] text-gray-400 shrink-0">
                     {new Date(ev.receivedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
@@ -830,7 +827,7 @@ export default function OwnerDashboard() {
                   Ready for payroll funding
                 </div>
                 <p className="text-white/30 text-[10px]">
-                  Via Rollfi · Updated {payrollData?.fetchedAt
+                  Updated {payrollData?.fetchedAt
                     ? new Date(payrollData.fetchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
                     : "recently"}
                 </p>

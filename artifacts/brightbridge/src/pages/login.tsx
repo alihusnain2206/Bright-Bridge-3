@@ -384,7 +384,7 @@ export default function Login() {
                 style={{ filter: "brightness(0) invert(1) opacity(0.9)" }} />
               <div>
                 <h1 className="text-xl font-bold tracking-tight" style={{ color: "rgba(255,255,255,0.92)" }}>BrightBridge</h1>
-                <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.28)" }}>EasyTeam SDK · Sandbox</p>
+                <p className="text-xs mt-0.5" style={{ color: "rgba(255,255,255,0.28)" }}>Workforce management platform</p>
               </div>
             </div>
 
