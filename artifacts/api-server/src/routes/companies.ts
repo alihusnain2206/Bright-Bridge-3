@@ -871,6 +871,7 @@ router.post("/employees", async (req: Request, res: Response) => {
 
       // 4e. Log activity
       void logPeopleActivity({ companyId: body.companyId, employeeId, action: "employee.created", description: `${body.firstName} ${body.lastName} added (${displayId})`, category: "onboarding", performedBy: req.session.userId ?? "system" });
+      store.logActivity({ companyId: body.companyId, type: "employee.added", description: `${body.firstName} ${body.lastName} added as ${body.position || "employee"}`, actorName: caller.name, actorRole: caller.role });
 
       req.log.info({ employeeId, displayId, isDaycareEmployee, compScore }, "People Module seeded for new employee");
     } catch (pmErr) {
@@ -925,6 +926,9 @@ router.put("/employees/:employeeId", async (req: Request, res: Response) => {
   try {
     await db.update(employees).set({ ...updates, updatedAt: new Date().toISOString() }).where(eq(employees.id, employeeId));
     const [updated] = await db.select().from(employees).where(eq(employees.id, employeeId));
+    if (updated) {
+      store.logActivity({ companyId: updated.companyId, type: "employee.updated", description: `${updated.firstName} ${updated.lastName} — employee record updated`, actorName: caller.name, actorRole: caller.role });
+    }
     res.json(updated);
   } catch (err) {
     req.log.error({ err }, "Failed to update employee");

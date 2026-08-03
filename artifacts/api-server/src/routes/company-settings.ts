@@ -301,6 +301,7 @@ router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Re
         registeredAt: nowISO, updatedAt: nowISO,
       }).returning();
 
+      store.logActivity({ companyId, type: "company.updated", description: `State tax registration saved (${stateCode})`, actorName: user.name, actorRole: user.role });
       res.json({ success: true, registration: inserted });
     } catch (err: unknown) {
       const e = err as { response?: { data: unknown } };
@@ -348,6 +349,7 @@ router.put("/state-registrations/:id", requireAuth, async (req: Request, res: Re
              rollfiResponse: JSON.stringify(response.data), updatedAt: nowISO })
       .where(eq(stateRegistrationsTable.id, id)).returning();
 
+    store.logActivity({ companyId: reg.companyId, type: "company.updated", description: `State tax registration saved (${reg.stateCode})`, actorName: user.name, actorRole: user.role });
     res.json({ success: true, registration: updated });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
@@ -1442,6 +1444,8 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
       )
       .catch((dbErr) => req.log.warn({ dbErr }, "sign-8655: failed to persist upload error"));
   }
+
+  store.logActivity({ companyId, type: "document.signed", description: `Form 8655 signed by ${signerName.trim()}`, actorName: caller?.name ?? signerName.trim(), actorRole: caller?.role ?? signerTitle.trim() });
 
   res.json({
     id,

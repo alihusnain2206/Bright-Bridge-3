@@ -5,7 +5,7 @@ import { apiFetch, timeAgo } from "./helpers";
 import type { ActivityFeedEvent, CompanyState } from "./types";
 import {
   DollarSign, UserPlus, Clock, CheckCircle2, XCircle,
-  Loader2, FileText, Building2, Activity,
+  Loader2, FileText, Building2, Activity, PenLine,
 } from "lucide-react";
 
 // ── Icon + colour per event type ────────────────────────────────────────────
@@ -25,6 +25,7 @@ const TYPE_ICON: Record<string, IconConfig> = {
   "employee.updated":    { icon: UserPlus,      bg: "bg-violet-500/20",  fg: "text-violet-300" },
   "hours.synced":        { icon: Clock,         bg: "bg-amber-500/20",   fg: "text-amber-300" },
   "document.uploaded":   { icon: FileText,      bg: "bg-sky-500/20",     fg: "text-sky-300" },
+  "document.signed":     { icon: PenLine,       bg: "bg-indigo-500/20",  fg: "text-indigo-300" },
   "company.updated":     { icon: Building2,     bg: "bg-gray-500/20",    fg: "text-gray-300" },
 };
 
