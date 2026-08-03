@@ -519,6 +519,64 @@ describe("POST /rollfi/companies/:companyId/retry-8655-upload", () => {
     });
   });
 
+  // ── getCompanyInfo throws AND DB company row is missing ───────────────────
+  // The route uses `if (dbCo) { ... }` — when the companies table has no row,
+  // taxpayerName / ein / address fields stay as empty strings but the signer
+  // data from companySignedForms is still intact.  The PDF must still be built
+  // (containing at least the signer name) and the upload must still be attempted.
+
+  describe("when getCompanyInfo throws AND the DB company row is missing", () => {
+    beforeEach(() => {
+      // Signed form + companies select for rollfiCompanyId
+      queueHappyPathSelects();
+      axiosMock.post
+        .mockRejectedValueOnce(new Error("ECONNREFUSED"))  // getCompanyInfo fails
+        .mockResolvedValueOnce({ data: UPLOAD_SUCCESS });   // uploadDocument succeeds
+      // DB fallback select for company info returns empty (no company row)
+      dbState.callQueue.push([]);
+    });
+
+    it("returns HTTP 200 — missing company row does not abort the retry", async () => {
+      const res = await postRetry(makeApp());
+      expect(res.status).toBe(200);
+    });
+
+    it("upload is still attempted even with no DB company row", async () => {
+      await postRetry(makeApp());
+      // First axios call threw; second (index 1) is uploadDocument
+      expect(axiosMock.post).toHaveBeenCalledTimes(2);
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(payload.documentType).toBe("8655Form");
+      expect(payload.companyId).toBe(ROLLFI_UUID);
+    });
+
+    it("upload succeeds and returns uploadStatus='uploaded'", async () => {
+      const res = await postRetry(makeApp());
+      expect(res.body.uploadStatus).toBe("uploaded");
+    });
+
+    it("PDF is built with the stored signer name even when company row is absent", async () => {
+      await postRetry(makeApp());
+      expect(buildPdfSpy).toHaveBeenCalledTimes(1);
+      const pdfArg = buildPdfSpy.mock.calls[0][0] as Record<string, unknown>;
+      // Signer name must come from the companySignedForms row (not the missing company)
+      expect(pdfArg.signerName).toBe(SIGNED_FORM_ROW.signerName.trim());
+    });
+
+    it("PDF is built with empty company fields (graceful degradation) not a fallback crash", async () => {
+      await postRetry(makeApp());
+      const pdfArg = buildPdfSpy.mock.calls[0][0] as Record<string, unknown>;
+      // taxpayerName falls back to "Company" (the || "Company" default in the route)
+      expect(typeof pdfArg.taxpayerName).toBe("string");
+      // Upload payload still contains a non-empty base64 PDF
+      const uploadCall = axiosMock.post.mock.calls[1] as unknown[];
+      const payload = uploadCall[1] as Record<string, unknown>;
+      expect(typeof payload.fileBase64).toBe("string");
+      expect((payload.fileBase64 as string).length).toBeGreaterThan(0);
+    });
+  });
+
   // ── Access control ─────────────────────────────────────────────────────────
 
   describe("access control", () => {
