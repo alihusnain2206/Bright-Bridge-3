@@ -49,7 +49,7 @@ export function RecentActivityWidget({
 }) {
   const { data, isLoading } = useQuery<{ events: ActivityFeedEvent[] }>({
     queryKey: ["activity-feed", selectedCompanyId],
-    queryFn: () => apiFetch(`/activity?companyId=${encodeURIComponent(selectedCompanyId)}`),
+    queryFn: () => apiFetch(`/activity?companyId=${encodeURIComponent(selectedCompanyId)}&limit=8`),
     staleTime: 20_000,
     refetchInterval: 30_000,
     retry: false,

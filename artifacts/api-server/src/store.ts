@@ -515,6 +515,18 @@ export const store = {
     };
     activityLog.unshift(entry);
     if (activityLog.length > 300) activityLog.splice(300);
+    // Persist async — fire-and-forget so callers are never blocked
+    import("@workspace/db").then(({ db, appActivityLog }) => {
+      db.insert(appActivityLog).values({
+        id:          entry.id,
+        companyId:   entry.companyId,
+        type:        entry.type,
+        description: entry.description,
+        actorName:   entry.actorName ?? null,
+        actorRole:   entry.actorRole ?? null,
+        createdAt:   entry.createdAt,
+      }).catch(() => { /* non-fatal — in-memory copy still available */ });
+    }).catch(() => { /* ignore if db module unavailable */ });
   },
   getActivity(companyId: string, limit = 50): ActivityEvent[] {
     return activityLog.filter((e) => e.companyId === companyId).slice(0, limit);

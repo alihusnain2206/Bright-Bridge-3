@@ -5,7 +5,7 @@ import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persi
 import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByCompany } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable } from "@workspace/db";
+import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable, appActivityLog } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
 import { desc, eq, inArray, and, isNull, isNotNull } from "drizzle-orm";
@@ -5149,22 +5149,43 @@ function mapWebhookType(eventType: string): string {
   return labels[eventType] ?? eventType;
 }
 
-// GET /activity — app activities + Rollfi webhook events, merged by companyId
+// GET /activity — app activities (DB-persisted) + Rollfi webhook events, merged by companyId
 router.get("/activity", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
   const { companyId, limit: limitStr } = req.query as { companyId?: string; limit?: string };
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
-  const limit = Math.min(parseInt(limitStr ?? "50", 10) || 50, 100);
+  const limit = Math.min(parseInt(limitStr ?? "8", 10) || 8, 50);
 
-  const appEvents = store.getActivity(companyId, limit).map((e) => ({
-    id: e.id,
-    type: e.type,
-    description: e.description,
-    source: "app" as const,
-    actorName: e.actorName,
-    actorRole: e.actorRole,
-    createdAt: e.createdAt,
-  }));
+  // Read app events from DB (persistent across restarts); fall back to in-memory on error
+  let appEvents: Array<{ id: string; type: string; description: string; source: "app"; actorName?: string; actorRole?: string; createdAt: string }> = [];
+  try {
+    const rows = await db
+      .select()
+      .from(appActivityLog)
+      .where(eq(appActivityLog.companyId, companyId))
+      .orderBy(desc(appActivityLog.createdAt))
+      .limit(limit);
+    appEvents = rows.map((r) => ({
+      id: r.id,
+      type: r.type,
+      description: r.description,
+      source: "app" as const,
+      actorName: r.actorName ?? undefined,
+      actorRole: r.actorRole ?? undefined,
+      createdAt: r.createdAt,
+    }));
+  } catch {
+    // Fallback to in-memory if DB unavailable
+    appEvents = store.getActivity(companyId, limit).map((e) => ({
+      id: e.id,
+      type: e.type,
+      description: e.description,
+      source: "app" as const,
+      actorName: e.actorName,
+      actorRole: e.actorRole,
+      createdAt: e.createdAt,
+    }));
+  }
 
   await loadEventsFromDb(req.log);
   const rollfiEvents = rollfiEventCache

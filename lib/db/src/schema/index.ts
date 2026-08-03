@@ -402,6 +402,16 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
   createdAt: text("created_at").notNull(),
 });
 
+export const appActivityLog = pgTable("app_activity_log", {
+  id:          text("id").primaryKey(),
+  companyId:   text("company_id").notNull(),
+  type:        text("type").notNull(),
+  description: text("description").notNull(),
+  actorName:   text("actor_name"),
+  actorRole:   text("actor_role"),
+  createdAt:   text("created_at").notNull(),
+});
+
 export const timesheetShifts = pgTable("timesheet_shifts", {
   easyteamShiftId:     text("easyteam_shift_id").primaryKey(),
   employeeId:          text("employee_id"),
