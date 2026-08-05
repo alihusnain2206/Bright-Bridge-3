@@ -38,10 +38,10 @@ channel = "stable-25_05"
 
 [userenv.shared]
 IMPORT_ADMIN_SECRET = "2638f36dcf579e2df7bd6d213bab44f71f744aa03b60d41b"
-ROLLFI_VERBOSE = "true"
 
 [userenv.development]
 APP_URL = "https://app.brightbridgeassist.com"
+ROLLFI_VERBOSE = "true"
 
 [userenv.production]
 APP_URL = "https://app.brightbridgeassist.com"
