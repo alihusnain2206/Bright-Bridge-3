@@ -9,7 +9,8 @@ import { restoreActivityFromDb } from "./store.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
-import { db, companies, employees } from "@workspace/db";
+import { db, companies, employees, rollfiEmployeeRecords } from "@workspace/db";
+import { userAccounts } from "@workspace/db/schema";
 import { eq, isNull, isNotNull, and } from "drizzle-orm";
 
 /**
@@ -311,6 +312,72 @@ async function bootEasyTeamSync() {
 }
 
 /**
+ * One-time idempotent repair: Leticia Anderson was added to Urban Concepts during the first
+ * failed wizard attempt (creating orphaned company ORG-MSDK0754-QRO44V), so her login
+ * (USER-DYN-EMP-MSDKARCE-A4B11X / EMP-MSDKARCE-A4B11X) is bound to the wrong company.
+ * A duplicate employee (EMP-MSG96YBV-MX9JE9) was created during the second (successful) wizard
+ * run and holds the real Rollfi payroll record for Urban Concepts.
+ *
+ * Fix: move EMP-MSDKARCE-A4B11X to Urban Concepts, transfer the Rollfi record, delete the
+ * duplicate, and reload the in-memory staff user so the next JWT uses the correct location.
+ *
+ * Guard: runs only while EMP-MSDKARCE-A4B11X is still associated with the orphaned company.
+ */
+async function bootRepairLeticiaDuplicateEmployee() {
+  const CANONICAL_ID = "EMP-MSDKARCE-A4B11X";
+  const DUPLICATE_ID = "EMP-MSG96YBV-MX9JE9";
+  const ORPHAN_COMPANY = "ORG-MSDK0754-QRO44V";
+  const URBAN_CONCEPTS = "ORG-MSG8W5WM-G6PNF1";
+  const USER_ACCOUNT_ID = "USER-DYN-EMP-MSDKARCE-A4B11X";
+
+  try {
+    // Guard: only run if the canonical employee is still at the orphaned company
+    const [canonical] = await db
+      .select({ companyId: employees.companyId })
+      .from(employees)
+      .where(eq(employees.id, CANONICAL_ID));
+
+    if (!canonical || canonical.companyId !== ORPHAN_COMPANY) {
+      // Already fixed or canonical record doesn't exist — nothing to do
+      return;
+    }
+
+    logger.info({ CANONICAL_ID, DUPLICATE_ID }, "Boot repair: fixing Leticia duplicate employee — migrating to Urban Concepts");
+
+    // 1. Move canonical employee to Urban Concepts
+    await db.update(employees)
+      .set({ companyId: URBAN_CONCEPTS })
+      .where(eq(employees.id, CANONICAL_ID));
+
+    // 2. Move login account to Urban Concepts
+    await db.update(userAccounts)
+      .set({ companyId: URBAN_CONCEPTS })
+      .where(eq(userAccounts.id, USER_ACCOUNT_ID));
+
+    // 3. Transfer Rollfi payroll record from duplicate → canonical (so payroll still works)
+    await db.update(rollfiEmployeeRecords)
+      .set({ employeeId: CANONICAL_ID })
+      .where(eq(rollfiEmployeeRecords.employeeId, DUPLICATE_ID));
+
+    // 4. Delete the duplicate employee row (same email + same easyteam_uuid)
+    await db.delete(employees).where(eq(employees.id, DUPLICATE_ID));
+
+    // 5. Reload the in-memory staff user so the next JWT reflects Urban Concepts
+    const staffUser = store.getAllStaffUsers().find((u) => u.employeeId === CANONICAL_ID);
+    if (staffUser) {
+      (staffUser as Record<string, unknown>).companyId = URBAN_CONCEPTS;
+    }
+
+    logger.info(
+      { CANONICAL_ID, URBAN_CONCEPTS },
+      "Boot repair: Leticia duplicate resolved — login now bound to Urban Concepts"
+    );
+  } catch (err) {
+    logger.warn({ err }, "Boot repair: Leticia duplicate fix failed (non-fatal — will retry on next restart)");
+  }
+}
+
+/**
  * Log the active Rollfi environment and assert coherence with the database tier.
  *
  * Coherence rule:
@@ -409,6 +476,7 @@ app.listen(port, (err) => {
         });
       });
     }),
+    bootRepairLeticiaDuplicateEmployee(),
   ])
     .catch((err) => {
       logger.warn({ err }, "Could not fully load state from DB — starting with partial state");
