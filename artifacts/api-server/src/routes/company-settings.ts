@@ -1398,7 +1398,7 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
     req.log.info({ uploadResp: uploadResp.data }, "sign-8655: uploadDocument response");
 
     // Expected Rollfi response shape: { documentId: string } on success,
-    // or { error: string } / { success: false } on failure.
+    // or { error: string | { code, message } } / { success: false } on failure.
     // We require an explicit documentId or success:true — a 2xx with neither
     // is treated as a failure so we never silently swallow unexpected shapes.
     const upData = uploadResp.data as Record<string, unknown>;
@@ -1409,7 +1409,12 @@ router.post("/rollfi/companies/:companyId/sign-8655", requireAuth, async (req: R
       // Provider confirmed success without a documentId
       uploadStatus = "uploaded";
     } else if (upData?.error || upData?.success === false) {
-      throw new Error(String(upData?.error ?? "uploadDocument returned success=false"));
+      const errVal = upData?.error;
+      const errMsg = typeof errVal === "string" ? errVal
+        : typeof (errVal as Record<string, unknown>)?.message === "string"
+          ? String((errVal as Record<string, unknown>).message)
+          : JSON.stringify(errVal ?? "uploadDocument returned success=false");
+      throw new Error(errMsg);
     } else {
       // Neither documentId nor success:true — treat as failure and log raw body
       req.log.error({ rawUploadResponse: uploadResp.data }, "sign-8655: uploadDocument returned unexpected shape (no documentId, no success:true)");
@@ -1623,7 +1628,7 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
     req.log.info({ uploadResp: uploadResp.data }, "retry-8655-upload: uploadDocument response");
 
     // Expected Rollfi response shape: { documentId: string } on success,
-    // or { error: string } / { success: false } on failure.
+    // or { error: string | { code, message } } / { success: false } on failure.
     // We require an explicit documentId or success:true — a 2xx with neither
     // is treated as a failure so we never silently swallow unexpected shapes.
     const upData = uploadResp.data as Record<string, unknown>;
@@ -1634,7 +1639,12 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
       // Provider confirmed success without a documentId
       uploadStatus = "uploaded";
     } else if (upData?.error || upData?.success === false) {
-      throw new Error(String(upData?.error ?? "uploadDocument returned success=false"));
+      const errVal = upData?.error;
+      const errMsg = typeof errVal === "string" ? errVal
+        : typeof (errVal as Record<string, unknown>)?.message === "string"
+          ? String((errVal as Record<string, unknown>).message)
+          : JSON.stringify(errVal ?? "uploadDocument returned success=false");
+      throw new Error(errMsg);
     } else {
       // Neither documentId nor success:true — treat as failure and log raw body
       req.log.error({ rawUploadResponse: uploadResp.data }, "retry-8655-upload: uploadDocument returned unexpected shape (no documentId, no success:true)");
