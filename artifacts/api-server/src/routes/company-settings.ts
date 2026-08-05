@@ -537,6 +537,9 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     res.status(400).json({ error: "ZIP code must be 5 or 9 digits" }); return;
   }
 
+  // Hoisted so it's accessible in both the try and catch blocks
+  let locationPayload: Record<string, string> = {};
+
   try {
     const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
     if (!co) { res.status(404).json({ error: "Company not found" }); return; }
@@ -552,7 +555,7 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     if (!rollfiCompanyId) { res.status(400).json({ error: "Company not yet enrolled in payroll" }); return; }
 
     // Provider call — companyLocationId from DB rollfiLocationId
-    const locationPayload: Record<string, string> = {
+    locationPayload = {
       companyId: rollfiCompanyId,
     };
     if (rollfiLocationId) locationPayload.companyLocationId = rollfiLocationId;
