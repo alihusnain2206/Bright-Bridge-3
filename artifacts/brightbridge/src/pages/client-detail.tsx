@@ -588,7 +588,7 @@ function OwnerAccessSection({ company }: { company: Company }) {
       const res = await fetch("/api/auth/create-manager", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newForm.name, email: newForm.email, companyId: company.id, position: "Daycare Manager" }),
+        body: JSON.stringify({ name: newForm.name, email: newForm.email, companyId: company.id, position: "Daycare Manager", password: newForm.password }),
       });
       const d = await res.json() as { name?: string; email?: string; password?: string; error?: string };
       if (!res.ok) throw new Error(d.error ?? "Failed to create login");
