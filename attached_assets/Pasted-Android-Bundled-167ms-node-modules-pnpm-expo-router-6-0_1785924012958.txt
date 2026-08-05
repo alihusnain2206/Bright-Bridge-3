@@ -1,0 +1,100 @@
+Android Bundled 167ms node_modules\.pnpm\expo-router@6.0.24_7266b646f9a1289c0d2843f43d4bcfaa\node_modules\expo-router\entry.js (1 module)
+ WARN  SafeAreaView has been deprecated and will be removed in a future release. Please use 'react-native-safe-area-context' instead. See https://github.com/th3rdwave/react-native-safe-area-context
+ LOG  ET_WIRE {"n":1,"method":"POST","url":"https://www.easyteam.io/embed/api/auth/exchangeToken","reqBody":"{\"token\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZUlkIjoiRU1QLVNVTlNISU5FLTAwMSIsIm9yZ2FuaXphdGlvbklkIjoiT1JHLUJSSUdIVEJSSURHRSIsImxvY2F0aW9uSWQiOiJMT0MtU1VOU0hJTkUiLCJwYXJ0bmVySWQiOiI3Mzc4MGRkZC1mNDY2LTQ0YTItYmYxYy1hNDI3MTIxZTBmZDkiLCJhY2Nlc3NSb2xlIjp7Im5hbWUiOiJlbXBsb3llZSIsInBlcm1pc3Npb25zIjpbIkxPQ0FUSU9OX1JFQUQiLCJTSElGVF9SRUFEIiwiU0hJRlRfV1JJVEUiLCJTSElGVF9BREQiLCJTSElGVF9VUERBVEUiXX0sInJvbGUiOnsibmFtZSI6IlRlYWNoZXIiLCJob3VybHlXYWdlIjozNX0sIndhZ2UiOjM1LCJ3YWdlVHlwZSI6ImhvdXJseSIsImZlYXR1cmVzIjp7Imdlb2xvY2F0aW9uIjpmYWxzZSwic2hpZnROb3RlcyI6ZmFsc2V9LCJpYXQiOjE3ODU5MjM5MDYsImV4cCI6MTc4NTk1MjcwNn0.IgjoKgeUxLcebF7AWDxSI156YvZl6tpZF0yfi5nyr4fmyWD_jOfIi8jQhni4PHuzGVaJWckyIW43fTMm6_2-j2D0ngm3fxzyzbmy7Aqws2_tPCjNekbHFnhIjvXTy-yMJ2y5MQri2ONaf7i42aaIEoreb6TAwzp93KWzp6yWNNFn0TFy2ppLlAngfA4mr4YldlvcgTsHAgqr4eP2UEhX7CJ-AGklPsURNNJZtS86lKM6m9-449agW95WhezannWI1hHs5vl_7hJ9ucZGWJULi9dIPKU-bQ51QizVM6QXBSxb3STO-b7xoYpoRPZiVJxbXlD6GaaQORj7RbhOtkTtOGecRfXbfQx0ldPoaKeQ0XnNKI8pBvALY4wWizgV8wjfQ3xoR5-9eGqTx6gQePkQGSejBJTUEu6zO0cdHNmXzXzYybAsb7KuC9FAydydddLO8iTFDTNLKx_NTA7hmc2EpZ-JTllb8OeV8sZa6bgsPngC2Uongs7NYQJ_EAki-OJS4LHTlM-vcpaOuUGRRwNzHR0vGII08mEV3VyNbyNdylMeO4I3Swo7cVTwWraX_1uX0Pgcw4w7H6lsoKvQ_Ak-5cgf3arMKT9S5cFUx0DJbpWsv-9DHeLXC26rebYWG-z46DRnpXwpQL9kYmG7pWsx_OUSEPlS-C68apc-GN4D2VA\"}","status":201,"resBody":"{\"accessToken\":\"jwt_eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZUlkIjoiZjc2NTY0N2UtMGE1Yy00OTViLTljMTQtOTg0ZjdhZTRkMGU1IiwibG9jYXRpb25JZCI6ImE3NjQ5YzEwLWEzYjEtNDE5YS04MWZhLTI1NTU4OTk2MzViMyIsIm9yZ2FuaXphdGlvbklkIjoiYzI4MDAyM2MtMDJlOC00MDI1LTg3NzUtYjk2Y2EwMWZkNDUxIiwiYWNjZXNzUm9sZUlkIjoiNzY0YjkxYjQtMGVhNy00NGU3LWIwNDQtMGZjYTg4ODNlNzQ0IiwicGFydG5lcklkIjoiNzM3ODBkZGQtZjQ2Ni00NGEyLWJmMWMtYTQyNzEyMWUwZmQ5IiwicGVybWlzc2lvbnMiOlsiTE9DQVRJT05fUkVBRCIsIlNISUZUX0FERCIsIlNISUZUX1JFQUQiLCJTSElGVF9VUERBVEUiLCJTSElGVF9XUklURSJdLCJyb2xlTmFtZSI6InRlYWNoZXIiLCJpYXQiOjE3ODU5MjM5MDcsImV4cCI6MTc5MTEwNzkwN30.p0suKy5_VeyiesaaykDpJfg3bT-Cv_E2diL9QdEpzL7iQcdsgyjER4RIH_3m_dDqqWNMyWWCJiSwHjDHOHmBZTls6xqMXcXs1wGlw2iZYROa8TbgJfQ2R-mWYCDLXZy1HsCj9-6TpfM2GcThO-OKLtJ_4Znbf3jhcYFFjJQ9Py2ozI_pH5dhV9JqbsfixCvUO7PkNvUGLQq3ZLuujXpkEQKlm5eHM6SDZbzv9EPV32021htujQIGE8qTb8SwsWJbwKSKWBCiGzYmJgwi8iFVgr7ap5OGpcR5c7bfQohpkzr-ISSQTSI4vGLLAmEFeIuOlebxy7qrPkqZqOQp2XKkp6Hoj74ztXLoSr8zKrmHIPXY7_aejvLAgeN1E_nld1xLs9nYxTwTW8zrnNHrpsCCa_hAZF1wD3BqZCfhQSGzeaQh4CzsNRYAA-1DbqbYsPqqN0liXWwbVVJ9zJv9lHtTTNlFCQ4_K4PiekX7ktSSTTHtsf-WfwJwDRmE8lArYyAwfl0IWhHHoag1wfwq-FL9A-u3_pff1YBN22NFc9ybPs3unYddYDgXfdQVjTBmfCuMVET2PrEwFjKgGeJLsqbLu_W4FrVQi0TNsUvaEun7fSWSF5kO2cR0JW4DtB4aEw3sprRzFCRvRUXIjPLZ4Hc9uhfr7ZmTZlDxr3ltFftixb0\"}"}
+ ERROR  [Error: The 'responseText' property is only available if 'responseType' is set to '' or 'text', but it is 'blob'.]
+
+Call Stack
+  get__responseText (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  addEventListener$argument_1 (artifacts\mobile\app\index.tsx)
+  call (artifacts\mobile\<native>)
+  invoke (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatch (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  INTERNAL_DISPATCH_METHOD_KEY (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatchTrustedEvent (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\internals\EventTargetInternals.js)
+  setReadyState (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  __didCompleteResponse (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  RCTNetworking.addListener$argument_1 (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\vendor\emitter\EventEmitter.js)
+  apply (artifacts\mobile\<native>)
+  <anonymous> (node_modules\.pnpm\@babel+runtime@7.29.7\node_modules\@babel\runtime\helpers\superPropGet.js)
+  RCTDeviceEventEmitterImpl#emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\EventEmitter\RCTDeviceEventEmitter.js)
+ LOG  ET_WIRE {"n":3,"method":"POST","url":"https://www.easyteam.io/embed/api/auth/exchangeToken","reqBody":"{\"token\":\"eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZUlkIjoiRU1QLVNVTlNISU5FLTAwMSIsIm9yZ2FuaXphdGlvbklkIjoiT1JHLUJSSUdIVEJSSURHRSIsImxvY2F0aW9uSWQiOiJMT0MtU1VOU0hJTkUiLCJwYXJ0bmVySWQiOiI3Mzc4MGRkZC1mNDY2LTQ0YTItYmYxYy1hNDI3MTIxZTBmZDkiLCJhY2Nlc3NSb2xlIjp7Im5hbWUiOiJlbXBsb3llZSIsInBlcm1pc3Npb25zIjpbIkxPQ0FUSU9OX1JFQUQiLCJTSElGVF9SRUFEIiwiU0hJRlRfV1JJVEUiLCJTSElGVF9BREQiLCJTSElGVF9VUERBVEUiXX0sInJvbGUiOnsibmFtZSI6IlRlYWNoZXIiLCJob3VybHlXYWdlIjozNX0sIndhZ2UiOjM1LCJ3YWdlVHlwZSI6ImhvdXJseSIsImZlYXR1cmVzIjp7Imdlb2xvY2F0aW9uIjpmYWxzZSwic2hpZnROb3RlcyI6ZmFsc2V9LCJpYXQiOjE3ODU5MjM5MDYsImV4cCI6MTc4NTk1MjcwNn0.IgjoKgeUxLcebF7AWDxSI156YvZl6tpZF0yfi5nyr4fmyWD_jOfIi8jQhni4PHuzGVaJWckyIW43fTMm6_2-j2D0ngm3fxzyzbmy7Aqws2_tPCjNekbHFnhIjvXTy-yMJ2y5MQri2ONaf7i42aaIEoreb6TAwzp93KWzp6yWNNFn0TFy2ppLlAngfA4mr4YldlvcgTsHAgqr4eP2UEhX7CJ-AGklPsURNNJZtS86lKM6m9-449agW95WhezannWI1hHs5vl_7hJ9ucZGWJULi9dIPKU-bQ51QizVM6QXBSxb3STO-b7xoYpoRPZiVJxbXlD6GaaQORj7RbhOtkTtOGecRfXbfQx0ldPoaKeQ0XnNKI8pBvALY4wWizgV8wjfQ3xoR5-9eGqTx6gQePkQGSejBJTUEu6zO0cdHNmXzXzYybAsb7KuC9FAydydddLO8iTFDTNLKx_NTA7hmc2EpZ-JTllb8OeV8sZa6bgsPngC2Uongs7NYQJ_EAki-OJS4LHTlM-vcpaOuUGRRwNzHR0vGII08mEV3VyNbyNdylMeO4I3Swo7cVTwWraX_1uX0Pgcw4w7H6lsoKvQ_Ak-5cgf3arMKT9S5cFUx0DJbpWsv-9DHeLXC26rebYWG-z46DRnpXwpQL9kYmG7pWsx_OUSEPlS-C68apc-GN4D2VA\"}","status":201,"resBody":"{\"accessToken\":\"jwt_eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZUlkIjoiZjc2NTY0N2UtMGE1Yy00OTViLTljMTQtOTg0ZjdhZTRkMGU1IiwibG9jYXRpb25JZCI6ImE3NjQ5YzEwLWEzYjEtNDE5YS04MWZhLTI1NTU4OTk2MzViMyIsIm9yZ2FuaXphdGlvbklkIjoiYzI4MDAyM2MtMDJlOC00MDI1LTg3NzUtYjk2Y2EwMWZkNDUxIiwiYWNjZXNzUm9sZUlkIjoiNzY0YjkxYjQtMGVhNy00NGU3LWIwNDQtMGZjYTg4ODNlNzQ0IiwicGFydG5lcklkIjoiNzM3ODBkZGQtZjQ2Ni00NGEyLWJmMWMtYTQyNzEyMWUwZmQ5IiwicGVybWlzc2lvbnMiOlsiTE9DQVRJT05fUkVBRCIsIlNISUZUX0FERCIsIlNISUZUX1JFQUQiLCJTSElGVF9VUERBVEUiLCJTSElGVF9XUklURSJdLCJyb2xlTmFtZSI6InRlYWNoZXIiLCJpYXQiOjE3ODU5MjM5MDgsImV4cCI6MTc5MTEwNzkwOH0.D6D4SB5-iYlmscMPd_vWfwkv2raP5HcCnzIrpdsFSX3OFF6a4FMclXGW4hD-3dSoNba8zPIPc8y8RNmLZ9oI8qJeiE3jUMwnQjdagQ_N_bimPk6oE8VdVUpEGyRP6yJ9xjyzVIh4_XhPUDqQlBQMFA1tX8rY92vO2KV8mlPNuLJloHPgGMBiU0FTuzjYzQs0fNKDt28lO-G-04Ytp9Lqb6FFu99rR1ujgWsC5dYn5VPB4vpgwb-F-NicqwLuuCGuzY0b5CyEOWFq2IcXHQz9QfiSGGdv4CSKxsSBIrUOgCBgB9QS0OYJrQ6YkNC3DOuBSKd8-13H0U-S8h5OtSdb7DZAcCf2Trf9JAK-XCyBalrvc1tEsfX4bS76YyT1_Y0S8ZNW4WkUJ1SA-vbJAc-cjF8ymm-nAVjG2sgQcSH1RThHZusMzPqip77Hn-eF5eO2rQSoxmvq3Qoddqx19h1P6ECYh9fn-AoRKlbOtUhjYpVtN9D80rtf13aSKJIWZWj77CAgzyvTXCNsqn7YbM1v7M0GZOj2NW-u0G4GLOV_gLNiwAcXNGovstGV8jYsFj7zyc547ThUffEDJoQl8PUZhxDCq9T3HVla-UyPEjfcTIU1KArf60CL4OOyn69GVyQqaF3fFso9gSHAFNvhXtH6g6MRSxwESd1-eTRGLTY5AGs\"}"}
+ LOG  ET_WIRE {"n":4,"method":"GET","url":"https://www.easyteam.io/embed/api/organizations/c280023c-02e8-4025-8775-b96ca01fd451/staffmembers/week-starts-on","reqBody":"","status":200,"resBody":"1"}
+ ERROR  [Error: The 'responseText' property is only available if 'responseType' is set to '' or 'text', but it is 'blob'.]
+
+Call Stack
+  get__responseText (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  addEventListener$argument_1 (artifacts\mobile\app\index.tsx)
+  call (artifacts\mobile\<native>)
+  invoke (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatch (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  INTERNAL_DISPATCH_METHOD_KEY (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatchTrustedEvent (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\internals\EventTargetInternals.js)
+  setReadyState (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  __didCompleteResponse (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  RCTNetworking.addListener$argument_1 (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\vendor\emitter\EventEmitter.js)
+  apply (artifacts\mobile\<native>)
+  <anonymous> (node_modules\.pnpm\@babel+runtime@7.29.7\node_modules\@babel\runtime\helpers\superPropGet.js)
+  RCTDeviceEventEmitterImpl#emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\EventEmitter\RCTDeviceEventEmitter.js)
+ ERROR  [Error: The 'responseText' property is only available if 'responseType' is set to '' or 'text', but it is 'blob'.]
+
+Call Stack
+  get__responseText (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  addEventListener$argument_1 (artifacts\mobile\app\index.tsx)
+  call (artifacts\mobile\<native>)
+  invoke (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatch (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  INTERNAL_DISPATCH_METHOD_KEY (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatchTrustedEvent (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\internals\EventTargetInternals.js)
+  setReadyState (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  __didCompleteResponse (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  RCTNetworking.addListener$argument_1 (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\vendor\emitter\EventEmitter.js)
+  apply (artifacts\mobile\<native>)
+  <anonymous> (node_modules\.pnpm\@babel+runtime@7.29.7\node_modules\@babel\runtime\helpers\superPropGet.js)
+  RCTDeviceEventEmitterImpl#emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\EventEmitter\RCTDeviceEventEmitter.js)
+ ERROR  [Error: The 'responseText' property is only available if 'responseType' is set to '' or 'text', but it is 'blob'.]
+
+Call Stack
+  get__responseText (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  addEventListener$argument_1 (artifacts\mobile\app\index.tsx)
+  call (artifacts\mobile\<native>)
+  invoke (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatch (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  INTERNAL_DISPATCH_METHOD_KEY (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatchTrustedEvent (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\internals\EventTargetInternals.js)
+  setReadyState (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  __didCompleteResponse (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  RCTNetworking.addListener$argument_1 (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\vendor\emitter\EventEmitter.js)
+  apply (artifacts\mobile\<native>)
+  <anonymous> (node_modules\.pnpm\@babel+runtime@7.29.7\node_modules\@babel\runtime\helpers\superPropGet.js)
+  RCTDeviceEventEmitterImpl#emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\EventEmitter\RCTDeviceEventEmitter.js)
+ ERROR  [Error: The 'responseText' property is only available if 'responseType' is set to '' or 'text', but it is 'blob'.]
+
+Call Stack
+  get__responseText (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  addEventListener$argument_1 (artifacts\mobile\app\index.tsx)
+  call (artifacts\mobile\<native>)
+  invoke (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatch (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  INTERNAL_DISPATCH_METHOD_KEY (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\EventTarget.js)
+  dispatchTrustedEvent (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\src\private\webapis\dom\events\internals\EventTargetInternals.js)
+  setReadyState (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  __didCompleteResponse (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  RCTNetworking.addListener$argument_1 (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\Network\XMLHttpRequest.js)
+  apply (artifacts\mobile\<native>)
+  emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\vendor\emitter\EventEmitter.js)
+  apply (artifacts\mobile\<native>)
+  <anonymous> (node_modules\.pnpm\@babel+runtime@7.29.7\node_modules\@babel\runtime\helpers\superPropGet.js)
+  RCTDeviceEventEmitterImpl#emit (node_modules\.pnpm\react-native@0.81.5_@babel+_36fc948850e3c3ce42159195230f2b5f\node_modules\react-native\Libraries\EventEmitter\RCTDeviceEventEmitter.js)
