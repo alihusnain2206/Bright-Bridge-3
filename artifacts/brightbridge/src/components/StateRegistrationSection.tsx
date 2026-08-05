@@ -319,7 +319,12 @@ export function StateRegistrationSection({
 
     setEditSaving(true); setEditError(""); setEditSuccess(false);
     try {
-      const res = await fetch(`/api/state-registrations/${editingRegId}`, {
+      // Always pass companyId as a query param so super-admin edits on a client's
+      // Rollfi-synced (synthetic) row resolve to the correct company, not the
+      // super-admin's own company. Owners are unaffected — the server always uses
+      // the session's companyId for non-super_admin callers regardless.
+      const url = `/api/state-registrations/${editingRegId}?companyId=${encodeURIComponent(companyId)}`;
+      const res = await fetch(url, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fieldValues: editFieldValues }),
@@ -423,7 +428,7 @@ export function StateRegistrationSection({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  {/* Rollfi-sourced rows can't be retried or edited through BrightBridge */}
+                  {/* Retry is only meaningful for locally-created rows (Rollfi-sourced have no retry path) */}
                   {reg.source !== "rollfi" && (reg.status === "failed" || reg.status === "active") && (
                     <RetryStateRegButton
                       regId={reg.id}
