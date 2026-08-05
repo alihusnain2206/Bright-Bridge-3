@@ -572,15 +572,17 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
 
     // Provider returns empty body with 400 when request format is invalid
     if (!r.data || (typeof r.data === "object" && Object.keys(r.data).length === 0)) {
+      req.log.warn({ locationPayload }, "PUT /company-info/location: Rollfi returned empty body — possible field format issue");
       res.status(400).json({
-        error: "Address update was rejected by the payroll provider. Please check the values and try again.",
+        error: "Address update was rejected by the payroll provider. Please verify the address is a valid US address and all fields are filled in correctly.",
       });
       return;
     }
 
     const rollfiErr = extractRollfiError(r.data);
     if (rollfiErr) {
-      res.status(400).json({ error: rollfiErr, rollfiResponse: r.data }); return;
+      req.log.warn({ rollfiErr, rollfiData: r.data }, "PUT /company-info/location: Rollfi returned error body");
+      res.status(400).json({ error: `Payroll provider rejected the address: ${rollfiErr}` }); return;
     }
 
     // Write to DB
@@ -599,10 +601,24 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     res.json({ success: true });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown; status?: number } };
-    // Surface the empty-body 400 specifically
     if (e.response?.status === 400) {
+      // Extract Rollfi's rejection detail from the response body when present
+      const data = e.response?.data;
+      let detail: string | null = null;
+      if (data && typeof data === "object") {
+        const d = data as Record<string, unknown>;
+        const errObj = d.error;
+        if (typeof errObj === "string" && errObj.trim()) detail = errObj.trim();
+        else if (errObj && typeof errObj === "object") detail = (errObj as { message?: string }).message?.trim() ?? null;
+        else if (typeof d.message === "string" && (d.message as string).trim()) detail = (d.message as string).trim();
+      } else if (typeof data === "string" && (data as string).trim()) {
+        detail = (data as string).trim();
+      }
+      req.log.warn({ rollfiStatus: 400, rollfiData: data, locationPayload }, "PUT /company-info/location: Rollfi rejected address (HTTP 400)");
       res.status(400).json({
-        error: "Address update was rejected by the payroll provider. Please check the values and try again.",
+        error: detail
+          ? `Payroll provider rejected the address: ${detail}`
+          : "Address update was rejected by the payroll provider. Please verify the address is a valid US address and all fields are filled in correctly.",
       });
       return;
     }

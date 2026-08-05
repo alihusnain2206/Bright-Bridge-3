@@ -324,7 +324,12 @@ function LocationForm({ companyId, co, onSaved }: { companyId: string; co: Compa
           {saveError && (
             <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
               <AlertTriangle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-              {saveError}
+              <div className="space-y-1">
+                <p>{saveError}</p>
+                <p className="text-xs text-red-600">
+                  Common causes: address not found in USPS database, ZIP code doesn't match the city/state, or address line 1 exceeds 40 characters.
+                </p>
+              </div>
             </div>
           )}
           <div className="flex gap-2">
