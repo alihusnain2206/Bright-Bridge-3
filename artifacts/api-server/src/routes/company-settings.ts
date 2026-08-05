@@ -538,7 +538,7 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
   }
 
   // Hoisted so it's accessible in both the try and catch blocks
-  let locationPayload: Record<string, string> = {};
+  let locationPayload: Record<string, string | boolean> = {};
 
   try {
     const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId));
@@ -576,17 +576,23 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     }
 
     // Provider call — companyLocationId resolved above (live from Rollfi, or stored fallback)
+    // NOTE: do NOT include `country` — it is not a field Rollfi accepts on updateCompanyLocation
+    // (not present in createBusiness either). Sending it causes a silent HTTP 400 empty-body rejection.
+    // Omit address2 entirely when empty — Rollfi rejects empty-string optional fields.
     locationPayload = {
       companyId: rollfiCompanyId,
     };
     if (rollfiLocationId) locationPayload.companyLocationId = rollfiLocationId;
-    if (address1 !== undefined) { locationPayload.address1 = address1.slice(0, 40); }
-    if (address2 !== undefined) { locationPayload.address2 = address2.slice(0, 40); }
-    if (city     !== undefined) { locationPayload.city     = city.slice(0, 40); }
-    if (state    !== undefined) { locationPayload.state    = state; }
-    if (zipcode  !== undefined) { locationPayload.zipcode  = zipcode; }
-    if (phone    !== undefined) { locationPayload.phoneNumber = phone; }
-    locationPayload.country = "US";
+    if (address1 !== undefined)               { locationPayload.address1 = address1.slice(0, 40); }
+    if (address2 !== undefined && address2.trim()) { locationPayload.address2 = address2.slice(0, 40); }
+    if (city     !== undefined)               { locationPayload.city     = city.slice(0, 40); }
+    if (state    !== undefined)               { locationPayload.state    = state; }
+    if (zipcode  !== undefined)               { locationPayload.zipcode  = zipcode; }
+    if (phone    !== undefined)               { locationPayload.phoneNumber = phone; }
+    // Mirror the flags from createBusiness — Rollfi requires these on updates too
+    locationPayload.isWorkLocation    = true;
+    locationPayload.isMailingAddress  = true;
+    locationPayload.isFilingAddress   = true;
 
     const r = await axios.post(
       `${getBaseUrl()}/companyOnboarding#updateCompanyLocation`,
