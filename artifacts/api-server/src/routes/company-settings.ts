@@ -554,7 +554,28 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     }
     if (!rollfiCompanyId) { res.status(400).json({ error: "Company not yet enrolled in payroll" }); return; }
 
-    // Provider call — companyLocationId from DB rollfiLocationId
+    // Fetch the real companyLocationID live from Rollfi — the value stored in
+    // companies.rollfiLocationId can be stale or an EasyTeam UUID rather than a
+    // Rollfi location UUID, which causes a silent HTTP 400 with empty body.
+    try {
+      const locRes = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyLocationInfo`,
+        { method: "getCompanyLocationInfo", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders(), timeout: 8000 },
+      );
+      const locs = (locRes.data as { CompanyLocation?: { companyLocationID: string; isWorkLocation?: boolean }[] }).CompanyLocation ?? [];
+      const work = locs.find((l) => l.isWorkLocation) ?? locs[0];
+      if (work?.companyLocationID) {
+        if (work.companyLocationID !== rollfiLocationId) {
+          req.log.info({ fresh: work.companyLocationID, stored: rollfiLocationId }, "PUT /company-info/location: refreshed companyLocationID from Rollfi (stored value was stale/wrong)");
+        }
+        rollfiLocationId = work.companyLocationID;
+      }
+    } catch (locErr) {
+      req.log.warn({ locErr }, "PUT /company-info/location: could not refresh companyLocationID from Rollfi — falling back to stored value");
+    }
+
+    // Provider call — companyLocationId resolved above (live from Rollfi, or stored fallback)
     locationPayload = {
       companyId: rollfiCompanyId,
     };
