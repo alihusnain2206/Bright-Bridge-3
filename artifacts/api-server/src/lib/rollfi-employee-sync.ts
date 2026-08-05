@@ -3,7 +3,7 @@ import { store, type RollfiCompanyRecord } from "../store.js";
 import { persistRollfiEmployee } from "./rollfi-persist.js";
 import { getRollfiConfig } from "./rollfi-config.js";
 import { getRollfiWageFields } from "./rollfi-wage.js";
-import { safeRollfiLog } from "./safe-rollfi-log.js";
+import { safeRollfiLog, rollfiVerboseLog } from "./safe-rollfi-log.js";
 
 type Logger = { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void; error: (...a: unknown[]) => void };
 
@@ -181,7 +181,9 @@ export async function runEmployeeKycOnboarding(
 
   // ── acceptTermsAndCondition — SOFT ────────────────────────────────────────
   try {
+    rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId });
     const r = await axios.put(`${baseUrl}/userOnboarding#acceptTermsAndCondition`, { method: "acceptTermsAndCondition", userId: rollfiUserId }, { headers });
+    rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#acceptTermsAndCondition`, r.data);
     log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi acceptTermsAndCondition response");
     const errMsg = extractRollfiError(r.data);
     if (errMsg) softWarnings.push({ step: "acceptTermsAndCondition", message: errMsg });
@@ -197,10 +199,12 @@ export async function runEmployeeKycOnboarding(
     hardErrors.push({ step: "addKycInformation", message: "SSN is required for onboarding and was not collected for this employee. Gather the SSN before retrying." });
   } else {
     try {
+      rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#addKycInformation`, { method: "addKycInformation", kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode } });
       const r = await axios.post(`${baseUrl}/userOnboarding#addKycInformation`, {
         method: "addKycInformation",
         kycInformation: { userId: rollfiUserId, ssn, dateOfBirth, address1, address2: "", city, state, zipcode },
       }, { headers });
+      rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#addKycInformation`, r.data);
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
       const raw = r.data as Record<string, unknown>;
       const errMsg = extractRollfiError(raw);
@@ -233,10 +237,12 @@ export async function runEmployeeKycOnboarding(
     if (w4.homeState === "AZ" && w4.azDeductionPercent != null) {
       w4Payload.azDeductionPercent = w4.azDeductionPercent;
     }
+    rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#addW4Information`, { method: "addW4Information", w4Information: w4Payload });
     const r = await axios.post(`${baseUrl}/userOnboarding#addW4Information`, {
       method: "addW4Information",
       w4Information: w4Payload,
     }, { headers });
+    rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#addW4Information`, r.data);
     log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addW4Information response");
     const errMsg = extractRollfiError(r.data);
     if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
@@ -252,11 +258,13 @@ export async function runEmployeeKycOnboarding(
     : buildStateW4Payload(w4.homeState, normalizedFilingStatus, w4.dependents, w4.extraWithholding);
   if (stateW4Payload) {
     try {
+      rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#addStateW4Information`, { method: "addStateW4Information", userId: rollfiUserId, stateW4Information: stateW4Payload });
       const r = await axios.post(`${baseUrl}/userOnboarding#addStateW4Information`, {
         method: "addStateW4Information",
         userId: rollfiUserId,
         stateW4Information: stateW4Payload,
       }, { headers });
+      rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#addStateW4Information`, r.data);
       log.info({ rollfiResult: safeRollfiLog(r.data), homeState: w4.homeState, source: w4.stateW4Fields ? "ui-form" : "fallback" }, "Rollfi addStateW4Information response");
       const errMsg = extractRollfiError(r.data);
       if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
@@ -278,7 +286,9 @@ export async function runEmployeeKycOnboarding(
     hardErrors.push({ step: "initiateUserKyc", message: "Identity verification could not be started — this employee cannot be paid until KYC information is accepted and verification is initiated" });
   } else {
     try {
+      rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId });
       const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
+      rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#initiateUserKyc`, r.data);
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi initiateUserKyc response");
       const errMsg = extractRollfiError(r.data);
       if (errMsg) hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${errMsg}. This employee cannot be paid until verification completes` });
@@ -296,11 +306,10 @@ export async function runEmployeeKycOnboarding(
         ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
         : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
       log.info({ env: _cfg.env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
-      const r = await axios.post(`${baseUrl}/userPortal#addUserBankAccount`, {
-        method: "addUserBankAccount",
-        linkType: "Manual",
-        userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName, payPercentage: 100, isPrimary: true },
-      }, { headers });
+      const _bankUserPayload = { method: "addUserBankAccount", linkType: "Manual", userPayAccountEntity: { companyId: rollfiCompanyId, userId: rollfiUserId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName, payPercentage: 100, isPrimary: true } };
+      rollfiVerboseLog("OUT", `${baseUrl}/userPortal#addUserBankAccount`, _bankUserPayload);
+      const r = await axios.post(`${baseUrl}/userPortal#addUserBankAccount`, _bankUserPayload, { headers });
+      rollfiVerboseLog("IN", `${baseUrl}/userPortal#addUserBankAccount`, r.data);
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addUserBankAccount response");
       const errMsg = extractRollfiError(r.data);
       if (errMsg && !errMsg.toLowerCase().includes("already exists")) {
@@ -379,7 +388,7 @@ export async function onboardEmployeeToRollfi(
     let rollfiUserId: string | undefined;
 
     // ── addUser ───────────────────────────────────────────────────────────────
-    const addUserResp = await axios.post(`${baseUrl}/adminPortal#addUser`, {
+    const _addUserPayload = {
       method: "addUser",
       user: {
         companyId: rollfiCompany.rollfiCompanyId,
@@ -397,7 +406,10 @@ export async function onboardEmployeeToRollfi(
         stateCode: emp.homeState ?? "NJ",
         companyLocationId: rollfiCompany.rollfiLocationId,
       },
-    }, { headers });
+    };
+    rollfiVerboseLog("OUT", `${baseUrl}/adminPortal#addUser`, _addUserPayload);
+    const addUserResp = await axios.post(`${baseUrl}/adminPortal#addUser`, _addUserPayload, { headers });
+    rollfiVerboseLog("IN", `${baseUrl}/adminPortal#addUser`, addUserResp.data);
 
     const addUserRaw = addUserResp.data as Record<string, unknown>;
     const addUserErr = ((addUserRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
@@ -429,7 +441,7 @@ export async function onboardEmployeeToRollfi(
       annualSalary: emp.annualSalaryCents ?? null,
       overtimeEligible: emp.overtimeEligible,
     });
-    const addWageResp = await axios.post(`${baseUrl}/adminPortal#addUserWage`, {
+    const _addWagePayload = {
       method: "addUserWage",
       userWage: {
         companyId: rollfiCompany.rollfiCompanyId,
@@ -444,7 +456,10 @@ export async function onboardEmployeeToRollfi(
         startDate: emp.startDate ?? new Date().toISOString().slice(0, 10),
         paymentMethod: "Direct Deposit",
       },
-    }, { headers });
+    };
+    rollfiVerboseLog("OUT", `${baseUrl}/adminPortal#addUserWage`, _addWagePayload);
+    const addWageResp = await axios.post(`${baseUrl}/adminPortal#addUserWage`, _addWagePayload, { headers });
+    rollfiVerboseLog("IN", `${baseUrl}/adminPortal#addUserWage`, addWageResp.data);
     log.info({ rollfiResult: safeRollfiLog(addWageResp.data) }, "Rollfi addUserWage response");
 
     const addWageRaw = addWageResp.data as Record<string, unknown>;
@@ -527,11 +542,13 @@ export async function enrollEmployeeInNewPayPeriods(
 
   let periods: Array<Record<string, unknown>> = [];
   try {
+    rollfiVerboseLog("OUT", `${cfg.baseUrl}/reports#getUnProcessedPayPeriod`, { method: "getUnProcessedPayPeriod", companyId: rollfiCompanyId, workerType: "W2" });
     const resp = await axios.post(
       `${cfg.baseUrl}/reports#getUnProcessedPayPeriod`,
       { method: "getUnProcessedPayPeriod", companyId: rollfiCompanyId, workerType: "W2" },
       { headers }
     );
+    rollfiVerboseLog("IN", `${cfg.baseUrl}/reports#getUnProcessedPayPeriod`, resp.data);
     const raw = resp.data as Record<string, unknown>;
     periods = (raw.unprocessedPayPeriods ?? []) as Array<Record<string, unknown>>;
   } catch (err) {
@@ -550,6 +567,7 @@ export async function enrollEmployeeInNewPayPeriods(
     const payPeriodId = period.payPeriodId as string;
     if (!payPeriodId) continue;
     try {
+      rollfiVerboseLog("OUT", `${cfg.baseUrl}/payroll#addUsersToRegularPayPeriod`, { method: "addUsersToRegularPayPeriod", companyId: rollfiCompanyId, payPeriodId, payrollLineItems: [{ userId: rollfiUserId, paymentMethod: "Direct Deposit" }] });
       const enrollResp = await axios.post(
         `${cfg.baseUrl}/payroll#addUsersToRegularPayPeriod`,
         {
@@ -560,6 +578,7 @@ export async function enrollEmployeeInNewPayPeriods(
         },
         { headers }
       );
+      rollfiVerboseLog("IN", `${cfg.baseUrl}/payroll#addUsersToRegularPayPeriod`, enrollResp.data);
       const enrollRaw = enrollResp.data as Record<string, unknown>;
       const errMsg = extractRollfiError(enrollRaw);
       if (!errMsg) {

@@ -8,7 +8,7 @@ import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity, calculateComplianceScore, calculateReadinessFlags } from "./people.js";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
-import { safeRollfiLog } from "../lib/safe-rollfi-log.js";
+import { safeRollfiLog, rollfiVerboseLog } from "../lib/safe-rollfi-log.js";
 
 const router: IRouter = Router();
 
@@ -62,14 +62,18 @@ async function ensureFullOnboarding(
   bankInput?: CompanyBankInput,
 ): Promise<void> {
   try {
-    await axios.post(`${getBaseUrl()}/companyOnboarding#addKybInformation`, {
+    rollfiVerboseLog("OUT", `${getBaseUrl()}/companyOnboarding#addKybInformation`, { method: "addKybInformation", kybInformation: { companyId: rollfiCompanyId, ein, entityType: "LLC", dateOfIncorporation: "2015-01-01", incorporationState: "New Jersey", irsAssisgnedFederalFilingForm: "941" } });
+    const _kybResp = await axios.post(`${getBaseUrl()}/companyOnboarding#addKybInformation`, {
       method: "addKybInformation",
       kybInformation: { companyId: rollfiCompanyId, ein, entityType: "LLC", dateOfIncorporation: "2015-01-01", incorporationState: "New Jersey", irsAssisgnedFederalFilingForm: "941" },
     }, { headers: rollfiHeaders() });
+    rollfiVerboseLog("IN", `${getBaseUrl()}/companyOnboarding#addKybInformation`, _kybResp.data);
   } catch (e) { log.warn({ e }, "addKybInformation failed"); }
 
   try {
-    await axios.post(`${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`, { method: "initiateCompanyKyb", companyId: rollfiCompanyId }, { headers: rollfiHeaders() });
+    rollfiVerboseLog("OUT", `${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`, { method: "initiateCompanyKyb", companyId: rollfiCompanyId });
+    const _kybInitResp = await axios.post(`${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`, { method: "initiateCompanyKyb", companyId: rollfiCompanyId }, { headers: rollfiHeaders() });
+    rollfiVerboseLog("IN", `${getBaseUrl()}/companyOnboarding#initiateCompanyKyb`, _kybInitResp.data);
   } catch (e) { log.warn({ e }, "initiateCompanyKyb failed"); }
 
   await new Promise((r) => setTimeout(r, 2000));
@@ -80,10 +84,10 @@ async function ensureFullOnboarding(
       ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: "Payroll Funding" }
       : { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
     log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: maskAcct(bank.accountNumber), maskedRouting: maskAcct(bank.routingNumber) }, "addCompanyBankAccount: using bank details");
-    await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, {
-      method: "addCompanyBankAccount",
-      companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName },
-    }, { headers: rollfiHeaders() });
+    const _bankPayload = { method: "addCompanyBankAccount", companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName } };
+    rollfiVerboseLog("OUT", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload);
+    const _bankResp = await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload, { headers: rollfiHeaders() });
+    rollfiVerboseLog("IN", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankResp.data);
   } catch (e) { log.warn({ e }, "addCompanyBankAccount failed"); }
 
   try {
@@ -102,20 +106,20 @@ async function ensureFullOnboarding(
     // Try update first (company may already have a schedule); fall back to add
     let scheduleSet = false;
     try {
-      const upd = await axios.post(`${getBaseUrl()}/payroll#updatePaySchedule`, {
-        method: "updatePaySchedule",
-        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
-      }, { headers: rollfiHeaders() });
+      const _updPayload = { method: "updatePaySchedule", paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 } };
+      rollfiVerboseLog("OUT", `${getBaseUrl()}/payroll#updatePaySchedule`, _updPayload);
+      const upd = await axios.post(`${getBaseUrl()}/payroll#updatePaySchedule`, _updPayload, { headers: rollfiHeaders() });
       const updData = upd.data as Record<string, unknown>;
+      rollfiVerboseLog("IN", `${getBaseUrl()}/payroll#updatePaySchedule`, updData);
       if (!updData.error) { scheduleSet = true; log.info({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, workerType, via: "update", rollfiResult: safeRollfiLog(updData) }, "Pay schedule set in Rollfi"); }
       else { log.warn({ rollfiResult: safeRollfiLog(updData) }, "updatePaySchedule returned error body, trying add"); }
     } catch (_) { /* fall through to add */ }
     if (!scheduleSet) {
-      const add = await axios.post(`${getBaseUrl()}/payroll#addPaySchedule`, {
-        method: "addPaySchedule",
-        paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 },
-      }, { headers: rollfiHeaders() });
+      const _addPayload = { method: "addPaySchedule", paySchedule: { companyId: rollfiCompanyId, workerType, compensationFrequency, payBeginDate, payDate, paymentMode: "Self-Initiated", standardWorkingHours: 8 } };
+      rollfiVerboseLog("OUT", `${getBaseUrl()}/payroll#addPaySchedule`, _addPayload);
+      const add = await axios.post(`${getBaseUrl()}/payroll#addPaySchedule`, _addPayload, { headers: rollfiHeaders() });
       const addData = add.data as Record<string, unknown>;
+      rollfiVerboseLog("IN", `${getBaseUrl()}/payroll#addPaySchedule`, addData);
       if (addData.error) {
         log.warn({ rollfiCompanyId, compensationFrequency, payBeginDate, payDate, rollfiResult: safeRollfiLog(addData) }, "addPaySchedule returned error body — pay schedule NOT set");
       } else {
@@ -292,13 +296,16 @@ router.post("/companies", async (req: Request, res: Response) => {
           ? body.dateOfIncorporation.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2")
           : "2015-01-01";
 
-        const response = await axios.post(`${getBaseUrl()}/companyOnboarding#createBusiness`, {
+        const _createBusinessPayload = {
           method: "createBusiness",
           registration: { company: body.companyName, businessWebsite: body.businessWebsite ?? "", doingBusinessAs: body.doingBusinessAs ?? body.companyName, isTermsAccepted: true },
           kybInformation: { ein: useEin, entityType: body.entityType ?? "LLC", incorporationState: body.incorporationState ?? "New Jersey", dateOfIncorporation: incorporationDate, irsAssisgnedFederalFilingForm: body.irsFilingForm ?? "941", payrollRunThisYear: body.payrollRunThisYear === "Yes" ? "Yes" : "No", formerPaidThisYear: "No" },
           companyLocation: { companyLocation: body.locationName ?? "Main", address1: body.address1, address2: body.address2 ?? "", city: body.city, state: body.state, zipcode: body.zipcode, phoneNumber: body.phone, isWorkLocation: true, isMailingAddress: true, isFilingAddress: true },
           businessUser: { firstName: body.ownerFirstName, middleName: "", lastName: body.ownerLastName, phoneNumber: body.ownerPhone, email: body.ownerEmail, address1: body.ownerAddress1, address2: "", city: body.ownerCity, state: body.ownerState, zipcode: body.ownerZip, ssn: ownerSsn, dateOfBirth: body.ownerDob.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2"), payrollAdmin: true, bookkeeper: true, beneficialOwner: true, ownershipPercentage: body.ownershipPercentage ?? 100 },
-        }, { headers: rollfiHeaders() });
+        };
+        rollfiVerboseLog("OUT", `${getBaseUrl()}/companyOnboarding#createBusiness`, _createBusinessPayload);
+        const response = await axios.post(`${getBaseUrl()}/companyOnboarding#createBusiness`, _createBusinessPayload, { headers: rollfiHeaders() });
+        rollfiVerboseLog("IN", `${getBaseUrl()}/companyOnboarding#createBusiness`, response.data);
 
         // safeRollfiLog strips raw fields — never log full response (may echo SSN/bank)
         req.log.info({ rollfiResult: safeRollfiLog(response.data) }, "Rollfi createBusiness response");
