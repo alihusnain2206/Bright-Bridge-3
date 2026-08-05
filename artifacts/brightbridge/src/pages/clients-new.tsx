@@ -100,7 +100,7 @@ export default function ClientsNew() {
   const [payDateError, setPayDateError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
-  const [created, setCreated] = useState<{ id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number } | null>(null);
+  const [created, setCreated] = useState<{ id: string; name: string; rollfiCompanyId?: string | null; rollfi?: { error?: string; rollfiCompanyId?: string }; stateRegistrations?: number } | null>(null);
   const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
 
   // Manager login creation (shown on success screen)
@@ -220,7 +220,7 @@ export default function ClientsNew() {
       body: JSON.stringify({ ...form, stateTaxRegistrations: stateTaxEntries }),
     });
     await advance(2); await advance(3); await advance(4); await advance(5); await advance(6);
-    const data = await res.json() as { id: string; name: string; rollfi?: { error?: string }; stateRegistrations?: number; error?: string };
+    const data = await res.json() as { id: string; name: string; rollfiCompanyId?: string | null; rollfi?: { error?: string; rollfiCompanyId?: string }; stateRegistrations?: number; error?: string };
     setProgressSteps((prev) => prev.map((s) => ({ ...s, done: true, active: false })));
     if (!res.ok) throw new Error(data.error ?? "Failed to create client");
     return data;
@@ -242,17 +242,41 @@ export default function ClientsNew() {
 
   // ── Success screen ───────────────────────────────────────────
   if (created) {
-    const hasRollfi = !created.rollfi?.error;
+    // hasRollfi is true only when a real Rollfi company ID was assigned.
+    // created.rollfi?.error covers createBusiness failures;
+    // !rollfiCompanyId covers the credentials-not-configured path where rollfi:{} is returned with no error and no ID.
+    const hasRollfi = !!(created.rollfiCompanyId ?? created.rollfi?.rollfiCompanyId);
     return (
       <div className="max-w-2xl mx-auto">
         <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
           <div className="px-8 py-8 text-center border-b">
-            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
-              <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+            <div className={`w-16 h-16 ${hasRollfi ? "bg-emerald-100" : "bg-amber-100"} rounded-full flex items-center justify-center mx-auto mb-4`}>
+              {hasRollfi
+                ? <CheckCircle2 className="h-8 w-8 text-emerald-600" />
+                : <AlertTriangle className="h-8 w-8 text-amber-600" />}
             </div>
             <h2 className="text-2xl font-bold text-gray-900">{created.name} has been added!</h2>
             <p className="text-gray-500 mt-1">Here's what was set up automatically</p>
           </div>
+
+          {/* Rollfi registration failure banner */}
+          {!hasRollfi && (
+            <div className="px-8 pt-6">
+              <div className="flex items-start gap-3 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3.5">
+                <AlertTriangle className="h-5 w-5 text-orange-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-orange-800">Rollfi registration incomplete — payroll is not active</p>
+                  <p className="text-sm text-orange-700 mt-0.5">
+                    The company was saved, but registration with Rollfi failed:{" "}
+                    <span className="font-mono text-xs bg-orange-100 px-1 py-0.5 rounded">{created.rollfi?.error ?? "credentials not configured"}</span>
+                  </p>
+                  <p className="text-xs text-orange-600 mt-1.5">
+                    Go to the client's <strong>Settings tab → Register with Rollfi</strong> to complete payroll setup before adding employees.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="px-8 py-6 space-y-3">
             {[

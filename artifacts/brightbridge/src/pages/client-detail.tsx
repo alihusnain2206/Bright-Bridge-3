@@ -845,6 +845,23 @@ export default function ClientDetail() {
         </div>
       </div>
 
+      {/* Rollfi registration missing — persistent banner */}
+      {!data.rollfiCompanyId && !(data.rollfi?.rollfiCompanyId) && (
+        <div className="flex items-center gap-3 bg-orange-50 border border-orange-300 rounded-xl px-4 py-3">
+          <AlertTriangle className="h-5 w-5 text-orange-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-orange-800">Rollfi payroll registration incomplete</p>
+            <p className="text-xs text-orange-700 mt-0.5">Payroll cannot run until this company is registered with Rollfi. Employees will not receive wages.</p>
+          </div>
+          <button
+            onClick={() => setTab("settings")}
+            className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white transition-colors"
+          >
+            Register with Rollfi →
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <div className="flex gap-1 border-b border-gray-200">
         {TABS.map(({ id, label }) => (

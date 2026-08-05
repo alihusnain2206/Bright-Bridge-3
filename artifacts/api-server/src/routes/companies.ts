@@ -393,6 +393,23 @@ router.post("/companies", async (req: Request, res: Response) => {
 
     void logPeopleActivity({ companyId, action: "company.created", description: `Company "${body.companyName}" created`, category: "company", performedBy: req.session.userId ?? "system" });
 
+    // Alert super admin when Rollfi registration was skipped or failed.
+    // Uses store.logActivity (→ appActivityLog) so it appears in the super admin's
+    // Recent Activity dashboard feed, not only in the People activity log.
+    if (rollfiResult.error || !rollfiResult.rollfiCompanyId) {
+      const reason = rollfiResult.error
+        ? `createBusiness error: ${rollfiResult.error}`
+        : "Rollfi credentials not configured on this server";
+      req.log.warn({ companyId, companyName: body.companyName, reason }, "company.rollfi_skipped: company created without Rollfi registration");
+      store.logActivity({
+        companyId,
+        type: "company.rollfi_skipped",
+        description: `⚠️ "${body.companyName}" created but Rollfi registration was skipped — ${reason}. Go to Settings → Register with Rollfi to complete payroll setup.`,
+        actorName: "System",
+        actorRole: "system",
+      });
+    }
+
     const [saved] = await db.select().from(companies).where(eq(companies.id, companyId));
     const stateRegCount = (rollfiResult as Record<string, unknown>).stateRegSuccessCount as number | undefined;
     res.status(201).json({ ...saved, rollfi: rollfiResult, stateRegistrations: stateRegCount ?? 0 });
