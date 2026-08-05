@@ -5,13 +5,16 @@
  * GET  /api/admin/users                     — list employees with login account status
  * POST /api/admin/users/:employeeId/set-password — admin sets a password (no current password required)
  * GET  /api/admin/stale-8655-uploads        — list companies whose Form 8655 upload is stuck (super_admin only)
+ * POST /api/admin/easyteam/register-company — register all unregistered employees for a company in EasyTeam (super_admin only)
  */
 import { Router } from "express";
 import * as bcrypt from "bcryptjs";
 import { db, employees, userAccounts, companySignedForms, companies } from "@workspace/db";
-import { eq, and, isNotNull, inArray } from "drizzle-orm";
+import { eq, and, isNotNull, inArray, isNull } from "drizzle-orm";
 import { store } from "../store.js";
 import { FORM_8655_STALE_THRESHOLD_MS } from "../lib/form8655-constants.js";
+import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
+import { resolveCompanyLocationId } from "../lib/location.js";
 
 const adminRouter = Router();
 
@@ -253,6 +256,63 @@ adminRouter.get("/admin/stale-8655-uploads", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "GET /admin/stale-8655-uploads failed");
     res.status(500).json({ error: "Failed to query stale uploads" });
+  }
+});
+
+// ── POST /api/admin/easyteam/register-company ─────────────────────────────────
+// Re-run EasyTeam registration for every employee in a company that has no UUID yet.
+// Safe to call multiple times — only processes employees where easyteam_uuid IS NULL.
+adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(401).json({ error: "super_admin access required" });
+    return;
+  }
+
+  const { companyId } = req.body as { companyId?: string };
+  if (!companyId) {
+    res.status(400).json({ error: "companyId is required" });
+    return;
+  }
+
+  try {
+    const locationId = await resolveCompanyLocationId(companyId);
+    const unregistered = await db
+      .select()
+      .from(employees)
+      .where(and(eq(employees.companyId, companyId), isNull(employees.easyteamUuid)));
+
+    const results: Array<{ employeeId: string; name: string; success: boolean; easyteamUuid?: string; error?: string }> = [];
+
+    for (const emp of unregistered) {
+      const result = await registerEmployeeInEasyTeam(
+        {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          email: emp.email,
+          roleName: emp.position ?? "Staff",
+          wage: (emp.hourlyWage ?? 1500) / 100,
+          wageType: "hourly",
+        },
+        locationId,
+        req.log
+      );
+      results.push({
+        employeeId: emp.id,
+        name: `${emp.firstName} ${emp.lastName}`,
+        success: result.success,
+        easyteamUuid: result.easyteamEmployeeId,
+        error: result.error,
+      });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed    = results.filter((r) => !r.success).length;
+    req.log.info({ companyId, locationId, succeeded, failed }, "admin: EasyTeam company registration complete");
+    res.json({ companyId, locationId, succeeded, failed, results });
+  } catch (err) {
+    req.log.error({ err }, "POST /admin/easyteam/register-company failed");
+    res.status(500).json({ error: "Registration failed" });
   }
 });
 

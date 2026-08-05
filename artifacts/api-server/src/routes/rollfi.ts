@@ -5,6 +5,7 @@ import { persistRollfiCompany, persistRollfiEmployee } from "../lib/rollfi-persi
 import { getTimesheetApprovalsByCompanyPeriod, getLatestTimesheetApprovalsByCompany } from "../lib/timesheet-approvals-persist.js";
 import { deleteUserAccount } from "../lib/user-account-persist.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
+import { resolveCompanyLocationId } from "../lib/location.js";
 import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable, appActivityLog } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
 import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
@@ -800,7 +801,12 @@ router.post("/rollfi/employees", async (req, res) => {
   // Awaited (not fire-and-forget) so the UUID is mapped before we respond: the caller
   // gets a 201 only after the employee is registered and etUuidToEmployeeId is updated.
   // registerEmployeeInEasyTeam handles setEasyTeamUuidMapping + DB persist internally.
-  const resolvedEtLocationId = etLocationId ?? "LOC-SUNSHINE";
+  // Use resolveCompanyLocationId so wizard-created companies with an empty-string
+  // rollfiLocationId still get a stable fallback (LOC-<companyId>) rather than
+  // silently inheriting "LOC-SUNSHINE" via the nullish-coalescing shortcut.
+  const resolvedEtLocationId = (etLocationId && etLocationId.trim())
+    ? etLocationId
+    : await resolveCompanyLocationId(companyId);
   const etResult = await registerEmployeeInEasyTeam(
     {
       id: user.employeeId!,
