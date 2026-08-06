@@ -843,10 +843,11 @@ export default function PeoplePage() {
                                     {chip.label}
                                   </span>
                                 )}
-                                {/* Inline retry UI: shown when addUser was rejected at creation (no rollfiUserId + stored error reason) */}
+                                {/* Inline retry UI: shown for any employee whose Rollfi account was never created (no rollfiUserId).
+                                    Shows translated error reason when available, generic prompt otherwise. */}
                                 {(() => {
-                                  const errReason = !emp.rollfiUserId ? parseSyncError(emp.lastSyncError) : null;
-                                  if (!errReason) return null;
+                                  if (emp.rollfiUserId) return null;
+                                  const errReason = parseSyncError(emp.lastSyncError) ?? "Payroll setup did not complete. Retry to connect this employee to payroll.";
                                   const rm = retryMessages[emp.id];
                                   return (
                                     <div className="mt-1.5 space-y-1 max-w-[200px]">
