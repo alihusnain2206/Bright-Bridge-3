@@ -843,15 +843,22 @@ export default function PeoplePage() {
                                     {chip.label}
                                   </span>
                                 )}
-                                {/* Inline retry UI: shown for any employee whose Rollfi account was never created (no rollfiUserId).
-                                    Shows translated error reason when available, generic prompt otherwise. */}
+                                {/* Inline retry/complete UI:
+                                    - No rollfiUserId → "Retry payroll setup" (account was never created)
+                                    - Has rollfiUserId but KYC not passed / not payroll-ready → "Complete setup" (account exists, steps incomplete) */}
                                 {(() => {
-                                  if (emp.rollfiUserId) return null;
-                                  const errReason = parseSyncError(emp.lastSyncError) ?? "Payroll setup did not complete. Retry to connect this employee to payroll.";
+                                  const noAccount   = !emp.rollfiUserId;
+                                  const kycPending   = !!emp.rollfiUserId && emp.kycStatus !== "passed" && emp.payrollReady !== true;
+                                  if (!noAccount && !kycPending) return null;
+
+                                  const errReason = noAccount
+                                    ? (parseSyncError(emp.lastSyncError) ?? "Payroll setup did not complete. Retry to connect this employee to payroll.")
+                                    : "Payroll account created — finishing remaining setup steps.";
+                                  const btnLabel  = noAccount ? "Retry payroll setup" : "Complete payroll setup";
                                   const rm = retryMessages[emp.id];
                                   return (
                                     <div className="mt-1.5 space-y-1 max-w-[200px]">
-                                      <p className="text-xs text-red-600 leading-snug">{errReason}</p>
+                                      <p className={`text-xs leading-snug ${noAccount ? "text-red-600" : "text-amber-700"}`}>{errReason}</p>
                                       {rm && (
                                         <p className={`text-xs leading-snug ${rm.ok ? "text-emerald-600" : "text-amber-700"}`}>{rm.text}</p>
                                       )}
@@ -877,7 +884,7 @@ export default function PeoplePage() {
                                           }}
                                           className="text-xs text-[#0EA5C9] hover:underline disabled:opacity-50 cursor-pointer"
                                         >
-                                          {retryingEmpId === emp.id ? "Retrying…" : "Retry payroll setup"}
+                                          {retryingEmpId === emp.id ? "Working…" : btnLabel}
                                         </button>
                                       )}
                                     </div>
