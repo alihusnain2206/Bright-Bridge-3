@@ -594,13 +594,13 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     locationPayload.isMailingAddress  = true;
     locationPayload.isFilingAddress   = true;
 
-    // Log the exact URL and body before sending so we can diagnose any mismatch
-    const rollfiUrl = `${getBaseUrl()}/companyOnboarding#updateCompanyLocation`;
+    // updateCompanyLocation uses adminPortal path-style routing (like updateStateRegistrationInfo),
+    // NOT the companyOnboarding body-dispatch pattern — Rollfi's gateway rejects unknown methods
+    // on /companyOnboarding with HTTP 400 + empty body before the request reaches their application.
+    const rollfiUrl = `${getBaseUrl()}/adminPortal/updateCompanyLocation`;
     const rollfiBody = { method: "updateCompanyLocation", ...locationPayload };
     req.log.info({ rollfiUrl, rollfiBaseUrl: getBaseUrl(), rollfiBody }, "PUT /company-info/location: sending to Rollfi");
 
-    // Fields are sent FLAT (not nested under companyLocation:{}) — consistent with how
-    // getCompanyLocationInfo and other Rollfi calls pass params directly at the top level.
     const r = await axios.post(
       rollfiUrl,
       rollfiBody,
