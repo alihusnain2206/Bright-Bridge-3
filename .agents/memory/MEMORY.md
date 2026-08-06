@@ -20,3 +20,4 @@
 - [Password reset flow](password-reset-flow.md) — forgot/reset endpoints in auth.ts; passwordResetTokens table; nodemailer email lib; isNull() for used_at check; APP_URL needed for prod link
 - [Dashboard Phase 1 — shared components + consolidated endpoint](dashboard-phase1.md) — 6 widgets extracted to components/dashboard/; GET /dashboard/payroll with 60s cache
 - [Owner Dashboard Phase 2 — Payroll Command Center](dashboard-phase2.md) — full rebuild of dashboard-owner.tsx; layout, data sources, widget prop quirks, cash derivation
+- [Rollfi updateCompanyLocation endpoint](rollfi-update-company-location.md) — correct URL is /adminPortal/updateCompanyLocation (flat body, no flags); Rollfi 500 bug open with their support (log IDs 17104–17201)
