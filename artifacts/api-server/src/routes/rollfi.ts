@@ -2833,15 +2833,17 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
 
       const now = new Date().toISOString();
 
-      if (r.success && r.rollfiUserId) {
-        // Write Rollfi user ID back to both master row and normalised table
+      if (r.rollfiUserId) {
+        // addUser succeeded — always persist the rollfiUserId, even when downstream KYC/W4 steps
+        // failed. This ensures the next Retry uses the existing-user path and does NOT create
+        // another orphaned Rollfi account.
+        const fullSuccess = !r.hardErrors || r.hardErrors.length === 0;
         await db.update(employeesTable).set({
-          rollfiUserId:    r.rollfiUserId,
-          rollfiSynced:    true,
-          rollfiOnboardedAt: now,
-          lastSyncError:   null,
-          syncStatus:      "synced",
-          updatedAt:       now,
+          rollfiUserId:      r.rollfiUserId,
+          rollfiSynced:      fullSuccess,
+          ...(fullSuccess ? { rollfiOnboardedAt: now, lastSyncError: null, syncStatus: "synced" }
+                          : { lastSyncError: JSON.stringify({ failedSteps: r.hardErrors ?? [], softWarnings: r.softWarnings ?? [] }), syncStatus: "partial" }),
+          updatedAt:         now,
         }).where(eq(employeesTable.id, employeeId));
 
         await persistRollfiEmployee(employeeId, {
@@ -2849,8 +2851,16 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
           rollfiCompanyId: rollfiCompany.rollfiCompanyId,
         });
 
-        req.log.info({ employeeId, rollfiUserId: r.rollfiUserId, hardErrors: r.hardErrors }, "repair-onboarding: addUser succeeded");
-        res.json({ success: r.hardErrors.length === 0, fixed: ["addUser"], stillFailed: r.hardErrors.map(e => e.step), softWarnings: r.softWarnings });
+        const stillFailed = (r.hardErrors ?? []).map(e => e.step);
+        req.log.info({ employeeId, rollfiUserId: r.rollfiUserId, fullSuccess, stillFailed }, "repair-onboarding: addUser+chain completed (full or partial)");
+
+        if (fullSuccess) {
+          res.json({ success: true, fixed: ["addUser"], stillFailed: [], softWarnings: r.softWarnings });
+        } else {
+          const firstErr = r.hardErrors?.[0];
+          const friendly = firstErr ? translateOnboardingError(firstErr.message) : "Some payroll setup steps did not complete — click Retry to continue";
+          res.status(400).json({ success: false, error: friendly, fixed: ["addUser"], stillFailed });
+        }
       } else {
         // addUser still failing — translate the error and store it back
         const rawErr = r.error ?? r.hardErrors?.[0]?.message ?? "Unknown error";

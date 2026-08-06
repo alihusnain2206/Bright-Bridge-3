@@ -216,6 +216,25 @@ export async function runEmployeeKycOnboarding(
     }
   }
 
+  // ── initiateUserKyc — HARD (must run immediately after addKycInformation) ──
+  // Rollfi requires KYC to be initiated before W4 information can be submitted.
+  // Running it after W4 causes "Complete your KYC details first" rejection.
+  if (!kycAdded) {
+    log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
+    hardErrors.push({ step: "initiateUserKyc", message: "Identity verification could not be started — this employee cannot be paid until KYC information is accepted and verification is initiated" });
+  } else {
+    try {
+      rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId });
+      const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
+      rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#initiateUserKyc`, r.data);
+      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi initiateUserKyc response");
+      const errMsg = extractRollfiError(r.data);
+      if (errMsg) hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${errMsg}. This employee cannot be paid until verification completes` });
+    } catch (e) {
+      hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${e instanceof Error ? e.message : String(e)}. This employee cannot be paid until verification completes` });
+    }
+  }
+
   // ── addW4Information — HARD ───────────────────────────────────────────────
   const normalizedFilingStatus = normalizeW4FilingStatus(w4.filingStatus);
   log.info({ originalStatus: w4.filingStatus, normalizedStatus: normalizedFilingStatus }, "addW4Information: normalised filing status");
@@ -275,26 +294,6 @@ export async function runEmployeeKycOnboarding(
     }
   } else {
     log.info({ homeState: w4.homeState }, "Skipping addStateW4Information — state uses federal W-4 or has no income tax");
-  }
-
-  // ── initiateUserKyc — HARD ────────────────────────────────────────────────
-  // KYC initiation is a payroll gate: Rollfi rejects an employee with "invalid status" at
-  // import time if KYC was never initiated. Classify as hardError so the wizard surfaces the
-  // warning, records it in last_sync_error, and the Retry Failed Steps path can repair it.
-  if (!kycAdded) {
-    log.warn({ rollfiUserId }, "Skipping initiateUserKyc — addKycInformation did not succeed");
-    hardErrors.push({ step: "initiateUserKyc", message: "Identity verification could not be started — this employee cannot be paid until KYC information is accepted and verification is initiated" });
-  } else {
-    try {
-      rollfiVerboseLog("OUT", `${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId });
-      const r = await axios.post(`${baseUrl}/userOnboarding#initiateUserKyc`, { method: "initiateUserKyc", userId: rollfiUserId }, { headers });
-      rollfiVerboseLog("IN", `${baseUrl}/userOnboarding#initiateUserKyc`, r.data);
-      log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi initiateUserKyc response");
-      const errMsg = extractRollfiError(r.data);
-      if (errMsg) hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${errMsg}. This employee cannot be paid until verification completes` });
-    } catch (e) {
-      hardErrors.push({ step: "initiateUserKyc", message: `Identity verification could not be started — ${e instanceof Error ? e.message : String(e)}. This employee cannot be paid until verification completes` });
-    }
   }
 
   // ── addUserBankAccount — HARD ─────────────────────────────────────────────
@@ -437,10 +436,14 @@ export async function onboardEmployeeToRollfi(
           const uLast  = (u.lastName  ?? "").toLowerCase();
           const uFull  = (`${u.firstName ?? ""} ${u.lastName ?? ""}`).trim().toLowerCase();
           const uName  = (u.name ?? "").toLowerCase();
+          // Rollfi getUsers may return `user` (combined name string) instead of firstName/lastName
+          const uUserField = ((u as Record<string, unknown>).user as string ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+          const empNameNorm = emp.name.trim().toLowerCase().replace(/\s+/g, " ");
           return (targetEmail && uEmail === targetEmail) ||
-                 uFull === emp.name.trim().toLowerCase() ||
+                 uFull === empNameNorm ||
                  (uFirst === (targetFirst ?? "").toLowerCase() && uLast === targetLast) ||
-                 uName === emp.name.trim().toLowerCase();
+                 uName === empNameNorm ||
+                 uUserField === empNameNorm;
         });
         if (match) {
           rollfiUserId = (match.userId ?? match.id) as string | undefined;
