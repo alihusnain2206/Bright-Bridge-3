@@ -589,10 +589,8 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     if (state    !== undefined)               { locationPayload.state    = state; }
     if (zipcode  !== undefined)               { locationPayload.zipcode  = zipcode; }
     if (phone    !== undefined)               { locationPayload.phoneNumber = phone; }
-    // Mirror the flags from createBusiness — Rollfi requires these on updates too
-    locationPayload.isWorkLocation    = true;
-    locationPayload.isMailingAddress  = true;
-    locationPayload.isFilingAddress   = true;
+    // NOTE: isWorkLocation / isMailingAddress / isFilingAddress are create-time-only flags;
+    // including them on updateCompanyLocation causes Rollfi to throw HTTP 500.
 
     // updateCompanyLocation uses adminPortal path-style routing (like updateStateRegistrationInfo),
     // NOT the companyOnboarding body-dispatch pattern — Rollfi's gateway rejects unknown methods
