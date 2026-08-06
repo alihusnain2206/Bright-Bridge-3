@@ -449,6 +449,34 @@ export async function onboardEmployeeToRollfi(
           log.warn({ empId: emp.id, userCount: users.length, allUserIds: users.map(u => u.userId ?? u.id) }, "getUsers: no match found — check sampleUsers above against employee name/email");
         }
       } catch (lookupErr) { log.warn({ lookupErr }, "getUsers lookup failed"); }
+
+      // If getUsers still didn't resolve the user (e.g. email belongs to a beneficial owner record,
+      // not a payroll employee), retry addUser with a unique fallback email so setup can proceed.
+      if (!rollfiUserId) {
+        const fallbackEmail = `${emp.id.toLowerCase().replace(/[^a-z0-9-]/g, "")}@payroll.brightbridgeassist.com`;
+        log.warn({ empId: emp.id, fallbackEmail }, "getUsers match failed — retrying addUser with unique fallback email (likely a beneficial-owner email conflict)");
+        try {
+          const fallbackPayload = {
+            ..._addUserPayload,
+            user: { ..._addUserPayload.user, email: fallbackEmail },
+          };
+          rollfiVerboseLog("OUT", `${baseUrl}/adminPortal#addUser (fallback email)`, fallbackPayload);
+          const fallbackResp = await axios.post(`${baseUrl}/adminPortal#addUser`, fallbackPayload, { headers });
+          rollfiVerboseLog("IN", `${baseUrl}/adminPortal#addUser (fallback email)`, fallbackResp.data);
+          const fallbackRaw = fallbackResp.data as Record<string, unknown>;
+          const fallbackErr = ((fallbackRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
+          if (!fallbackErr) {
+            const fallbackUser = (fallbackRaw.user ?? fallbackRaw) as Record<string, unknown>;
+            rollfiUserId = (fallbackUser.userId ?? fallbackUser.id) as string | undefined;
+            if (rollfiUserId) {
+              log.info({ rollfiUserId, empId: emp.id, fallbackEmail }, "addUser succeeded with fallback email — beneficial-owner email conflict resolved");
+            }
+          } else {
+            log.warn({ empId: emp.id, fallbackErr }, "addUser fallback email also failed");
+          }
+        } catch (fallbackErr) { log.warn({ fallbackErr }, "addUser fallback email request failed"); }
+      }
+
       if (!rollfiUserId) return { success: false, error: `Rollfi email already in use and could not resolve existing user` };
     } else {
       const userObj = (addUserRaw.user ?? addUserRaw) as Record<string, unknown>;
