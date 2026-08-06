@@ -637,21 +637,28 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
 
     res.json({ success: true });
   } catch (err: unknown) {
-    const e = err as { response?: { data: unknown; status?: number } };
-    if (e.response?.status === 400) {
-      // Extract Rollfi's rejection detail from the response body when present
-      const data = e.response?.data;
+    const e = err as { response?: { data: unknown; status?: number; headers?: unknown } };
+    const rollfiStatus = e.response?.status;
+    const rollfiData = e.response?.data;
+
+    // Log the FULL Rollfi response at every non-2xx status so we can diagnose
+    req.log.warn(
+      { rollfiStatus, rollfiData, rollfiHeaders: e.response?.headers, locationPayload },
+      `PUT /company-info/location: Rollfi returned HTTP ${rollfiStatus ?? "unknown"}`,
+    );
+
+    if (rollfiStatus === 400 || rollfiStatus === 500 || rollfiStatus !== undefined) {
+      // Extract any error detail Rollfi included in the body
       let detail: string | null = null;
-      if (data && typeof data === "object") {
-        const d = data as Record<string, unknown>;
+      if (rollfiData && typeof rollfiData === "object") {
+        const d = rollfiData as Record<string, unknown>;
         const errObj = d.error;
         if (typeof errObj === "string" && errObj.trim()) detail = errObj.trim();
         else if (errObj && typeof errObj === "object") detail = (errObj as { message?: string }).message?.trim() ?? null;
         else if (typeof d.message === "string" && (d.message as string).trim()) detail = (d.message as string).trim();
-      } else if (typeof data === "string" && (data as string).trim()) {
-        detail = (data as string).trim();
+      } else if (typeof rollfiData === "string" && (rollfiData as string).trim()) {
+        detail = (rollfiData as string).trim();
       }
-      req.log.warn({ rollfiStatus: 400, rollfiData: data, locationPayload }, "PUT /company-info/location: Rollfi rejected address (HTTP 400)");
       res.status(400).json({
         error: detail
           ? `Payroll provider rejected the address: ${detail}`
@@ -659,8 +666,9 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
       });
       return;
     }
-    req.log.error({ err }, "PUT /company-info/location failed");
-    res.status(500).json({ error: "Save failed", details: e.response?.data ?? String(err) });
+
+    req.log.error({ err }, "PUT /company-info/location failed (non-HTTP error)");
+    res.status(500).json({ error: "Save failed" });
   }
 });
 
