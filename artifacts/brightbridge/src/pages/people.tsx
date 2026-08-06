@@ -873,12 +873,14 @@ export default function PeoplePage() {
                                             setRetryingEmpId(emp.id);
                                             try {
                                               const resp = await fetch(`/api/rollfi/employees/${emp.id}/repair-onboarding`, { method: "POST", credentials: "include" });
-                                              const d = await resp.json() as { success?: boolean; error?: string; stillFailed?: string[] };
+                                              const d = await resp.json() as { success?: boolean; error?: string; rawError?: string; stillFailed?: string[] };
                                               if (resp.ok && d.success) {
                                                 setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: true, text: "Payroll setup complete!" } }));
                                                 refetchEmployees();
                                               } else {
-                                                setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: false, text: d.error ?? "Retry failed — verify the start date and try again." } }));
+                                                const msg = d.error
+                                                  ?? (d.stillFailed?.length ? `Step failed: ${d.stillFailed.join(", ")}. Contact support if this persists.` : "Setup could not complete — contact support.");
+                                                setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: false, text: msg } }));
                                               }
                                             } catch {
                                               setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: false, text: "Network error. Please try again." } }));

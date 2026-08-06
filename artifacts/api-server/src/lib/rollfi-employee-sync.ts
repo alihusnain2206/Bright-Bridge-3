@@ -208,9 +208,17 @@ export async function runEmployeeKycOnboarding(
       log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addKycInformation response");
       const raw = r.data as Record<string, unknown>;
       const errMsg = extractRollfiError(raw);
-      const isAlreadyExists = errMsg?.toLowerCase().includes("already exists") ?? false;
+      // "SSN already exists within this company" means the SSN is owned by a DIFFERENT Rollfi user,
+      // NOT this one.  Treat it as a hard conflict — NOT as "already done" — so the caller can
+      // detect the conflict and switch to the correct user before retrying.
+      const isSsnConflict   = errMsg?.toLowerCase().includes("ssn already exists") ?? false;
+      const isAlreadyExists = !isSsnConflict && (errMsg?.toLowerCase().includes("already exists") ?? false);
       kycAdded = !errMsg || isAlreadyExists;
-      if (errMsg && !isAlreadyExists) softWarnings.push({ step: "addKycInformation", message: errMsg });
+      if (isSsnConflict) {
+        hardErrors.push({ step: "addKycInformation", message: `SSN_CONFLICT: ${errMsg}` });
+      } else if (errMsg && !isAlreadyExists) {
+        softWarnings.push({ step: "addKycInformation", message: errMsg });
+      }
     } catch (e) {
       softWarnings.push({ step: "addKycInformation", message: e instanceof Error ? e.message : String(e) });
     }

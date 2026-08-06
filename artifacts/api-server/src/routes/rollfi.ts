@@ -2772,6 +2772,52 @@ router.post("/admin/employees/:employeeId/set-rollfi-user-id", async (req, res) 
   res.json({ success: true, employeeId, rollfiUserId });
 });
 
+// ── Admin: list all Rollfi users for this company ────────────
+// GET /api/admin/rollfi/company-users
+// Returns all users from Rollfi getUsers with userId, name, email, kycStatus, userStatus.
+// Used to diagnose SSN conflicts (find which user owns a given SSN by checking kycStatus).
+router.get("/admin/rollfi/company-users", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || !["owner", "super_admin"].includes(caller.role ?? "")) { res.status(403).json({ error: "Owner or super_admin only" }); return; }
+
+  try {
+    const companies = store.getDaycareCompanies();
+    const company = companies[0];
+    if (!company) { res.status(400).json({ error: "No company found" }); return; }
+    const rollfiCompany = store.getRollfiCompany(company.id);
+    if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+    const cfg = getRollfiConfig();
+    const { clientId, secretKey } = cfg;
+    const headers = { "x-api-key": `${clientId}:${secretKey}`, "Content-Type": "application/json" };
+
+    const resp = await axios.post(`${getBaseUrl()}/reports#getUsers`, {
+      method: "getUsers",
+      companyId: rollfiCompany.rollfiCompanyId,
+    }, { headers });
+
+    type RawUser = Record<string, unknown>;
+    const raw = resp.data as Record<string, unknown>;
+    const users: RawUser[] = (Array.isArray(raw.users) ? raw.users : Array.isArray(raw.user) ? raw.user : []) as RawUser[];
+
+    const mapped = users.map((u) => ({
+      userId:       u.userId    ?? u.id,
+      firstName:    u.firstName ?? null,
+      lastName:     u.lastName  ?? null,
+      user:         u.user      ?? null,
+      email:        u.email     ?? null,
+      kycStatus:    u.kycStatus ?? null,
+      userStatus:   (u.status as Record<string, unknown>)?.userStatus ?? u.userStatus ?? null,
+      role:         u.role      ?? null,
+    }));
+
+    res.json({ companyId: rollfiCompany.rollfiCompanyId, userCount: mapped.length, users: mapped });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // ── Repair failed onboarding steps ───────────────────────────
 // POST /api/rollfi/employees/:employeeId/repair-onboarding
 // Re-runs the hard steps that failed during initial onboarding (stored in last_sync_error).
@@ -2933,8 +2979,108 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
       }).where(eq(employeesTable.id, employeeId));
     }
 
-    req.log.info({ employeeId, success, fixed, stillFailed, softWarnings: result.softWarnings }, "repair-onboarding: complete");
-    res.json({ success, fixed, stillFailed, softWarnings: result.softWarnings });
+    // ── SSN conflict auto-resolution ─────────────────────────────────────────
+    // "SSN already exists within this company" means the SSN is registered to a DIFFERENT
+    // Rollfi user (an orphaned account from a previous retry). Find that user via getUsers,
+    // switch the employee's rollfiUserId, and re-run the KYC chain on the correct account.
+    const ssnConflict = result.hardErrors.find(
+      (e) => e.step === "addKycInformation" && e.message.startsWith("SSN_CONFLICT:")
+    );
+    if (ssnConflict && emp.rollfiUserId) {
+      req.log.warn({ employeeId, currentRollfiUserId: emp.rollfiUserId }, "repair-onboarding: SSN conflict — searching getUsers for the correct Rollfi account");
+      try {
+        const usersResp = await axios.post(
+          `${getBaseUrl()}/reports#getUsers`,
+          { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId },
+          { headers: { "x-api-key": `${getRollfiConfig().clientId}:${getRollfiConfig().secretKey}`, "Content-Type": "application/json" } }
+        );
+        type RU = { userId?: string; id?: string; firstName?: string; lastName?: string; user?: string; kycStatus?: string; email?: string };
+        const raw2 = usersResp.data as Record<string, unknown>;
+        const allUsers: RU[] = (Array.isArray(raw2.users) ? raw2.users : Array.isArray(raw2.user) ? raw2.user : []) as RU[];
+        const empFullName = `${emp.firstName} ${emp.lastName}`.toLowerCase().replace(/\s+/g, " ").trim();
+
+        // Find users that: (a) have KYC started (kycStatus !== "new"), (b) are NOT the current orphaned account, (c) match by name or fallback email
+        const fallbackEmail = `emp-${emp.id.toLowerCase()}@payroll.brightbridgeassist.com`;
+        const candidate = allUsers.find((u) => {
+          const uid = (u.userId ?? u.id ?? "") as string;
+          if (uid === emp.rollfiUserId) return false; // skip current account
+          const hasKyc = u.kycStatus && u.kycStatus !== "new";
+          const nameMatch = (
+            `${u.firstName ?? ""} ${u.lastName ?? ""}`.toLowerCase().replace(/\s+/g, " ").trim() === empFullName ||
+            ((u.user as string | undefined) ?? "").toLowerCase().replace(/\s+/g, " ").trim() === empFullName
+          );
+          const emailMatch = (u.email ?? "") === fallbackEmail || (u.email ?? "") === emp.email;
+          return hasKyc && (nameMatch || emailMatch);
+        });
+
+        if (candidate) {
+          const correctUserId = (candidate.userId ?? candidate.id) as string;
+          req.log.info({ employeeId, oldUserId: emp.rollfiUserId, newUserId: correctUserId, kycStatus: candidate.kycStatus }, "repair-onboarding: SSN conflict resolved — switching to correct Rollfi user");
+
+          // Switch DB to the correct user
+          const nowConflict = new Date().toISOString();
+          await db.update(employeesTable).set({ rollfiUserId: correctUserId, updatedAt: nowConflict }).where(eq(employeesTable.id, employeeId));
+          await persistRollfiEmployee(employeeId, { rollfiUserId: correctUserId, rollfiCompanyId: rollfiCompany.rollfiCompanyId });
+
+          // Re-run the KYC chain on the correct account
+          const result2 = await runKycOnboardingNew(
+            correctUserId,
+            rollfiCompany.rollfiCompanyId,
+            req.log,
+            {
+              filingStatus:    (emp.w4FilingStatus   ?? "Single") as "Single" | "MarriedFilingJointly" | "HeadOfHousehold",
+              multipleJobs:    emp.w4MultipleJobs    ?? false,
+              dependents:      emp.w4Dependents      ?? 0,
+              extraWithholding: emp.w4ExtraWithholding ?? 0,
+              otherIncome:     emp.w4OtherIncome     ?? 0,
+              otherDeduction:  emp.w4OtherDeduction  ?? 0,
+              homeState:       emp.homeState         ?? "NJ",
+            },
+            {
+              ssn:         emp.ssn         ?? undefined,
+              dateOfBirth: emp.dateOfBirth ?? undefined,
+              address1:    emp.homeAddress ?? undefined,
+              city:        emp.homeCity    ?? undefined,
+              state:       emp.homeState   ?? undefined,
+              zipcode:     emp.homeZip     ?? undefined,
+            }
+          );
+
+          const success2 = result2.hardErrors.length === 0;
+          const now2 = new Date().toISOString();
+          if (success2) {
+            await db.update(employeesTable).set({ rollfiOnboardedAt: now2, lastSyncError: null, syncStatus: "synced", updatedAt: now2 }).where(eq(employeesTable.id, employeeId));
+          } else {
+            await db.update(employeesTable).set({ lastSyncError: JSON.stringify({ failedSteps: result2.hardErrors, softWarnings: result2.softWarnings }), updatedAt: now2 }).where(eq(employeesTable.id, employeeId));
+          }
+          req.log.info({ employeeId, success: success2, stillFailed: result2.hardErrors.map(e => e.step) }, "repair-onboarding: SSN conflict re-run complete");
+
+          if (success2) {
+            return res.json({ success: true, fixed: ["ssnConflict"], stillFailed: [], softWarnings: result2.softWarnings });
+          } else {
+            const firstErr2 = result2.hardErrors[0];
+            const friendly2 = firstErr2 ? translateOnboardingError(firstErr2.message) : "Some payroll setup steps could not complete after SSN conflict resolution.";
+            return res.status(400).json({ success: false, error: friendly2, rawError: firstErr2?.message, fixed: ["ssnConflict"], stillFailed: result2.hardErrors.map(e => e.step), softWarnings: result2.softWarnings });
+          }
+        } else {
+          req.log.warn({ employeeId, userCount: allUsers.length, empFullName }, "repair-onboarding: SSN conflict — no matching Rollfi user found via getUsers; Rollfi support may be needed to resolve the SSN conflict");
+          return res.status(422).json({ success: false, error: "Payroll setup blocked: this employee's identity is linked to another account in Rollfi. Please contact Rollfi support to resolve the duplicate SSN conflict.", stillFailed: ["addKycInformation"], softWarnings: result.softWarnings });
+        }
+      } catch (conflictErr) {
+        req.log.error({ conflictErr, employeeId }, "repair-onboarding: SSN conflict resolution failed");
+        return res.status(500).json({ success: false, error: "SSN conflict detected but auto-resolution failed. Please contact Rollfi support.", stillFailed: ["addKycInformation"] });
+      }
+    }
+
+    req.log.info({ employeeId, success, fixed, stillFailed, softWarnings: result.softWarnings, hardErrors: result.hardErrors }, "repair-onboarding: complete");
+
+    if (success) {
+      res.json({ success: true, fixed, stillFailed: [], softWarnings: result.softWarnings });
+    } else {
+      const firstErr = result.hardErrors[0];
+      const friendly = firstErr ? translateOnboardingError(firstErr.message) : "Some payroll setup steps could not complete. Contact support if this persists.";
+      res.status(400).json({ success: false, error: friendly, rawError: firstErr?.message, fixed, stillFailed, softWarnings: result.softWarnings });
+    }
   } catch (err) {
     req.log.error({ err, employeeId }, "repair-onboarding failed");
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
