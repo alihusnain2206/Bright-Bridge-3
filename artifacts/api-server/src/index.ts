@@ -404,6 +404,31 @@ async function bootRepairLeticiaDuplicateEmployee() {
  * Safe to run on every boot: the WHERE clause ensures only null rows are updated, and the RETURNING
  * log confirms exactly which employees were touched.
  */
+/**
+ * One-time boot cleanup: remove the orphan company ORG-MSDK0754-QRO44V and its only
+ * remnant employee row (Joanne Indiviglio EMP-MSDRL319-4RI3XM).
+ * This company has zero references from any other table and was approved for deletion.
+ * Idempotent: no-ops when the company row is already gone.
+ */
+async function bootCleanOrphanCompany() {
+  const ORPHAN_CO  = "ORG-MSDK0754-QRO44V";
+  const ORPHAN_EMP = "EMP-MSDRL319-4RI3XM";
+  try {
+    const [existing] = await db.select({ id: companies.id }).from(companies).where(eq(companies.id, ORPHAN_CO));
+    if (!existing) {
+      logger.info({ ORPHAN_CO }, "Boot cleanup: orphan company already removed — nothing to do");
+      return;
+    }
+    await db.delete(rollfiEmployeeRecords).where(eq(rollfiEmployeeRecords.employeeId, ORPHAN_EMP));
+    await db.delete(employees).where(eq(employees.id, ORPHAN_EMP));
+    await db.delete(userAccounts).where(eq(userAccounts.companyId, ORPHAN_CO));
+    await db.delete(companies).where(eq(companies.id, ORPHAN_CO));
+    logger.info({ ORPHAN_CO, ORPHAN_EMP }, "Boot cleanup: orphan company and remnant employee deleted");
+  } catch (err) {
+    logger.warn({ err }, "Boot cleanup: orphan company deletion failed (non-fatal)");
+  }
+}
+
 async function bootBackfillRollfiUserIds() {
   try {
     // Find employees with no rollfi_user_id (null or empty string) but a matching rollfi_employee_records row
@@ -534,6 +559,7 @@ app.listen(port, (err) => {
     }),
     bootRepairLeticiaDuplicateEmployee(),
     bootBackfillRollfiUserIds(),
+    bootCleanOrphanCompany(),
   ])
     .catch((err) => {
       logger.warn({ err }, "Could not fully load state from DB — starting with partial state");

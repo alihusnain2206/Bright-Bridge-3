@@ -8,7 +8,7 @@ import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
 import { db, rollfiWebhookEvents, rollfiEmployeeRecords, companies as companiesTable, employees as employeesTable, stateRegistrations as stateRegistrationsTable, appActivityLog } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js"; // kept for retry fallback on legacy records
-import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError } from "../lib/rollfi-employee-sync.js";
+import { runEmployeeKycOnboarding as runKycOnboardingNew, extractRollfiError, onboardEmployeeToRollfi } from "../lib/rollfi-employee-sync.js";
 import { desc, eq, inArray, and, isNull, isNotNull } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
@@ -2720,9 +2720,30 @@ router.get("/rollfi/payperiod", async (req, res) => {
   }
 });
 
+// ── Error translation helper ──────────────────────────────────
+// Converts Rollfi's raw error strings into owner-friendly language.
+function translateOnboardingError(raw: string): string {
+  if (/date of join cannot be before.*incorporation/i.test(raw)) {
+    return "The employee's start date is before the company's payroll registration date. Please update the start date to the company's registration date or later, then retry.";
+  }
+  if (/already exists/i.test(raw) && /user/i.test(raw)) {
+    return "This employee already exists in the payroll system. If the start date was already corrected, the setup may already be complete — contact support if the badge still shows 'Not set up'.";
+  }
+  if (/invalid.*email/i.test(raw)) {
+    return "The employee's email address was rejected by the payroll system. Please verify and update the email, then retry.";
+  }
+  if (/ssn/i.test(raw) || /social security/i.test(raw)) {
+    return "The employee's Social Security Number was rejected. Please verify the SSN and retry.";
+  }
+  return raw;
+}
+
 // ── Repair failed onboarding steps ───────────────────────────
 // POST /api/rollfi/employees/:employeeId/repair-onboarding
 // Re-runs the hard steps that failed during initial onboarding (stored in last_sync_error).
+// When rollfiUserId is null (addUser was fully rejected at creation time, e.g. date-of-join error),
+// re-runs the FULL onboarding chain from addUser using current DB values — so the owner can correct
+// the offending field (e.g. start date) and retry without admin intervention.
 // Returns { success, fixed, stillFailed }.
 router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) => {
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
@@ -2732,10 +2753,85 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
   try {
     const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
     if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
-    if (!emp.rollfiUserId) { res.status(400).json({ error: "Employee has no Rollfi user ID — cannot repair" }); return; }
 
     const rollfiCompany = store.getRollfiCompany(emp.companyId);
     if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
+
+    // ── Branch: addUser was never run (total rejection at creation) ──────────
+    if (!emp.rollfiUserId) {
+      req.log.info({ employeeId, startDate: emp.startDate }, "repair-onboarding: rollfiUserId null — re-running full addUser + chain with current DB values");
+
+      const r = await onboardEmployeeToRollfi(
+        {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          email: emp.email,
+          roleName: emp.position ?? "Employee",
+          wage: (emp.hourlyWage ?? 0) / 100,
+          payType:            emp.payType ?? undefined,
+          annualSalaryCents:  emp.annualSalary ?? undefined,
+          overtimeEligible:   emp.overtimeEligible ?? undefined,
+          homeState:          emp.homeState ?? undefined,
+          homeAddress:        emp.homeAddress ?? undefined,
+          homeCity:           emp.homeCity ?? undefined,
+          homeZip:            emp.homeZip ?? undefined,
+          ssn:                emp.ssn ?? undefined,
+          dateOfBirth:        emp.dateOfBirth ?? undefined,
+          w4FilingStatus:            emp.w4FilingStatus ?? undefined,
+          w4MultipleJobs:            emp.w4MultipleJobs ?? undefined,
+          w4Dependents:              emp.w4Dependents ?? undefined,
+          w4DependentsAbove18:       emp.w4DependentsAbove18 ?? undefined,
+          w4ExtraWithholding:        emp.w4ExtraWithholding ?? undefined,
+          w4OtherIncome:             emp.w4OtherIncome ?? undefined,
+          w4OtherDeduction:          emp.w4OtherDeduction ?? undefined,
+          w4MilitarySpouseExemption: emp.w4MilitarySpouseExemption ?? undefined,
+          w4IsNonResident:           emp.w4IsNonResident ?? undefined,
+          w4AzDeductionPercent:      emp.w4AzDeductionPercent ?? undefined,
+          phone:     emp.phone ?? undefined,
+          startDate: emp.startDate,   // ← uses current DB value — owner edits this before retrying
+          // Bank credentials aren't stored post-wizard; bank step will be handled separately
+          bankName: emp.bankName ?? undefined,
+          accountType: emp.accountType ?? undefined,
+        },
+        rollfiCompany,
+        req.log
+      );
+
+      const now = new Date().toISOString();
+
+      if (r.success && r.rollfiUserId) {
+        // Write Rollfi user ID back to both master row and normalised table
+        await db.update(employeesTable).set({
+          rollfiUserId:    r.rollfiUserId,
+          rollfiSynced:    true,
+          rollfiOnboardedAt: now,
+          lastSyncError:   null,
+          syncStatus:      "synced",
+          updatedAt:       now,
+        }).where(eq(employeesTable.id, employeeId));
+
+        await persistRollfiEmployee(employeeId, {
+          rollfiUserId:    r.rollfiUserId,
+          rollfiCompanyId: rollfiCompany.rollfiCompanyId,
+        });
+
+        req.log.info({ employeeId, rollfiUserId: r.rollfiUserId, hardErrors: r.hardErrors }, "repair-onboarding: addUser succeeded");
+        res.json({ success: r.hardErrors.length === 0, fixed: ["addUser"], stillFailed: r.hardErrors.map(e => e.step), softWarnings: r.softWarnings });
+      } else {
+        // addUser still failing — translate the error and store it back
+        const rawErr = r.error ?? r.hardErrors?.[0]?.message ?? "Unknown error";
+        const friendly = translateOnboardingError(rawErr);
+        await db.update(employeesTable).set({
+          lastSyncError: JSON.stringify({ syncError: rawErr }),
+          updatedAt:     now,
+        }).where(eq(employeesTable.id, employeeId));
+        req.log.warn({ employeeId, rawErr }, "repair-onboarding: addUser still failing after retry");
+        res.status(400).json({ success: false, error: friendly, stillFailed: ["addUser"] });
+      }
+      return;
+    }
+
+    // ── Branch: employee exists in Rollfi but some KYC/W4/bank steps failed ──
 
     // Parse which steps previously failed from last_sync_error
     let previouslyFailed: string[] = [];

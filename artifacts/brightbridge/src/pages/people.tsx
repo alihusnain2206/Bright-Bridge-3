@@ -44,6 +44,8 @@ interface PeopleEmployee {
   kycStatus?: string | null;
   rollfiAccountStatus?: string | null;
   createdAt: string;
+  lastSyncError?: string | null;
+  rollfiSynced?: boolean | null;
 }
 
 interface Company { id: string; name: string; }
@@ -85,6 +87,29 @@ function isNewHire(emp: PeopleEmployee): boolean {
   if (emp.status === "onboarding" || emp.status === "pending") return true;
   if (!emp.startDate) return false;
   return (Date.now() - new Date(emp.startDate).getTime()) < 30 * 86400000;
+}
+
+/**
+ * Parse the stored lastSyncError JSON and return a concise owner-friendly reason,
+ * or null if there's nothing actionable to show.
+ */
+function parseSyncError(lastSyncError?: string | null): string | null {
+  if (!lastSyncError) return null;
+  try {
+    const parsed = JSON.parse(lastSyncError) as { syncError?: string; failedSteps?: Array<{ message: string }> };
+    const raw = parsed.syncError ?? parsed.failedSteps?.[0]?.message ?? null;
+    if (!raw) return null;
+    if (/date of join cannot be before.*incorporation/i.test(raw)) {
+      return "Start date is before the company's payroll registration date. Edit the start date and retry.";
+    }
+    if (/already exists/i.test(raw)) {
+      return "Payroll account may already exist. Contact support if this badge persists after retrying.";
+    }
+    if (/invalid.*email/i.test(raw)) {
+      return "Email address was rejected by payroll. Update the email and retry.";
+    }
+    return raw;
+  } catch { return null; }
 }
 
 function payrollBadge(emp: PeopleEmployee): { label: string; cls: string; link: boolean } {
@@ -403,6 +428,8 @@ export default function PeoplePage() {
   const [empContacts,  setEmpContacts]  = useState<PeopleEmployee | null>(null);
   const [empDocuments, setEmpDocuments] = useState<PeopleEmployee | null>(null);
   const [empTasks,     setEmpTasks]     = useState<PeopleEmployee | null>(null);
+  const [retryingEmpId, setRetryingEmpId] = useState<string | null>(null);
+  const [retryMessages, setRetryMessages] = useState<Record<string, { ok: boolean; text: string }>>({});
 
   // ── Data fetches ───────────────────────────────────────────
 
@@ -816,6 +843,45 @@ export default function PeoplePage() {
                                     {chip.label}
                                   </span>
                                 )}
+                                {/* Inline retry UI: shown when addUser was rejected at creation (no rollfiUserId + stored error reason) */}
+                                {(() => {
+                                  const errReason = !emp.rollfiUserId ? parseSyncError(emp.lastSyncError) : null;
+                                  if (!errReason) return null;
+                                  const rm = retryMessages[emp.id];
+                                  return (
+                                    <div className="mt-1.5 space-y-1 max-w-[200px]">
+                                      <p className="text-xs text-red-600 leading-snug">{errReason}</p>
+                                      {rm && (
+                                        <p className={`text-xs leading-snug ${rm.ok ? "text-emerald-600" : "text-amber-700"}`}>{rm.text}</p>
+                                      )}
+                                      {!rm?.ok && (
+                                        <button
+                                          disabled={retryingEmpId === emp.id}
+                                          onClick={async () => {
+                                            setRetryingEmpId(emp.id);
+                                            try {
+                                              const resp = await fetch(`/api/rollfi/employees/${emp.id}/repair-onboarding`, { method: "POST", credentials: "include" });
+                                              const d = await resp.json() as { success?: boolean; error?: string; stillFailed?: string[] };
+                                              if (resp.ok && d.success) {
+                                                setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: true, text: "Payroll setup complete!" } }));
+                                                refetchEmployees();
+                                              } else {
+                                                setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: false, text: d.error ?? "Retry failed — verify the start date and try again." } }));
+                                              }
+                                            } catch {
+                                              setRetryMessages(prev => ({ ...prev, [emp.id]: { ok: false, text: "Network error. Please try again." } }));
+                                            } finally {
+                                              setRetryingEmpId(null);
+                                            }
+                                          }}
+                                          className="text-xs text-[#0EA5C9] hover:underline disabled:opacity-50 cursor-pointer"
+                                        >
+                                          {retryingEmpId === emp.id ? "Retrying…" : "Retry payroll setup"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                               </td>
 
                               {/* Actions */}
