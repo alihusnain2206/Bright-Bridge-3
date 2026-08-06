@@ -1,8 +1,8 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
-import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, userAccounts, stateRegistrations as stateRegistrationsTable, onboardingTasks as onboardingTasksTable } from "@workspace/db";
+import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, rollfiEmployeeRecords, userAccounts, stateRegistrations as stateRegistrationsTable, onboardingTasks as onboardingTasksTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
@@ -566,6 +566,23 @@ router.get("/employees", async (req: Request, res: Response) => {
     const rows = conditions.length > 0
       ? await db.select().from(employees).where(and(...conditions))
       : await db.select().from(employees);
+
+    // Phase 3 read fallback: for employees where employees.rollfiUserId is null but
+    // rollfi_employee_records holds a Rollfi ID (e.g. boot-repair gap, duplicate-wizard gap),
+    // fill in the ID so People Hub never shows "Not set up" incorrectly.
+    const nullIds = rows.filter(r => !r.rollfiUserId).map(r => r.id);
+    if (nullIds.length > 0) {
+      const records = await db.select().from(rollfiEmployeeRecords)
+        .where(inArray(rollfiEmployeeRecords.employeeId, nullIds));
+      const byEmpId = new Map(records.map(r => [r.employeeId, r.rollfiUserId]));
+      for (const row of rows) {
+        if (!row.rollfiUserId) {
+          const fallback = byEmpId.get(row.id);
+          if (fallback) (row as Record<string, unknown>).rollfiUserId = fallback;
+        }
+      }
+    }
+
     res.json({ employees: rows });
   } catch (err) {
     req.log.error({ err }, "Failed to list employees");
@@ -581,6 +598,12 @@ router.get("/employees/:employeeId", async (req: Request, res: Response) => {
   try {
     const [row] = await db.select().from(employees).where(eq(employees.id, employeeId));
     if (!row) { res.status(404).json({ error: "Employee not found" }); return; }
+    // Phase 3 read fallback: fill rollfiUserId from normalized table if master row is null
+    if (!row.rollfiUserId) {
+      const [rec] = await db.select().from(rollfiEmployeeRecords)
+        .where(eq(rollfiEmployeeRecords.employeeId, employeeId));
+      if (rec?.rollfiUserId) (row as Record<string, unknown>).rollfiUserId = rec.rollfiUserId;
+    }
     res.json({ employee: row });
   } catch (err) {
     req.log.error({ err }, "Failed to get employee");
@@ -622,6 +645,29 @@ router.post("/employees", async (req: Request, res: Response) => {
   if (!body.companyId || !body.firstName || !body.lastName || !body.email || !body.position) {
     res.status(400).json({ error: "companyId, firstName, lastName, email, and position are required" });
     return;
+  }
+
+  // Phase 3 duplicate guard: reject if an employee with this email already exists in this company.
+  // Case-insensitive check — the DB constraint catches exact-case duplicates as a safety net.
+  try {
+    const existing = await db.select({ id: employees.id, firstName: employees.firstName, lastName: employees.lastName })
+      .from(employees)
+      .where(and(eq(employees.companyId, body.companyId), eq(employees.email, body.email.toLowerCase().trim())));
+    if (existing.length === 0) {
+      // Also check case-insensitively via a second query if the above missed (different case stored)
+      const allCoEmps = await db.select({ email: employees.email }).from(employees).where(eq(employees.companyId, body.companyId));
+      const emailLower = body.email.toLowerCase().trim();
+      const caseMatch = allCoEmps.find(e => e.email.toLowerCase() === emailLower);
+      if (caseMatch) {
+        res.status(409).json({ error: "An employee with this email address already exists in this company." });
+        return;
+      }
+    } else {
+      res.status(409).json({ error: "An employee with this email address already exists in this company." });
+      return;
+    }
+  } catch (dupErr) {
+    req.log.warn({ dupErr }, "Duplicate email check failed — proceeding with insert");
   }
 
   // Validate employee bank details in production when manually entered
@@ -909,7 +955,14 @@ router.post("/employees", async (req: Request, res: Response) => {
       rollfiSynced,
       rollfiUserId,
       loginPassword: "Staff123!",
-      rollfiFailedSteps: rollfiFailedSteps ?? [],
+      // Phase 3 honest UI: when Rollfi sync failed entirely (addUser rejection, network error, etc.)
+      // but no hard-step array was populated, synthesize a step entry so the wizard's failure
+      // panel activates instead of showing green success. Never hide a failed Rollfi sync.
+      rollfiFailedSteps: rollfiFailedSteps && rollfiFailedSteps.length > 0
+        ? rollfiFailedSteps
+        : (!rollfiSynced && syncError)
+          ? [{ step: "addUser", message: syncError }]
+          : [],
       rollfiSoftWarnings: rollfiSoftWarnings ?? [],
     });
   } catch (err) {

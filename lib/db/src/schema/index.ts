@@ -213,7 +213,9 @@ export const employees = pgTable("employees", {
   notes:             text("notes"),
   createdAt:         text("created_at").notNull(),
   updatedAt:         text("updated_at").notNull(),
-});
+}, (t) => ({
+  uniqueCompanyEmail: uniqueIndex("emp_company_email_unique").on(t.companyId, t.email),
+}));
 
 export const stateRegistrations = pgTable("state_registrations", {
   id:               text("id").primaryKey(),

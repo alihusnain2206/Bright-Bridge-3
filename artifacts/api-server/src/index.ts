@@ -11,7 +11,7 @@ import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
 import { db, companies, employees, rollfiEmployeeRecords } from "@workspace/db";
 import { userAccounts } from "@workspace/db/schema";
-import { eq, isNull, isNotNull, and } from "drizzle-orm";
+import { eq, isNull, isNotNull, and, or } from "drizzle-orm";
 
 /**
  * connect-pg-simple's `createTableIfMissing` reads a `table.sql` file from disk.
@@ -359,6 +359,19 @@ async function bootRepairLeticiaDuplicateEmployee() {
       .set({ employeeId: CANONICAL_ID })
       .where(eq(rollfiEmployeeRecords.employeeId, DUPLICATE_ID));
 
+    // 3b. Write the Rollfi user ID back to the canonical employees master row.
+    //     The boot repair previously only updated rollfi_employee_records but not employees.rollfi_user_id,
+    //     causing the People Hub to show "Not set up" despite the normalized record being present.
+    const [transferred] = await db
+      .select({ rollfiUserId: rollfiEmployeeRecords.rollfiUserId })
+      .from(rollfiEmployeeRecords)
+      .where(eq(rollfiEmployeeRecords.employeeId, CANONICAL_ID));
+    if (transferred?.rollfiUserId) {
+      await db.update(employees)
+        .set({ rollfiUserId: transferred.rollfiUserId, updatedAt: new Date().toISOString() })
+        .where(eq(employees.id, CANONICAL_ID));
+    }
+
     // 4. Delete the duplicate employee row (same email + same easyteam_uuid)
     await db.delete(employees).where(eq(employees.id, DUPLICATE_ID));
 
@@ -374,6 +387,49 @@ async function bootRepairLeticiaDuplicateEmployee() {
     );
   } catch (err) {
     logger.warn({ err }, "Boot repair: Leticia duplicate fix failed (non-fatal — will retry on next restart)");
+  }
+}
+
+/**
+ * One-time idempotent boot migration: for every employee where employees.rollfi_user_id is null
+ * but rollfi_employee_records holds a Rollfi ID, write the ID back to the master row.
+ *
+ * Covers two known data-gap patterns:
+ *  1. Boot repair gap — bootRepairLeticiaDuplicateEmployee transferred the Rollfi record to
+ *     rollfi_employee_records but did not write back to employees.rollfi_user_id (now fixed in
+ *     the repair itself, but this catches any existing rows from before the fix).
+ *  2. Test-company seed gap — ORG-RAINBOW / ORG-SUNSHINE employees created before the master-row
+ *     write path was in place.
+ *
+ * Safe to run on every boot: the WHERE clause ensures only null rows are updated, and the RETURNING
+ * log confirms exactly which employees were touched.
+ */
+async function bootBackfillRollfiUserIds() {
+  try {
+    // Find employees with no rollfi_user_id (null or empty string) but a matching rollfi_employee_records row
+    const gaps = await db
+      .select({ empId: employees.id, rollfiUserId: rollfiEmployeeRecords.rollfiUserId, firstName: employees.firstName, lastName: employees.lastName, companyId: employees.companyId })
+      .from(employees)
+      .innerJoin(rollfiEmployeeRecords, eq(rollfiEmployeeRecords.employeeId, employees.id))
+      .where(or(isNull(employees.rollfiUserId), eq(employees.rollfiUserId, "")));
+
+    if (gaps.length === 0) {
+      logger.info("Boot backfill: all employees already have rollfi_user_id — nothing to do");
+      return;
+    }
+
+    let fixed = 0;
+    for (const gap of gaps) {
+      await db.update(employees)
+        .set({ rollfiUserId: gap.rollfiUserId, updatedAt: new Date().toISOString() })
+        .where(and(eq(employees.id, gap.empId), isNull(employees.rollfiUserId)));
+      logger.info({ empId: gap.empId, name: `${gap.firstName} ${gap.lastName}`, companyId: gap.companyId, rollfiUserId: gap.rollfiUserId }, "Boot backfill: wrote rollfi_user_id to employees master row");
+      fixed++;
+    }
+
+    logger.info({ fixed, total: gaps.length }, "Boot backfill: rollfi_user_id backfill complete");
+  } catch (err) {
+    logger.warn({ err }, "Boot backfill: rollfi_user_id backfill failed (non-fatal)");
   }
 }
 
@@ -477,6 +533,7 @@ app.listen(port, (err) => {
       });
     }),
     bootRepairLeticiaDuplicateEmployee(),
+    bootBackfillRollfiUserIds(),
   ])
     .catch((err) => {
       logger.warn({ err }, "Could not fully load state from DB — starting with partial state");
