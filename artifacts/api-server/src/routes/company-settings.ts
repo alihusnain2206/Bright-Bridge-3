@@ -595,8 +595,13 @@ router.put("/company-info/location", requireAuth, async (req: Request, res: Resp
     // updateCompanyLocation uses adminPortal path-style routing (like updateStateRegistrationInfo),
     // NOT the companyOnboarding body-dispatch pattern — Rollfi's gateway rejects unknown methods
     // on /companyOnboarding with HTTP 400 + empty body before the request reaches their application.
+    //
+    // Rollfi requires the location fields to be nested inside a `companyLocation` object.
+    // companyId is NOT required at the top level per Rollfi docs.
+    // Sending a flat body (our original approach) causes HTTP 500 on their side.
+    const { companyId: _ignored, ...locationFields } = locationPayload;
     const rollfiUrl = `${getBaseUrl()}/adminPortal/updateCompanyLocation`;
-    const rollfiBody = { method: "updateCompanyLocation", ...locationPayload };
+    const rollfiBody = { method: "updateCompanyLocation", companyLocation: locationFields };
     req.log.info({ rollfiUrl, rollfiBaseUrl: getBaseUrl(), rollfiBody }, "PUT /company-info/location: sending to Rollfi");
 
     const r = await axios.post(
