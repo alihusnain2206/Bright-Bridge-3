@@ -847,9 +847,13 @@ export default function PeoplePage() {
                                     - No rollfiUserId → "Retry payroll setup" (account was never created)
                                     - Has rollfiUserId but KYC not passed / not payroll-ready → "Complete setup" (account exists, steps incomplete) */}
                                 {(() => {
-                                  const noAccount   = !emp.rollfiUserId;
-                                  const kycPending   = !!emp.rollfiUserId && emp.kycStatus !== "passed" && emp.payrollReady !== true;
-                                  if (!noAccount && !kycPending) return null;
+                                  const noAccount  = !emp.rollfiUserId;
+                                  // "Complete setup" only when KYC was never initiated — "new" or
+                                  // "kyc not initiated" means initiateUserKyc was never called.
+                                  // Do NOT show for employees legitimately "in progress" (kycStatus pending/under_review etc.).
+                                  const kycNeverStarted = !!emp.rollfiUserId &&
+                                    (emp.kycStatus === "new" || emp.kycStatus === "kyc not initiated" || !emp.kycStatus);
+                                  if (!noAccount && !kycNeverStarted) return null;
 
                                   const errReason = noAccount
                                     ? (parseSyncError(emp.lastSyncError) ?? "Payroll setup did not complete. Retry to connect this employee to payroll.")

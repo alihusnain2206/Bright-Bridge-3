@@ -2888,17 +2888,28 @@ router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) 
 
     req.log.info({ employeeId, rollfiUserId: emp.rollfiUserId, previouslyFailed }, "repair-onboarding: starting");
 
-    // Re-run the KYC/W4/bank chain — all hard steps check for "already exists" and skip gracefully
+    // Re-run the KYC/W4/bank chain — all hard steps check for "already exists" and skip gracefully.
+    // Pass real identity data (SSN, DOB, address) so KYC is not skipped in production.
     const result = await runKycOnboardingNew(
       emp.rollfiUserId,
       rollfiCompany.rollfiCompanyId,
       req.log,
       {
-        filingStatus: "Single", // safe default — already-exists responses are treated as success
-        multipleJobs: false,
-        dependents: 0,
-        extraWithholding: 0,
-        homeState: emp.homeState ?? "NJ",
+        filingStatus:    (emp.w4FilingStatus   ?? "Single") as "Single" | "MarriedFilingJointly" | "HeadOfHousehold",
+        multipleJobs:    emp.w4MultipleJobs    ?? false,
+        dependents:      emp.w4Dependents      ?? 0,
+        extraWithholding: emp.w4ExtraWithholding ?? 0,
+        otherIncome:     emp.w4OtherIncome     ?? 0,
+        otherDeduction:  emp.w4OtherDeduction  ?? 0,
+        homeState:       emp.homeState         ?? "NJ",
+      },
+      {
+        ssn:         emp.ssn          ?? undefined,
+        dateOfBirth: emp.dateOfBirth  ?? undefined,
+        address1:    emp.homeAddress  ?? undefined,
+        city:        emp.homeCity     ?? undefined,
+        state:       emp.homeState    ?? undefined,
+        zipcode:     emp.homeZip      ?? undefined,
       }
     );
 
