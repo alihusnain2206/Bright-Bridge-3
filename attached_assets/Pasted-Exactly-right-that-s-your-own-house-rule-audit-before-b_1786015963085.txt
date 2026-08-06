@@ -1,0 +1,23 @@
+Exactly right — that's your own house rule ("audit before building") applied correctly. We have symptoms on two employees and a guessed cause; fixing before knowing the real origin risks patching Leticia and Gail while leaving the duplicate-creating hole open for the next real customer. Here's the audit prompt:
+
+⚠️ AUDIT ONLY — do not modify, repair, backfill, or "fix" anything. Read and report only. We will decide the fix after reviewing findings. This is production data — no writes of any kind.
+
+You are a senior full-stack TypeScript engineer on BrightBridge Assist. Two employees in company "Urban Concepts of New York Round the Clock Nursery" show payroll "Not set up" (missing employees.rollfiUserId): Gail Davis (E1005) and Leticia Anderson (E1001). Your prior audit identified the immediate causes. Now we need the ROOT causes — how the data got into this state — before fixing.
+
+PART 1 — Leticia's duplicate: the origin story
+Both rows: Find the duplicate employee row the boot repair (bootRepairLeticiaDuplicateEmployee) was written for. Report both rows' data: ids, created_at timestamps, employeeDisplayId, email, status, and which row holds/held the Rollfi linkage. If the duplicate row was deleted, recover what you can from the repair function's code/comments and any logs.
+Creation paths: From timestamps and any activity_log / people_activity_log entries — which endpoint created each row? (wizard POST /api/employees? an import path? something else?) Were they created seconds apart (double-submit) or minutes/days apart (retry after failure)?
+Repair history: What does the git history / code comments of bootRepairLeticiaDuplicateEmployee say about what was found when it was written? When was it added?
+Why the repair was incomplete: confirm precisely which tables the repair writes to, and why employees.rollfiUserId was missed.
+PART 2 — Gail: the skipped sync
+Creation trace: When and via which endpoint was Gail's row created? Show her activity log entries around creation.
+The sync step: For her creation, did syncEmployeeToIntegrations (the addUser → Rollfi chain) run at all? Search logs for her creation window — did the Rollfi call fail, get skipped, or never fire? What error (if any) was logged?
+What the user saw: If the Rollfi step failed/skipped, would the person creating her (Joanne, non-technical) have seen ANY error or warning in the UI — or did the wizard show success? Trace the wizard's error handling for that specific failure mode.
+Rollfi's side: Does Gail exist in Rollfi (call getUsers or equivalent read-only lookup for the company)? If yes, report her Rollfi user ID (do NOT write it anywhere yet) — and explain how she exists there despite our DB having no ID (was she created in Rollfi's dashboard directly? via a sync that wrote to Rollfi but failed before saving locally?).
+PART 3 — The systemic questions
+Duplicate guard: Does the employee-creation flow have ANY protection against creating a second employee with the same email (or name) in the same company? Report what exists (unique DB constraint? endpoint check? frontend check?) — or confirm nothing does.
+Sync-failure visibility: When syncEmployeeToIntegrations fails mid-chain today, what happens? Is the employee saved anyway with null rollfiUserId (silent partial success), rolled back, or flagged? Is there any UI indicator or list showing employees whose Rollfi sync is incomplete?
+Blast radius: Across ALL companies in production — how many employees have null/empty employees.rollfiUserId? And how many have a mismatch (null in employees but present in rollfi_employee_records, like Leticia)? List them (name, company, created_at) so we know whether this is 2 employees or a wider pattern.
+DELIVERABLE
+
+Structured findings per question, with evidence (timestamps, log lines, code references). End with your root-cause conclusion for each employee and a recommended fix plan — but implement NOTHING yet.
