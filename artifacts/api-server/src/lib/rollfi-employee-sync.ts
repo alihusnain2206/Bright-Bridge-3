@@ -414,18 +414,40 @@ export async function onboardEmployeeToRollfi(
     const addUserRaw = addUserResp.data as Record<string, unknown>;
     const addUserErr = ((addUserRaw.error as Record<string, unknown> | undefined)?.message as string) ?? "";
     if (addUserErr.toLowerCase().includes("email already in use") || addUserErr.toLowerCase().includes("already in use")) {
-      log.warn({ empId: emp.id, email: emp.email }, "Rollfi email already in use — looking up existing user");
+      log.warn({ empId: emp.id, email: emp.email }, "Rollfi email already in use — looking up existing user via getUsers");
       try {
         const getUsersResp = await axios.post(`${baseUrl}/reports#getUsers`, { method: "getUsers", companyId: rollfiCompany.rollfiCompanyId }, { headers });
-        type RollfiUser = { userId: string; firstName?: string; lastName?: string; email?: string };
-        const users = ((getUsersResp.data as { users?: RollfiUser[] }).users ?? []);
+        rollfiVerboseLog("IN", `${baseUrl}/reports#getUsers`, getUsersResp.data);
+
+        // Rollfi may return users under different root keys depending on version
+        const rawData = getUsersResp.data as Record<string, unknown>;
+        type RollfiUser = { userId?: string; id?: string; firstName?: string; lastName?: string; email?: string; name?: string };
+        const users: RollfiUser[] = (rawData.users ?? rawData.result ?? rawData.data ?? []) as RollfiUser[];
+
+        log.info({ empId: emp.id, userCount: users.length, targetEmail: emp.email, targetName: emp.name,
+          sampleUsers: users.slice(0, 5).map(u => ({ id: u.userId ?? u.id, firstName: u.firstName, lastName: u.lastName, email: u.email }))
+        }, "getUsers response — attempting email + name match");
+
         const targetEmail = (emp.email ?? "").toLowerCase();
-        const targetName = emp.name.toLowerCase();
-        const match = users.find((u) =>
-          (u.email && u.email.toLowerCase() === targetEmail) ||
-          (`${u.firstName ?? ""} ${u.lastName ?? ""}`.trim().toLowerCase() === targetName)
-        );
-        if (match) { rollfiUserId = match.userId; log.info({ rollfiUserId, empId: emp.id }, "Resolved existing Rollfi user for re-sync"); }
+        const [targetFirst, ...rest] = emp.name.trim().split(/\s+/);
+        const targetLast = rest.join(" ").toLowerCase();
+        const match = users.find((u) => {
+          const uEmail = (u.email ?? "").toLowerCase();
+          const uFirst = (u.firstName ?? "").toLowerCase();
+          const uLast  = (u.lastName  ?? "").toLowerCase();
+          const uFull  = (`${u.firstName ?? ""} ${u.lastName ?? ""}`).trim().toLowerCase();
+          const uName  = (u.name ?? "").toLowerCase();
+          return (targetEmail && uEmail === targetEmail) ||
+                 uFull === emp.name.trim().toLowerCase() ||
+                 (uFirst === (targetFirst ?? "").toLowerCase() && uLast === targetLast) ||
+                 uName === emp.name.trim().toLowerCase();
+        });
+        if (match) {
+          rollfiUserId = (match.userId ?? match.id) as string | undefined;
+          log.info({ rollfiUserId, empId: emp.id, matchedUser: { firstName: match.firstName, lastName: match.lastName, email: match.email } }, "Resolved existing Rollfi user for re-sync");
+        } else {
+          log.warn({ empId: emp.id, userCount: users.length, allUserIds: users.map(u => u.userId ?? u.id) }, "getUsers: no match found — check sampleUsers above against employee name/email");
+        }
       } catch (lookupErr) { log.warn({ lookupErr }, "getUsers lookup failed"); }
       if (!rollfiUserId) return { success: false, error: `Rollfi email already in use and could not resolve existing user` };
     } else {

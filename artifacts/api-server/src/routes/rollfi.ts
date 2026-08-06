@@ -2738,6 +2738,40 @@ function translateOnboardingError(raw: string): string {
   return raw;
 }
 
+// ── Super-admin: manually associate a known Rollfi user ID ────
+// POST /api/admin/employees/:employeeId/set-rollfi-user-id
+// Body: { rollfiUserId: string }
+// Used when automatic getUsers matching fails and the Rollfi user ID is known
+// from the Rollfi admin portal or support. Writes the ID to both DB tables so
+// the standard repair-onboarding KYC chain can run on the next Retry.
+router.post("/admin/employees/:employeeId/set-rollfi-user-id", async (req, res) => {
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const caller = store.getUserById(req.session.userId);
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
+
+  const { employeeId } = req.params;
+  const { rollfiUserId } = req.body as { rollfiUserId?: string };
+  if (!employeeId || !rollfiUserId) { res.status(400).json({ error: "employeeId and rollfiUserId required" }); return; }
+
+  const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  const rollfiCompany = store.getRollfiCompany(emp.companyId);
+  const now = new Date().toISOString();
+
+  await db.update(employeesTable)
+    .set({ rollfiUserId, updatedAt: now })
+    .where(eq(employeesTable.id, employeeId));
+
+  await persistRollfiEmployee(employeeId, {
+    rollfiUserId,
+    rollfiCompanyId: rollfiCompany?.rollfiCompanyId,
+  });
+
+  req.log.info({ employeeId, rollfiUserId, setBy: caller.id }, "super_admin: manually set rollfiUserId");
+  res.json({ success: true, employeeId, rollfiUserId });
+});
+
 // ── Repair failed onboarding steps ───────────────────────────
 // POST /api/rollfi/employees/:employeeId/repair-onboarding
 // Re-runs the hard steps that failed during initial onboarding (stored in last_sync_error).
