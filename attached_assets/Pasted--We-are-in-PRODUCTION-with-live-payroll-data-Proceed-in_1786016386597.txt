@@ -1,0 +1,30 @@
+⚠️ We are in PRODUCTION with live payroll data. Proceed in the exact phases below. Phase 1 is read-only and requires a report back before Phase 2 runs.
+
+PHASE 1 — Gail lookup (READ-ONLY, report before continuing)
+
+Call Rollfi's user lookup (getUserByEmail or getUsers for the company) for Gail Davis / Urban Concepts. Report:
+
+Does she exist in Rollfi? If yes: her Rollfi user ID, status, and wage info (does she have a wage set?)
+STOP and report before any writes. Her fix path depends on this answer.
+PHASE 2 — Data repairs (after Phase 1 report is reviewed)
+General backfill (covers Leticia + the 4 test-company mismatches): one-time reconciliation — for every employee where employees.rollfi_user_id is null but rollfi_employee_records has a Rollfi ID for that employee, write the ID back to the master row. Log each backfilled employee. This fixes the class, not just Leticia.
+Fix the boot repair: add the missing write to bootRepairLeticiaDuplicateEmployee so it's correct if it ever runs again (or retire it if the backfill makes it obsolete — your call, state which).
+Gail: per Phase 1 outcome — if she exists in Rollfi, backfill her ID (+ wage id if present) into the master row and create her rollfi_employee_records row. If she does NOT exist, do NOT auto-create her — report what the full sync chain would do and wait for my go-ahead (creating a real person in live payroll deserves an explicit yes).
+Orphan company ORG-MSDK0754-QRO44V (from Leticia's first failed wizard run, contains a Joanne remnant row): report what it contains and whether anything references it. Do NOT delete yet — recommend a cleanup approach.
+PHASE 3 — Systemic fixes
+Read fallback: GET /api/employees (and anywhere else that reads employees.rollfi_user_id for display) should fall back to rollfi_employee_records when the master field is null — so this class of gap can never show "Not set up" incorrectly again.
+Duplicate guard: add a unique constraint on (company_id, lower(email)) in employees, plus a friendly pre-insert check in POST /api/employees that returns a clear "This employee already exists in this company" error the wizard displays — never a raw DB error. Confirm the constraint won't fail to apply due to existing data (check for existing duplicates first; report if any).
+Silent sync failure — honest UI: when syncEmployeeToIntegrations fails any Rollfi step, the API must populate the failure fields (rollfiFailedSteps / syncStatus) so the wizard's existing failure indicators actually show. The wizard must never display plain success when the Rollfi chain failed — show "Employee saved, but payroll setup incomplete — [Retry]" wired to the existing Complete Payroll Setup repair tooling. Do not roll back the employee insert (partial save is fine) — the sin is hiding it, not saving it.
+SCOPE BOUNDARY
+
+Do not touch: payroll submission, existing Rollfi sync chain order, EasyTeam integration, wizard steps unrelated to error display. No deletions of any rows in this task.
+
+TESTING CHECKLIST
+ Leticia + the 4 test mismatches show correct payroll status after backfill
+ Gail resolved per her Phase 1 path (or halted awaiting go-ahead)
+ Duplicate test: attempt to create an employee with an existing email in the same company → friendly error, no row created
+ Simulated Rollfi failure on create → employee saved, wizard shows incomplete-setup state with Retry, NOT success
+ No regression in Directory/People Hub for unaffected employees
+DELIVERABLE
+
+Phase 1 findings first. Then per phase: what changed, rows affected (list), and confirmation of each checklist item.
