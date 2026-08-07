@@ -1,0 +1,63 @@
+🔴 URGENT PRODUCTION SECURITY FIX — smallest
+possible change, nothing else.
+
+SCOPE: artifacts/api-server/src/routes/clients.ts
+ONLY. Do NOT touch people.ts, rollfi.ts,
+easyteam.ts, payroll, the Rollfi sync chain,
+EasyTeam integration, wizards, or any other
+file in this task.
+
+PROBLEM: Every route in clients.ts has NO
+authentication. GET /clients and GET
+/clients/:clientId/employees return real
+company and employee data (names, emails,
+wages) to unauthenticated HTTP requests.
+POST/DELETE routes allow unauthenticated
+creation and deletion of companies and
+employees.
+
+REQUIRED:
+1. Apply requireAuth to EVERY route in
+   clients.ts.
+2. For routes taking a companyId/clientId,
+   call assertCompanyAccess so non-super_admin
+   callers can only reach their own company.
+3. POST /clients and DELETE /clients/:clientId
+   (create/delete companies): restrict to
+   super_admin via requireRole.
+4. POST /clients/:clientId/employees:
+   requireRole owner + super_admin, plus
+   assertCompanyAccess.
+
+CRITICAL — DO NOT BREAK PRODUCTION:
+Before changing anything, AUDIT and REPORT
+which frontend pages, background jobs, boot
+sequences, or integrations currently call
+these endpoints, and whether they call them
+with an authenticated session. If ANY caller
+is unauthenticated by design (e.g. a boot
+script or webhook), report it and STOP —
+do not apply the change to that specific
+route until I confirm.
+
+Then apply the fix to the routes that are
+safe to lock.
+
+TESTING CHECKLIST:
+- Unauthenticated curl to GET /clients →
+  401
+- Unauthenticated curl to GET
+  /clients/:clientId/employees → 401
+- Joanne (super_admin) can still use every
+  page that depends on these routes
+- An owner login can still load their own
+  company's data
+- An owner CANNOT reach another company's
+  clients data (403)
+- No regressions: payroll pages, People
+  pages, wizards, EasyTeam screens all load
+
+DELIVERABLE: list of callers found in the
+audit step, routes changed, guards applied,
+and confirmation nothing outside clients.ts
+was modified.

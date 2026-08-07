@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { requireAuth, requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
 import { store, type EmployeeStatus } from "../store";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount, deleteUserAccount } from "../lib/user-account-persist.js";
@@ -73,7 +74,7 @@ function projectEmployee(e: typeof employeesTable.$inferSelect) {
 // Sunshine and Rainbow). Store companies are listed first; DB rows for the same
 // ID take precedence and override the store entry. ORG-BRIGHTBRIDGE (HQ) is
 // always excluded — it is not a daycare client.
-router.get("/clients", async (_req, res) => {
+router.get("/clients", requireAuth, async (_req, res) => {
   const rows: (typeof companiesTable.$inferSelect)[] = await db.select().from(companiesTable).catch(() => []);
 
   // Build a map of DB rows keyed by ID.
@@ -112,7 +113,7 @@ router.get("/clients", async (_req, res) => {
 // In the unified model a "client" IS a company, so this creates a DB company row and
 // projects it back to the legacy Client shape. Retained for HTTP/Zod contract stability
 // (the generated `useCreateClient` hook); the in-app wizard creates companies via POST /api/companies.
-router.post("/clients", async (req, res) => {
+router.post("/clients", requireRole("super_admin"), async (req, res) => {
   const { name, locationName } = req.body as {
     name: string;
     locationName: string;
@@ -141,8 +142,9 @@ router.post("/clients", async (req, res) => {
 // ── DELETE /clients/:clientId ────────────────────────────────
 // Removes the company (the unified "client"). The `client_employee_records` table is left
 // in place per the data-retention requirement. Retained for contract stability.
-router.delete("/clients/:clientId", async (req, res) => {
+router.delete("/clients/:clientId", requireRole("super_admin"), async (req, res) => {
   const { clientId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
   const deleted = await db
     .delete(companiesTable)
     .where(eq(companiesTable.id, clientId))
@@ -170,8 +172,9 @@ router.delete("/clients/:clientId", async (req, res) => {
 });
 
 // ── GET /clients/by-company/:companyId ───────────────────────
-router.get("/clients/by-company/:companyId", async (req, res) => {
+router.get("/clients/by-company/:companyId", requireAuth, async (req, res) => {
   const { companyId } = req.params;
+  if (!assertCompanyAccess(req, res, companyId)) return;
   const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
   if (co) { res.json(projectCompany(co)); return; }
 
@@ -185,15 +188,17 @@ router.get("/clients/by-company/:companyId", async (req, res) => {
 });
 
 // ── GET /clients/:clientId/employees ─────────────────────────
-router.get("/clients/:clientId/employees", async (req, res) => {
+router.get("/clients/:clientId/employees", requireAuth, async (req, res) => {
   const { clientId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
   const rows = await db.select().from(employeesTable).where(eq(employeesTable.companyId, clientId)).catch(() => []);
   res.json({ employees: rows.map(projectEmployee) });
 });
 
 // ── POST /clients/:clientId/employees (quick-add) ────────────
-router.post("/clients/:clientId/employees", async (req, res) => {
+router.post("/clients/:clientId/employees", requireRole("super_admin", "owner"), async (req, res) => {
   const { clientId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
 
   const [co] = await db.select().from(companiesTable).where(eq(companiesTable.id, clientId)).catch(() => [undefined]);
   const storeCo = store.getCompany(clientId);
@@ -296,8 +301,9 @@ router.post("/clients/:clientId/employees", async (req, res) => {
 });
 
 // ── DELETE /clients/:clientId/employees/:employeeId ──────────
-router.delete("/clients/:clientId/employees/:employeeId", async (req, res) => {
+router.delete("/clients/:clientId/employees/:employeeId", requireAuth, async (req, res) => {
   const { clientId, employeeId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
   const [emp] = await db.select().from(employeesTable)
     .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, clientId)))
     .catch(() => [undefined]);
@@ -320,8 +326,9 @@ router.delete("/clients/:clientId/employees/:employeeId", async (req, res) => {
 });
 
 // ── PATCH /clients/:clientId/employees/:employeeId/status ────
-router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res) => {
+router.patch("/clients/:clientId/employees/:employeeId/status", requireAuth, async (req, res) => {
   const { clientId, employeeId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
   const { status } = req.body as { status: EmployeeStatus };
 
   const VALID: EmployeeStatus[] = ["hired", "onboarding", "active", "terminated"];
@@ -364,8 +371,9 @@ router.patch("/clients/:clientId/employees/:employeeId/status", async (req, res)
 });
 
 // ── POST /clients/:clientId/employees/:employeeId/sync ───────
-router.post("/clients/:clientId/employees/:employeeId/sync", async (req, res) => {
+router.post("/clients/:clientId/employees/:employeeId/sync", requireAuth, async (req, res) => {
   const { clientId, employeeId } = req.params;
+  if (!assertCompanyAccess(req, res, clientId)) return;
 
   const [emp] = await db.select().from(employeesTable)
     .where(and(eq(employeesTable.id, employeeId), eq(employeesTable.companyId, clientId)))
