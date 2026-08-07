@@ -13,6 +13,7 @@ import { desc, eq, inArray, and, isNull, isNotNull } from "drizzle-orm";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { getRollfiWageFields } from "../lib/rollfi-wage.js";
 import { safeRollfiLog } from "../lib/safe-rollfi-log.js";
+import { assertCompanyAccess } from "../lib/auth-middleware.js";
 import crypto from "crypto";
 
 // ── Rollfi / Convoy webhook HMAC verification ─────────────────────────────────
@@ -3653,6 +3654,18 @@ router.post("/rollfi/companies/:companyId/sync-employees", async (req, res) => {
 router.get("/rollfi/payroll/preview", async (req, res) => {
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
 
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _previewCaller = store.getUserById(req.session.userId);
+  if (!_previewCaller || !["super_admin", "owner", "manager"].includes(_previewCaller.role)) {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  if (!companyId && _previewCaller.role !== "super_admin") {
+    res.status(400).json({ error: "companyId required" }); return;
+  }
+  if (companyId && !assertCompanyAccess(req, res, companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
+
   const toDate = to ? new Date(to) : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const calendarDays = Math.round((toDate.getTime() - fromDate.getTime()) / (24 * 60 * 60 * 1000));
@@ -3821,6 +3834,15 @@ router.get("/rollfi/compensation-types", async (req, res) => {
 // ── Initiate payroll ─────────────────────────────────────────
 
 router.post("/rollfi/payroll/initiate", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _initiateCaller = store.getUserById(req.session.userId);
+  if (!_initiateCaller || !["super_admin", "owner"].includes(_initiateCaller.role)) {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
+
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4116,6 +4138,15 @@ router.post("/rollfi/payroll/initiate", async (req, res) => {
 // ── Import payroll data (Step 1 of 2-step payroll flow) ──────
 
 router.post("/rollfi/payroll/import", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _importCaller = store.getUserById(req.session.userId);
+  if (!_importCaller || !["super_admin", "owner"].includes(_importCaller.role)) {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
+
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4493,6 +4524,15 @@ router.post("/rollfi/payroll/import", async (req, res) => {
 // Rollfi's dashboard cancellation does not always clear the API-level submitted flag.
 
 router.post("/rollfi/payroll/cancel-submission", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _cancelCaller = store.getUserById(req.session.userId);
+  if (!_cancelCaller || !["super_admin", "owner"].includes(_cancelCaller.role)) {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
+
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4531,6 +4571,15 @@ router.post("/rollfi/payroll/cancel-submission", async (req, res) => {
 // ── Submit payroll (Step 2 of 2-step payroll flow) ───────────
 
 router.post("/rollfi/payroll/submit", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _submitCaller = store.getUserById(req.session.userId);
+  if (!_submitCaller || !["super_admin", "owner"].includes(_submitCaller.role)) {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
+
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4685,6 +4734,14 @@ router.get("/rollfi/payperiod/history", async (req, res) => {
 // ── Run all payroll (all onboarded companies in sequence) ─────
 
 router.post("/rollfi/payroll/run-all", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _runAllCaller = store.getUserById(req.session.userId);
+  if (!_runAllCaller || _runAllCaller.role !== "super_admin") {
+    res.status(403).json({ error: "Insufficient permissions" }); return;
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;

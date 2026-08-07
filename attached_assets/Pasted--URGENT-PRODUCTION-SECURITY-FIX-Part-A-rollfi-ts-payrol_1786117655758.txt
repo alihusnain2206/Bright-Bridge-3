@@ -1,0 +1,108 @@
+🔴 URGENT PRODUCTION SECURITY FIX — Part A
+(rollfi.ts payroll routes only).
+
+⚠️ THIS FILE MOVES REAL MONEY. A live payroll
+run must not break. All changes are ADDITIVE
+GUARDS ONLY. Do not run checks in parallel with
+a publish.
+
+SCOPE: artifacts/api-server/src/routes/rollfi.ts
+ONLY, and ONLY the six routes listed below.
+Do NOT touch any other route in this file — the
+~30 remaining unguarded routes (onboarding,
+bank, repair tools, /rollfi/state) are a
+SEPARATE task. Do NOT touch POST /rollfi/webhook
+under any circumstances — it is HMAC-verified
+and must stay unauthenticated. Do NOT touch
+people.ts, clients.ts, easyteam.ts, companies.ts,
+the Rollfi sync chain internals, EasyTeam,
+wizards, or any frontend file.
+
+DO NOT CHANGE any handler's business logic,
+request/response shape, Rollfi API calls, or
+existing status codes. Add guards only.
+
+CONTEXT (from your prior audit — do not
+re-derive): rollfi.ts has no router-level auth
+middleware. These six routes either have no
+session check or read the session without
+enforcing it. Confirmed: no mobile app, boot
+script, cron, webhook, or server-to-server
+caller hits any of them — all current callers
+are logged-in browser pages that always send
+companyId.
+
+CRITICAL PLACEMENT RULE: every guard must be
+the VERY FIRST lines of the handler — before
+getRollfiConfig(), before any store call, before
+any DB read, and before any Rollfi API call. A
+401/403 must never leave a partial Rollfi state.
+
+ROUTES AND GUARDS:
+
+1. GET /rollfi/payroll/preview
+   - require session (401 if absent)
+   - requireRole: super_admin, owner, manager
+   - if companyId is absent AND caller is not
+     super_admin → 400 "companyId required"
+     (do NOT fall through to the all-company
+     path)
+   - if companyId present → assertCompanyAccess
+   - the existing `!companyId ||` filter
+     short-circuit must no longer be reachable
+     by a non-super_admin caller
+
+2. POST /rollfi/payroll/initiate
+3. POST /rollfi/payroll/import
+4. POST /rollfi/payroll/submit
+5. POST /rollfi/payroll/cancel-submission
+   For each of these four:
+   - require session (401 if absent)
+   - requireRole: super_admin, owner
+   - assertCompanyAccess on body.companyId;
+     if body.companyId is missing → 400
+   - guard lines must precede ALL existing
+     handler logic
+
+6. POST /rollfi/payroll/run-all
+   - requireRole: super_admin ONLY
+   - no company scoping (it iterates all
+     companies by design)
+
+TESTING CHECKLIST (report actual results):
+- Unauthenticated curl to each of the six
+  routes → 401 (verify submit and run-all
+  specifically)
+- GET /rollfi/payroll/preview with NO
+  companyId as an owner → 400, not
+  all-company data
+- GET /rollfi/payroll/preview with no
+  companyId as super_admin → still works as
+  before
+- Owner can preview / initiate / submit for
+  their OWN company exactly as before
+- Owner gets 403 attempting preview,
+  initiate, or submit with another company's
+  companyId
+- Manager can still load the preview for
+  their own company (manager-payroll.tsx and
+  manager-payroll-submit.tsx)
+- Manager gets 403 on initiate/submit (role
+  excluded)
+- Non-super_admin gets 403 on run-all
+- Joanne (super_admin) can still do
+  everything across companies
+- REGRESSION — most important: walk the full
+  payroll flow on a test company end to end
+  (payperiod → preview → initiate → submit)
+  and confirm no behavioural change and no
+  partial Rollfi state
+- Confirm POST /rollfi/webhook still accepts
+  inbound events unchanged
+
+DELIVERABLE SUMMARY: the six routes changed,
+the exact guard lines and where they were
+placed relative to existing logic, confirmation
+that no other route in rollfi.ts was touched,
+confirmation the webhook is untouched, and the
+full test results.
