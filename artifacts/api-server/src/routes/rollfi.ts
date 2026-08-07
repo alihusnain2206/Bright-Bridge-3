@@ -861,6 +861,12 @@ router.post("/rollfi/employees", async (req, res) => {
 router.delete("/rollfi/employees/:userId", async (req, res) => {
   if (!req.session.userId) { res.status(401).json({ error: "Unauthorized" }); return; }
   const { userId } = req.params;
+  // ── Company access guard (additive — no business logic changed below) ────
+  const _delCaller = store.getUserById(req.session.userId);
+  if (!_delCaller || !["super_admin", "owner"].includes(_delCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  const _delTarget = store.getUserById(userId);
+  if (_delTarget && _delCaller.role !== "super_admin" && _delCaller.companyId !== _delTarget.companyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+  // ─────────────────────────────────────────────────────────────────────────
   const deleted = store.deleteStaffUser(userId);
   if (!deleted) {
     res.status(404).json({ error: "Employee not found or cannot be deleted" });
@@ -889,6 +895,11 @@ router.post("/rollfi/employees/deactivate", async (req, res) => {
   const allStaff = store.getAllStaffUsers();
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+  // ── Company access guard (additive — no business logic changed below) ────
+  const _deactivateCaller = store.getUserById(req.session.userId);
+  if (!_deactivateCaller || !["super_admin", "owner"].includes(_deactivateCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (_deactivateCaller.role !== "super_admin" && _deactivateCaller.companyId !== employee.companyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+  // ─────────────────────────────────────────────────────────────────────────
 
   // Resolve actual status: store resets to "active" on restart; trust DB for non-active states
   let deactivateStatus = employee.status;
@@ -984,6 +995,11 @@ router.post("/rollfi/employees/terminate", async (req, res) => {
   const allStaff = store.getAllStaffUsers();
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+  // ── Company access guard (additive — no business logic changed below) ────
+  const _terminateCaller = store.getUserById(req.session.userId);
+  if (!_terminateCaller || !["super_admin", "owner"].includes(_terminateCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (_terminateCaller.role !== "super_admin" && _terminateCaller.companyId !== employee.companyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+  // ─────────────────────────────────────────────────────────────────────────
 
   // Resolve actual status: store resets to "active" on restart; trust DB for non-active states
   let terminateStatus = employee.status;
@@ -1078,6 +1094,11 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
   const allStaff = store.getAllStaffUsers();
   const employee = allStaff.find((u) => u.employeeId === employeeId);
   if (!employee) { res.status(404).json({ error: "Employee not found" }); return; }
+  // ── Company access guard (additive — no business logic changed below) ────
+  const _reactivateCaller = store.getUserById(req.session.userId);
+  if (!_reactivateCaller || !["super_admin", "owner"].includes(_reactivateCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (_reactivateCaller.role !== "super_admin" && _reactivateCaller.companyId !== employee.companyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+  // ─────────────────────────────────────────────────────────────────────────
 
   // Resolve actual status: in-memory store resets to "active" on restart, so trust DB when store says active
   let effectiveStatus = employee.status;
