@@ -1,0 +1,100 @@
+ROLE: You are a senior full-stack TypeScript
+engineer performing a READ-ONLY AUDIT of the
+authentication and role system in this app.
+
+CRITICAL RULE: DO NOT MODIFY ANY CODE, ANY
+FILE, OR THE DATABASE. This is a report-only
+task. Do not refactor, do not fix anything
+you find, do not run migrations. Report only.
+
+CONTEXT: We are planning to add two new
+platform-level roles ("technical" and
+"super_manager") for a support ticket system.
+Before designing that change, we need a
+complete picture of how roles and auth work
+today.
+
+AUDIT AND REPORT THE FOLLOWING:
+
+1. ROLE STORAGE
+- Where is a user's role stored? (table,
+  column, type — exact schema definition
+  from lib/db/src/schema/index.ts)
+- What are the exact role values currently
+  in use? Is the role field a free text
+  column, an enum, or constrained some
+  other way?
+- Query the user_accounts table and report
+  the DISTINCT role values that actually
+  exist in the data right now, and how many
+  users hold each role.
+
+2. SESSION & LOGIN FLOW
+- How does login work? (endpoint, what gets
+  stored in the session, where the session
+  lives)
+- After login, how does the frontend learn
+  the user's role? (API endpoint, session
+  object, context/state)
+- Is the role cached anywhere client-side
+  (localStorage, React context, store.ts)?
+
+3. ROLE CHECKS — BACKEND
+- List every backend location that checks
+  a user's role (middleware, route guards,
+  inline checks like role === 'super_admin').
+  For each: file, what it protects, and
+  which roles pass.
+- Is there a central authorization
+  middleware/helper, or are checks scattered
+  inline per route?
+
+4. ROLE CHECKS — FRONTEND
+- How does the sidebar decide which items to
+  show per role? (file, mechanism)
+- List other frontend locations that branch
+  on role (quick actions, settings tabs,
+  company selector, route guards/redirects).
+
+5. USER CREATION PATHS
+- List every code path that creates a
+  user_accounts row today (wizard auto-create,
+  Grant Access flow, seed scripts, anything
+  else). For each: what role it assigns and
+  how the password is set.
+- Is there any existing way to create a
+  PLATFORM-LEVEL user (one not tied to a
+  single company), other than super_admin?
+- How is super_admin itself represented —
+  does Joanne's account have a companyId or
+  is it null/special?
+
+6. COMPANY SCOPING
+- How is company scoping enforced for
+  super_admin vs other roles? (e.g. does
+  super_admin pass a companyId explicitly
+  via the company selector?)
+- If a new role needed to see data ACROSS
+  companies (like super_admin does), what
+  exactly would it need to satisfy the
+  current scoping checks?
+
+7. RISK ASSESSMENT
+- Based on the above: if we add two new role
+  values ("technical", "super_manager"),
+  list every place that would need to change
+  or could break, ordered by risk.
+- Flag any place where an unknown role value
+  would cause a crash, a lockout, or
+  unintended access (e.g. default-deny vs
+  default-allow behavior in checks).
+- State whether the role column/type itself
+  needs a migration to accept new values,
+  or whether new values can be written
+  without schema change.
+
+DELIVERABLE: A structured report covering
+all 7 sections, with exact file paths and
+line references where relevant. NO CODE
+CHANGES. If you are tempted to fix something
+you find, note it in the report instead.
