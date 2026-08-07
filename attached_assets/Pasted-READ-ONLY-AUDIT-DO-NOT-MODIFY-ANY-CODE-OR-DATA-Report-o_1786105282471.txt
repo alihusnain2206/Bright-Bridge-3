@@ -1,0 +1,69 @@
+READ-ONLY AUDIT. DO NOT MODIFY ANY CODE OR
+DATA. Report only.
+
+CONTEXT: A prior audit found that every route
+in artifacts/api-server/src/routes/people.ts
+is protected ONLY by an inline
+if (!req.session.userId) check — no
+requireRole, no assertCompanyAccess. We will
+fix this next, but we must not lock out
+legitimate users. This audit tells us what
+"legitimate" means per route.
+
+For EVERY route in people.ts, report:
+
+1. ROUTE INVENTORY
+   Method, path, what it does (read/write/
+   delete), and what data it touches.
+
+2. WHO CALLS IT TODAY
+   Every frontend caller (file + component)
+   for each route. For each caller, state
+   which user roles actually reach that
+   screen in the app today (based on sidebar
+   entries and App.tsx route guards).
+   Flag any route with NO frontend caller —
+   these may be dead code.
+
+3. INTENDED ACCESS (your recommendation)
+   For each route, state which roles SHOULD
+   be allowed, and whether access should be
+   further limited to:
+   - own record only (employee reading their
+     own documents)
+   - own team (manager, via employees.managerId)
+   - own company (owner)
+   - any company (super_admin)
+   Call out explicitly where an employee must
+   retain access to their OWN data, since
+   over-locking would break self-service.
+
+4. SCOPING MECHANICS
+   For routes taking employeeId: how would
+   the server verify that employee belongs to
+   the caller's company? Report the exact
+   lookup available (table/field/helper).
+   For routes taking a document/task/
+   compliance/contact ID: how does the server
+   resolve that record back to an employee
+   and then to a company? Report the join
+   path for each of the 5 people tables.
+
+5. NON-BROWSER CALLERS
+   Does anything other than the frontend call
+   these routes — boot scripts, webhooks,
+   Rollfi/EasyTeam callbacks, background jobs,
+   the mobile app? List them. If any is
+   unauthenticated by design, flag it as a
+   STOPPER.
+
+6. RISK ORDER
+   Rank the routes by exposure severity
+   (binary document downloads and PII first),
+   so we can fix in priority order if we need
+   to split the work.
+
+DELIVERABLE: the per-route table (inventory,
+callers, recommended access, scoping join
+path), the stopper list, and your proposed
+guard plan. NO CODE CHANGES.
