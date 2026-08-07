@@ -1,0 +1,95 @@
+🔴 PRODUCTION SECURITY FIX — Part 1 of 2.
+
+⚠️ LIVE PRODUCTION APP with real payroll. All
+changes must be additive guards only. Do not
+run checks in parallel with a publish.
+
+SCOPE: artifacts/api-server/src/routes/people.ts
+ONLY, and ONLY the routes listed below. Do NOT
+touch rollfi.ts, easyteam.ts, companies.ts,
+clients.ts, payroll processing, the Rollfi sync
+chain, EasyTeam, wizards, or any frontend file.
+Do NOT change any handler's business logic,
+response shape, or status codes other than
+adding 403s. Do NOT implement manager
+team-scoping (managerId) — company-level
+scoping only in this task.
+
+CONTEXT (from your prior audit — do not
+re-derive): every route in people.ts is guarded
+only by an inline session check. No employee-
+role user can reach any of these routes today
+(App.tsx and layout.tsx exclude them), so
+locking to super_admin | owner | manager breaks
+no current flow. All five people tables carry
+companyId directly on each row.
+
+REQUIRED PATTERN:
+1. Add requireRole("super_admin", "owner",
+   "manager") to each route below.
+2. Add a shared helper (e.g.
+   assertResourceCompany) that compares the
+   resource's companyId to the caller's
+   companyId, with super_admin bypassing.
+   Return 403 on mismatch. Reuse the row the
+   handler already fetches for its 404 check —
+   do NOT add redundant queries where the row
+   is already loaded.
+3. Keep existing 404 behaviour: unknown ID
+   still returns 404, not 403.
+
+ROUTES IN THIS TASK (highest risk first):
+- GET /documents/:id/download  ← currently does
+  NO DB read at all; add a lookup of the
+  document row's companyId BEFORE streaming
+  from GCS/filesystem
+- PATCH /employees/:id
+- GET /documents (by employeeId AND by
+  companyId — the caller-supplied companyId
+  must be verified against the caller's own
+  company, not trusted)
+- POST /documents/upload
+- POST /documents
+- PUT /documents/:id
+- DELETE /documents/:id
+- GET /emergency-contacts (verify the
+  employeeId belongs to the caller's company)
+- POST /emergency-contacts
+- PUT /emergency-contacts/:id
+- DELETE /emergency-contacts/:id
+- POST /activity-log
+- GET /activity-log
+
+CRITICAL RULE ON QUERY PARAMS: wherever a
+route accepts companyId or employeeId from the
+query/body, that value must be VERIFIED against
+the caller's company — never trusted as a
+filter. This was the core finding of the audit.
+
+TESTING CHECKLIST (report actual results):
+- Joanne (super_admin) can still read/download
+  documents, edit employees, and manage
+  emergency contacts across companies
+- An owner can do all of the above for their
+  OWN company
+- An owner gets 403 attempting any of these
+  with another company's employeeId,
+  companyId, or document/contact ID
+- A manager can still complete their existing
+  flows for their own company
+- Document download of another company's doc
+  ID returns 403, not the file
+- Unknown IDs still return 404
+- No frontend changes were needed (report if
+  any page breaks)
+- Regression: People Hub pages, employee
+  profile tabs, EmergencyContactForm,
+  EmployeeDocuments, TaskActionModal all still
+  load and function for owner + super_admin
+
+DELIVERABLE SUMMARY: routes changed, the
+helper added, where each companyId comparison
+draws its value from, confirmation no extra
+DB queries were added except on
+/documents/:id/download, and confirmation
+nothing outside people.ts was modified.

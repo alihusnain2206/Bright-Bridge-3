@@ -11,6 +11,7 @@ import {
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { store, type Department } from "../store.js";
+import { requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -52,6 +53,17 @@ const router: IRouter = Router();
 
 function uid() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
 function nowIso() { return new Date().toISOString(); }
+
+/**
+ * Resolves the companyId for an employee from the DB.
+ * Used when a route only receives employeeId in the query/body and must
+ * verify company membership before touching the resource.
+ * Returns null if the employee does not exist.
+ */
+async function resolveEmployeeCompany(employeeId: string): Promise<string | null> {
+  const [row] = await db.select({ companyId: employees.companyId }).from(employees).where(eq(employees.id, employeeId));
+  return row?.companyId ?? null;
+}
 function addDays(dateStr: string | undefined, days: number): string {
   const base = dateStr ? new Date(dateStr) : new Date();
   base.setDate(base.getDate() + days);
@@ -674,8 +686,7 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
 
 // ─── PATCH EMPLOYEE ────────────────────────────────────────────
 
-router.patch("/employees/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.patch("/employees/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = String(req.params.id);
 
   // String fields (stored as-is)
@@ -702,6 +713,7 @@ router.patch("/employees/:id", async (req: Request, res: Response) => {
     // for fields that haven't actually moved.
     const [existing] = await db.select().from(employees).where(eq(employees.id, id));
     if (!existing) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, existing.companyId)) return;
 
     const dbUpdates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
     const changed = new Set<string>();
@@ -1409,11 +1421,13 @@ router.post("/compliance/:id/waive", async (req: Request, res: Response) => {
 
 // ─── EMERGENCY CONTACTS ───────────────────────────────────────
 
-router.get("/emergency-contacts", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/emergency-contacts", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const employeeId = String(req.query.employeeId ?? "");
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
   try {
+    const empCompanyId = await resolveEmployeeCompany(employeeId);
+    if (!empCompanyId) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, empCompanyId)) return;
     const contacts = await db.select().from(emergencyContactsTable).where(eq(emergencyContactsTable.employeeId, employeeId));
     res.json({ contacts });
   } catch (err) {
@@ -1422,12 +1436,12 @@ router.get("/emergency-contacts", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/emergency-contacts", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/emergency-contacts", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const body = req.body as Partial<ContactRow> & { employeeId?: string; companyId?: string };
   if (!body.employeeId || !body.companyId || !body.name || !body.relationship || !body.phoneNumber) {
     res.status(400).json({ error: "employeeId, companyId, name, relationship, and phoneNumber required" }); return;
   }
+  if (!assertCompanyAccess(req, res, body.companyId)) return;
   try {
     const now = nowIso();
     const [created] = await db.insert(emergencyContactsTable).values({
@@ -1464,9 +1478,11 @@ router.post("/emergency-contacts", async (req: Request, res: Response) => {
   }
 });
 
-router.put("/emergency-contacts/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.put("/emergency-contacts/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   try {
+    const [existing] = await db.select().from(emergencyContactsTable).where(eq(emergencyContactsTable.id, req.params.id as string));
+    if (!existing) { res.status(404).json({ error: "Contact not found" }); return; }
+    if (!assertCompanyAccess(req, res, existing.companyId)) return;
     const [updated] = await db.update(emergencyContactsTable)
       .set({ ...(req.body as Record<string, unknown>), updatedAt: nowIso() })
       .where(eq(emergencyContactsTable.id, req.params.id as string)).returning();
@@ -1478,9 +1494,11 @@ router.put("/emergency-contacts/:id", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/emergency-contacts/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.delete("/emergency-contacts/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   try {
+    const [existing] = await db.select().from(emergencyContactsTable).where(eq(emergencyContactsTable.id, req.params.id as string));
+    if (!existing) { res.status(404).json({ error: "Contact not found" }); return; }
+    if (!assertCompanyAccess(req, res, existing.companyId)) return;
     await db.delete(emergencyContactsTable).where(eq(emergencyContactsTable.id, req.params.id as string));
     res.json({ success: true });
   } catch (err) {
@@ -1491,11 +1509,14 @@ router.delete("/emergency-contacts/:id", async (req: Request, res: Response) => 
 
 // ─── DOCUMENTS ────────────────────────────────────────────────
 
-router.get("/documents", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/documents", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const { employeeId, companyId } = req.query as Record<string, string | undefined>;
   if (!employeeId && !companyId) { res.status(400).json({ error: "employeeId or companyId required" }); return; }
   try {
+    // Verify the caller has access to the target company before querying.
+    // When only employeeId is provided, resolve the company from the employee row.
+    const resolvedCompanyId = companyId ?? await resolveEmployeeCompany(employeeId!);
+    if (!assertCompanyAccess(req, res, resolvedCompanyId ?? undefined)) return;
     const cond = employeeId
       ? eq(employeeDocumentsTable.employeeId, employeeId)
       : eq(employeeDocumentsTable.companyId, companyId!);
@@ -1507,11 +1528,11 @@ router.get("/documents", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/documents/:id/download", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/documents/:id/download", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   try {
     const [doc] = await db.select().from(employeeDocumentsTable).where(eq(employeeDocumentsTable.id, req.params.id as string));
     if (!doc) { res.status(404).json({ error: "Document not found" }); return; }
+    if (!assertCompanyAccess(req, res, doc.companyId)) return;
     if (!doc.fileUrl) { res.status(404).json({ error: "File not found on server" }); return; }
 
     // New GCS-backed documents: fileUrl starts with /objects/
@@ -1543,14 +1564,14 @@ router.get("/documents/:id/download", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/documents/upload", upload.single("file"), async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/documents/upload", requireRole("super_admin", "owner", "manager"), upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) { res.status(400).json({ error: "No file provided or file type not allowed (PDF, JPG, PNG only)" }); return; }
   const body = req.body as Record<string, string>;
   const { employeeId, companyId, documentType, documentName, customTypeName, expiryDate, notes } = body;
   if (!employeeId || !companyId || !documentType || !documentName) {
     res.status(400).json({ error: "employeeId, companyId, documentType, documentName required" }); return;
   }
+  if (!assertCompanyAccess(req, res, companyId)) return;
   try {
     const now = nowIso();
     const docId = `doc-${uid()}`;
@@ -1624,12 +1645,12 @@ router.post("/documents/upload", upload.single("file"), async (req: Request, res
   }
 });
 
-router.post("/documents", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/documents", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const body = req.body as Partial<DocRow>;
   if (!body.employeeId || !body.companyId || !body.documentName || !body.documentType || !body.fileName) {
     res.status(400).json({ error: "employeeId, companyId, documentName, documentType, fileName required" }); return;
   }
+  if (!assertCompanyAccess(req, res, body.companyId)) return;
   try {
     const now = nowIso();
     const [created] = await db.insert(employeeDocumentsTable).values({
@@ -1651,9 +1672,11 @@ router.post("/documents", async (req: Request, res: Response) => {
   }
 });
 
-router.put("/documents/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.put("/documents/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   try {
+    const [existing] = await db.select().from(employeeDocumentsTable).where(eq(employeeDocumentsTable.id, req.params.id as string));
+    if (!existing) { res.status(404).json({ error: "Document not found" }); return; }
+    if (!assertCompanyAccess(req, res, existing.companyId)) return;
     const [updated] = await db.update(employeeDocumentsTable)
       .set({ ...(req.body as Record<string, unknown>), updatedAt: nowIso() })
       .where(eq(employeeDocumentsTable.id, req.params.id as string)).returning();
@@ -1665,9 +1688,11 @@ router.put("/documents/:id", async (req: Request, res: Response) => {
   }
 });
 
-router.delete("/documents/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.delete("/documents/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   try {
+    const [existing] = await db.select().from(employeeDocumentsTable).where(eq(employeeDocumentsTable.id, req.params.id as string));
+    if (!existing) { res.status(404).json({ error: "Document not found" }); return; }
+    if (!assertCompanyAccess(req, res, existing.companyId)) return;
     await db.update(employeeDocumentsTable).set({ status: "rejected", updatedAt: nowIso() }).where(eq(employeeDocumentsTable.id, req.params.id as string));
     res.json({ success: true });
   } catch (err) {
@@ -1678,10 +1703,10 @@ router.delete("/documents/:id", async (req: Request, res: Response) => {
 
 // ─── ACTIVITY LOG ─────────────────────────────────────────────
 
-router.get("/activity-log", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/activity-log", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const { companyId, employeeId, category, limit } = req.query as Record<string, string | undefined>;
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
     const conds = [eq(peopleActivityLogTable.companyId, companyId)];
@@ -1701,12 +1726,12 @@ router.get("/activity-log", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/activity-log", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/activity-log", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const body = req.body as { companyId?: string; employeeId?: string; action?: string; description?: string; category?: string; performedBy?: string; metadata?: Record<string, unknown> };
   if (!body.companyId || !body.action || !body.description || !body.category) {
     res.status(400).json({ error: "companyId, action, description, category required" }); return;
   }
+  if (!assertCompanyAccess(req, res, body.companyId)) return;
   try {
     await logPeopleActivity({ companyId: body.companyId, employeeId: body.employeeId, action: body.action, description: body.description, category: body.category, performedBy: body.performedBy ?? req.session.userId, metadata: body.metadata });
     res.status(201).json({ success: true });
