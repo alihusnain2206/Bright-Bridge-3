@@ -1,0 +1,219 @@
+ROLE: You are a senior full-stack TypeScript
+engineer adding two new platform support roles
+and a self-serve platform-account screen to
+BrightBridge Assist.
+
+⚠️ PRODUCTION CONSTRAINT: This is a LIVE
+production app with real companies running
+real payroll. Existing logins MUST continue
+working exactly as today. All changes must be
+ADDITIVE. Do not run checks in parallel with
+a publish.
+
+SCOPE BOUNDARY:
+Do NOT touch: Payroll processing, the Rollfi
+sync chain, EasyTeam integration (do NOT add
+new-role cases to the EasyTeam JWT endpoint —
+unknown roles falling to the null-token branch
+is acceptable), wizards, the People module,
+company settings logic, assertCompanyAccess
+in lib/auth-middleware.ts (do NOT add the new
+roles to its super_admin exemption). Do NOT
+modify or remove any hardcoded testUsers
+entry in store.ts. Do NOT change the boot
+sequence (loadUserAccountsFromDb /
+reconcileEmployeeLoginAccounts) beyond what
+Part 1 states, and do NOT refactor the
+in-memory store pattern.
+
+CONTEXT (from prior audits — verify, do not
+re-derive): Login reads only the in-memory
+testUsers array via store.getUserByEmail.
+At boot, loadUserAccountsFromDb() copies all
+user_accounts DB rows into that array
+(email-deduped via store.addTestUser). The
+role column in user_accounts is plain text —
+no DB migration needed for new role values.
+
+PART 1 — LOGIN SAFETY NET + IMMEDIATE
+AVAILABILITY OF NEW ACCOUNTS
+
+1. POST /auth/login: keep the existing
+   store.getUserByEmail lookup FIRST,
+   unchanged. ONLY if it returns undefined,
+   fall back to querying user_accounts by
+   email (case-insensitive).
+   - DB-fallback users authenticate with
+     bcrypt compare ONLY (their stored hash).
+     Never plaintext-compare on this path.
+   - On success: store the user's id in
+     req.session.userId as usual, AND push
+     the account into the in-memory store via
+     store.addTestUser so subsequent
+     getUserById calls (e.g. /auth/me) find
+     it.
+   - Deactivated accounts (check schema for
+     isActive/status) are rejected with the
+     same generic error as a wrong password.
+2. GET /auth/me: add the same fallback
+   (store.getUserById first, then
+   user_accounts by id; push into store on
+   hit). Response shape unchanged
+   ({ user, company, location }); platform
+   accounts (companyId null) return company
+   as undefined.
+3. Report (do not blanket-change) any other
+   endpoints resolving the session user the
+   same way. Change-password: if the target
+   account has a user_accounts row, persist
+   the new bcrypt hash to the DB row (not
+   only the in-memory mutation).
+
+PART 2 — NEW ROLE VALUES
+
+1. Add "technical" and "super_manager" to
+   the role union type in the schema
+   (compile-time only; no DB migration).
+2. components/layout.tsx sidebar switch: add
+   cases for both new roles. Their sidebar =
+   ONLY a "Support Tickets" item (route
+   /support-admin, icon: headset/lifebuoy)
+   plus the standard profile/logout
+   affordance. No People, no Payroll, no
+   company selector.
+3. App.tsx route guards: register
+   /support-admin allowing roles:
+   super_admin, technical, super_manager.
+   For now the page is a PLACEHOLDER:
+   brand-styled card "Support Tickets —
+   coming soon" (navy #1B3A6B header, teal
+   #0EA5C9 accent). The real ticket system
+   arrives in a later task.
+4. Do NOT add the new roles to any existing
+   requireRole call site. Outside the
+   placeholder route they should have access
+   to nothing.
+
+PART 3 — MANAGE SUPPORT ROLES SCREEN
+
+New page /admin/support-roles, super_admin
+ONLY (frontend guard + backend
+requireRole("super_admin") on every
+endpoint).
+
+Backend (TypeScript):
+- POST /api/admin/platform-users
+  body: { name, email, role } where role ∈
+  technical | super_manager.
+  * Reject if email exists in EITHER the
+    in-memory testUsers OR user_accounts
+    (case-insensitive) — note: several old
+    test emails like ali@rainbow.com exist;
+    duplicates must be blocked, not masked.
+  * Generate a strong temp password, bcrypt-
+    hash it, insert a user_accounts row with
+    companyId = null.
+  * ALSO call store.addTestUser immediately
+    with the same account so it can log in
+    with NO restart. The in-memory entry must
+    carry the bcrypt hash (login already
+    detects $2b$ prefixes and compares with
+    bcrypt — verify this and confirm in the
+    deliverable).
+  * Return the temp password ONCE in the
+    response.
+- GET /api/admin/platform-users — list DB
+  platform accounts (companyId null): name,
+  email, role, active status, created date.
+  Do NOT list hardcoded testUsers.
+- PATCH /api/admin/platform-users/:id —
+  deactivate/reactivate, switch role between
+  technical/super_manager, reset password
+  (new temp password returned once; update
+  BOTH the DB row and the in-memory entry).
+  Deactivation must also remove/disable the
+  in-memory entry so login is blocked
+  immediately, not after restart. Guard
+  against editing super_admin accounts.
+
+Frontend page:
+- Table: name, email, role badge (Technical
+  = teal chip, Super Manager = navy chip),
+  status, created date
+- "Add Support User" primary button (navy)
+  → modal: name, email, role select →
+  success state shows the one-time temp
+  password with a copy button and the note
+  "Share this securely — it will not be
+  shown again"
+- Row actions: reset password (confirm),
+  deactivate/reactivate (confirm), change
+  role
+- Empty state, loading skeletons, error
+  with retry
+- Sidebar entry for super_admin only:
+  "Support Roles"
+
+PART 4 — CREATE ALI'S ACCOUNT
+
+Via the new endpoint/code path (NOT a
+hardcoded testUsers entry), create:
+  name: Ali Husnain
+  email: ali@brightbridgeassist.com
+  role: technical
+  companyId: null
+(Do NOT reuse ali@rainbow.com — that email
+is taken by an old test account.) Report the
+generated temp password in the deliverable
+summary.
+
+PART 5 — RULES
+1. TypeScript throughout; existing card/
+   badge/modal patterns; brand colors
+2. bcrypt for ALL new password material;
+   never store or log plaintext
+3. No duplicate fetches; company-scoped
+   rules unchanged elsewhere
+4. Session shape unchanged (userId only)
+
+TESTING CHECKLIST:
+- Joanne (joanne@brightbridgeassist.com)
+  logs in exactly as before; sidebar
+  unchanged for her
+- David Brown's owner login works unchanged
+  (he is a boot-loaded DB account — good
+  regression test for the boot path)
+- A wizard-created employee login works
+  unchanged
+- Create Ali via /admin/support-roles →
+  Ali logs in IMMEDIATELY (no restart) with
+  the temp password; /auth/me returns role
+  "technical"; sidebar shows ONLY Support
+  Tickets; /people and /payroll routes
+  redirect away
+- technical account sees the placeholder at
+  /support-admin
+- Restart/redeploy → Ali logs in again (DB
+  row reloaded at boot)
+- Duplicate email (try ali@rainbow.com and
+  an existing employee email) is rejected
+  with a clear message
+- Deactivate Ali → login blocked
+  immediately; reactivate → works again
+- Wrong password on the new account fails
+  with the same generic error as store
+  accounts
+- /admin/support-roles returns 403/redirect
+  for owner, manager, employee, technical,
+  super_manager
+- No regressions: People pages, payroll
+  pages, wizards untouched
+
+DELIVERABLE SUMMARY: files changed, new
+endpoints, exact login lookup order,
+confirmation that store.addTestUser handles
+bcrypt-hashed passwords on the plaintext-vs-
+hash branch, Ali's temp password, and
+confirmation that no hardcoded testUsers
+entry, EasyTeam code, boot sequence, or
+assertCompanyAccess logic was modified.

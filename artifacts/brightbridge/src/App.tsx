@@ -52,6 +52,8 @@ import SettingsHubPage from "@/pages/settings-hub";
 import AccountSettingsPage from "@/pages/account-settings";
 import CompanySettingsPage from "@/pages/company-settings";
 import UsersAccessPage from "@/pages/users-access";
+import SupportAdminPage from "@/pages/support-admin";
+import SupportRolesPage from "@/pages/support-roles";
 
 const queryClient = new QueryClient();
 
@@ -247,6 +249,12 @@ function Router() {
             </Route>
             <Route path="/payroll">
               <ProtectedRoute component={Payroll} roles={["super_admin"]} />
+            </Route>
+            <Route path="/support-admin">
+              <ProtectedRoute component={SupportAdminPage} roles={["super_admin", "technical", "super_manager"]} />
+            </Route>
+            <Route path="/admin/support-roles">
+              <ProtectedRoute component={SupportRolesPage} roles={["super_admin"]} />
             </Route>
             <Route path="/roles" component={Roles} />
             <Route component={NotFound} />

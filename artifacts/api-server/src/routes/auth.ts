@@ -88,6 +88,30 @@ async function resolveUserCompany(companyId?: string): Promise<object | undefine
 
 // ── Login ────────────────────────────────────────────────────
 
+/** Shape returned by the DB fallback path. Mirrors TestUser closely enough for auth. */
+async function loadUserFromDb(email: string): Promise<import("../store.js").TestUser | undefined> {
+  const [row] = await db
+    .select()
+    .from(userAccounts)
+    .where(eq(userAccounts.email, email.toLowerCase()))
+    .catch(() => [undefined]);
+  if (!row) return undefined;
+  // Deactivated DB accounts are rejected outright
+  if (row.isActive === false) return undefined;
+  return {
+    id:         row.id,
+    name:       row.name,
+    email:      row.email,
+    password:   row.password,
+    role:       row.role as import("../store.js").UserRole,
+    companyId:  row.companyId ?? "",
+    locationId: row.locationId ?? undefined,
+    employeeId: row.employeeId ?? null,
+    position:   row.position ?? "",
+    isActive:   row.isActive,
+  };
+}
+
 router.post("/auth/login", async (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
   if (!email || !password) {
@@ -95,16 +119,44 @@ router.post("/auth/login", async (req, res) => {
     return;
   }
 
-  const user = store.getUserByEmail(email);
+  // 1. In-memory store — covers hardcoded testUsers + all boot-loaded DB accounts
+  let user = store.getUserByEmail(email);
+
+  // 2. DB fallback — catches newly-created platform accounts that weren't present at boot
+  //    (e.g. created via POST /api/admin/platform-users after the server started, in a
+  //    different process, or before the first restart). Only bcrypt-compare on this path.
+  let fromDbFallback = false;
+  if (!user) {
+    const dbUser = await loadUserFromDb(email);
+    if (dbUser) {
+      // Push into store so getUserById works for the rest of this session
+      store.addTestUser(dbUser);
+      user = dbUser;
+      fromDbFallback = true;
+    }
+  }
+
   if (!user) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
-  // Support both legacy plain-text passwords and bcrypt hashes (set via change-password)
+
+  // DB-fallback accounts must use bcrypt (they were created with a bcrypt hash).
+  // In-memory accounts support both legacy plaintext and bcrypt hashes.
   const storedPw = user.password;
-  const isMatch = (storedPw.startsWith("$2b$") || storedPw.startsWith("$2a$"))
-    ? await bcrypt.compare(password, storedPw)
-    : storedPw === password;
+  let isMatch: boolean;
+  if (fromDbFallback) {
+    // Strict: DB fallback always bcrypt-only
+    isMatch = (storedPw.startsWith("$2b$") || storedPw.startsWith("$2a$"))
+      ? await bcrypt.compare(password, storedPw)
+      : false;
+  } else {
+    // Legacy plaintext or bcrypt — existing behaviour unchanged
+    isMatch = (storedPw.startsWith("$2b$") || storedPw.startsWith("$2a$"))
+      ? await bcrypt.compare(password, storedPw)
+      : storedPw === password;
+  }
+
   if (!isMatch) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
@@ -112,7 +164,7 @@ router.post("/auth/login", async (req, res) => {
 
   req.session.userId = user.id;
   const { password: _p, ...safeUser } = user;
-  const company = await resolveUserCompany(user.companyId);
+  const company = await resolveUserCompany(user.companyId || undefined);
   const location = await resolveUserLocation(user.id);
   res.json({ user: safeUser, company, location });
 });
@@ -246,12 +298,42 @@ router.get("/auth/me", async (req, res) => {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
-  const user = store.getUserById(req.session.userId);
+
+  // 1. In-memory store (fast path)
+  let user = store.getUserById(req.session.userId);
+
+  // 2. DB fallback — for accounts added after boot (e.g. new platform accounts)
+  if (!user) {
+    const [row] = await db
+      .select()
+      .from(userAccounts)
+      .where(eq(userAccounts.id, req.session.userId))
+      .catch(() => [undefined]);
+    if (row && row.isActive !== false) {
+      const dbUser: import("../store.js").TestUser = {
+        id:         row.id,
+        name:       row.name,
+        email:      row.email,
+        password:   row.password,
+        role:       row.role as import("../store.js").UserRole,
+        companyId:  row.companyId ?? "",
+        locationId: row.locationId ?? undefined,
+        employeeId: row.employeeId ?? null,
+        position:   row.position ?? "",
+        isActive:   row.isActive,
+      };
+      store.addTestUser(dbUser);
+      const { password: _p, ...safe } = dbUser;
+      user = safe;
+    }
+  }
+
   if (!user) {
     res.status(401).json({ error: "User not found" });
     return;
   }
-  const company = await resolveUserCompany(user.companyId);
+
+  const company = await resolveUserCompany(user.companyId || undefined);
   const location = await resolveUserLocation(user.id);
   // Attach photoUrl from DB (not stored in in-memory TestUser)
   const [dbRow] = await db

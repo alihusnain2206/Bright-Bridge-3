@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
-export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent";
+export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent" | "technical" | "super_manager";
 
 export interface AuthUser {
   id: string;
@@ -125,6 +125,7 @@ export function useAuth() {
 }
 
 export function dashboardPath(role: UserRole): string {
+  if (role === "technical" || role === "super_manager") return "/support-admin";
   return `/dashboard/${role.replace("_", "-")}`;
 }
 

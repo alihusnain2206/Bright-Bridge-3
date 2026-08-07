@@ -5,7 +5,7 @@ import {
   Webhook, Settings, SlidersHorizontal, LogOut, ShieldCheck, Scale, Building2, DollarSign,
   Users, Briefcase, ChevronDown, ChevronRight,
   UserPlus, ClipboardList, FolderOpen, Phone, FileText,
-  BarChart2, AlertTriangle, UserCog, Menu, X,
+  BarChart2, AlertTriangle, UserCog, Menu, X, Headphones,
 } from "lucide-react";
 import { useAuth, dashboardPath } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
@@ -60,9 +60,10 @@ function getNavItems(role: string | undefined): NavItem[] {
             { href: "/settings",         label: "Organization Settings" },
           ],
         },
-        { href: "/config",    label: "Config",    icon: SlidersHorizontal },
-        { href: "/roles",     label: "Roles",     icon: Scale },
-        { href: "/webhooks",  label: "Webhooks",  icon: Webhook },
+        { href: "/config",               label: "Config",         icon: SlidersHorizontal },
+        { href: "/roles",                label: "Roles",          icon: Scale },
+        { href: "/webhooks",             label: "Webhooks",       icon: Webhook },
+        { href: "/admin/support-roles",  label: "Support Roles",  icon: ShieldCheck },
       ];
     case "owner":
       return [
@@ -124,17 +125,24 @@ function getNavItems(role: string | undefined): NavItem[] {
         { href: dashboardPath("parent"), label: "Dashboard",       icon: LayoutDashboard },
         { href: "/roles",                label: "Role Comparison", icon: Scale },
       ];
+    case "technical":
+    case "super_manager":
+      return [
+        { href: "/support-admin", label: "Support Tickets", icon: Headphones },
+      ];
     default:
       return [];
   }
 }
 
 const ROLE_COLOR: Record<string, string> = {
-  super_admin: "#dc2626",
-  owner:       "#7c3aed",
-  manager:     "#d97706",
-  employee:    "#16a34a",
-  parent:      "#2563eb",
+  super_admin:   "#dc2626",
+  owner:         "#7c3aed",
+  manager:       "#d97706",
+  employee:      "#16a34a",
+  parent:        "#2563eb",
+  technical:     "#0EA5C9",
+  super_manager: "#1B3A6B",
 };
 
 interface CompanyInfo { id: string; name: string; ein?: string; }

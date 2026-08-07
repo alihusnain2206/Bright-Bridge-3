@@ -2,7 +2,7 @@ export type EmployeeStatus = "hired" | "invited" | "onboarding" | "active" | "on
 
 // ─── ROLE-BASED DATA ────────────────────────────────────────
 
-export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent";
+export type UserRole = "super_admin" | "owner" | "manager" | "employee" | "parent" | "technical" | "super_manager";
 
 export interface TestUser {
   id: string;
@@ -18,6 +18,8 @@ export interface TestUser {
   /** 'hourly' | 'salary' — carried from wizard so preview works before the DB is consulted. */
   payType?: string;
   status?: EmployeeStatus;
+  /** false = deactivated; login and session lookup return undefined for this account */
+  isActive?: boolean;
   onLeaveReason?: string;
   onLeaveDate?: string;
   expectedReturnDate?: string;
@@ -289,11 +291,15 @@ export const store = {
     return companies.find((c) => c.id === id);
   },
   getUserByEmail(email: string): TestUser | undefined {
-    return testUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    const u = testUsers.find((u) => u.email.toLowerCase() === email.toLowerCase());
+    // isActive defaults to true for hardcoded entries that predate the field
+    if (u && u.isActive === false) return undefined;
+    return u;
   },
   getUserById(id: string): Omit<TestUser, "password"> | undefined {
     const user = testUsers.find((u) => u.id === id);
     if (!user) return undefined;
+    if (user.isActive === false) return undefined;
     const { password: _p, ...safe } = user;
     return safe;
   },

@@ -50,11 +50,12 @@ export const userAccounts = pgTable("user_accounts", {
   email:       text("email").notNull().unique(),
   password:    text("password").notNull(),
   role:        text("role").notNull().default("employee"),
-  companyId:   text("company_id").notNull().default(""),
+  companyId:   text("company_id").default(""),
   locationId:  text("location_id"),
   employeeId:  text("employee_id"),
   position:    text("position"),
   photoUrl:    text("photo_url"),
+  isActive:    boolean("is_active").notNull().default(true),
   createdAt:   text("created_at").notNull(),
 });
 

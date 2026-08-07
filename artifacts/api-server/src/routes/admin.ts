@@ -9,9 +9,10 @@
  */
 import { Router } from "express";
 import * as bcrypt from "bcryptjs";
+import * as crypto from "crypto";
 import { db, employees, userAccounts, companySignedForms, companies } from "@workspace/db";
 import { eq, and, isNotNull, inArray, isNull } from "drizzle-orm";
-import { store } from "../store.js";
+import { store, type UserRole } from "../store.js";
 import { FORM_8655_STALE_THRESHOLD_MS } from "../lib/form8655-constants.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
@@ -314,6 +315,208 @@ adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
     req.log.error({ err }, "POST /admin/easyteam/register-company failed");
     res.status(500).json({ error: "Registration failed" });
   }
+});
+
+// ── Platform-level user management ───────────────────────────────────────────
+// These endpoints manage "technical" and "super_manager" accounts that have no
+// company affiliation (companyId IS NULL). super_admin access only throughout.
+
+const PLATFORM_ROLES: UserRole[] = ["technical", "super_manager"];
+
+function generateTempPassword(): string {
+  // 20 chars: letters + digits, cryptographically random
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  return Array.from(crypto.randomBytes(20))
+    .map((b) => chars[b % chars.length])
+    .join("");
+}
+
+// POST /api/admin/platform-users — create a new platform support account
+adminRouter.post("/admin/platform-users", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(403).json({ error: "super_admin access required" }); return;
+  }
+
+  const { name, email, role } = req.body as { name?: string; email?: string; role?: string };
+  if (!name?.trim() || !email?.trim() || !role) {
+    res.status(400).json({ error: "name, email, and role are required" }); return;
+  }
+  if (!PLATFORM_ROLES.includes(role as UserRole)) {
+    res.status(400).json({ error: `role must be one of: ${PLATFORM_ROLES.join(", ")}` }); return;
+  }
+
+  const normalEmail = email.trim().toLowerCase();
+
+  // Reject if email already exists in-memory (covers hardcoded testUsers + boot-loaded DB accounts)
+  if (store.getUserByEmail(normalEmail)) {
+    res.status(409).json({ error: "An account with this email already exists" }); return;
+  }
+  // Also check DB directly — catches deactivated accounts (getUserByEmail skips them)
+  const [existingDb] = await db
+    .select({ id: userAccounts.id })
+    .from(userAccounts)
+    .where(eq(userAccounts.email, normalEmail));
+  if (existingDb) {
+    res.status(409).json({ error: "An account with this email already exists" }); return;
+  }
+
+  const tempPassword = generateTempPassword();
+  const hashed = await bcrypt.hash(tempPassword, 12);
+  const newId = `PLAT-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
+  const now = new Date().toISOString();
+
+  // Insert DB row with companyId = null (platform account, no company affiliation)
+  await db.insert(userAccounts).values({
+    id:        newId,
+    name:      name.trim(),
+    email:     normalEmail,
+    password:  hashed,
+    role:      role,
+    companyId: null,
+    isActive:  true,
+    createdAt: now,
+  });
+
+  // Push into in-memory store immediately so login works without a restart
+  store.addTestUser({
+    id:         newId,
+    name:       name.trim(),
+    email:      normalEmail,
+    password:   hashed,
+    role:       role as UserRole,
+    companyId:  "",
+    employeeId: null,
+    position:   role === "technical" ? "Technical Support" : "Support Manager",
+    isActive:   true,
+  });
+
+  req.log.info({
+    audit: "platform-user-created",
+    callerUserId: caller.id,
+    newUserId: newId,
+    email: normalEmail,
+    role,
+  }, `[AUDIT] platform-user created: ${normalEmail} (${role}) by ${caller.email}`);
+
+  // Return temp password ONCE — it is not stored in plaintext anywhere
+  res.status(201).json({ id: newId, name: name.trim(), email: normalEmail, role, tempPassword });
+});
+
+// GET /api/admin/platform-users — list DB platform accounts (companyId IS NULL)
+adminRouter.get("/admin/platform-users", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(403).json({ error: "super_admin access required" }); return;
+  }
+
+  const rows = await db
+    .select({
+      id:        userAccounts.id,
+      name:      userAccounts.name,
+      email:     userAccounts.email,
+      role:      userAccounts.role,
+      isActive:  userAccounts.isActive,
+      createdAt: userAccounts.createdAt,
+    })
+    .from(userAccounts)
+    .where(isNull(userAccounts.companyId));
+
+  res.json({ users: rows });
+});
+
+// PATCH /api/admin/platform-users/:id — deactivate/reactivate, change role, reset password
+adminRouter.patch("/admin/platform-users/:id", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(403).json({ error: "super_admin access required" }); return;
+  }
+
+  const targetId = req.params.id;
+  const [targetRow] = await db
+    .select()
+    .from(userAccounts)
+    .where(eq(userAccounts.id, targetId));
+
+  if (!targetRow) {
+    res.status(404).json({ error: "Account not found" }); return;
+  }
+  // Guard: cannot edit a super_admin account
+  if (targetRow.role === "super_admin") {
+    res.status(403).json({ error: "Cannot modify a super_admin account" }); return;
+  }
+
+  const body = req.body as {
+    isActive?: boolean;
+    role?: string;
+    resetPassword?: boolean;
+  };
+
+  const dbUpdate: Record<string, unknown> = {};
+  const result: Record<string, unknown> = { id: targetId };
+
+  // ── Deactivate / reactivate ──
+  if (typeof body.isActive === "boolean") {
+    dbUpdate.isActive = body.isActive;
+    result.isActive = body.isActive;
+
+    // Sync in-memory immediately so login is blocked/unblocked without restart
+    const rawUser = store.getRawUser(targetId);
+    if (rawUser) {
+      (rawUser as Record<string, unknown>).isActive = body.isActive;
+    } else if (body.isActive) {
+      // Reactivating an account that was never in-memory — push it in now
+      store.addTestUser({
+        id:         targetRow.id,
+        name:       targetRow.name,
+        email:      targetRow.email,
+        password:   targetRow.password,
+        role:       targetRow.role as UserRole,
+        companyId:  targetRow.companyId ?? "",
+        employeeId: targetRow.employeeId ?? null,
+        position:   targetRow.position ?? "",
+        isActive:   true,
+      });
+    }
+  }
+
+  // ── Change role ──
+  if (body.role !== undefined) {
+    if (!PLATFORM_ROLES.includes(body.role as UserRole)) {
+      res.status(400).json({ error: `role must be one of: ${PLATFORM_ROLES.join(", ")}` }); return;
+    }
+    dbUpdate.role = body.role;
+    result.role = body.role;
+    const rawUser = store.getRawUser(targetId);
+    if (rawUser) (rawUser as Record<string, unknown>).role = body.role;
+  }
+
+  // ── Reset password ──
+  let tempPassword: string | undefined;
+  if (body.resetPassword) {
+    tempPassword = generateTempPassword();
+    const hashed = await bcrypt.hash(tempPassword, 12);
+    dbUpdate.password = hashed;
+    // Sync in-memory
+    const rawUser = store.getRawUser(targetId);
+    if (rawUser) rawUser.password = hashed;
+    result.tempPassword = tempPassword;
+  }
+
+  if (Object.keys(dbUpdate).length === 0) {
+    res.status(400).json({ error: "No changes specified (isActive, role, or resetPassword)" }); return;
+  }
+
+  await db.update(userAccounts).set(dbUpdate).where(eq(userAccounts.id, targetId));
+
+  req.log.info({
+    audit: "platform-user-updated",
+    callerUserId: caller.id,
+    targetId,
+    changes: Object.keys(dbUpdate).filter((k) => k !== "password"),
+  }, `[AUDIT] platform-user updated: ${targetId} by ${caller.email}`);
+
+  res.json({ ok: true, ...result });
 });
 
 export default adminRouter;

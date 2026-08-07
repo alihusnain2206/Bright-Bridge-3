@@ -22,3 +22,4 @@
 - [Owner Dashboard Phase 2 — Payroll Command Center](dashboard-phase2.md) — full rebuild of dashboard-owner.tsx; layout, data sources, widget prop quirks, cash derivation
 - [Rollfi updateCompanyLocation endpoint](rollfi-update-company-location.md) — correct URL is /adminPortal/updateCompanyLocation (flat body, no flags); Rollfi 500 bug open with their support (log IDs 17104–17201)
 - [Repair onboarding — null rollfiUserId gap](repair-onboarding-adduser-gap.md) — two-branch repair-onboarding; branch 1 re-runs full addUser with current DB values; error translation helper; People Hub inline retry UI
+- [Platform roles and login DB fallback](platform-roles-login-fallback.md) — technical/super_manager roles; DB-fallback login path; isActive column; /api/admin/platform-users endpoints; Ali's account PLAT-8575F7AC319C
