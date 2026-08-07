@@ -1,0 +1,108 @@
+🔴 PRODUCTION SECURITY FIX — Part 2 of 2
+(people.ts).
+
+⚠️ LIVE PRODUCTION APP with real payroll. All
+changes must be additive guards only. Do not
+run checks in parallel with a publish.
+
+SCOPE: artifacts/api-server/src/routes/people.ts
+ONLY, and ONLY the routes listed below. The 13
+routes hardened in Part 1 are DONE — do not
+modify them again. Do NOT touch rollfi.ts,
+easyteam.ts, companies.ts, clients.ts, payroll
+processing, the Rollfi sync chain, EasyTeam,
+wizards, or any frontend file. Do NOT change
+handler business logic, response shapes, or
+status codes other than adding 403s. Do NOT
+implement manager team-scoping (managerId) —
+company-level scoping only.
+
+REUSE what Part 1 built: the same
+requireRole(...) pattern, the same company
+comparison helper, and resolveEmployeeCompany.
+Do not create a second parallel helper.
+
+ROUTES IN THIS TASK:
+
+Onboarding tasks:
+- GET /onboarding-tasks (by employeeId OR
+  companyId — verify BOTH against the caller's
+  company; never trust the param as a filter)
+- GET /onboarding-tasks/pipeline
+- GET /onboarding-tasks/:id
+- POST /onboarding-tasks/:id/complete
+- POST /onboarding-tasks/:id/skip
+- POST /onboarding-tasks/:id/reopen
+- POST /onboarding-tasks/:id/notes
+
+Compliance:
+- GET /compliance (by employeeId)
+- GET /compliance/company-overview
+- POST /compliance/:id/complete
+- POST /compliance/:id/reopen
+- POST /compliance/:id/waive  ← NOTE: this one
+  is restricted to requireRole("super_admin",
+  "owner") only — NOT manager. Waiving is a
+  policy decision. It currently has no frontend
+  caller; guard it, do not delete it.
+
+Employees / misc:
+- POST /employees/:id/sync-address
+- POST /employees/:id/photo
+- GET /employees/:id/photo  ← currently reads
+  the filesystem with NO DB read at all; add a
+  companyId lookup on the employee before
+  serving the file
+- DELETE /employees/:id/photo
+- GET /departments
+- POST /departments
+- PUT /departments/:id
+- DELETE /departments/:id
+
+ROLE ASSIGNMENT: all routes above get
+requireRole("super_admin", "owner", "manager")
+EXCEPT POST /compliance/:id/waive as noted.
+
+COMPANY SCOPING: onboardingTasks,
+complianceItems, and taskNotes all carry
+companyId directly on the row — reuse the row
+the handler already fetches for its 404 check
+rather than adding a query. Report any route
+where a new query was genuinely unavoidable.
+
+Departments note: departments live in the
+in-memory store, not the DB. Scope them by the
+caller's companyId the same way, and report how
+the store exposes company association.
+
+TESTING CHECKLIST (report actual results):
+- Joanne (super_admin) can complete/skip/
+  reopen tasks, add notes, complete/reopen
+  compliance items, manage departments, and
+  view/upload/delete photos across companies
+- An owner can do all of the above for their
+  OWN company
+- An owner gets 403 for another company's
+  task ID, compliance ID, employeeId,
+  companyId param, or photo
+- A manager can still complete their normal
+  task and compliance flows for their own
+  company
+- A manager gets 403 on POST
+  /compliance/:id/waive
+- GET /employees/:id/photo for another
+  company's employee returns 403, not the
+  image
+- Unknown IDs still return 404, not 403
+- Regression: People Hub, employee profile
+  tabs (Onboarding, Compliance, Documents),
+  TaskActionModal (all task types),
+  EmployeeCompliancePanel, department
+  add/rename/delete in Settings, photo upload
+  in the wizard and profile all still work
+
+DELIVERABLE SUMMARY: routes changed, which
+helper each reuses, any new DB queries added
+and why, how departments were scoped, and
+confirmation nothing outside people.ts was
+modified.

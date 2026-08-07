@@ -823,12 +823,12 @@ const photoUpload = multer({
 // ── Force-sync address to Rollfi ───────────────────────────────
 // Pushes all four address fields from the DB to Rollfi's updateKycInformation
 // regardless of what changed.  Used when a previous sync failed silently.
-router.post("/employees/:id/sync-address", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/employees/:id/sync-address", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = String(req.params.id);
   try {
     const [emp] = await db.select().from(employees).where(eq(employees.id, id));
     if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, emp.companyId)) return;
     if (!emp.rollfiUserId) {
       res.status(400).json({ error: "Employee has no Rollfi account — cannot sync address" }); return;
     }
@@ -868,13 +868,13 @@ router.post("/employees/:id/sync-address", async (req: Request, res: Response) =
   }
 });
 
-router.post("/employees/:id/photo", photoUpload.single("photo"), async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/employees/:id/photo", requireRole("super_admin", "owner", "manager"), photoUpload.single("photo"), async (req: Request, res: Response) => {
   if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
   const empId = String(req.params.id);
   try {
     const [emp] = await db.select().from(employees).where(eq(employees.id, empId));
     if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, emp.companyId)) return;
     const ext = req.file.mimetype === "image/png" ? "png" : req.file.mimetype === "image/webp" ? "webp" : "jpg";
     const filename = `${empId}.${ext}`;
     const filepath = path.join(PHOTOS_DIR, filename);
@@ -894,9 +894,12 @@ router.post("/employees/:id/photo", photoUpload.single("photo"), async (req: Req
   }
 });
 
-router.get("/employees/:id/photo", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/employees/:id/photo", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const empId = String(req.params.id);
+  // Company check: photo route doesn't read the employee row normally, so we need one lookup.
+  const empCompanyId = await resolveEmployeeCompany(empId);
+  if (!empCompanyId) { res.status(404).json({ error: "No photo" }); return; }
+  if (!assertCompanyAccess(req, res, empCompanyId)) return;
   // Find file (any extension)
   let found: string | null = null;
   try {
@@ -912,12 +915,12 @@ router.get("/employees/:id/photo", async (req: Request, res: Response) => {
   fs.createReadStream(found).pipe(res);
 });
 
-router.delete("/employees/:id/photo", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.delete("/employees/:id/photo", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const empId = String(req.params.id);
   try {
     const [emp] = await db.select().from(employees).where(eq(employees.id, empId));
     if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, emp.companyId)) return;
     // Delete file(s)
     try {
       for (const f of fs.readdirSync(PHOTOS_DIR)) {
@@ -935,10 +938,10 @@ router.delete("/employees/:id/photo", async (req: Request, res: Response) => {
 
 // ─── DEPARTMENTS ──────────────────────────────────────────────
 
-router.get("/departments", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/departments", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   const depts = store.getDepartments(companyId);
   const empRows = await db.select({ id: employees.id, dept: employees.department })
@@ -951,20 +954,20 @@ router.get("/departments", async (req: Request, res: Response) => {
   res.json({ departments: result });
 });
 
-router.post("/departments", (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/departments", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
   const { companyId, name } = req.body as { companyId?: string; name?: string };
   if (!companyId || !name) { res.status(400).json({ error: "companyId and name required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   const dept: Department = { id: `dept-${uid()}`, companyId, name: name.trim(), type: "custom", isDefault: false, isActive: true, createdAt: nowIso() };
   store.addDepartment(dept);
   res.status(201).json({ department: dept });
 });
 
-router.put("/departments/:id", (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.put("/departments/:id", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
   const dept = store.getDepartmentById(req.params.id as string);
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
+  if (!assertCompanyAccess(req, res, dept.companyId)) return;
   if (dept.isDefault) { res.status(400).json({ error: "Cannot rename a default department" }); return; }
   const { name } = req.body as { name?: string };
   if (!name) { res.status(400).json({ error: "name required" }); return; }
@@ -972,10 +975,10 @@ router.put("/departments/:id", (req: Request, res: Response) => {
   res.json({ department: { ...dept, name: name.trim() } });
 });
 
-router.delete("/departments/:id", (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.delete("/departments/:id", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
   const dept = store.getDepartmentById(req.params.id as string);
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
+  if (!assertCompanyAccess(req, res, dept.companyId)) return;
   if (dept.isDefault) { res.status(400).json({ error: "Cannot delete a default department" }); return; }
   store.deleteDepartment(dept.id);
   res.json({ success: true });
@@ -983,12 +986,14 @@ router.delete("/departments/:id", (req: Request, res: Response) => {
 
 // ─── ONBOARDING TASKS ─────────────────────────────────────────
 
-router.get("/onboarding-tasks", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/onboarding-tasks", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const { employeeId, companyId, status } = req.query as Record<string, string | undefined>;
 
   try {
     if (employeeId) {
+      const empCompanyId = await resolveEmployeeCompany(employeeId);
+      if (!empCompanyId) { res.status(404).json({ error: "Employee not found" }); return; }
+      if (!assertCompanyAccess(req, res, empCompanyId)) return;
       const tasks = await db.select().from(onboardingTasksTable)
         .where(eq(onboardingTasksTable.employeeId, employeeId));
       const total = tasks.length;
@@ -1004,6 +1009,7 @@ router.get("/onboarding-tasks", async (req: Request, res: Response) => {
     }
 
     if (companyId) {
+      if (!assertCompanyAccess(req, res, companyId)) return;
       const conds = [eq(onboardingTasksTable.companyId, companyId)];
       if (status) conds.push(eq(onboardingTasksTable.status, status));
       const tasks = await db.select().from(onboardingTasksTable).where(and(...conds));
@@ -1018,10 +1024,10 @@ router.get("/onboarding-tasks", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/onboarding-tasks/pipeline", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/onboarding-tasks/pipeline", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
     const all = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.companyId, companyId));
@@ -1038,13 +1044,13 @@ router.get("/onboarding-tasks/pipeline", async (req: Request, res: Response) => 
   }
 });
 
-router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/onboarding-tasks/:id/complete", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
 
   try {
     const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!assertCompanyAccess(req, res, task.companyId)) return;
 
     const now = nowIso();
     const { completionMethod, completionNote, acknowledgedBy, acknowledgedAt, linkedDocumentId } = req.body as Record<string, string>;
@@ -1150,12 +1156,12 @@ router.post("/onboarding-tasks/:id/complete", async (req: Request, res: Response
   }
 });
 
-router.post("/onboarding-tasks/:id/skip", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/onboarding-tasks/:id/skip", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!assertCompanyAccess(req, res, task.companyId)) return;
     if (task.isRequired) { res.status(400).json({ error: "Cannot skip a required task" }); return; }
     await db.update(onboardingTasksTable).set({ status: "skipped", updatedAt: nowIso() }).where(eq(onboardingTasksTable.id, id));
     res.json({ success: true });
@@ -1165,12 +1171,12 @@ router.post("/onboarding-tasks/:id/skip", async (req: Request, res: Response) =>
   }
 });
 
-router.get("/onboarding-tasks/:id", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/onboarding-tasks/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!assertCompanyAccess(req, res, task.companyId)) return;
     const notes = await db.select().from(taskNotesTable).where(eq(taskNotesTable.taskId, id));
     let linkedDocuments: DocRow[] = [];
     if (task.linkedDocumentIds) {
@@ -1184,12 +1190,12 @@ router.get("/onboarding-tasks/:id", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/onboarding-tasks/:id/reopen", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/onboarding-tasks/:id/reopen", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [task] = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.id, id));
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!assertCompanyAccess(req, res, task.companyId)) return;
     if (task.status === "pending") { res.status(400).json({ error: "Task is already pending" }); return; }
 
     const now = nowIso();
@@ -1232,14 +1238,14 @@ router.post("/onboarding-tasks/:id/reopen", async (req: Request, res: Response) 
   }
 });
 
-router.post("/onboarding-tasks/:id/notes", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/onboarding-tasks/:id/notes", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const taskId = req.params.id as string;
   const { text } = req.body as { text?: string };
   if (!text?.trim()) { res.status(400).json({ error: "Note text is required" }); return; }
   try {
     const [task] = await db.select({ id: onboardingTasksTable.id, employeeId: onboardingTasksTable.employeeId, companyId: onboardingTasksTable.companyId, taskName: onboardingTasksTable.taskName }).from(onboardingTasksTable).where(eq(onboardingTasksTable.id, taskId));
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+    if (!assertCompanyAccess(req, res, task.companyId)) return;
     const storeUser = store.getUserById(req.session.userId);
     const authorName = storeUser?.name ?? req.session.userId;
     const now = nowIso();
@@ -1273,12 +1279,14 @@ function getLinkedTaskNames(type: string, name: string): string[] {
   return MAP[type] ?? [];
 }
 
-router.get("/compliance", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/compliance", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const employeeId = String(req.query.employeeId ?? "");
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
 
   try {
+    const empCompanyId = await resolveEmployeeCompany(employeeId);
+    if (!empCompanyId) { res.status(404).json({ error: "Employee not found" }); return; }
+    if (!assertCompanyAccess(req, res, empCompanyId)) return;
     const items = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.employeeId, employeeId));
     const allTasks = await db.select({
       id: onboardingTasksTable.id,
@@ -1301,10 +1309,10 @@ router.get("/compliance", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/compliance/company-overview", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.get("/compliance/company-overview", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const companyId = String(req.query.companyId ?? "");
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
     const all = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.companyId, companyId));
@@ -1325,12 +1333,12 @@ router.get("/compliance/company-overview", async (req: Request, res: Response) =
   }
 });
 
-router.post("/compliance/:id/complete", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/compliance/:id/complete", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
     if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    if (!assertCompanyAccess(req, res, item.companyId)) return;
 
     // Guard: reject if any required pending linked tasks exist
     const linkedNames = getLinkedTaskNames(item.type, item.name);
@@ -1377,12 +1385,12 @@ router.post("/compliance/:id/complete", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/compliance/:id/reopen", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/compliance/:id/reopen", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
     if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    if (!assertCompanyAccess(req, res, item.companyId)) return;
     if (item.status !== "completed") { res.status(400).json({ error: "Item is not completed" }); return; }
 
     const now = nowIso();
@@ -1404,12 +1412,12 @@ router.post("/compliance/:id/reopen", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/compliance/:id/waive", async (req: Request, res: Response) => {
-  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+router.post("/compliance/:id/waive", requireRole("super_admin", "owner"), async (req: Request, res: Response) => {
   const id = req.params.id as string;
   try {
     const [item] = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.id, id));
     if (!item) { res.status(404).json({ error: "Compliance item not found" }); return; }
+    if (!assertCompanyAccess(req, res, item.companyId)) return;
     if (item.isRequired) { res.status(400).json({ error: "Cannot waive a required compliance item" }); return; }
     await db.update(complianceItemsTable).set({ status: "waived", updatedAt: nowIso() }).where(eq(complianceItemsTable.id, id));
     res.json({ success: true });
