@@ -1,0 +1,23 @@
+⚠️ AUDIT ONLY — do not modify, build, or refactor anything. Read and report. We're planning a multi-location feature (client has 4 physical daycare sites under one company) and need to know exactly what location support already exists across our stack before designing.
+
+Report on each of the following:
+
+1. Our database
+Does any table currently have a location concept (employees, companies, timesheet_shifts, or elsewhere)? Any location, site, workLocation columns anywhere?
+How are departments stored (the in-memory store pattern) — summarize the mechanism, since locations may want a similar-or-better treatment
+What would be the natural place for: (a) a locations table per company, (b) an employee's home-location reference, (c) a per-shift worked-location reference
+2. EasyTeam
+What location support does EasyTeam have? Check our integration code and their API/SDK docs: do locations exist as entities, can employees belong to multiple, and do clock-in/shift records carry a location ID?
+The location-ID mismatch bug we fixed previously (schedule grid) — summarize how EasyTeam location IDs currently map to anything on our side. Is there currently exactly one EasyTeam location per company?
+Do shifts/timesheets we pull (timesheet_shifts table) include a location field today, even if unused?
+3. Rollfi
+What does CompanyLocations in Rollfi hold today for our companies — one location or several? What fields per location?
+Check Rollfi's API docs: is there a supported way to (a) add multiple company locations, (b) associate an employee with a specific location, (c) does location affect anything payroll/tax-wise (work-location-based tax jurisdiction)? This matters because all 4 sites are NYC but future clients may have sites in different tax jurisdictions.
+4. Existing reporting surfaces
+Where do payroll cost aggregations currently happen (the payroll screen widgets, /api/dashboard/payroll work)? What would "cost by location" need as inputs — do we have per-employee per-period pay amounts accessible outside Rollfi's payrollLineItems?
+Is there any existing custom-field / tag mechanism on employees we could use for a "DOE contract" flag, or would it be a new column?
+5. Access scoping
+Summarize how role-based data scoping works today (owner sees company, manager sees ?) — what would "director sees only their location's staff" require structurally?
+DELIVERABLE
+
+Structured findings per section, flagging anything that makes multi-location harder or easier than expected. NO code changes, no schema changes, no recommendations to implement yet — findings only. We'll design after reviewing.
