@@ -1,0 +1,145 @@
+🔴 PRODUCTION SECURITY FIX — rollfi.ts Part B.
+
+⚠️ LIVE PRODUCTION APP. All changes are
+ADDITIVE GUARDS ONLY. Do not run checks in
+parallel with a publish.
+
+SCOPE: artifacts/api-server/src/routes/rollfi.ts
+ONLY. The six payroll routes from Part A
+(preview, initiate, import, submit,
+cancel-submission, run-all) are DONE — do not
+modify them again. Do NOT touch POST
+/rollfi/webhook under any circumstances (HMAC-
+verified, must stay unauthenticated). Do NOT
+touch people.ts, clients.ts, easyteam.ts,
+companies.ts, the Rollfi sync chain internals,
+EasyTeam, wizards, or any frontend file.
+
+DO NOT CHANGE any handler's business logic,
+request/response shape, Rollfi API calls, or
+existing status codes. Add guards only.
+
+REUSE Part A's pattern: guards as the VERY
+FIRST lines of each handler, before
+getRollfiConfig(), before any store call, DB
+read, or Rollfi API call. Reuse
+assertCompanyAccess and the same
+resolve-employee-company approach used in
+people.ts (resolveEmployeeCompany) where only
+an employeeId is available.
+
+CONTEXT (from your prior audit — do not
+re-derive): confirmed no mobile app, boot
+script, cron, or server-to-server caller hits
+any of these routes. All current callers are
+logged-in browser pages.
+
+ROUTES AND GUARDS — TIER 1 (do these first,
+highest exposure):
+
+- GET /rollfi/state → super_admin ONLY
+  (full dump of all companies + employees +
+  Rollfi IDs)
+- POST /rollfi/onboard/bank-account → owner,
+  super_admin + assertCompanyAccess on
+  body.companyId
+- GET /rollfi/onboard/bank-status → owner,
+  super_admin + assertCompanyAccess
+- POST /rollfi/onboard/verify-bank → owner,
+  super_admin + assertCompanyAccess
+- POST /rollfi/onboard/company → owner,
+  super_admin + assertCompanyAccess
+- POST /rollfi/repair-store-wages →
+  super_admin ONLY (touches all companies)
+- POST /rollfi/admin/seed-statuses →
+  super_admin ONLY
+- POST /admin/employees/:id/set-rollfi-user-id
+  → super_admin ONLY
+- GET /admin/rollfi/company-users →
+  super_admin ONLY
+- GET /rollfi/payroll/overview → super_admin
+  ONLY (all companies)
+
+TIER 2 — company-scoped reads and writes
+(super_admin, owner, manager unless noted;
+assertCompanyAccess on the companyId from
+query, body, or URL param as applicable):
+
+- GET /rollfi/payperiod
+- GET /rollfi/payperiod/history
+- GET /rollfi/payperiod/details
+- GET /rollfi/paystubs
+- GET /rollfi/company-tasks
+- GET /rollfi/employees/status
+- GET /rollfi/employees/:id/live-status
+  (resolve company from the employee record)
+- GET /rollfi/repair/preflight-status
+- POST /rollfi/onboard/employee (resolve from
+  employeeId)
+- POST /rollfi/employees/:id/retry-kyc
+  (resolve from employee record)
+- POST /rollfi/employees/:id/repair-onboarding
+  (resolve from employee record)
+- POST /rollfi/employees (add employee to
+  Rollfi) → super_admin, owner
+- POST /rollfi/companies/:id/sync-employees →
+  super_admin, owner + assertCompanyAccess
+- POST /rollfi/repair/employee-payroll-setup →
+  super_admin, owner (resolve from employee)
+- POST /rollfi/employees/:id/fix-wage →
+  super_admin, owner (resolve from employee)
+- POST /rollfi/retry-kyb → super_admin, owner
+  + assertCompanyAccess
+- POST /rollfi/fix-pay-schedule → super_admin,
+  owner + assertCompanyAccess
+
+TIER 3 — authenticated-only, no company
+scoping needed (require a valid session; any
+role):
+
+- GET /rollfi/status
+- GET /config/env
+- GET /rollfi/state-w4-fields/:state
+- GET /rollfi/overtime-types
+- GET /rollfi/compensation-types
+
+ALREADY ENFORCING — verify only, do not
+change: DELETE /rollfi/employees/:userId,
+POST /rollfi/employees/deactivate, terminate,
+reactivate, the state-registration routes,
+GET /activity, /unmatched-webhooks, and the
+webhook event routes. Report if any is weaker
+than it appears.
+
+TESTING CHECKLIST (report actual results):
+- Unauthenticated curl → every route above
+  returns 401 (test /rollfi/state and
+  /rollfi/onboard/bank-account specifically)
+- Joanne (super_admin) can still reach
+  everything across companies
+- An owner can perform their own company's
+  onboarding, bank, paystub, and payperiod
+  flows exactly as before
+- An owner gets 403 on another company's
+  companyId or employeeId for every Tier 2
+  route
+- An owner gets 403 on all Tier 1
+  super_admin-only routes
+- Unknown IDs still return their existing
+  status (404 or Rollfi-level error), not 403
+- POST /rollfi/webhook still accepts inbound
+  events unchanged
+- Part A's six payroll routes still behave
+  exactly as after Part A
+- REGRESSION: employee wizard Rollfi chain
+  (addUser → wage → T&C → KYC → W4 → state
+  W4), company onboarding wizard, bank
+  linking flow, paystubs view, pay period
+  history — all still work end to end
+
+DELIVERABLE SUMMARY: every route changed with
+its guard, any route where a new DB lookup was
+unavoidable, confirmation the webhook and Part
+A routes are untouched, confirmation nothing
+outside rollfi.ts was modified, and full test
+results.

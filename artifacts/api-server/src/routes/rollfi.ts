@@ -643,7 +643,10 @@ async function recoverZeroedSalariedEmployees(
 
 // ── Status ───────────────────────────────────────────────────
 
-router.get("/rollfi/status", (_req, res) => {
+router.get("/rollfi/status", (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   const cfg = getRollfiConfig();
   res.json({
     configured: cfg.credentialsPresent,
@@ -652,7 +655,10 @@ router.get("/rollfi/status", (_req, res) => {
   });
 });
 
-router.get("/config/env", (_req, res) => {
+router.get("/config/env", (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   res.json({ rollfiEnv: getRollfiConfig().env });
 });
 
@@ -661,6 +667,9 @@ router.get("/config/env", (_req, res) => {
 // form and to know the correct field names for addStateW4Information.
 
 router.get("/rollfi/state-w4-fields/:stateCode", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   const stateCode = (req.params.stateCode ?? "").toUpperCase();
   if (!stateCode) { res.status(400).json({ error: "stateCode is required" }); return; }
   try {
@@ -679,7 +688,12 @@ router.get("/rollfi/state-w4-fields/:stateCode", async (req, res) => {
 
 // ── Full state (companies + employees + their Rollfi IDs) ────
 
-router.get("/rollfi/state", async (_req, res) => {
+router.get("/rollfi/state", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _stateCaller = store.getUserById(req.session.userId);
+  if (!_stateCaller || _stateCaller.role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   // Store companies (hardcoded Sunshine + Rainbow)
   const storeCompanies = store.getDaycareCompanies();
   const storeCompanyIds = new Set(storeCompanies.map((c) => c.id));
@@ -756,6 +770,12 @@ router.get("/rollfi/state", async (_req, res) => {
 // ── Create / delete payroll employee ─────────────────────────
 
 router.post("/rollfi/employees", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _addEmpCaller = store.getUserById(req.session.userId);
+  if (!_addEmpCaller || !["super_admin", "owner"].includes(_addEmpCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   const { name, email, position, hourlyWage, companyId } = req.body as {
     name: string;
     email: string;
@@ -1120,6 +1140,12 @@ router.post("/rollfi/employees/reactivate", async (req, res) => {
 // ── Company onboarding ───────────────────────────────────────
 
 router.post("/rollfi/onboard/company", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _onboardCoCaller = store.getUserById(req.session.userId);
+  if (!_onboardCoCaller || !["super_admin", "owner"].includes(_onboardCoCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
     return;
@@ -1394,6 +1420,12 @@ router.post("/rollfi/onboard/company", async (req, res) => {
 // re-initiates initiateCompanyKyb, and re-adds the bank account.
 
 router.post("/rollfi/retry-kyb", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _retryKybCaller = store.getUserById(req.session.userId);
+  if (!_retryKybCaller || !["super_admin", "owner"].includes(_retryKybCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -1520,6 +1552,17 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
 // ── Fix pay schedule ─────────────────────────────────────────
 
 router.post("/rollfi/fix-pay-schedule", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _fixSchedCaller = store.getUserById(req.session.userId);
+  if (!_fixSchedCaller || !["super_admin", "owner"].includes(_fixSchedCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  // companyId is optional (super_admin may pass rollfiCompanyId directly); owners must always provide companyId
+  if (_fixSchedCaller.role !== "super_admin") {
+    const _fsCompanyId = (req.body as { companyId?: string }).companyId;
+    if (!_fsCompanyId) { res.status(400).json({ error: "companyId required" }); return; }
+    if (_fixSchedCaller.companyId !== _fsCompanyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+  }
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -1588,6 +1631,12 @@ router.post("/rollfi/fix-pay-schedule", async (req, res) => {
 // ── Bank account linking ─────────────────────────────────────
 
 router.post("/rollfi/onboard/bank-account", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _bankAccCaller = store.getUserById(req.session.userId);
+  if (!_bankAccCaller || !["super_admin", "owner"].includes(_bankAccCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -1646,6 +1695,12 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
 // ── Funding source status (via getCompanyInfo) ───────────────
 
 router.get("/rollfi/onboard/bank-status", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _bankStCaller = store.getUserById(req.session.userId);
+  if (!_bankStCaller || !["super_admin", "owner"].includes(_bankStCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   const { companyId } = req.query as { companyId: string };
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
@@ -1677,6 +1732,12 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
 // ── Micro-deposit verification ────────────────────────────────
 
 router.post("/rollfi/onboard/verify-bank", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _verifyBankCaller = store.getUserById(req.session.userId);
+  if (!_verifyBankCaller || !["super_admin", "owner"].includes(_verifyBankCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -1943,6 +2004,12 @@ router.post("/rollfi/state-registrations/:id/retry", async (req, res) => {
 // ── Employee onboarding ──────────────────────────────────────
 
 router.post("/rollfi/onboard/employee", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _onboardEmpCaller = store.getUserById(req.session.userId);
+  if (!_onboardEmpCaller || !["super_admin", "owner", "manager"].includes(_onboardEmpCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "ROLLFI_CLIENT_ID and ROLLFI_SECRET_KEY are not configured" });
     return;
@@ -2258,6 +2325,12 @@ router.post("/rollfi/onboard/employee", async (req, res) => {
 // Tries editUserWage first (update in-place), then addUserWage (add new record).
 
 router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _fixWageCaller = store.getUserById(req.session.userId);
+  if (!_fixWageCaller || !["super_admin", "owner"].includes(_fixWageCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
@@ -2425,6 +2498,11 @@ router.post("/rollfi/employees/:rollfiUserId/fix-wage", async (req, res) => {
 // for every store employee that has been onboarded. Safe to call repeatedly.
 
 router.post("/rollfi/repair-store-wages", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _repairWagesCaller = store.getUserById(req.session.userId);
+  if (!_repairWagesCaller || _repairWagesCaller.role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
@@ -2574,6 +2652,12 @@ router.post("/rollfi/repair-store-wages", async (req, res) => {
 });
 
 router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _retryKycCaller = store.getUserById(req.session.userId);
+  if (!_retryKycCaller || !["super_admin", "owner", "manager"].includes(_retryKycCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.body as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -2618,6 +2702,12 @@ router.post("/rollfi/employees/:rollfiUserId/retry-kyc", async (req, res) => {
 // ── Pay period ───────────────────────────────────────────────
 
 router.get("/rollfi/payperiod", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _payperiodCaller = store.getUserById(req.session.userId);
+  if (!_payperiodCaller || !["super_admin", "owner", "manager"].includes(_payperiodCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -2780,7 +2870,7 @@ router.post("/admin/employees/:employeeId/set-rollfi-user-id", async (req, res) 
 router.get("/admin/rollfi/company-users", async (req, res) => {
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const caller = store.getUserById(req.session.userId);
-  if (!caller || !["owner", "super_admin"].includes(caller.role ?? "")) { res.status(403).json({ error: "Owner or super_admin only" }); return; }
+  if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
 
   try {
     const companies = store.getDaycareCompanies();
@@ -2828,12 +2918,19 @@ router.get("/admin/rollfi/company-users", async (req, res) => {
 // Returns { success, fixed, stillFailed }.
 router.post("/rollfi/employees/:employeeId/repair-onboarding", async (req, res) => {
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ── Role guard (additive) ────────────────────────────────────────────────
+  const _repairOnboardCaller = store.getUserById(req.session.userId);
+  if (!_repairOnboardCaller || !["super_admin", "owner"].includes(_repairOnboardCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  // ─────────────────────────────────────────────────────────────────────────
   const { employeeId } = req.params;
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
 
   try {
     const [emp] = await db.select().from(employeesTable).where(eq(employeesTable.id, employeeId));
     if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+    // ── Company access guard (company resolved from emp record) ──────────
+    if (_repairOnboardCaller.role !== "super_admin" && _repairOnboardCaller.companyId !== emp.companyId) { res.status(403).json({ error: "Access denied: company mismatch" }); return; }
+    // ─────────────────────────────────────────────────────────────────────
 
     const rollfiCompany = store.getRollfiCompany(emp.companyId);
     if (!rollfiCompany) { res.status(400).json({ error: "Company not onboarded to Rollfi" }); return; }
@@ -3457,6 +3554,12 @@ router.get("/rollfi/repair/preflight-status", async (req, res) => {
 // ── Employee Rollfi activation status ────────────────────────
 
 router.get("/rollfi/employees/status", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _empStatusCaller = store.getUserById(req.session.userId);
+  if (!_empStatusCaller || !["super_admin", "owner", "manager"].includes(_empStatusCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -3790,6 +3893,9 @@ router.get("/rollfi/payroll/preview", async (req, res) => {
 // ── Payroll type lookups ──────────────────────────────────────
 
 router.get("/rollfi/overtime-types", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
@@ -3811,6 +3917,9 @@ router.get("/rollfi/overtime-types", async (req, res) => {
 });
 
 router.get("/rollfi/compensation-types", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
@@ -4624,6 +4733,11 @@ router.post("/rollfi/payroll/submit", async (req, res) => {
 // ── Payroll overview (all companies, current period) ─────────
 
 router.get("/rollfi/payroll/overview", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _overviewCaller = store.getUserById(req.session.userId);
+  if (!_overviewCaller || _overviewCaller.role !== "super_admin") { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4657,6 +4771,12 @@ router.get("/rollfi/payroll/overview", async (req, res) => {
 // ── Pay period history (processed periods) ───────────────────
 
 router.get("/rollfi/payperiod/history", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _histCaller = store.getUserById(req.session.userId);
+  if (!_histCaller || !["super_admin", "owner", "manager"].includes(_histCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4902,6 +5022,12 @@ router.post("/rollfi/payroll/run-all", async (req, res) => {
 // ── Company task list (onboarding status) ────────────────────
 
 router.get("/rollfi/company-tasks", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _coTasksCaller = store.getUserById(req.session.userId);
+  if (!_coTasksCaller || !["super_admin", "owner", "manager"].includes(_coTasksCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
@@ -4948,6 +5074,12 @@ router.get("/rollfi/company-tasks", async (req, res) => {
 // ── Pay period details (real tax data from Rollfi after processing) ──────
 
 router.get("/rollfi/payperiod/details", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _ppDetailsCaller = store.getUserById(req.session.userId);
+  if (!_ppDetailsCaller || !["super_admin", "owner", "manager"].includes(_ppDetailsCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
@@ -4972,6 +5104,12 @@ router.get("/rollfi/payperiod/details", async (req, res) => {
 // ── Pay stubs (per-employee pay breakdown for a processed period) ─────────
 
 router.get("/rollfi/paystubs", async (req, res) => {
+  // ── Auth guard (additive — no business logic changed below) ─────────────
+  if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const _paystubsCaller = store.getUserById(req.session.userId);
+  if (!_paystubsCaller || !["super_admin", "owner", "manager"].includes(_paystubsCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
+  if (!assertCompanyAccess(req, res, (req.query as { companyId?: string }).companyId)) return;
+  // ────────────────────────────────────────────────────────────────────────
   if (!getRollfiConfig().credentialsPresent) {
     res.status(400).json({ error: "Rollfi credentials not configured" }); return;
   }
