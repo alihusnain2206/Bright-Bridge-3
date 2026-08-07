@@ -1,0 +1,76 @@
+READ-ONLY AUDIT. DO NOT MODIFY ANY CODE OR
+DATA. Report only.
+
+CONTEXT: A prior audit found that
+artifacts/api-server/src/routes/rollfi.ts has
+no router-level auth middleware. Specifically
+GET /rollfi/payroll/preview has no session
+check in its handler, and uses the pattern
+`!companyId || u.companyId === companyId` —
+so an absent companyId skips the filter and
+returns all staff across all companies with
+wages, approved hours, and pay amounts.
+
+This file drives real payroll and real bank
+debits. We will fix it surgically. This audit
+tells us exactly what is safe to touch.
+
+REPORT:
+
+1. FULL ROUTE INVENTORY
+   Every route in rollfi.ts: method, path,
+   what it does, and its CURRENT auth guard
+   (router middleware, requireAuth,
+   requireRole, inline session check, or
+   none). Mark clearly which have NO auth.
+
+2. THE PREVIEW ENDPOINT
+   For GET /rollfi/payroll/preview: full
+   handler walkthrough — what it queries,
+   what it returns, and exactly how the
+   `!companyId ||` short-circuit behaves.
+   Which frontend page(s) call it, with what
+   parameters, and as which roles?
+
+3. NON-BROWSER CALLERS — CRITICAL
+   Does anything other than a logged-in
+   browser call ANY route in this file?
+   Check specifically for:
+   - Rollfi webhooks / callbacks hitting our
+     endpoints
+   - the boot sequence in index.ts
+   - background jobs, cron, retry logic
+   - internal server-to-server calls from
+     other route files or lib/
+   - the mobile app (note: the mobile app
+     source is NOT in this repo — report any
+     route that looks designed for external
+     or unauthenticated access even if you
+     cannot find an internal caller)
+   Any unauthenticated-by-design caller is a
+   STOPPER — name it and flag it.
+
+4. PAYROLL-CRITICAL PATHS
+   Which routes are part of the live payroll
+   run / Rollfi sync chain (the ones that
+   must not be disturbed)? Which are
+   read-only reporting endpoints that are
+   safe to guard?
+
+5. RECOMMENDED GUARDS
+   For each route, the minimum guard you
+   would apply (roles + whether company
+   scoping is needed), and flag any route
+   where adding a guard could plausibly
+   break a live payroll flow.
+
+6. SCOPING MECHANICS
+   For routes taking companyId: how would
+   the server verify it belongs to the
+   caller? Confirm whether assertCompanyAccess
+   is usable here as it is in people.ts.
+
+DELIVERABLE: the route table with current
+guards, the preview endpoint walkthrough, the
+stopper list, and your proposed minimal fix
+plan. NO CODE CHANGES.
