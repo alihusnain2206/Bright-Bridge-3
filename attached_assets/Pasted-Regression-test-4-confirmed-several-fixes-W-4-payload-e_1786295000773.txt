@@ -1,0 +1,146 @@
+Regression test #4 confirmed several 
+fixes (W-4 payload, employee status 
+truth, direct-deposit task, account 
+number validation, NJ defaults, roster 
+navigation). Six items remain, listed by 
+severity. For EACH: implement, then 
+reproduce the tester's exact steps and 
+report what you observed.
+
+SCOPE: Do not change the Rollfi call 
+sequence, payroll math, KYC/KYB logic, or 
+EasyTeam.
+
+FIX 1 (CRITICAL, architecture) — the bank 
+linking feature is unreachable for client 
+companies:
+The bank setup page at /bank-account-setup 
+is scoped to the logged-in org, not to a 
+selected client company. A super admin 
+managing multiple client companies has NO 
+route to link or replace a specific 
+client's bank account, during onboarding 
+or after. Also, the Add-Client wizard Step 
+6 was never updated — it still shows only 
+the read-only sandbox card with no Plaid/
+Manual choice and no Account Holder Name 
+field.
+- Make the bank setup page COMPANY-SCOPED: 
+  it must operate on a companyId passed in 
+  the route (e.g. 
+  /clients/:companyId/bank-account) and 
+  read/write that company's funding source.
+- Add a "Bank Account" entry to the CLIENT's 
+  own settings/detail tabs, not only the 
+  org-level settings.
+- Update Add-Client wizard Step 6 to offer 
+  the Plaid vs Manual choice for that 
+  company (production), with the manual 
+  form including Account Holder Name. In 
+  sandbox keep the existing auto-submitted 
+  test bank card, but make its messaging 
+  consistent with the bank page (see FIX 6).
+- Verify the whole flow works for a company 
+  other than the logged-in org.
+
+FIX 2 (CRITICAL, privacy) — SSN rendered in 
+clear text:
+In BOTH wizards the SSN input is 
+type="text" and the eye toggle is 
+decorative — the value never masks 
+(confirmed: type stays "text" in both 
+toggle states) even though the label says 
+"Encrypted — KYB only".
+- Mask by default (masked input or 
+  ***-**-#### display) with a working reveal 
+  toggle that actually changes the input 
+  type.
+- Add the inline on-blur validation ("SSN 
+  must be exactly 9 digits") — the rule 
+  already exists on the Next action; it must 
+  also fire on blur with aria-invalid set.
+- Apply to owner SSN and employee SSN.
+
+FIX 3 (CRITICAL) — company-level Payroll 
+Status still lies:
+The client Payroll Status page shows three 
+unconditional green ticks ("Rollfi payroll 
+account active", "Pay schedule: BiWeekly", 
+"Bank account: Connected") for a company 
+whose KYB is Pending and whose two 
+employees are blocked on KYC. It also 
+contradicts the same company's success page, 
+which lists "Connect company bank account" 
+as still required.
+- Add a KYB status row reading the company's 
+  real kybStatus.
+- Add an employee provisioning summary 
+  derived from the stored per-employee flags 
+  (e.g. "2 employees pending verification").
+- Derive the bank line from the normalised 
+  bank-status helper so the success page, 
+  dashboard checklist, and Payroll Status 
+  all agree (this also closes CW7 and R9).
+You fixed this pattern at the employee level 
+last cycle — apply the same derived-state 
+approach at company level.
+
+FIX 4 (HIGH) — environment banner never 
+resolves after login:
+On the login page the banner reads 
+"⚡ LOADING" indefinitely; after signing in 
+it shows "Environment unknown — verify 
+configuration before taking action" and 
+stays there for 10s+. Only a full page 
+reload resolves it to SANDBOX. In production 
+this means an operator can work an entire 
+session without ever seeing the LIVE PAYROLL 
+warning.
+- Fetch/resolve the environment reliably 
+  after authentication (re-fetch on auth 
+  state change), with a short retry.
+- Never leave the banner stuck in LOADING or 
+  unknown; if the endpoint genuinely fails, 
+  keep the grey warning but retry in the 
+  background.
+
+FIX 5 (HIGH) — "Add Another" wedges the 
+wizard:
+Clicking Add Another on the employee success 
+page renders the provisioning panel with no 
+employee name and all seven steps pre-ticked, 
+and never returns to Step 1 (still spinning 
+after 35s). This is the third run it has been 
+reported. Reset ALL wizard state including 
+the provisioning/progress state and any 
+submission flags, then render a blank Step 1. 
+Reproduce it yourself.
+
+FIX 6 (HIGH) — owner-login panel blank on 
+first open:
+The Create Owner Login panel renders with all 
+three fields empty on first open; only Cancel 
++ reopen populates name, email, and the 
+generated password. Third run reported. Fix 
+so the first render is populated. Also make 
+the generated password field read-only with a 
+copy button (it is currently editable with 
+only an eye toggle).
+
+Also fix in the same pass:
+- N2: with a bi-weekly schedule the default 
+  first pay date lands on a Sunday and the 
+  validator rejects the Friday inside that 
+  cycle, making the first selectable Friday a 
+  week late. Correct the pay-date rule so 
+  valid banking days after the period end are 
+  selectable.
+- N5: wizard Step 6 warns about micro-deposits 
+  in sandbox while the bank page says sandbox 
+  uses an auto-configured test bank. Make the 
+  messaging consistent.
+
+DELIVERABLE: per fix — files changed, what 
+changed, and the reproduction you performed. 
+State explicitly if anything could not be 
+verified.

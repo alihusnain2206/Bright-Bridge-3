@@ -204,6 +204,10 @@ function Router() {
             <Route path="/clients/:companyId/employees">
               <ProtectedRoute component={ClientDetail} roles={["super_admin"]} />
             </Route>
+            {/* FIX 1 — company-scoped bank setup page must be before :companyId catch-all */}
+            <Route path="/clients/:companyId/bank-account">
+              <ProtectedRoute component={BankAccountSetupPage} roles={["super_admin", "owner"]} />
+            </Route>
             <Route path="/clients/:companyId">
               <ProtectedRoute component={ClientDetail} roles={["super_admin"]} />
             </Route>

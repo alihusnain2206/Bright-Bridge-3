@@ -5,6 +5,7 @@ import {
   Building2, Users, CheckCircle2, XCircle, Clock, AlertTriangle,
   ChevronLeft, ChevronRight, Plus, DollarSign, RefreshCw, Loader2, ShieldCheck,
   Eye, EyeOff, Copy, X, KeyRound, Pause, Ban, RotateCcw, UserX, Globe, UserPlus,
+  Landmark,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -510,6 +511,38 @@ function EmployeesTab({ company }: { company: Company }) {
 
 function PayrollTab({ company }: { company: Company }) {
   const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
+
+  // FIX 3 — live bank status (more accurate than the stored boolean)
+  const { data: bankStatusData } = useQuery<{ verified: boolean; status: string | null }>({
+    queryKey: ["/api/rollfi/bank-status-tab", company.id],
+    queryFn: () => fetch(`/api/rollfi/onboard/bank-status?companyId=${company.id}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: hasRollfi,
+    staleTime: 30_000,
+  });
+
+  // FIX 3 — employee provisioning summary
+  const { data: empData } = useQuery<{ employees: Employee[] }>({
+    queryKey: ["/api/employees", company.id],
+    queryFn: () => fetch(`/api/employees?companyId=${company.id}`, { credentials: "include" }).then((r) => r.json()),
+    staleTime: 30_000,
+  });
+  const employees = empData?.employees ?? [];
+  const totalEmp = employees.length;
+  const pendingKyc = employees.filter((e) => e.kycStatus !== "verified" && e.status !== "terminated").length;
+  const verifiedEmp = employees.filter((e) => e.kycStatus === "verified").length;
+
+  // Derive bank truth: prefer live API result, fall back to stored boolean
+  const bankVerified = bankStatusData?.verified ?? company.bankAccountAdded;
+  const bankLabel = (() => {
+    if (!bankStatusData) return company.bankAccountAdded ? "Connected" : "Action required";
+    if (bankStatusData.verified) return "Connected";
+    if (bankStatusData.status) return bankStatusData.status.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+    return "Action required";
+  })();
+
+  const kybVerified = company.kybStatus === "verified";
+  const kybPending  = company.kybStatus === "pending";
+
   return (
     <div className="space-y-4">
       <div className="bg-white rounded-xl border p-5 shadow-sm">
@@ -520,19 +553,37 @@ function PayrollTab({ company }: { company: Company }) {
           </div>
         ) : (
           <div className="space-y-3 text-sm">
+            {/* Rollfi account */}
             <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
               <span>Rollfi payroll account active</span>
               <span className="ml-auto font-mono text-xs text-gray-400">{company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId}</span>
             </div>
+            {/* KYB — FIX 3: derived from actual kybStatus, not hardcoded green */}
             <div className="flex items-center gap-3">
-              {company.payScheduleAdded ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <XCircle className="h-4 w-4 text-gray-300" />}
+              {kybVerified ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : kybPending ? <Clock className="h-4 w-4 text-amber-500 shrink-0" /> : <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />}
+              <span>KYB verification: <span className={`font-medium ${kybVerified ? "text-emerald-600" : kybPending ? "text-amber-600" : "text-red-600"}`}>{company.kybStatus.replace(/_/g, " ")}</span></span>
+            </div>
+            {/* Pay schedule */}
+            <div className="flex items-center gap-3">
+              {company.payScheduleAdded ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : <XCircle className="h-4 w-4 text-gray-300 shrink-0" />}
               <span>Pay schedule: {company.payFrequency ?? "Not set"}</span>
             </div>
+            {/* Bank — FIX 3: derived from live API, not hardcoded connected */}
             <div className="flex items-center gap-3">
-              {company.bankAccountAdded ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <AlertTriangle className="h-4 w-4 text-amber-500" />}
-              <span>Bank account: {company.bankAccountAdded ? "Connected" : "Action required"}</span>
+              {bankVerified ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />}
+              <span>Bank account: {bankLabel}</span>
             </div>
+            {/* Employee provisioning — FIX 3 */}
+            {totalEmp > 0 && (
+              <div className="flex items-center gap-3">
+                {pendingKyc === 0 ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : <Clock className="h-4 w-4 text-amber-500 shrink-0" />}
+                <span>
+                  Employees: {verifiedEmp}/{totalEmp} KYC verified
+                  {pendingKyc > 0 && <span className="ml-1.5 text-amber-600 text-xs font-medium">({pendingKyc} pending verification)</span>}
+                </span>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -765,6 +816,22 @@ function SettingsTab({ company, onRefresh }: { company: Company; onRefresh: () =
           </Button>
         </div>
       )}
+
+      {/* FIX 1 — Bank Account card so super_admin can reach the company-scoped bank setup */}
+      <div className="bg-white rounded-xl border p-5 shadow-sm space-y-3">
+        <p className="text-sm font-bold text-gray-800">Bank Account</p>
+        <p className="text-sm text-gray-500">
+          {company.bankAccountAdded
+            ? "A bank account is connected for this company."
+            : "No bank account connected — required for Rollfi to fund payroll."}
+        </p>
+        <Link href={`/clients/${company.id}/bank-account`}>
+          <Button variant="outline" className="gap-1.5">
+            <Landmark className="h-4 w-4" />
+            {company.bankAccountAdded ? "Manage Bank Account" : "Connect Bank Account"} →
+          </Button>
+        </Link>
+      </div>
 
       <OwnerAccessSection company={company} />
       <StateRegistrationSection

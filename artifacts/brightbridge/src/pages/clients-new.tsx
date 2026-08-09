@@ -39,6 +39,21 @@ const daysOut = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n
 const payDateOffsetDays: Record<string, number> = { Weekly: 7, BiWeekly: 14, SemiMonthly: 15, Monthly: 30 };
 function randomTestEin() { return `${String(Math.floor(10 + Math.random()*89))}-${String(Math.floor(1000000 + Math.random()*9000000))}`; }
 
+// ── N2: Pay-date helpers ──────────────────────────────────────────────────────
+/** Last Mon–Fri on or before the given ISO date (e.g. period-end Saturday → Friday). */
+function prevBankingDay(dateStr: string): string {
+  const d = new Date(dateStr + "T12:00:00");
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+  return d.toISOString().split("T")[0];
+}
+/** True when the given ISO date falls on a Mon–Fri banking day. */
+function isBankingDay(dateStr: string): boolean {
+  const day = new Date(dateStr + "T12:00:00").getDay();
+  return day >= 1 && day <= 5;
+}
+/** Default pay date: last banking day at or before n days from today. */
+const bankingPayDate = (n: number) => prevBankingDay(daysOut(n));
+
 interface FormData {
   // Step 1
   companyName: string; doingBusinessAs: string; businessWebsite: string; phone: string;
@@ -116,6 +131,20 @@ export default function ClientsNew() {
   const rollfiEnv = useRollfiEnv();
   const isProduction = rollfiEnv === "production";
 
+  // FIX 6 — pre-populate the owner login form as soon as the company is created
+  // so the panel is never blank on first open.
+  useEffect(() => {
+    if (created && !loginCreated && !loginForm.name) {
+      const chars = "ABCDEFGHJKMNPQRSTWXYZabcdefghjkmnpqrstwxyz0123456789!@#$";
+      const pwd = Array.from({ length: 12 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+      setLoginForm({
+        name: `${form.ownerFirstName} ${form.ownerLastName}`.trim(),
+        email: form.ownerEmail,
+        password: pwd,
+      });
+    }
+  }, [created]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const copyField = (val: string, field: string) => {
     void navigator.clipboard.writeText(val);
     setCopiedField(field);
@@ -191,7 +220,7 @@ export default function ClientsNew() {
     ownerDob: "", ownerSsn: "", ownerAddress1: "", ownerCity: "", ownerState: "", ownerZip: "",
     ownershipPercentage: 100, isPayrollAdmin: true,
     entityType: "LLC", ein: "", incorporationState: "", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
-    payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
+    payFrequency: "BiWeekly", payBeginDate: today(), payDate: bankingPayDate(14), workerType: "W2",
     fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking", fundingAccountName: "",
     bankSetupMethod: "Manual" as "Manual" | "Plaid",
   });
@@ -505,12 +534,18 @@ export default function ClientsNew() {
                     <Input value={loginForm.email} onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" autoComplete="off" />
                   </div>
                   <div className="col-span-2 space-y-1">
-                    <Label className="text-xs text-gray-500">Temporary Password <span className="font-normal text-gray-400">(auto-generated — share once)</span></Label>
+                    <Label className="text-xs text-gray-500">Temporary Password <span className="font-normal text-gray-400">(auto-generated — copy before sharing)</span></Label>
                     <div className="relative">
-                      <Input type={showLoginPw ? "text" : "password"} value={loginForm.password} onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} className="h-8 text-sm pr-9 font-mono" autoComplete="new-password" />
-                      <button type="button" onClick={() => setShowLoginPw((p) => !p)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
-                        {showLoginPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                      </button>
+                      <Input type={showLoginPw ? "text" : "password"} value={loginForm.password} readOnly className="h-8 text-sm pr-16 font-mono bg-gray-50 cursor-default" autoComplete="off" />
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5">
+                        <button type="button" onClick={() => setShowLoginPw((p) => !p)} className="p-1 text-gray-400 hover:text-gray-700">
+                          {showLoginPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                        </button>
+                        <button type="button" onClick={() => copyField(loginForm.password, "new-pw")} className="p-1 text-gray-400 hover:text-[#284362]" title="Copy password">
+                          <Copy className="h-3.5 w-3.5" />
+                        </button>
+                        {copiedField === "new-pw" && <span className="text-[10px] text-emerald-600 whitespace-nowrap">Copied!</span>}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -775,8 +810,9 @@ export default function ClientsNew() {
                   <Input
                     value={form.ownerSsn}
                     onChange={(e) => { set("ownerSsn", e.target.value); if (ownerSsnAttempted) setOwnerSsnAttempted(false); }}
+                    onBlur={() => { if (form.ownerSsn && form.ownerSsn.replace(/\D/g, "").length !== 9) setOwnerSsnAttempted(true); }}
                     placeholder="XXX-XX-XXXX"
-                    type="text"
+                    type={showSsn ? "text" : "password"}
                     autoComplete="off"
                     data-1p-ignore
                     className={`pr-9 ${ownerSsnAttempted && form.ownerSsn.replace(/\D/g, "").length !== 9 ? "border-red-500 focus-visible:ring-red-400" : ""}`}
@@ -897,7 +933,7 @@ export default function ClientsNew() {
                 { value: "Monthly", label: "Monthly" },
               ].map(({ value, label }) => (
                 <label key={value} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-colors text-sm ${form.payFrequency === value ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
-                  <input type="radio" name="freq" value={value} checked={form.payFrequency === value} onChange={() => setForm((f) => ({ ...f, payFrequency: value, payBeginDate: today(), payDate: daysOut(payDateOffsetDays[value] ?? 14) }))} />
+                  <input type="radio" name="freq" value={value} checked={form.payFrequency === value} onChange={() => setForm((f) => ({ ...f, payFrequency: value, payBeginDate: today(), payDate: bankingPayDate(payDateOffsetDays[value] ?? 14) }))} />
                   {label} {value === "BiWeekly" && <span className="ml-auto px-1.5 py-0.5 bg-[#284362]/10 text-[#284362] text-[10px] font-bold rounded">DEFAULT</span>}
                 </label>
               ))}
@@ -1058,12 +1094,13 @@ export default function ClientsNew() {
               </div>
             )}
 
-            {(!isProduction || form.bankSetupMethod === "Manual") && (
+            {/* N5: micro-deposit warning only in production+Manual — sandbox uses auto-configured test bank */}
+            {isProduction && form.bankSetupMethod === "Manual" && (
               <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
                 <div>
                   <p className="font-medium">Micro-deposit verification required</p>
-                  <p className="mt-0.5">After creation, Rollfi sends two small test deposits (usually $0.01–$0.99) to verify the account. KYB approval is also required before payroll can run. Both typically take 1–3 business days in production.</p>
+                  <p className="mt-0.5">After creation, Rollfi sends two small test deposits (usually $0.01–$0.99) to verify the account. KYB approval is also required before payroll can run. Both typically take 1–3 business days.</p>
                 </div>
               </div>
             )}
@@ -1178,9 +1215,16 @@ export default function ClientsNew() {
                 return;
               }
               if (step === 5) {
-                const periodEnd = new Date(form.payBeginDate).getTime() + (payDateOffsetDays[form.payFrequency] ?? 14) * 86400000;
-                if (form.payBeginDate && form.payDate && new Date(form.payDate).getTime() <= periodEnd) {
-                  setPayDateError("Pay date must be after the pay period ends");
+                // N2: require a banking day at or after the last banking day of the period
+                if (!isBankingDay(form.payDate)) {
+                  setPayDateError("Pay date must be a weekday (Mon–Fri)");
+                  return;
+                }
+                const periodEndTs = new Date(form.payBeginDate + "T12:00:00").getTime()
+                  + (payDateOffsetDays[form.payFrequency] ?? 14) * 86400000;
+                const minPayDate = prevBankingDay(new Date(periodEndTs).toISOString().split("T")[0]);
+                if (form.payDate < minPayDate) {
+                  setPayDateError(`Pay date must be on or after ${minPayDate} (last banking day of the pay period)`);
                   return;
                 }
                 setPayDateError("");

@@ -469,7 +469,20 @@ export default function ClientEmployeesNew() {
             {created.loginPassword && <p>→ Login created: {form.email} / {created.loginPassword}</p>}
           </div>
           <div className="px-8 py-4 flex gap-3">
-            <Button onClick={() => { setCreated(null); setStep(1); setRetryResult(null); setStep3Attempted(false); setPhotoFile(null); setPhotoPreview(null); setForm(makeInitialForm()); }} variant="outline" className="flex-1">Add Another</Button>
+            <Button onClick={() => {
+              // FIX 5 — reset ALL wizard state so "Add Another" returns to a clean Step 1
+              setCreated(null);
+              setStep(1);
+              setRetryResult(null);
+              setStep3Attempted(false);
+              setPhotoFile(null);
+              setPhotoPreview(null);
+              setSubmitting(false);
+              setSubmitError("");
+              setProgressSteps([]);
+              setShowSsn(false);
+              setForm(makeInitialForm());
+            }} variant="outline" className="flex-1">Add Another</Button>
             <Button onClick={() => navigate(`/clients/${companyId}`)} className="flex-1 text-white border-0" style={{ background: ORANGE }}>View All Employees →</Button>
           </div>
         </div>
@@ -758,8 +771,9 @@ export default function ClientEmployeesNew() {
                   <Input
                     value={form.ssn}
                     onChange={(e) => { set("ssn", e.target.value); if (step3Attempted) setStep3Attempted(false); }}
+                    onBlur={() => { if (form.ssn && form.ssn.replace(/\D/g, "").length !== 9) { setStep3Attempted(true); } }}
                     placeholder="XXX-XX-XXXX"
-                    type="text"
+                    type={showSsn ? "text" : "password"}
                     autoComplete="off"
                     data-1p-ignore
                     className={`pr-9 ${step3Attempted && form.ssn.replace(/\D/g, "").length !== 9 ? "border-red-500 focus-visible:ring-red-400" : ""}`}

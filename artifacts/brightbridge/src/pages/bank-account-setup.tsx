@@ -7,7 +7,7 @@
  * Production: full Plaid + Manual flows with status polling.
  */
 import React, { useState, useEffect, useRef } from "react";
-import { Link } from "wouter";
+import { Link, useParams } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
@@ -46,9 +46,12 @@ export default function BankAccountSetupPage() {
   const isProduction = rollfiEnv === "production";
   const queryClient = useQueryClient();
 
-  // For super_admin acting on another company, accept ?companyId= query param
-  const params = new URLSearchParams(window.location.search);
-  const companyId = params.get("companyId") ?? user?.companyId ?? "";
+  // FIX 1 — accept companyId from the route (/clients/:companyId/bank-account),
+  // from a ?companyId= query param, or fall back to the logged-in user's company.
+  const routeParams = useParams<{ companyId?: string }>();
+  const queryParams = new URLSearchParams(window.location.search);
+  const companyId = routeParams?.companyId ?? queryParams.get("companyId") ?? user?.companyId ?? "";
+  const fromClientRoute = !!routeParams?.companyId;
 
   // ── Method choice ──────────────────────────────────────────────────────
   const [method, setMethod] = useState<"Plaid" | "Manual" | null>(null);
@@ -254,7 +257,7 @@ export default function BankAccountSetupPage() {
 
       {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-3">
-        <Link href="/company-settings">
+        <Link href={fromClientRoute ? `/clients/${companyId}` : "/company-settings"}>
           <button className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-500 hover:text-gray-800 transition-colors">
             <ChevronLeft className="h-5 w-5" />
           </button>
