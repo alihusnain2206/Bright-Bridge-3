@@ -1905,15 +1905,14 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
         .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to sync kybStatus to DB"));
     }
 
-    // Lazy write-back 2 (Task 2): self-heal bank_account_added when Rollfi confirms the account is ready.
-    // One-directional — NEVER sets it false. The WHERE clause avoids a write when the value is already true.
-    // This corrects companies whose account is "ready" in Rollfi but whose DB flag was never written
-    // (e.g. linked before the column was tracked, or the write path was missed).
+    // Lazy write-back 2 (Task 2): self-heal bank_account_added + bank_account_verified when Rollfi confirms ready.
+    // One-directional — NEVER sets either field false. WHERE avoids redundant writes.
+    // bankAccountVerified is what all list/checklist views should read; bankAccountAdded means "details submitted".
     if (linked) {
       void db.update(companiesTable)
-        .set({ bankAccountAdded: true, updatedAt: new Date().toISOString() })
-        .where(and(eq(companiesTable.id, companyId), eq(companiesTable.bankAccountAdded, false)))
-        .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to self-heal bankAccountAdded"));
+        .set({ bankAccountAdded: true, bankAccountVerified: true, updatedAt: new Date().toISOString() })
+        .where(and(eq(companiesTable.id, companyId), eq(companiesTable.bankAccountVerified, false)))
+        .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to self-heal bankAccountAdded/Verified"));
     }
 
     res.json({

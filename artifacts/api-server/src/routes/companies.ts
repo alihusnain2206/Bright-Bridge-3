@@ -192,7 +192,7 @@ router.get("/companies/:companyId/onboarding-status", async (req: Request, res: 
         brightbridgeAccount: { done: true, label: "BrightBridge account" },
         rollfiRegistered:    { done: !!rollfi, label: "Rollfi payroll registration" },
         kybVerification:     { done: company.kybStatus === "verified", pending: company.kybStatus === "pending", label: "KYB business verification" },
-        bankAccount:         { done: company.bankAccountAdded, label: "Company bank account" },
+        bankAccount:         { done: company.bankAccountVerified, pending: !company.bankAccountVerified && company.bankAccountAdded, label: "Company bank account" },
         paySchedule:         { done: company.payScheduleAdded, label: "Pay schedule configured" },
         employees:           { done: empRows.length > 0, count: empRows.length, label: "Employees added" },
       },

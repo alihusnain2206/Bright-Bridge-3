@@ -122,9 +122,10 @@ export const companies = pgTable("companies", {
   bankLinkMethod:        text("bank_link_method"),          // "Manual" | "Plaid"
   bankLinkGeneratedAt:   text("bank_link_generated_at"),    // ISO-8601; Plaid links expire ~72 h
   // Onboarding
-  kybStatus:         text("kyb_status").notNull().default("not_started"),
-  bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
-  payScheduleAdded:  boolean("pay_schedule_added").notNull().default(false),
+  kybStatus:          text("kyb_status").notNull().default("not_started"),
+  bankAccountAdded:   boolean("bank_account_added").notNull().default(false),
+  bankAccountVerified: boolean("bank_account_verified").notNull().default(false),
+  payScheduleAdded:   boolean("pay_schedule_added").notNull().default(false),
   // Pay schedule
   payFrequency:      text("pay_frequency"),
   firstPayDate:      text("first_pay_date"),

@@ -16,7 +16,7 @@ interface Company {
   id: string; name: string; doingBusinessAs?: string; phone: string;
   industry: string; package: string; status: string;
   address1: string; city: string; state: string; zipcode: string;
-  kybStatus: string; bankAccountAdded: boolean; payScheduleAdded: boolean;
+  kybStatus: string; bankAccountAdded: boolean; bankAccountVerified: boolean; payScheduleAdded: boolean;
   payFrequency?: string; rollfiCompanyId?: string;
   createdAt: string; employeeCount?: number;
 }
@@ -45,7 +45,7 @@ function CompanyCard({ company }: { company: Company }) {
     { done: true,                       label: "BrightBridge account" },
     { done: hasRollfi,                  label: "Rollfi registered" },
     { done: company.kybStatus === "verified", label: "KYB verified" },
-    { done: company.bankAccountAdded,   label: "Bank account" },
+    { done: company.bankAccountVerified, label: "Bank account" },
     { done: company.payScheduleAdded,   label: "Pay schedule" },
   ];
   const doneCount = onboardingItems.filter((i) => i.done).length;
