@@ -1878,6 +1878,22 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
         ? (active.accountNumber as string).slice(-4)
         : null) ??
       null;
+
+    // ── Live KYB status from Rollfi ─────────────────────────────────────────
+    // Rollfi returns kycStatus on the Company object ("pending", "approved", etc.)
+    const rawKyb = (company.kycStatus as string | undefined) ?? null;
+    const liveKybStatus = rawKyb
+      ? (["approved", "verified"].includes(rawKyb.toLowerCase()) ? "verified" : rawKyb.toLowerCase())
+      : null;
+
+    // Lazy-write to DB so the local kybStatus stays in sync with Rollfi without a manual resync step.
+    if (liveKybStatus) {
+      void db.update(companiesTable)
+        .set({ kybStatus: liveKybStatus, updatedAt: new Date().toISOString() })
+        .where(eq(companiesTable.id, companyId))
+        .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to sync kybStatus to DB"));
+    }
+
     res.json({
       rollfiCompanyId: rollfiCompany.rollfiCompanyId,
       status: (active?.status as string | undefined) ?? null,
@@ -1885,6 +1901,7 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
       last4,
       bankName: (active?.bankName as string | undefined) ?? null,
       accountType: (active?.accountType as string | undefined) ?? null,
+      kybStatus: liveKybStatus,
     });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };

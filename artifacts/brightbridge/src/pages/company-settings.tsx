@@ -11,10 +11,11 @@
  */
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Settings,
   Check,
@@ -46,6 +47,15 @@ interface Company {
   payFrequency?: string; rollfiCompanyId?: string;
   rollfi?: { rollfiCompanyId?: string } | null;
   employeeCount?: number;
+}
+
+interface BankStatus {
+  verified: boolean;
+  status: string | null;
+  last4: string | null;
+  bankName: string | null;
+  accountType: string | null;
+  kybStatus: string | null;  // live from Rollfi via getCompanyInfo
 }
 
 interface ProgressStep {
@@ -185,15 +195,19 @@ const CARDS: CardDef[] = [
 
 // ── Owner Overview Tab ─────────────────────────────────────────────────────────
 
-function OwnerOverviewTab({ company }: { company: Company }) {
+function OwnerOverviewTab({ company, bankStatus }: { company: Company; bankStatus?: BankStatus | null }) {
   const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
+  // Prefer live Rollfi KYB status; fall back to DB value
+  const liveKybStatus = bankStatus?.kybStatus ?? company.kybStatus;
+  const bankVerified  = bankStatus?.verified ?? company.bankAccountAdded;
+
   const steps = [
-    { done: true,                               label: "BrightBridge account created" },
-    { done: hasRollfi,                          label: "Rollfi payroll registration" },
-    { done: company.kybStatus === "verified",   pending: company.kybStatus === "pending", label: "KYB business verification" },
-    { done: company.bankAccountAdded,           label: "Company bank account connected" },
-    { done: company.payScheduleAdded,           label: `Pay schedule (${company.payFrequency ?? "BiWeekly"})` },
-    { done: (company.employeeCount ?? 0) > 0,  label: `Employees added (${company.employeeCount ?? 0} so far)` },
+    { done: true,                             label: "BrightBridge account created" },
+    { done: hasRollfi,                        label: "Rollfi payroll registration" },
+    { done: liveKybStatus === "verified",     pending: liveKybStatus === "pending", label: "KYB business verification" },
+    { done: bankVerified,                     label: "Company bank account connected" },
+    { done: company.payScheduleAdded,         label: `Pay schedule (${company.payFrequency ?? "BiWeekly"})` },
+    { done: (company.employeeCount ?? 0) > 0, label: `Employees added (${company.employeeCount ?? 0} so far)` },
   ];
 
   return (
@@ -244,11 +258,11 @@ function OwnerOverviewTab({ company }: { company: Company }) {
             <div className="flex justify-between">
               <span className="text-gray-500">KYB Status</span>
               <span className={`font-medium capitalize ${
-                company.kybStatus === "verified" ? "text-emerald-600"
-                : company.kybStatus === "pending" ? "text-amber-600"
+                liveKybStatus === "verified" ? "text-emerald-600"
+                : liveKybStatus === "pending" ? "text-amber-600"
                 : "text-gray-500"
               }`}>
-                {company.kybStatus.replace(/_/g, " ")}
+                {liveKybStatus.replace(/_/g, " ")}
               </span>
             </div>
             <div className="flex justify-between">
@@ -286,6 +300,141 @@ function OwnerOverviewTab({ company }: { company: Company }) {
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Owner Payroll Tab ──────────────────────────────────────────────────────────
+
+function OwnerPayrollTab({ company, bankStatus, bankStatusLoading }: {
+  company: Company;
+  bankStatus?: BankStatus | null;
+  bankStatusLoading?: boolean;
+}) {
+  const hasRollfi    = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
+  const liveKybStatus = bankStatus?.kybStatus ?? company.kybStatus;
+  const kybVerified   = liveKybStatus === "verified";
+  const kybPending    = liveKybStatus === "pending";
+  const bankVerified  = bankStatus?.verified ?? company.bankAccountAdded;
+
+  const bankLabel = (() => {
+    if (!bankStatus) return company.bankAccountAdded ? "Connected" : "Action required";
+    if (bankStatus.verified) return "Connected";
+    if (bankStatus.status)   return bankStatus.status.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+    return "Action required";
+  })();
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      {!hasRollfi && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          Your company hasn't been registered with Rollfi yet. Contact support to complete payroll setup.
+        </div>
+      )}
+
+      {/* Payroll Status panel */}
+      <div className="bg-white rounded-xl border p-5 shadow-sm space-y-4">
+        <p className="text-sm font-bold text-gray-800">Payroll Status</p>
+
+        {bankStatusLoading ? (
+          <div className="space-y-2">
+            {[1,2,3,4].map(i => <div key={i} className="h-5 bg-gray-100 rounded animate-pulse" />)}
+          </div>
+        ) : (
+          <div className="space-y-3 text-sm">
+            {/* Rollfi account */}
+            <div className="flex items-center gap-3">
+              {hasRollfi
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                : <XCircle className="h-4 w-4 text-gray-300 shrink-0" />}
+              <span>Rollfi payroll account: <span className={`font-medium ${hasRollfi ? "text-emerald-600" : "text-gray-400"}`}>{hasRollfi ? "Active" : "Not registered"}</span></span>
+            </div>
+
+            {/* KYB */}
+            <div className="flex items-center gap-3">
+              {kybVerified
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                : kybPending
+                  ? <Clock className="h-4 w-4 text-amber-500 shrink-0" />
+                  : <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />}
+              <span>Business verification (KYB): <span className={`font-medium capitalize ${kybVerified ? "text-emerald-600" : kybPending ? "text-amber-600" : "text-red-600"}`}>{liveKybStatus.replace(/_/g, " ")}</span></span>
+              {kybPending && <Badge variant="outline" className="ml-auto text-[10px] border-amber-300 text-amber-600">Under review</Badge>}
+            </div>
+
+            {/* Pay schedule */}
+            <div className="flex items-center gap-3">
+              {company.payScheduleAdded
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                : <XCircle className="h-4 w-4 text-gray-300 shrink-0" />}
+              <span>Pay schedule: <span className={`font-medium ${company.payScheduleAdded ? "text-emerald-600" : "text-gray-400"}`}>{company.payFrequency ?? "Not set"}</span></span>
+            </div>
+
+            {/* Bank account */}
+            <div className="flex items-center gap-3">
+              {bankVerified
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                : <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />}
+              <span>
+                Bank account: <span className={`font-medium ${bankVerified ? "text-emerald-600" : "text-amber-600"}`}>{bankLabel}</span>
+                {bankStatus?.bankName && bankVerified && (
+                  <span className="text-gray-400 ml-1.5 text-xs">{bankStatus.bankName}{bankStatus.last4 ? ` ···· ${bankStatus.last4}` : ""}</span>
+                )}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bank Account management card */}
+      <div className="bg-white rounded-xl border p-5 shadow-sm space-y-3">
+        <div className="flex items-center gap-2">
+          <Landmark className="h-4 w-4 text-teal-600" />
+          <p className="text-sm font-bold text-gray-800">Bank Account</p>
+        </div>
+
+        {bankStatusLoading ? (
+          <div className="h-12 bg-gray-100 rounded-lg animate-pulse" />
+        ) : bankVerified ? (
+          <>
+            <div className="flex items-start gap-3 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-emerald-800">Bank account connected</p>
+                <p className="text-emerald-700 mt-0.5">
+                  {[bankStatus?.bankName, bankStatus?.last4 ? `···· ${bankStatus.last4}` : null, bankStatus?.accountType].filter(Boolean).join(" · ")}
+                  {bankStatus?.status && ` — ${bankStatus.status}`}
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500">Need to use a different account? You can replace it at any time — changes take effect for the next payroll run.</p>
+            <Link href="/bank-account-setup">
+              <Button variant="outline" className="gap-1.5">
+                <Landmark className="h-4 w-4" />Manage Bank Account →
+              </Button>
+            </Link>
+          </>
+        ) : (
+          <>
+            <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm">
+              <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-800">No bank account connected</p>
+                <p className="text-amber-700 mt-0.5">
+                  {bankStatus?.status
+                    ? `Status: ${bankStatus.status.replace(/_/g, " ")} — check status or resubmit below.`
+                    : "A bank account is required before payroll can run."}
+                </p>
+              </div>
+            </div>
+            <Link href="/bank-account-setup">
+              <Button className="gap-1.5 text-white border-0" style={{ background: "#284362" }}>
+                <Landmark className="h-4 w-4" />Connect Bank Account →
+              </Button>
+            </Link>
+          </>
+        )}
       </div>
     </div>
   );
@@ -594,7 +743,7 @@ function PageSkeleton() {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
-type TabId = "overview" | "settings";
+type TabId = "overview" | "payroll" | "settings";
 
 export default function CompanySettingsPage() {
   const { user } = useAuth();
@@ -615,13 +764,24 @@ export default function CompanySettingsPage() {
     staleTime: 30_000,
   });
 
-  // Company detail for the Overview tab
+  // Company detail for Overview + Payroll tabs
   const { data: company, isLoading: companyLoading } = useQuery<Company>({
     queryKey: ["/api/companies", companyId],
     queryFn: () =>
       fetch(`/api/companies/${companyId}`, { credentials: "include" }).then((r) => r.json()),
     enabled: !!companyId,
     staleTime: 60_000,
+  });
+
+  const hasRollfi = !!(company?.rollfiCompanyId ?? company?.rollfi?.rollfiCompanyId);
+
+  // Live bank + KYB status from Rollfi — feeds both Overview and Payroll tabs
+  const { data: bankStatus, isLoading: bankStatusLoading } = useQuery<BankStatus>({
+    queryKey: ["bank-status-owner", companyId],
+    queryFn: () =>
+      fetch(`/api/rollfi/onboard/bank-status?companyId=${companyId}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: !!companyId && hasRollfi,
+    staleTime: 30_000,
   });
 
   if (isLoading) return <PageSkeleton />;
@@ -661,17 +821,21 @@ export default function CompanySettingsPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-gray-200 mb-6 ml-11">
-        {(["overview", "settings"] as TabId[]).map((id) => (
+        {([
+          { id: "overview",  label: "Overview" },
+          { id: "payroll",   label: "Payroll Settings" },
+          { id: "settings",  label: "Settings" },
+        ] as { id: TabId; label: string }[]).map(({ id, label }) => (
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px capitalize ${
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
               tab === id
                 ? "border-[#E8622A] text-[#E8622A]"
                 : "border-transparent text-gray-500 hover:text-gray-800"
             }`}
           >
-            {id === "overview" ? "Overview" : "Settings"}
+            {label}
           </button>
         ))}
       </div>
@@ -687,7 +851,21 @@ export default function CompanySettingsPage() {
             <Skeleton className="h-56 rounded-xl" />
           </div>
         ) : company ? (
-          <OwnerOverviewTab company={company} />
+          <OwnerOverviewTab company={company} bankStatus={bankStatus} />
+        ) : (
+          <div className="text-sm text-gray-500 py-8 text-center">Company details unavailable.</div>
+        )
+      )}
+
+      {/* Payroll Settings tab */}
+      {tab === "payroll" && (
+        companyLoading ? (
+          <div className="space-y-4">
+            <Skeleton className="h-40 rounded-xl" />
+            <Skeleton className="h-48 rounded-xl" />
+          </div>
+        ) : company ? (
+          <OwnerPayrollTab company={company} bankStatus={bankStatus} bankStatusLoading={bankStatusLoading} />
         ) : (
           <div className="text-sm text-gray-500 py-8 text-center">Company details unavailable.</div>
         )
