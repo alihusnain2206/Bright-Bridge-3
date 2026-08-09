@@ -2,18 +2,19 @@
  * Company Settings — landing page
  * Route: /company-settings  (owner + super_admin only)
  *
- * Three sections:
- *  1. Configuration Progress  — 8 real steps toward first payroll
- *  2. Settings Categories     — live cards + coming-soon cards
- *  3. Attention Required      — right-hand panel with warnings
+ * Tabs:
+ *  Overview — Company Info, Rollfi Payroll status, Setup Checklist
+ *  Settings — Configuration Progress, Settings Categories, Attention Required
  *
- * All data comes from a single GET /api/company-settings/dashboard fetch.
+ * All settings data comes from GET /api/company-settings/dashboard.
+ * Overview data comes from GET /api/companies/:companyId.
  */
-import React from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import {
   Settings,
   Check,
@@ -31,10 +32,21 @@ import {
   Lock,
   RefreshCw,
   Landmark,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+
+interface Company {
+  id: string; name: string; phone: string; industry: string; package: string;
+  status: string; address1: string; city: string; state: string;
+  kybStatus: string; bankAccountAdded: boolean; payScheduleAdded: boolean;
+  payFrequency?: string; rollfiCompanyId?: string;
+  rollfi?: { rollfiCompanyId?: string } | null;
+  employeeCount?: number;
+}
 
 interface ProgressStep {
   id: string;
@@ -170,6 +182,114 @@ const CARDS: CardDef[] = [
     soon: true,
   },
 ];
+
+// ── Owner Overview Tab ─────────────────────────────────────────────────────────
+
+function OwnerOverviewTab({ company }: { company: Company }) {
+  const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
+  const steps = [
+    { done: true,                               label: "BrightBridge account created" },
+    { done: hasRollfi,                          label: "Rollfi payroll registration" },
+    { done: company.kybStatus === "verified",   pending: company.kybStatus === "pending", label: "KYB business verification" },
+    { done: company.bankAccountAdded,           label: "Company bank account connected" },
+    { done: company.payScheduleAdded,           label: `Pay schedule (${company.payFrequency ?? "BiWeekly"})` },
+    { done: (company.employeeCount ?? 0) > 0,  label: `Employees added (${company.employeeCount ?? 0} so far)` },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* Two info cards */}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Company Info */}
+        <div className="bg-white rounded-xl border p-4 shadow-sm">
+          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">Company Info</p>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Phone</span>
+              <span className="font-medium">{company.phone || "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Industry</span>
+              <span className="font-medium capitalize">{company.industry}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Package</span>
+              <span className="font-medium capitalize">{company.package.replace(/_/g, " ")}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Address</span>
+              <span className="font-medium text-right">{company.address1}, {company.city} {company.state}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Rollfi Payroll */}
+        <div className="bg-white rounded-xl border p-4 shadow-sm">
+          <p className="text-xs text-gray-400 font-medium uppercase tracking-wide mb-3">Rollfi Payroll</p>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Status</span>
+              <span className={`font-medium ${hasRollfi ? "text-emerald-600" : "text-amber-600"}`}>
+                {hasRollfi ? "Registered" : "Not registered"}
+              </span>
+            </div>
+            {hasRollfi && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">Company ID</span>
+                <span className="font-mono text-xs text-gray-500 truncate max-w-[180px]">
+                  {company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-gray-500">KYB Status</span>
+              <span className={`font-medium capitalize ${
+                company.kybStatus === "verified" ? "text-emerald-600"
+                : company.kybStatus === "pending" ? "text-amber-600"
+                : "text-gray-500"
+              }`}>
+                {company.kybStatus.replace(/_/g, " ")}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Pay Schedule</span>
+              <span className={`font-medium ${company.payScheduleAdded ? "text-emerald-600" : "text-gray-400"}`}>
+                {company.payScheduleAdded ? company.payFrequency : "Not set"}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Setup Checklist */}
+      <div className="bg-white rounded-xl border p-5 shadow-sm">
+        <p className="text-sm font-bold text-gray-800 mb-4">Setup Checklist</p>
+        <div className="space-y-3">
+          {steps.map(({ done, pending, label }) => (
+            <div key={label} className="flex items-center gap-3">
+              {done
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                : pending
+                  ? <Clock className="h-4 w-4 text-amber-500 shrink-0" />
+                  : <XCircle className="h-4 w-4 text-gray-300 shrink-0" />}
+              <span className={`text-sm ${done ? "text-gray-800" : pending ? "text-amber-700" : "text-gray-400"}`}>
+                {label}
+              </span>
+              {pending && (
+                <Badge variant="outline" className="ml-auto text-[10px] border-amber-300 text-amber-600">
+                  Under review
+                </Badge>
+              )}
+              {!done && !pending && (
+                <span className="ml-auto text-[10px] text-red-500 font-medium">Action required</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Progress ring SVG ──────────────────────────────────────────────────────────
 
@@ -474,9 +594,12 @@ function PageSkeleton() {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 
+type TabId = "overview" | "settings";
+
 export default function CompanySettingsPage() {
   const { user } = useAuth();
   const [, navigate] = useLocation();
+  const [tab, setTab] = useState<TabId>("overview");
 
   const companyId = user?.companyId;
 
@@ -490,6 +613,15 @@ export default function CompanySettingsPage() {
     },
     enabled: !!user,
     staleTime: 30_000,
+  });
+
+  // Company detail for the Overview tab
+  const { data: company, isLoading: companyLoading } = useQuery<Company>({
+    queryKey: ["/api/companies", companyId],
+    queryFn: () =>
+      fetch(`/api/companies/${companyId}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: !!companyId,
+    staleTime: 60_000,
   });
 
   if (isLoading) return <PageSkeleton />;
@@ -523,66 +655,102 @@ export default function CompanySettingsPage() {
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Company Settings</h1>
       </div>
-      <p className="text-sm text-gray-500 mb-7 ml-11">
+      <p className="text-sm text-gray-500 mb-5 ml-11">
         Configure and manage your organization settings for {data.company.name}.
       </p>
 
-      {/* Two-column layout */}
-      <div className="grid grid-cols-3 gap-6">
-        {/* Main column */}
-        <div className="col-span-2 space-y-7">
-          {/* Configuration progress */}
-          <ConfigProgress progress={data.progress} />
-
-          {/* Settings categories */}
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 mb-4">Settings Categories</h2>
-            <div className="grid grid-cols-3 gap-4">
-              {CARDS.map(card => (
-                <CategoryCard
-                  key={card.id}
-                  card={card}
-                  footer={
-                    card.id === "state-tax" && data.registrationCount > 0 ? (
-                      <p className="text-[11px] text-emerald-600 font-medium">
-                        {data.registrationCount} active registration{data.registrationCount !== 1 ? "s" : ""}
-                      </p>
-                    ) : undefined
-                  }
-                  onClick={() => card.href && navigate(card.href)}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="space-y-6">
-          <AttentionPanel items={data.attention} />
-
-          {/* Quick links */}
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Quick access</h3>
-            <div className="space-y-1">
-              {[
-                { label: "Account Settings", href: "/account-settings" },
-                { label: "Company Information", href: "/settings?tab=company-info" },
-                { label: "State Tax", href: "/settings?tab=state-tax" },
-              ].map(link => (
-                <button
-                  key={link.href}
-                  onClick={() => navigate(link.href)}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700
-                             hover:bg-gray-50 hover:text-[#1B3A6B] transition-colors"
-                >
-                  {link.label}
-                  <ChevronRight className="w-4 h-4 text-gray-300" />
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200 mb-6 ml-11">
+        {(["overview", "settings"] as TabId[]).map((id) => (
+          <button
+            key={id}
+            onClick={() => setTab(id)}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px capitalize ${
+              tab === id
+                ? "border-[#E8622A] text-[#E8622A]"
+                : "border-transparent text-gray-500 hover:text-gray-800"
+            }`}
+          >
+            {id === "overview" ? "Overview" : "Settings"}
+          </button>
+        ))}
       </div>
+
+      {/* Overview tab */}
+      {tab === "overview" && (
+        companyLoading ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Skeleton className="h-40 rounded-xl" />
+              <Skeleton className="h-40 rounded-xl" />
+            </div>
+            <Skeleton className="h-56 rounded-xl" />
+          </div>
+        ) : company ? (
+          <OwnerOverviewTab company={company} />
+        ) : (
+          <div className="text-sm text-gray-500 py-8 text-center">Company details unavailable.</div>
+        )
+      )}
+
+      {/* Settings tab */}
+      {tab === "settings" && (
+        <div className="grid grid-cols-3 gap-6">
+          {/* Main column */}
+          <div className="col-span-2 space-y-7">
+            {/* Configuration progress */}
+            <ConfigProgress progress={data.progress} />
+
+            {/* Settings categories */}
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 mb-4">Settings Categories</h2>
+              <div className="grid grid-cols-3 gap-4">
+                {CARDS.map(card => (
+                  <CategoryCard
+                    key={card.id}
+                    card={card}
+                    footer={
+                      card.id === "state-tax" && data.registrationCount > 0 ? (
+                        <p className="text-[11px] text-emerald-600 font-medium">
+                          {data.registrationCount} active registration{data.registrationCount !== 1 ? "s" : ""}
+                        </p>
+                      ) : undefined
+                    }
+                    onClick={() => card.href && navigate(card.href)}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Right sidebar */}
+          <div className="space-y-6">
+            <AttentionPanel items={data.attention} />
+
+            {/* Quick links */}
+            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+              <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Quick access</h3>
+              <div className="space-y-1">
+                {[
+                  { label: "Account Settings", href: "/account-settings" },
+                  { label: "Company Information", href: "/settings?tab=company-info" },
+                  { label: "State Tax", href: "/settings?tab=state-tax" },
+                ].map(link => (
+                  <button
+                    key={link.href}
+                    onClick={() => navigate(link.href)}
+                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-gray-700
+                               hover:bg-gray-50 hover:text-[#1B3A6B] transition-colors"
+                  >
+                    {link.label}
+                    <ChevronRight className="w-4 h-4 text-gray-300" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
