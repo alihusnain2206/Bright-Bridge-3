@@ -1,0 +1,163 @@
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist,
+a LIVE PRODUCTION payroll application with real clients and real payroll runs.
+
+⚠️ PRODUCTION CONSTRAINT
+This app is live. Real companies depend on it. Do not run any check, build, or
+test in parallel with a publish operation. If you are uncertain about any
+change, STOP and report rather than guessing.
+
+═══════════════════════════════════════════════════════════
+SCOPE BOUNDARY — DO NOT TOUCH
+═══════════════════════════════════════════════════════════
+- Payroll processing or any pay-period logic
+- The Rollfi employee sync chain (lib/rollfi-employee-sync.ts)
+- KYC / KYB submission logic (only the STATUS NORMALISATION in Fix 5 changes)
+- EasyTeam integration of any kind
+- The company creation wizard (pages/clients-new.tsx)
+- POST /rollfi/onboard/bank-account — do NOT change the submit path
+- POST /rollfi/onboard/verify-bank — the micro-deposit backend is correct
+- First-time bank linking for companies with NO account — must remain
+  EXACTLY as it is today
+
+Only two files change:
+  artifacts/api-server/src/routes/rollfi.ts   (bank-status handler only)
+  artifacts/brightbridge/src/pages/bank-account-setup.tsx
+
+═══════════════════════════════════════════════════════════
+CONFIRMED PRODUCTION EVIDENCE (live logs, 2026-08-09)
+═══════════════════════════════════════════════════════════
+The real production getCompanyInfo response contains:
+  - A BankAccounts array (1 item). There is NO FundingSources array.
+  - BankAccounts[0] keys: companyFundingSourceEntityId, bankName,
+    accountName, accountNumber, accountType, status, bankBalance
+  - NO linkType field. NO last4 field. NO field matching "verif".
+  - accountNumber arrives PRE-MASKED by Rollfi as "XXXXXXXXX6067"
+  - status exact value observed: "MicroDeposit pending"  (lowercase p)
+  - Company-level kycStatus exact value: "passed"
+
+Two live production companies were observed on the bank page today:
+  Company A — status "Ready"
+  Company B — status "MicroDeposit pending"
+BOTH currently render the green "Bank account connected" card. Company B's
+micro-deposit verification card does NOT appear, so that client has no way
+to complete verification and cannot fund payroll.
+
+═══════════════════════════════════════════════════════════
+FIX 1 (backend) — `verified` must mean READY, not "exists"
+═══════════════════════════════════════════════════════════
+In GET /rollfi/onboard/bank-status the current logic is:
+
+  const active =
+    sources.find(f => ["active","verified","ready"].includes(lower(f.status)))
+    ?? sources.find(f => lower(f.status) !== "deactivated")
+    ?? sources[0] ?? null;
+  verified = active !== null && lower(active.status) !== "deactivated";
+
+The second fallback matches "MicroDeposit pending", so verified returns true
+for an account that cannot fund payroll. Separate SELECTION from VERIFICATION:
+
+  const READY = ["active","verified","ready"];
+  const readySource   = sources.find(f => READY.includes(lower(f.status))) ?? null;
+  const displaySource = readySource
+                        ?? sources.find(f => lower(f.status) !== "deactivated")
+                        ?? sources[0] ?? null;
+
+  verified = readySource !== null;              // STRICT
+  // status, last4, bankName, accountType still derive from displaySource
+
+Do NOT change the returned field names or the response shape.
+Company A must still return verified: true.
+Company B must now return verified: false with status "MicroDeposit pending".
+
+Keep the existing handling that merges FundingSources and BankAccounts —
+production sends only BankAccounts, so that path must keep working.
+
+═══════════════════════════════════════════════════════════
+FIX 2 (frontend) — honest status card
+═══════════════════════════════════════════════════════════
+In bank-account-setup.tsx the status card currently always renders green with
+a checkmark. Make it reflect reality:
+
+  verified === true   → unchanged: green card, "Bank account connected"
+  verified === false  → AMBER card (#F59E0B), warning icon,
+                        heading: "Bank account pending verification"
+                        body: "We've sent two small test deposits to this
+                        account. Enter the amounts below to finish setup.
+                        Payroll cannot be funded until this is complete."
+
+bankName / last4 / accountType display stays the same in both states.
+
+═══════════════════════════════════════════════════════════
+FIX 3 (frontend) — remove the false replace promise
+═══════════════════════════════════════════════════════════
+Remove this text from the status card:
+  "You can replace this account below. Changes take effect for the next
+   payroll run."
+
+Replace with neutral GRAY text:
+  "Need to change this account? Changing your payroll funding account isn't
+   available in the app yet — please contact support so it can be updated
+   safely."
+
+Reason: the app has no deactivateCompanyBankAccount flow, so this promise
+cannot currently be kept.
+
+═══════════════════════════════════════════════════════════
+FIX 4 (frontend) — close the ambiguous submit path
+═══════════════════════════════════════════════════════════
+The Plaid/Manual method choice currently renders on:
+  isProduction && !method
+Change to:
+  isProduction && !method && !bankStatus
+
+So it renders ONLY when NO bank account exists at all. Also ensure the Plaid
+panel and the Manual form do not render when bankStatus is present, even if
+`method` is already set in component state.
+
+CRITICAL: when bankStatus is null/undefined (no account on file), everything
+must behave EXACTLY as today. First-time linking must be completely
+unaffected. Verify this explicitly and report on it.
+
+═══════════════════════════════════════════════════════════
+FIX 5 (backend) — KYB "passed" not recognised
+═══════════════════════════════════════════════════════════
+In the same handler, the KYB status normalisation maps only "approved" and
+"verified" to "verified". Rollfi's real production value for a completed KYB
+is "passed", so approved companies show "Action required" on the Setup
+Checklist.
+
+Add "passed" to that normalisation array. This is a one-word addition to an
+existing list. Do NOT change any other KYC/KYB logic.
+
+═══════════════════════════════════════════════════════════
+TESTING CHECKLIST — perform and report what you OBSERVED
+═══════════════════════════════════════════════════════════
+1. Company with status "Ready": verified true, green card unchanged, no
+   method choice rendered, new gray support text present
+2. Company with status "MicroDeposit pending": verified false, AMBER card,
+   and the micro-deposit entry card VISIBLE with two amount inputs
+3. Report the actual bankLinkMethod DB value for the pending company — the
+   micro-deposit card is also gated on bankLinkMethod !== "Plaid", so state
+   whether that gate passes
+4. Company with NO bank account: method choice renders, Plaid works, Manual
+   form renders — UNCHANGED from today
+5. Confirm the bank-status response shape is unchanged apart from `verified`
+6. Confirm the handler still parses a response containing ONLY BankAccounts
+   (no FundingSources) — this is the real production shape
+7. Confirm last4 still derives correctly from the pre-masked accountNumber
+   string "XXXXXXXXX6067"
+8. Company with kycStatus "passed": KYB badge shows verified and the Setup
+   Checklist no longer shows "Action required"
+9. Confirm no other route, page, or component was modified
+
+═══════════════════════════════════════════════════════════
+DELIVERABLE SUMMARY — required
+═══════════════════════════════════════════════════════════
+- Files changed (should be exactly two)
+- The `verified` logic quoted before and after
+- The actual bankLinkMethod value for the pending company
+- Which companies' KYB badges change as a result of Fix 5
+- Explicit confirmation the no-account first-time flow is untouched
+
+For each item above: implement it, then reproduce the exact steps and report
+what you actually observed. State explicitly if anything could not be verified.

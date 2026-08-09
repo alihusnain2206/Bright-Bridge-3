@@ -1865,25 +1865,36 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
       ...(Array.isArray(company.FundingSources) ? company.FundingSources as Record<string, unknown>[] : []),
       ...(Array.isArray(company.BankAccounts)   ? company.BankAccounts   as Record<string, unknown>[] : []),
     ];
-    const active =
-      sources.find((f) => ["active", "verified", "ready"].includes(String(f.status ?? "").toLowerCase())) ??
+    // FIX 1: Separate SELECTION (displaySource — bank details to show) from
+    // VERIFICATION (readySource — only truly-active accounts count as verified).
+    // Before this fix, the second fallback matched "MicroDeposit pending" and
+    // returned verified:true for an account that cannot fund payroll.
+    const READY_STATUSES = ["active", "verified", "ready"];
+    const readySource =
+      sources.find((f) => READY_STATUSES.includes(String(f.status ?? "").toLowerCase())) ?? null;
+    const displaySource =
+      readySource ??
       sources.find((f) => String(f.status ?? "").toLowerCase() !== "deactivated") ??
       sources[0] ??
       null;
-    const linked = active !== null && String(active?.status ?? "").toLowerCase() !== "deactivated";
-    // Normalised shape — omit raw to avoid exposing full bank metadata to clients
+    const linked = readySource !== null;  // STRICT: only READY_STATUSES counts as verified
+    // Normalised shape — omit raw to avoid exposing full bank metadata to clients.
+    // last4 derives from displaySource (accountNumberLast4 or last 4 of pre-masked accountNumber).
     const last4 =
-      (active?.accountNumberLast4 as string | undefined) ??
-      (typeof active?.accountNumber === "string" && (active.accountNumber as string).length >= 4
-        ? (active.accountNumber as string).slice(-4)
+      (displaySource?.accountNumberLast4 as string | undefined) ??
+      (typeof displaySource?.accountNumber === "string" && (displaySource.accountNumber as string).length >= 4
+        ? (displaySource.accountNumber as string).slice(-4)
         : null) ??
       null;
 
     // ── Live KYB status from Rollfi ─────────────────────────────────────────
-    // Rollfi returns kycStatus on the Company object ("pending", "approved", etc.)
+    // Rollfi returns kycStatus on the Company object. Confirmed production values:
+    //   "passed"   — KYB complete (FIX 5: add "passed" to the recognised set)
+    //   "pending"  — KYB under review
     const rawKyb = (company.kycStatus as string | undefined) ?? null;
+    // FIX 5: "passed" is Rollfi's real production value for a completed KYB.
     const liveKybStatus = rawKyb
-      ? (["approved", "verified"].includes(rawKyb.toLowerCase()) ? "verified" : rawKyb.toLowerCase())
+      ? (["approved", "verified", "passed"].includes(rawKyb.toLowerCase()) ? "verified" : rawKyb.toLowerCase())
       : null;
 
     // Lazy-write to DB so the local kybStatus stays in sync with Rollfi without a manual resync step.
@@ -1896,11 +1907,11 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
 
     res.json({
       rollfiCompanyId: rollfiCompany.rollfiCompanyId,
-      status: (active?.status as string | undefined) ?? null,
+      status: (displaySource?.status as string | undefined) ?? null,
       verified: linked,
       last4,
-      bankName: (active?.bankName as string | undefined) ?? null,
-      accountType: (active?.accountType as string | undefined) ?? null,
+      bankName: (displaySource?.bankName as string | undefined) ?? null,
+      accountType: (displaySource?.accountType as string | undefined) ?? null,
       kybStatus: liveKybStatus,
     });
   } catch (err: unknown) {

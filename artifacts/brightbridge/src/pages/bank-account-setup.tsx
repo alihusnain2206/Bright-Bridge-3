@@ -277,17 +277,23 @@ export default function BankAccountSetupPage() {
           <div>
             {bankStatus.verified ? (
               <>
+                {/* FIX 2/3: green card unchanged except support-text replaces false "replace" promise */}
                 <p className="text-sm font-semibold text-emerald-800">Bank account connected</p>
                 <p className="text-sm text-emerald-700 mt-0.5">
                   {[bankStatus.bankName, bankStatus.last4 ? `···· ${bankStatus.last4}` : null, bankStatus.accountType].filter(Boolean).join(" · ")}
                   {bankStatus.status ? <span className="ml-1 capitalize">— {bankStatus.status}</span> : null}
                 </p>
-                <p className="text-xs text-emerald-600 mt-1">You can replace this account below. Changes take effect for the next payroll run.</p>
+                {/* FIX 3: removed false "replace below" promise; no deactivate flow exists */}
+                <p className="text-xs text-gray-500 mt-1">Need to change this account? Changing your payroll funding account isn't available in the app yet — please contact support so it can be updated safely.</p>
               </>
             ) : (
               <>
-                <p className="text-sm font-semibold text-amber-800">No verified bank account</p>
-                <p className="text-sm text-amber-700 mt-0.5">Payroll cannot run until a bank account is linked and verified.</p>
+                {/* FIX 2: honest amber card for accounts that exist but aren't yet verified */}
+                <p className="text-sm font-semibold text-amber-800">Bank account pending verification</p>
+                <p className="text-sm text-amber-700 mt-0.5">
+                  {[bankStatus.bankName, bankStatus.last4 ? `···· ${bankStatus.last4}` : null, bankStatus.accountType].filter(Boolean).join(" · ")}
+                </p>
+                <p className="text-sm text-amber-700 mt-1">We've sent two small test deposits to this account. Enter the amounts below to finish setup. Payroll cannot be funded until this is complete.</p>
               </>
             )}
           </div>
@@ -422,7 +428,10 @@ export default function BankAccountSetupPage() {
       )}
 
       {/* ── Production: method choice ──────────────────────────────────── */}
-      {isProduction && !method && (
+      {/* FIX 4: hide method choice whenever an account already exists (status present).
+          When bankStatus is absent or has null status (no account on file) this renders
+          exactly as before — first-time linking is completely unaffected. */}
+      {isProduction && !method && !bankStatus?.status && (
         <div className="space-y-3">
           <p className="text-sm font-semibold text-gray-700">Choose how to link your bank account:</p>
 
@@ -476,7 +485,8 @@ export default function BankAccountSetupPage() {
       )}
 
       {/* ── Plaid flow ────────────────────────────────────────────────────── */}
-      {isProduction && method === "Plaid" && (
+      {/* FIX 4: also hide when an account already exists */}
+      {isProduction && method === "Plaid" && !bankStatus?.status && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <button onClick={() => { setMethod(null); resetPlaid(); }} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
@@ -636,7 +646,8 @@ export default function BankAccountSetupPage() {
       )}
 
       {/* ── Manual flow ───────────────────────────────────────────────────── */}
-      {isProduction && method === "Manual" && (
+      {/* FIX 4: also hide when an account already exists */}
+      {isProduction && method === "Manual" && !bankStatus?.status && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <button onClick={() => { setMethod(null); setManualError(""); setManualSuccess(false); }} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
