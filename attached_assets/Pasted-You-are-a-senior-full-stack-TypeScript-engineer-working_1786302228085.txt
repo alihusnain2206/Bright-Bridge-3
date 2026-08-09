@@ -1,0 +1,125 @@
+You are a senior full-stack TypeScript engineer working on BrightBridge Assist,
+a LIVE PRODUCTION payroll application with real clients and real payroll runs.
+
+⚠️ PRODUCTION CONSTRAINT
+This app is live. Do not run any check, build, or test in parallel with a
+publish operation. If you are uncertain about any change, STOP and report
+rather than guessing.
+
+═══════════════════════════════════════════════════════════
+SCOPE BOUNDARY — DO NOT TOUCH
+═══════════════════════════════════════════════════════════
+- Payroll processing or any pay-period logic
+- The Rollfi employee sync chain, KYC/KYB submission logic, EasyTeam
+- The company creation wizard (pages/clients-new.tsx)
+- POST /rollfi/onboard/bank-account and POST /rollfi/onboard/verify-bank
+- The `verified` logic in GET /rollfi/onboard/bank-status — this was fixed
+  this session and is CORRECT. Do not modify it.
+- pages/bank-account-setup.tsx — fixed this session, leave it alone
+- The MEANING of the bank_account_added column. It means "bank details were
+  submitted". It must KEEP that meaning. Do NOT repurpose it and do NOT set
+  it false anywhere — the micro-deposit reminder flow depends on it.
+
+═══════════════════════════════════════════════════════════
+BACKGROUND — CONFIRMED ROOT CAUSE
+═══════════════════════════════════════════════════════════
+Two different questions have been conflated across the app:
+  "Were bank details submitted?"  → DB column bank_account_added
+  "Can this account fund payroll?" → Rollfi's verified (bank-status endpoint)
+
+The Setup Checklist in client-detail.tsx line ~198 reads:
+  { done: company.bankAccountAdded, label: "Company bank account connected" }
+It never consults live bank-status. Confirmed production consequences:
+
+  BrightbridgeAssist     Rollfi "ready"              DB false  → shows "Action
+                                                                 required"
+                                                                 (FALSE NEGATIVE)
+  Round the Clock Nursery Rollfi "MicroDeposit pending" DB true → shows ✅
+                                                                 (FALSE POSITIVE
+                                                                 — dangerous)
+
+The same page's Settings tab ALREADY queries live bank-status correctly at
+line ~517 using: bankStatusData?.verified ?? company.bankAccountAdded
+That result is simply never shared with the checklist.
+
+═══════════════════════════════════════════════════════════
+TASK 1 — SWEEP FIRST (report before fixing)
+═══════════════════════════════════════════════════════════
+This same mistake has now appeared three times in different places. Before
+changing anything, search the ENTIRE codebase for every read of:
+  bankAccountAdded  /  bank_account_added  /  bankLinked  /  bankAdded
+
+For each occurrence report: file, line, and whether it is being used to mean
+"submitted" (correct) or "connected / ready / verified" (WRONG).
+
+Report this list BEFORE applying Task 2 and Task 3, so we can decide whether
+more places need fixing. Do not fix anything found in the sweep without
+listing it first.
+
+═══════════════════════════════════════════════════════════
+TASK 2 — Self-heal the false negative (backend)
+═══════════════════════════════════════════════════════════
+In GET /rollfi/onboard/bank-status, extend the EXISTING lazy write-back
+(which currently writes kybStatus) so that when verified === true it also
+sets bank_account_added = true for that company.
+
+Write ONLY when the stored value is currently false — do not write on every
+request. NEVER set it false. This is a one-directional self-heal.
+
+═══════════════════════════════════════════════════════════
+TASK 3 — Three-state checklist item (frontend, client-detail.tsx)
+═══════════════════════════════════════════════════════════
+Lift the live bank-status query to page level so the Setup Checklist can
+consume it. Reuse the EXISTING query/endpoint the Settings tab already
+uses at line ~517 — do NOT create a second duplicate fetch. One
+company-scoped query, shared by both consumers.
+
+The checklist item currently has two states (done / not done). It needs
+THREE, because "submitted but awaiting Rollfi" is a real state that neither
+a tick nor a cross describes honestly:
+
+  bankStatusData?.verified === true
+      → ✅ green — "Company bank account connected"
+
+  verified === false AND company.bankAccountAdded === true
+      → ⏳ amber (#F59E0B) — "Bank account awaiting verification"
+        sub-text: "Enter the two test deposit amounts to finish setup"
+
+  verified === false AND bankAccountAdded === false
+      → ⊘ "Action required" — "Company bank account connected"
+
+While bank-status is still LOADING, fall back to the existing
+company.bankAccountAdded value rather than flashing "Action required".
+If the bank-status query ERRORS, do the same — never show a worse state
+because a fetch failed.
+
+Do not change any other checklist item.
+
+═══════════════════════════════════════════════════════════
+TESTING CHECKLIST — report what you OBSERVED
+═══════════════════════════════════════════════════════════
+1. BrightbridgeAssist (Rollfi "ready"): checklist shows ✅ green
+2. Confirm Task 2 wrote bank_account_added = true for BrightbridgeAssist —
+   report the DB value before and after
+3. Round the Clock Nursery (Rollfi "MicroDeposit pending", DB true):
+   checklist shows AMBER "awaiting verification", NOT a green tick and NOT
+   "Action required"
+4. Confirm bank_account_added is still TRUE for Round the Clock Nursery —
+   it must not have been cleared
+5. Confirm only ONE bank-status request fires per page load (no duplicate
+   call introduced by lifting the query)
+6. Confirm the Settings tab bank card still behaves exactly as before
+7. Confirm no other checklist item changed
+8. Confirm bank-account-setup.tsx was NOT modified
+
+═══════════════════════════════════════════════════════════
+DELIVERABLE SUMMARY — required
+═══════════════════════════════════════════════════════════
+- The Task 1 sweep results (full list, with correct/wrong judgement each)
+- Files changed
+- The checklist condition quoted before and after
+- DB values before and after for both companies
+- Confirmation that bank_account_added is never set false anywhere
+
+For each item: implement, then reproduce the exact steps and report what you
+actually observed. State explicitly if anything could not be verified.

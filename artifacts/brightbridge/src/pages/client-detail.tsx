@@ -189,14 +189,29 @@ function Toast({ message, onDismiss }: { message: string; onDismiss: () => void 
   );
 }
 
-function OverviewTab({ company }: { company: Company }) {
+// Shared type — used by OverviewTab and PayrollTab (page-level query lives in ClientDetail).
+type BankStatusData = { verified: boolean; status: string | null };
+
+function OverviewTab({ company, bankStatusData }: { company: Company; bankStatusData?: BankStatusData | null }) {
   const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
-  const steps = [
-    { done: true,                           label: "BrightBridge account created" },
-    { done: hasRollfi,                      label: "Rollfi payroll registration" },
+
+  // Prefer live Rollfi result; fall back to DB boolean while the query is loading or if it errors.
+  // This prevents a false "Action required" flash on load and keeps the worst-case no worse than before.
+  const bankVerified: boolean = bankStatusData?.verified ?? company.bankAccountAdded;
+  // "submitted but not yet Rollfi-verified" — three-state: ready / awaiting / not submitted
+  const bankPending = !bankVerified && company.bankAccountAdded;
+
+  const steps: Array<{ done: boolean; pending?: boolean; label: string; subText?: string }> = [
+    { done: true,                             label: "BrightBridge account created" },
+    { done: hasRollfi,                        label: "Rollfi payroll registration" },
     { done: company.kybStatus === "verified", pending: company.kybStatus === "pending", label: "KYB business verification" },
-    { done: company.bankAccountAdded,       label: "Company bank account connected" },
-    { done: company.payScheduleAdded,       label: `Pay schedule (${company.payFrequency ?? "BiWeekly"})` },
+    {
+      done:    bankVerified,
+      pending: bankPending,
+      label:   bankPending ? "Bank account awaiting verification" : "Company bank account connected",
+      subText: bankPending ? "Enter the two test deposit amounts to finish setup" : undefined,
+    },
+    { done: company.payScheduleAdded,         label: `Pay schedule (${company.payFrequency ?? "BiWeekly"})` },
     { done: (company.employeeCount ?? 0) > 0, label: `Employees added (${company.employeeCount ?? 0} so far)` },
   ];
 
@@ -232,11 +247,19 @@ function OverviewTab({ company }: { company: Company }) {
       <div className="bg-white rounded-xl border p-5 shadow-sm">
         <p className="text-sm font-bold text-gray-800 mb-4">Setup Checklist</p>
         <div className="space-y-3">
-          {steps.map(({ done, pending, label }) => (
-            <div key={label} className="flex items-center gap-3">
-              {done ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" /> : pending ? <Clock className="h-4 w-4 text-amber-500 shrink-0" /> : <XCircle className="h-4 w-4 text-gray-300 shrink-0" />}
-              <span className={`text-sm ${done ? "text-gray-800" : pending ? "text-amber-700" : "text-gray-400"}`}>{label}</span>
-              {pending && <Badge variant="outline" className="ml-auto text-[10px] border-amber-300 text-amber-600">Under review</Badge>}
+          {steps.map(({ done, pending, label, subText }) => (
+            <div key={label} className={`flex gap-3 ${subText ? "items-start" : "items-center"}`}>
+              {done
+                ? <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0 mt-0.5" />
+                : pending
+                  ? <Clock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                  : <XCircle className="h-4 w-4 text-gray-300 shrink-0 mt-0.5" />}
+              <div className="flex-1 min-w-0">
+                <span className={`text-sm ${done ? "text-gray-800" : pending ? "text-amber-700 font-medium" : "text-gray-400"}`}>{label}</span>
+                {subText && <p className="text-xs text-amber-600 mt-0.5">{subText}</p>}
+              </div>
+              {/* KYB pending shows "Under review"; bank pending shows sub-text instead (no badge) */}
+              {pending && !subText && <Badge variant="outline" className="ml-auto text-[10px] border-amber-300 text-amber-600">Under review</Badge>}
               {!done && !pending && <span className="ml-auto text-[10px] text-red-500 font-medium">Action required</span>}
             </div>
           ))}
@@ -509,16 +532,10 @@ function EmployeesTab({ company }: { company: Company }) {
   );
 }
 
-function PayrollTab({ company }: { company: Company }) {
+function PayrollTab({ company, bankStatusData }: { company: Company; bankStatusData?: BankStatusData | null }) {
   const hasRollfi = !!(company.rollfiCompanyId ?? company.rollfi?.rollfiCompanyId);
-
-  // FIX 3 — live bank status (more accurate than the stored boolean)
-  const { data: bankStatusData } = useQuery<{ verified: boolean; status: string | null }>({
-    queryKey: ["/api/rollfi/bank-status-tab", company.id],
-    queryFn: () => fetch(`/api/rollfi/onboard/bank-status?companyId=${company.id}`, { credentials: "include" }).then((r) => r.json()),
-    enabled: hasRollfi,
-    staleTime: 30_000,
-  });
+  // bankStatusData is now provided by the page-level query in ClientDetail (shared with OverviewTab).
+  // No second useQuery call here — one request per page load, result cached by React Query.
 
   // FIX 3 — employee provisioning summary
   const { data: empData } = useQuery<{ employees: Employee[] }>({
@@ -873,6 +890,17 @@ export default function ClientDetail() {
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["/api/companies", companyId] });
 
+  // Page-level bank-status query — result shared between OverviewTab (checklist) and PayrollTab (status card).
+  // Defined here so a single request serves both consumers regardless of which tab the user views first.
+  // enabled waits for the company record so we have the Rollfi ID before firing.
+  const hasRollfiId = !!(data?.rollfiCompanyId) || !!(data?.rollfi?.rollfiCompanyId);
+  const { data: bankStatusData } = useQuery<BankStatusData>({
+    queryKey: ["/api/rollfi/bank-status-tab", companyId],
+    queryFn: () => fetch(`/api/rollfi/onboard/bank-status?companyId=${companyId}`, { credentials: "include" }).then((r) => r.json()),
+    enabled: !!companyId && hasRollfiId,
+    staleTime: 30_000,
+  });
+
   if (isLoading) return <div className="space-y-4"><Skeleton className="h-20 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" /></div>;
   if (!data || !data.name) return (
     <div className="text-center py-20">
@@ -940,10 +968,10 @@ export default function ClientDetail() {
       </div>
 
       {/* Tab content */}
-      {tab === "overview"  && <OverviewTab company={data} />}
+      {tab === "overview"  && <OverviewTab  company={data} bankStatusData={bankStatusData} />}
       {tab === "employees" && <EmployeesTab company={data} />}
-      {tab === "payroll"   && <PayrollTab company={data} />}
-      {tab === "settings"  && <SettingsTab company={data} onRefresh={refresh} />}
+      {tab === "payroll"   && <PayrollTab   company={data} bankStatusData={bankStatusData} />}
+      {tab === "settings"  && <SettingsTab  company={data} onRefresh={refresh} />}
     </div>
   );
 }

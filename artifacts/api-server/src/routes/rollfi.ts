@@ -1897,12 +1897,23 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
       ? (["approved", "verified", "passed"].includes(rawKyb.toLowerCase()) ? "verified" : rawKyb.toLowerCase())
       : null;
 
-    // Lazy-write to DB so the local kybStatus stays in sync with Rollfi without a manual resync step.
+    // Lazy write-back 1: keep local kybStatus in sync with Rollfi.
     if (liveKybStatus) {
       void db.update(companiesTable)
         .set({ kybStatus: liveKybStatus, updatedAt: new Date().toISOString() })
         .where(eq(companiesTable.id, companyId))
         .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to sync kybStatus to DB"));
+    }
+
+    // Lazy write-back 2 (Task 2): self-heal bank_account_added when Rollfi confirms the account is ready.
+    // One-directional — NEVER sets it false. The WHERE clause avoids a write when the value is already true.
+    // This corrects companies whose account is "ready" in Rollfi but whose DB flag was never written
+    // (e.g. linked before the column was tracked, or the write path was missed).
+    if (linked) {
+      void db.update(companiesTable)
+        .set({ bankAccountAdded: true, updatedAt: new Date().toISOString() })
+        .where(and(eq(companiesTable.id, companyId), eq(companiesTable.bankAccountAdded, false)))
+        .catch((e: unknown) => req.log.warn({ err: e }, "bank-status: failed to self-heal bankAccountAdded"));
     }
 
     res.json({
