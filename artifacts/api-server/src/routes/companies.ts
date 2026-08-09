@@ -44,6 +44,7 @@ interface CompanyBankInput {
   routingNumber?: string;
   accountNumber?: string;
   accountType?: string;
+  accountName?: string;  // Account holder name — required by Rollfi's addCompanyBankAccount schema
 }
 
 function validateBankDetails(b: CompanyBankInput): string | null {
@@ -51,6 +52,7 @@ function validateBankDetails(b: CompanyBankInput): string | null {
   if (!b.accountNumber || !/^\d{4,17}$/.test(b.accountNumber.replace(/\D/g, ""))) return "Account number must be 4–17 digits";
   if (!b.bankName?.trim()) return "Bank name is required";
   if (b.accountType !== "checking" && b.accountType !== "savings") return "Account type must be checking or savings";
+  if (!b.accountName?.trim()) return "Account holder name is required";
   return null;
 }
 
@@ -81,7 +83,7 @@ async function ensureFullOnboarding(
   try {
     const isProduction = getRollfiConfig().env === "production";
     const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
-      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: "Payroll Funding" }
+      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: bankInput.accountName ?? "Payroll Funding" }
       : { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
     log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: maskAcct(bank.accountNumber), maskedRouting: maskAcct(bank.routingNumber) }, "addCompanyBankAccount: using bank details");
     const _bankPayload = { method: "addCompanyBankAccount", companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName } };
@@ -212,7 +214,7 @@ router.post("/companies", async (req: Request, res: Response) => {
     entityType: string; ein?: string; incorporationState: string; dateOfIncorporation: string; irsFilingForm: string;
     payrollRunThisYear: string;
     payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
-    fundingBankName?: string; fundingRoutingNumber?: string; fundingAccountNumber?: string; fundingAccountType?: string;
+    fundingBankName?: string; fundingRoutingNumber?: string; fundingAccountNumber?: string; fundingAccountType?: string; fundingAccountName?: string;
     stateTaxRegistrations?: Array<{
       stateCode: string; stateName: string; fieldValues: Record<string, string>;
     }>;
@@ -229,6 +231,7 @@ router.post("/companies", async (req: Request, res: Response) => {
       accountNumber: body.fundingAccountNumber,
       bankName: body.fundingBankName,
       accountType: body.fundingAccountType,
+      accountName: body.fundingAccountName,
     });
     if (bankErr) { res.status(400).json({ error: `Company funding account: ${bankErr}` }); return; }
   }
@@ -381,6 +384,7 @@ router.post("/companies", async (req: Request, res: Response) => {
             routingNumber: body.fundingRoutingNumber,
             accountNumber: body.fundingAccountNumber,
             accountType: body.fundingAccountType,
+            accountName: body.fundingAccountName,
           }).then(async () => {
             await db.update(companies).set({ bankAccountAdded: true, payScheduleAdded: true, status: "active", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
             req.log.info({ companyId }, "Rollfi full onboarding complete");
@@ -638,7 +642,7 @@ router.post("/employees", async (req: Request, res: Response) => {
     w4MilitarySpouseExemption?: boolean; w4IsNonResident?: boolean; w4AzDeductionPercent?: number | null;
     stateW4Fields?: Record<string, string>;
     bankSetupMethod: "invite" | "manual";
-    bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
+    bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string; accountName?: string;
     department?: string; managerId?: string; managerName?: string;
   };
 
@@ -677,6 +681,7 @@ router.post("/employees", async (req: Request, res: Response) => {
       accountNumber: body.accountNumber,
       bankName: body.bankName,
       accountType: body.accountType,
+      accountName: body.accountName,
     });
     if (bankErr) { res.status(400).json({ error: `Employee bank account: ${bankErr}` }); return; }
   }
@@ -815,6 +820,7 @@ router.post("/employees", async (req: Request, res: Response) => {
         routingNumber: body.bankSetupMethod === "manual" ? body.routingNumber : undefined,
         accountNumber: body.bankSetupMethod === "manual" ? body.accountNumber : undefined,
         accountType: body.bankSetupMethod === "manual" ? body.accountType : undefined,
+        accountName: body.bankSetupMethod === "manual" ? body.accountName : undefined,
       },
       req.log
     );

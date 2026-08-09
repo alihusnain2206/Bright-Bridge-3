@@ -66,7 +66,7 @@ interface FormData {
   stateW4Fields: Record<string, string>;
   // Step 4
   bankSetupMethod: "invite" | "manual";
-  bankName: string; routingNumber: string; accountNumber: string; accountType: string;
+  bankName: string; routingNumber: string; accountNumber: string; accountType: string; accountName: string;
 }
 
 interface Company { id: string; name: string; }
@@ -245,7 +245,7 @@ export default function ClientEmployeesNew() {
     w4OtherIncome: 0, w4OtherDeduction: 0,
     w4MilitarySpouseExemption: false, w4IsNonResident: false, w4AzDeductionPercent: 0,
     stateW4Fields: {},
-    bankSetupMethod: "invite", bankName: "", routingNumber: "", accountNumber: "", accountType: "checking",
+    bankSetupMethod: "invite", bankName: "", routingNumber: "", accountNumber: "", accountType: "checking", accountName: "",
   });
 
   const [form, setForm] = useState<FormData>(makeInitialForm);
@@ -939,8 +939,9 @@ export default function ClientEmployeesNew() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5"><Label>Bank Name *</Label><Input value={form.bankName} onChange={(e) => set("bankName", e.target.value)} placeholder="e.g. Chase Bank" /></div>
+                  <div className="space-y-1.5"><Label>Account Holder Name *</Label><Input value={form.accountName} onChange={(e) => set("accountName", e.target.value)} placeholder="Name on account (e.g. Jane Smith)" /></div>
                   <div className="space-y-1.5"><Label>Routing Number * (9 digits)</Label><Input value={form.routingNumber} onChange={(e) => set("routingNumber", e.target.value.replace(/\D/g, ""))} placeholder="9-digit ABA routing number" maxLength={9} /></div>
-                  <div className="space-y-1.5"><Label>Account Number *</Label><Input value={form.accountNumber} onChange={(e) => set("accountNumber", e.target.value)} placeholder="Employee's account number" /></div>
+                  <div className="space-y-1.5"><Label>Account Number * (4–17 digits)</Label><Input value={form.accountNumber} onChange={(e) => set("accountNumber", e.target.value.replace(/\D/g, "").slice(0, 17))} placeholder="Employee's account number" /></div>
                   <div className="space-y-1.5">
                     <Label>Account Type</Label>
                     <div className="flex gap-4 pt-1">

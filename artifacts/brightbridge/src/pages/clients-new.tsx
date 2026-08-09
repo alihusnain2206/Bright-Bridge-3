@@ -54,7 +54,7 @@ interface FormData {
   // Step 5
   payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
   // Step 6 — funding bank account (production only; sandbox uses test values automatically)
-  fundingBankName: string; fundingRoutingNumber: string; fundingAccountNumber: string; fundingAccountType: string;
+  fundingBankName: string; fundingRoutingNumber: string; fundingAccountNumber: string; fundingAccountType: string; fundingAccountName: string;
 }
 
 interface StateTaxEntry {
@@ -191,7 +191,7 @@ export default function ClientsNew() {
     ownershipPercentage: 100, isPayrollAdmin: true,
     entityType: "LLC", ein: "", incorporationState: "", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
     payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
-    fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking",
+    fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking", fundingAccountName: "",
   });
 
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
@@ -846,12 +846,16 @@ export default function ClientsNew() {
                     <Input value={form.fundingBankName} onChange={(e) => set("fundingBankName", e.target.value)} placeholder="e.g. Chase Bank" />
                   </div>
                   <div className="space-y-1.5">
+                    <Label>Account Holder Name *</Label>
+                    <Input value={form.fundingAccountName} onChange={(e) => set("fundingAccountName", e.target.value)} placeholder="e.g. ABC Daycare LLC" />
+                  </div>
+                  <div className="space-y-1.5">
                     <Label>Routing Number * (9 digits)</Label>
                     <Input value={form.fundingRoutingNumber} onChange={(e) => set("fundingRoutingNumber", e.target.value.replace(/\D/g, ""))} placeholder="021000021" maxLength={9} />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Account Number *</Label>
-                    <Input value={form.fundingAccountNumber} onChange={(e) => set("fundingAccountNumber", e.target.value)} placeholder="Your business checking account number" />
+                    <Label>Account Number * (4–17 digits)</Label>
+                    <Input value={form.fundingAccountNumber} onChange={(e) => set("fundingAccountNumber", e.target.value.replace(/\D/g, "").slice(0, 17))} placeholder="Your business checking account number" />
                   </div>
                   <div className="space-y-1.5">
                     <Label>Account Type *</Label>

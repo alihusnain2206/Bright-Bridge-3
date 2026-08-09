@@ -78,7 +78,7 @@ async function runEmployeeKycOnboarding(
   rollfiUserId: string,
   rollfiCompanyId: string,
   log: { info: (...a: unknown[]) => void; warn: (...a: unknown[]) => void },
-  bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string }
+  bankInput?: { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string; accountName?: string }
 ): Promise<KycOnboardingResult> {
   const headers = rollfiHeaders();
 
@@ -222,7 +222,7 @@ async function runEmployeeKycOnboarding(
   } else {
     try {
       const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
-        ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: "default" }
+        ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Direct Deposit", accountType: bankInput.accountType ?? "checking", accountName: bankInput.accountName ?? "Direct Deposit" }
         : { accountNumber: "9889890989", routingNumber: "122238242", bankName: "Chase Bank", accountType: "savings", accountName: "default" };
       log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: `****${bank.accountNumber.slice(-4)}` }, "addUserBankAccount: submitting bank details");
       const r = await axios.post(
@@ -1736,8 +1736,8 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
   }
 
   const isProduction = getRollfiConfig().env === "production";
-  const { bankName: bodyBankName, routingNumber: bodyRouting, accountNumber: bodyAccount, accountType: bodyAccountType } =
-    req.body as { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string };
+  const { bankName: bodyBankName, routingNumber: bodyRouting, accountNumber: bodyAccount, accountType: bodyAccountType, accountName: bodyAccountName } =
+    req.body as { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string; accountName?: string };
 
   let bankAcct: { accountNumber: string; routingNumber: string; bankName: string; accountType: string; accountName: string };
   if (isProduction) {
@@ -1745,7 +1745,11 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
       res.status(400).json({ error: "Production requires bankName, routingNumber, and accountNumber in the request body. Full numbers are never stored — provide them on each call." });
       return;
     }
-    bankAcct = { accountNumber: bodyAccount, routingNumber: bodyRouting, bankName: bodyBankName, accountType: bodyAccountType ?? "checking", accountName: "Payroll Funding" };
+    if (!bodyAccountName?.trim()) {
+      res.status(400).json({ error: "accountName (account holder name) is required — e.g. 'ABC Daycare LLC'." });
+      return;
+    }
+    bankAcct = { accountNumber: bodyAccount, routingNumber: bodyRouting, bankName: bodyBankName, accountType: bodyAccountType ?? "checking", accountName: bodyAccountName };
   } else {
     bankAcct = { accountNumber: rollfiCompany.ein ?? randomNineDigits(), routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
   }
@@ -1815,8 +1819,21 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
       sources[0] ??
       null;
     const linked = active !== null && String(active?.status ?? "").toLowerCase() !== "deactivated";
-    // Omit raw — it may contain bank metadata; callers only need the normalised result
-    res.json({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, fundingSource: active, linked });
+    // Normalised shape — omit raw to avoid exposing full bank metadata to clients
+    const last4 =
+      (active?.accountNumberLast4 as string | undefined) ??
+      (typeof active?.accountNumber === "string" && (active.accountNumber as string).length >= 4
+        ? (active.accountNumber as string).slice(-4)
+        : null) ??
+      null;
+    res.json({
+      rollfiCompanyId: rollfiCompany.rollfiCompanyId,
+      status: (active?.status as string | undefined) ?? null,
+      verified: linked,
+      last4,
+      bankName: (active?.bankName as string | undefined) ?? null,
+      accountType: (active?.accountType as string | undefined) ?? null,
+    });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     req.log.warn({ err }, "getCompanyInfo failed");
@@ -1871,11 +1888,22 @@ router.post("/rollfi/onboard/verify-bank", async (req, res) => {
   }
 
   // Step 2: attempt micro-deposit verification
-  const { debitAmount1 = 0.01, debitAmount2 = 0.01 } = req.body as { debitAmount1?: number; debitAmount2?: number };
+  // Amounts must come from the user — hardcoded guesses always fail in production.
+  const { debitAmount1, debitAmount2 } = req.body as { debitAmount1?: unknown; debitAmount2?: unknown };
+  const amt1 = typeof debitAmount1 === "number" ? debitAmount1 : parseFloat(String(debitAmount1 ?? ""));
+  const amt2 = typeof debitAmount2 === "number" ? debitAmount2 : parseFloat(String(debitAmount2 ?? ""));
+  if (!Number.isFinite(amt1) || !Number.isFinite(amt2)) {
+    res.status(400).json({ error: "debitAmount1 and debitAmount2 are required — enter the exact amounts deposited into the account (e.g. 0.12 and 0.15)." });
+    return;
+  }
+  if (amt1 <= 0 || amt1 >= 1.0 || amt2 <= 0 || amt2 >= 1.0) {
+    res.status(400).json({ error: "Each micro-deposit amount must be a positive number less than $1.00 (e.g. 0.12)." });
+    return;
+  }
   try {
     const r = await axios.post(
       `${getBaseUrl()}/adminPortal#verifyMicroDeposits`,
-      { method: "verifyMicroDeposits", companyId: rollfiCompanyId, debitAmount1, debitAmount2 },
+      { method: "verifyMicroDeposits", companyId: rollfiCompanyId, debitAmount1: amt1, debitAmount2: amt2 },
       { headers: rollfiHeaders() }
     );
     req.log.info({ rollfiResponse: r.data, debitAmount1, debitAmount2 }, "verifyMicroDeposits response");
@@ -3310,8 +3338,8 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
     res.status(403).json({ error: "Only owners and super admins can run payroll setup" }); return;
   }
 
-  const { employeeId, bankName, routingNumber, accountNumber, accountType } = req.body as {
-    employeeId: string; bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string;
+  const { employeeId, bankName, routingNumber, accountNumber, accountType, accountName } = req.body as {
+    employeeId: string; bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string; accountName?: string;
   };
   if (!employeeId) { res.status(400).json({ error: "employeeId required" }); return; }
 
@@ -3537,7 +3565,7 @@ router.post("/rollfi/repair/employee-payroll-setup", async (req, res) => {
           accountNumber, routingNumber,
           bankName: bankName ?? "Direct Deposit",
           accountType: accountType ?? "checking",
-          accountName: "default", payPercentage: 100, isPrimary: true,
+          accountName: accountName ?? "Direct Deposit", payPercentage: 100, isPrimary: true,
         },
       }, { headers: rollfiHeaders() });
       req.log.info({ rollfiResult: safeRollfiLog(r.data), employeeId }, "repair-payroll-setup: addUserBankAccount response");

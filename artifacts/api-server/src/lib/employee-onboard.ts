@@ -54,6 +54,8 @@ export interface EmployeeSyncInput {
   routingNumber?: string;
   accountNumber?: string;
   accountType?: string;
+  /** Account holder name — forwarded to Rollfi addUserBankAccount as accountName. */
+  accountName?: string;
 }
 
 export interface EmployeeSyncResult {
@@ -122,7 +124,7 @@ export async function syncEmployeeToIntegrations(
         stateW4Fields:            emp.stateW4Fields,
         phone: emp.phone, startDate: emp.startDate,
         bankName: emp.bankName, routingNumber: emp.routingNumber,
-        accountNumber: emp.accountNumber, accountType: emp.accountType,
+        accountNumber: emp.accountNumber, accountType: emp.accountType, accountName: emp.accountName,
       },
       rollfiCompany,
       log

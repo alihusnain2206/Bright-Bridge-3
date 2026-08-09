@@ -669,6 +669,7 @@ function PayrollSetupModal({
   const [preflightError, setPreflightError] = useState<string | null>(null);
 
   const [bankName,      setBankName]      = useState("");
+  const [accountName,   setAccountName]   = useState("");
   const [routingNumber, setRoutingNumber] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [accountType,   setAccountType]   = useState("checking");
@@ -720,6 +721,7 @@ function PayrollSetupModal({
       const body: Record<string, unknown> = { employeeId: emp.id };
       if (!skipBank && accountNumber && routingNumber && bankName) {
         body.bankName      = bankName;
+        body.accountName   = accountName;
         body.routingNumber = routingNumber;
         body.accountNumber = accountNumber;
         body.accountType   = accountType;
@@ -870,6 +872,15 @@ function PayrollSetupModal({
                           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30"
                         />
                       </div>
+                      <div className="col-span-2">
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Account Holder Name</label>
+                        <input
+                          value={accountName}
+                          onChange={e => setAccountName(e.target.value)}
+                          placeholder="Name on account (e.g. Jane Smith)"
+                          className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30"
+                        />
+                      </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">Routing Number</label>
                         <input
@@ -883,8 +894,8 @@ function PayrollSetupModal({
                         <label className="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
                         <input
                           value={accountNumber}
-                          onChange={e => setAccountNumber(e.target.value.replace(/\D/g, ""))}
-                          placeholder="Account number"
+                          onChange={e => setAccountNumber(e.target.value.replace(/\D/g, "").slice(0, 17))}
+                          placeholder="4–17 digit account number"
                           className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#2C4562]/30 font-mono"
                         />
                       </div>
