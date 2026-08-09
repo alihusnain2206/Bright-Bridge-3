@@ -431,7 +431,7 @@ export default function BankAccountSetupPage() {
       {/* FIX 4: hide method choice whenever an account already exists (status present).
           When bankStatus is absent or has null status (no account on file) this renders
           exactly as before — first-time linking is completely unaffected. */}
-      {isProduction && !method && !bankStatus?.status && (
+      {isProduction && !method && !bankStatus && (
         <div className="space-y-3">
           <p className="text-sm font-semibold text-gray-700">Choose how to link your bank account:</p>
 
@@ -486,7 +486,7 @@ export default function BankAccountSetupPage() {
 
       {/* ── Plaid flow ────────────────────────────────────────────────────── */}
       {/* FIX 4: also hide when an account already exists */}
-      {isProduction && method === "Plaid" && !bankStatus?.status && (
+      {isProduction && method === "Plaid" && !bankStatus && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <button onClick={() => { setMethod(null); resetPlaid(); }} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
@@ -647,7 +647,7 @@ export default function BankAccountSetupPage() {
 
       {/* ── Manual flow ───────────────────────────────────────────────────── */}
       {/* FIX 4: also hide when an account already exists */}
-      {isProduction && method === "Manual" && !bankStatus?.status && (
+      {isProduction && method === "Manual" && !bankStatus && (
         <div className="space-y-4">
           <div className="flex items-center gap-2">
             <button onClick={() => { setMethod(null); setManualError(""); setManualSuccess(false); }} className="p-1 rounded hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-colors">
