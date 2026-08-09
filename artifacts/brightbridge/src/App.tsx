@@ -51,6 +51,7 @@ import WorkforceDepartmentsPage from "@/pages/workforce-departments";
 import SettingsHubPage from "@/pages/settings-hub";
 import AccountSettingsPage from "@/pages/account-settings";
 import CompanySettingsPage from "@/pages/company-settings";
+import BankAccountSetupPage from "@/pages/bank-account-setup";
 import UsersAccessPage from "@/pages/users-access";
 import SupportAdminPage from "@/pages/support-admin";
 import SupportRolesPage from "@/pages/support-roles";
@@ -237,6 +238,9 @@ function Router() {
             {/* Company Settings */}
             <Route path="/company-settings">
               <ProtectedRoute component={CompanySettingsPage} roles={["owner", "super_admin"]} />
+            </Route>
+            <Route path="/bank-account-setup">
+              <ProtectedRoute component={BankAccountSetupPage} roles={["owner", "super_admin"]} />
             </Route>
             <Route path="/account-settings">
               <ProtectedRoute component={AccountSettingsPage} roles={["owner", "super_admin", "employee"]} />

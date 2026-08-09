@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import {
   Building2, MapPin, User, FileText, Calendar, CheckCircle2,
   AlertTriangle, ChevronRight, ChevronLeft, Loader2, Eye, EyeOff, RefreshCw,
-  Globe, Plus, Trash2, Landmark, KeyRound, UserPlus, Copy, X,
+  Globe, Plus, Trash2, Landmark, KeyRound, UserPlus, Copy, X, ExternalLink, Mail,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +55,7 @@ interface FormData {
   payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
   // Step 6 — funding bank account (production only; sandbox uses test values automatically)
   fundingBankName: string; fundingRoutingNumber: string; fundingAccountNumber: string; fundingAccountType: string; fundingAccountName: string;
+  bankSetupMethod: "Manual" | "Plaid";
 }
 
 interface StateTaxEntry {
@@ -192,9 +193,18 @@ export default function ClientsNew() {
     entityType: "LLC", ein: "", incorporationState: "", dateOfIncorporation: "", irsFilingForm: "941", payrollRunThisYear: "No",
     payFrequency: "BiWeekly", payBeginDate: today(), payDate: daysOut(14), workerType: "W2",
     fundingBankName: "", fundingRoutingNumber: "", fundingAccountNumber: "", fundingAccountType: "checking", fundingAccountName: "",
+    bankSetupMethod: "Manual" as "Manual" | "Plaid",
   });
 
   const set = (key: keyof FormData, value: string | number | boolean) => setForm((f) => ({ ...f, [key]: value }));
+
+  // ── Plaid bank-link wizard (used on success screen when bankSetupMethod === "Plaid") ──
+  const plaidWizardPollCountRef = useRef(0);
+  const plaidWizardTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [plaidWizardStep, setPlaidWizardStep] = useState<"idle" | "loading" | "waiting" | "emailSent" | "success" | "timeout" | "error">("idle");
+  const [plaidWizardEmailOverride, setPlaidWizardEmailOverride] = useState("");
+  const [plaidWizardEmailSentTo, setPlaidWizardEmailSentTo] = useState<string | null>(null);
+  const [plaidWizardError, setPlaidWizardError] = useState("");
 
   const runWithProgress = async () => {
     const labels = [
@@ -237,6 +247,59 @@ export default function ClientsNew() {
       const msg = e instanceof Error ? e.message : "An error occurred";
       // Keep the overlay open so the error is visible — the Retry button handles dismissal
       setSubmitError(msg);
+    }
+  };
+
+  // Cleanup Plaid wizard polling on unmount
+  useEffect(() => {
+    return () => { if (plaidWizardTimerRef.current) clearInterval(plaidWizardTimerRef.current); };
+  }, []);
+
+  const startPlaidWizardPoll = (companyId: string) => {
+    plaidWizardPollCountRef.current = 0;
+    if (plaidWizardTimerRef.current) clearInterval(plaidWizardTimerRef.current);
+    plaidWizardTimerRef.current = setInterval(() => {
+      plaidWizardPollCountRef.current++;
+      void fetch(`/api/rollfi/onboard/bank-status?companyId=${companyId}`, { credentials: "include" })
+        .then(r => r.json() as Promise<{ verified: boolean }>)
+        .then(data => {
+          if (data.verified) {
+            clearInterval(plaidWizardTimerRef.current!);
+            setPlaidWizardStep("success");
+          } else if (plaidWizardPollCountRef.current >= 60) {
+            clearInterval(plaidWizardTimerRef.current!);
+            setPlaidWizardStep("timeout");
+          }
+        })
+        .catch(() => { /* non-fatal — keep polling */ });
+    }, 5000);
+  };
+
+  const handlePlaidWizardConnect = async (companyId: string, subOption: "generateURL" | "sendInviteByEmail") => {
+    setPlaidWizardStep("loading");
+    setPlaidWizardError("");
+    try {
+      const body: Record<string, string> = { companyId, linkType: "Plaid", plaidOptions: subOption };
+      if (subOption === "sendInviteByEmail" && plaidWizardEmailOverride.trim()) body.email = plaidWizardEmailOverride.trim();
+      const r = await fetch("/api/rollfi/onboard/bank-account", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json() as { plaidLinkURL?: string; sentTo?: string | null; error?: string };
+      if (!r.ok) throw new Error(data.error ?? "Failed to initiate Plaid link");
+      if (subOption === "generateURL" && data.plaidLinkURL) {
+        window.open(data.plaidLinkURL, "_blank", "noopener,noreferrer");
+        setPlaidWizardStep("waiting");
+        startPlaidWizardPoll(companyId);
+      } else if (subOption === "sendInviteByEmail") {
+        setPlaidWizardEmailSentTo((data.sentTo ?? plaidWizardEmailOverride.trim()) || null);
+        setPlaidWizardStep("emailSent");
+        startPlaidWizardPoll(companyId);
+      }
+    } catch (e) {
+      setPlaidWizardError(e instanceof Error ? e.message : "Failed to initiate Plaid");
+      setPlaidWizardStep("error");
     }
   };
 
@@ -294,10 +357,91 @@ export default function ClientsNew() {
             ))}
           </div>
 
+          {/* ── Plaid bank connection panel (shown when Plaid was selected) ── */}
+          {hasRollfi && isProduction && form.bankSetupMethod === "Plaid" && (
+            <div className="px-8 py-5 border-t space-y-4">
+              <p className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <Landmark className="h-4 w-4" style={{ color: "#009974" }} />Connect Bank Account via Plaid
+              </p>
+
+              {plaidWizardStep === "idle" && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                      <ExternalLink className="h-4 w-4" style={{ color: "#009974" }} />Connect now
+                    </p>
+                    <p className="text-xs text-gray-500">Opens a secure Plaid window in a new tab — log in to your bank and authorise.</p>
+                    <Button size="sm" onClick={() => { void handlePlaidWizardConnect(created.id, "generateURL"); }} className="w-full gap-1.5 text-white border-0" style={{ background: "#009974" }}>
+                      <ExternalLink className="h-3.5 w-3.5" />Open Plaid
+                    </Button>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 p-4 space-y-3">
+                    <p className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                      <Mail className="h-4 w-4 text-[#284362]" />Email the link to the owner
+                    </p>
+                    <Input type="email" placeholder={`Override destination (default: ${form.ownerEmail})`} value={plaidWizardEmailOverride} onChange={(e) => setPlaidWizardEmailOverride(e.target.value)} className="text-sm h-8" />
+                    <Button size="sm" variant="outline" onClick={() => { void handlePlaidWizardConnect(created.id, "sendInviteByEmail"); }} className="w-full gap-1.5">
+                      <Mail className="h-3.5 w-3.5" />Send invite
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {plaidWizardStep === "loading" && (
+                <div className="flex items-center gap-2 py-4 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#284362]" />Setting up Plaid link…
+                </div>
+              )}
+
+              {plaidWizardStep === "waiting" && (
+                <div className="rounded-xl border border-[#284362]/20 bg-[#284362]/5 p-4 space-y-3 text-center">
+                  <Loader2 className="h-6 w-6 animate-spin text-[#284362] mx-auto" />
+                  <p className="text-sm font-semibold text-gray-800">Complete the connection in the Plaid window, then return here.</p>
+                  <p className="text-xs text-gray-500">Checking every 5 seconds…</p>
+                  <div className="flex gap-2 justify-center">
+                    <Button size="sm" variant="outline" onClick={() => { void handlePlaidWizardConnect(created.id, "generateURL"); }}>
+                      <RefreshCw className="h-3.5 w-3.5 mr-1" />Reopen Plaid
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {plaidWizardStep === "emailSent" && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-2 text-center">
+                  <CheckCircle2 className="h-6 w-6 text-emerald-500 mx-auto" />
+                  <p className="text-sm font-semibold text-emerald-800">
+                    Invitation sent{plaidWizardEmailSentTo ? ` to ${plaidWizardEmailSentTo}` : ` to ${form.ownerEmail}`} — link expires in ~72 hours.
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => { void handlePlaidWizardConnect(created.id, "sendInviteByEmail"); }}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-1" />Resend
+                  </Button>
+                </div>
+              )}
+
+              {plaidWizardStep === "success" && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center space-y-1.5">
+                  <CheckCircle2 className="h-7 w-7 text-emerald-500 mx-auto" />
+                  <p className="text-sm font-bold text-emerald-800">Bank connected via Plaid!</p>
+                  <p className="text-xs text-emerald-600">Verified and ready for payroll.</p>
+                </div>
+              )}
+
+              {(plaidWizardStep === "timeout" || plaidWizardStep === "error") && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
+                  <p className="text-sm font-semibold text-amber-800">{plaidWizardStep === "timeout" ? "Connection not yet confirmed." : "Could not start Plaid link."}</p>
+                  {plaidWizardStep === "error" && <p className="text-xs text-amber-700 font-mono">{plaidWizardError}</p>}
+                  <Button size="sm" variant="outline" onClick={() => setPlaidWizardStep("idle")}>Try again</Button>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="px-8 py-5 border-t bg-amber-50 space-y-3">
             <p className="text-sm font-semibold text-amber-800 flex items-center gap-2"><AlertTriangle className="h-4 w-4" />Action required to run payroll:</p>
             <div className="space-y-2 text-sm text-amber-700">
-              <div className="flex items-start gap-2"><span className="mt-0.5">□</span><span>Connect company bank account for payroll funding</span></div>
+              {form.bankSetupMethod === "Plaid" && isProduction
+                ? <div className="flex items-start gap-2"><span className="mt-0.5">□</span><span>Connect company bank account via Plaid (use the panel above)</span></div>
+                : <div className="flex items-start gap-2"><span className="mt-0.5">□</span><span>Connect company bank account for payroll funding</span></div>}
               <div className="flex items-start gap-2"><span className="mt-0.5">□</span><span>KYB verification under review — takes 1-3 business days</span></div>
               <div className="flex items-start gap-2"><span className="mt-0.5">□</span><span>Add employees so payroll can be processed</span></div>
             </div>
@@ -833,55 +977,91 @@ export default function ClientsNew() {
               </>
             ) : (
               <div className="space-y-4">
-                <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-                  <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-                  <div>
-                    <p className="font-semibold">Enter the company's business bank account</p>
-                    <p className="mt-0.5 text-amber-700">This account will be used by Rollfi to fund payroll and collect tax payments on behalf of this company.</p>
-                  </div>
+                {/* Method toggle — Plaid (recommended) or Manual */}
+                <div className="flex gap-3">
+                  {(["Plaid", "Manual"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => set("bankSetupMethod", m)}
+                      className={`flex-1 flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${form.bankSetupMethod === m ? "border-[#284362] bg-[#284362]/5" : "border-gray-200 hover:border-gray-300"}`}
+                    >
+                      <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${form.bankSetupMethod === m ? (m === "Plaid" ? "bg-[#009974]" : "bg-[#284362]") : "bg-gray-100"}`}>
+                        <Landmark className={`h-4 w-4 ${form.bankSetupMethod === m ? "text-white" : "text-gray-400"}`} />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-sm font-bold text-gray-900 flex items-center gap-1 justify-center">
+                          {m === "Plaid" ? "Plaid" : "Manual entry"}
+                          {m === "Plaid" && <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-emerald-100 text-emerald-700">Recommended</span>}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-0.5">{m === "Plaid" ? "Instant — no test deposits" : "Routing & account number"}</p>
+                      </div>
+                    </button>
+                  ))}
                 </div>
-                <div className="space-y-3">
-                  <div className="space-y-1.5">
-                    <Label>Bank Name *</Label>
-                    <Input value={form.fundingBankName} onChange={(e) => set("fundingBankName", e.target.value)} placeholder="e.g. Chase Bank" />
+
+                {form.bankSetupMethod === "Plaid" ? (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-4 space-y-1.5">
+                    <p className="text-sm font-semibold text-emerald-800 flex items-center gap-2">
+                      <CheckCircle2 className="h-4 w-4" />Plaid selected
+                    </p>
+                    <p className="text-sm text-emerald-700">After this company is created, a <strong>Connect Bank</strong> panel will appear where you can open the secure Plaid window or send the owner an invite link by email.</p>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label>Account Holder Name *</Label>
-                    <Input value={form.fundingAccountName} onChange={(e) => set("fundingAccountName", e.target.value)} placeholder="e.g. ABC Daycare LLC" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Routing Number * (9 digits)</Label>
-                    <Input value={form.fundingRoutingNumber} onChange={(e) => set("fundingRoutingNumber", e.target.value.replace(/\D/g, ""))} placeholder="021000021" maxLength={9} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Account Number * (4–17 digits)</Label>
-                    <Input value={form.fundingAccountNumber} onChange={(e) => set("fundingAccountNumber", e.target.value.replace(/\D/g, "").slice(0, 17))} placeholder="Your business checking account number" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Account Type *</Label>
-                    <div className="flex gap-3">
-                      {(["checking", "savings"] as const).map((t) => (
-                        <label key={t} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border cursor-pointer text-sm ${form.fundingAccountType === t ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
-                          <input type="radio" name="fundingAccountType" value={t} checked={form.fundingAccountType === t} onChange={() => set("fundingAccountType", t)} className="sr-only" />
-                          <span className={`h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 ${form.fundingAccountType === t ? "border-[#284362]" : "border-gray-300"}`}>
-                            {form.fundingAccountType === t && <span className="h-2 w-2 rounded-full bg-[#284362]" />}
-                          </span>
-                          {t.charAt(0).toUpperCase() + t.slice(1)}
-                        </label>
-                      ))}
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                      <Landmark className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                      <div>
+                        <p className="font-semibold">Enter the company's business bank account</p>
+                        <p className="mt-0.5 text-amber-700">This account will be used by Rollfi to fund payroll and collect tax payments on behalf of this company.</p>
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="space-y-1.5">
+                        <Label>Bank Name *</Label>
+                        <Input value={form.fundingBankName} onChange={(e) => set("fundingBankName", e.target.value)} placeholder="e.g. Chase Bank" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Account Holder Name *</Label>
+                        <Input value={form.fundingAccountName} onChange={(e) => set("fundingAccountName", e.target.value)} placeholder="e.g. ABC Daycare LLC" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Routing Number * (9 digits)</Label>
+                        <Input value={form.fundingRoutingNumber} onChange={(e) => set("fundingRoutingNumber", e.target.value.replace(/\D/g, ""))} placeholder="021000021" maxLength={9} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Account Number * (4–17 digits)</Label>
+                        <Input value={form.fundingAccountNumber} onChange={(e) => set("fundingAccountNumber", e.target.value.replace(/\D/g, "").slice(0, 17))} placeholder="Your business checking account number" />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Account Type *</Label>
+                        <div className="flex gap-3">
+                          {(["checking", "savings"] as const).map((t) => (
+                            <label key={t} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border cursor-pointer text-sm ${form.fundingAccountType === t ? "border-[#284362] bg-[#284362]/5 font-medium" : "border-gray-200"}`}>
+                              <input type="radio" name="fundingAccountType" value={t} checked={form.fundingAccountType === t} onChange={() => set("fundingAccountType", t)} className="sr-only" />
+                              <span className={`h-4 w-4 rounded-full border-2 flex items-center justify-center shrink-0 ${form.fundingAccountType === t ? "border-[#284362]" : "border-gray-300"}`}>
+                                {form.fundingAccountType === t && <span className="h-2 w-2 rounded-full bg-[#284362]" />}
+                              </span>
+                              {t.charAt(0).toUpperCase() + t.slice(1)}
+                            </label>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
 
-            <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
-              <div>
-                <p className="font-medium">Micro-deposit verification required</p>
-                <p className="mt-0.5">After creation, Rollfi sends two small test deposits (usually $0.01–$0.99) to verify the account. KYB approval is also required before payroll can run. Both typically take 1–3 business days in production.</p>
+            {(!isProduction || form.bankSetupMethod === "Manual") && (
+              <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+                <div>
+                  <p className="font-medium">Micro-deposit verification required</p>
+                  <p className="mt-0.5">After creation, Rollfi sends two small test deposits (usually $0.01–$0.99) to verify the account. KYB approval is also required before payroll can run. Both typically take 1–3 business days in production.</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
 

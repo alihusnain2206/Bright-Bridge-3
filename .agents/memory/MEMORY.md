@@ -24,3 +24,4 @@
 - [Repair onboarding — null rollfiUserId gap](repair-onboarding-adduser-gap.md) — two-branch repair-onboarding; branch 1 re-runs full addUser with current DB values; error translation helper; People Hub inline retry UI
 - [Platform roles and login DB fallback](platform-roles-login-fallback.md) — technical/super_manager roles; DB-fallback login path; isActive column; /api/admin/platform-users endpoints; Ali's account PLAT-8575F7AC319C
 - [people.ts security guards](people-ts-security-guards.md) — all 33 routes now guarded; requireRole + assertCompanyAccess pattern; resolveEmployeeCompany helper; waive is super_admin+owner only
+- [Plaid bank linking](plaid-bank-linking.md) — linkType/plaidOptions API shape; DB columns; production-only guard; polling pattern; never log plaidLinkURL; Babel `??`+`||` parens gotcha

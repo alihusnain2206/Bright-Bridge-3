@@ -30,6 +30,7 @@ import {
   Bell,
   Lock,
   RefreshCw,
+  Landmark,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -92,6 +93,16 @@ const CARDS: CardDef[] = [
     iconBg: "bg-blue-50",
     iconColor: "text-blue-600",
     href: "/settings?tab=company-info",
+    soon: false,
+  },
+  {
+    id: "bank-account",
+    title: "Bank Account",
+    description: "Link or update the account used to fund payroll — Plaid or manual entry.",
+    icon: Landmark,
+    iconBg: "bg-teal-50",
+    iconColor: "text-teal-600",
+    href: "/bank-account-setup",
     soon: false,
   },
   {

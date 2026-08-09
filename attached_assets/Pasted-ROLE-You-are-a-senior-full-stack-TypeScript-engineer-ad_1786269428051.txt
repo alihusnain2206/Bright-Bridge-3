@@ -1,0 +1,200 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer adding Plaid as a 
+second company bank linking option 
+alongside the existing manual entry 
+flow.
+
+CONTEXT — VERIFIED FROM ROLLFI DOCS 
+(CompanyBankAccountLinking):
+Plaid requires NO separate endpoint — it 
+is the same addCompanyBankAccount call 
+with extra fields:
+
+- linkType: "Manual" | "Plaid" | 
+  "CustomProvider"
+- When linkType is "Plaid", set 
+  plaidOptions to either:
+  * "generateURL" → the response 
+    contains plaidLinkURL to surface in 
+    our own UI
+  * "sendInviteByEmail" → Rollfi emails 
+    a one-time Plaid link to the payroll 
+    admin; optional "email" field 
+    overrides the destination
+- Plaid links expire after roughly 72 
+  hours; the valid link is reused for 
+  subsequent addCompanyBankAccount calls 
+  until it expires
+
+For the URL flow the request looks like:
+{ "method": "addCompanyBankAccount",
+  "linkType": "Plaid",
+  "plaidOptions": "generateURL",
+  "companyFundingSourceEntity": { 
+    "companyId": "..." } }
+
+Note that with Plaid, no account/routing 
+numbers are submitted by us — the user 
+authenticates with their bank directly.
+
+SCOPE BOUNDARY:
+Add Plaid as an ADDITIONAL option. Do 
+NOT remove or degrade the existing 
+manual entry + micro-deposit path — both 
+must remain fully functional. Do not 
+touch payroll processing, KYC/KYB logic, 
+the employee onboarding chain, or 
+EasyTeam. This is production-only 
+behaviour: sandbox keeps its existing 
+auto-submitted test bank.
+
+PART 1 — BACKEND
+
+Extend POST /rollfi/onboard/bank-account 
+to accept:
+- linkType: "Manual" (default, existing 
+  behaviour) or "Plaid"
+- plaidOptions: "generateURL" or 
+  "sendInviteByEmail" (required when 
+  linkType is "Plaid")
+- email (optional, only for 
+  sendInviteByEmail)
+
+Behaviour:
+- linkType "Manual": unchanged — 
+  existing validation and submission 
+  path, including the required 
+  accountName.
+- linkType "Plaid" + "generateURL": 
+  call addCompanyBankAccount with only 
+  companyId in companyFundingSourceEntity 
+  (no account/routing/accountName), and 
+  return { plaidLinkURL, expiresNote } 
+  to the client.
+- linkType "Plaid" + "sendInviteByEmail": 
+  same call with plaidOptions 
+  sendInviteByEmail (plus email when 
+  provided); return a confirmation state 
+  — no URL is returned by Rollfi in this 
+  flow.
+- Store on the company record which link 
+  method was used and, for Plaid, when 
+  the link was generated (so we can show 
+  expiry and offer regeneration).
+- Never log the plaidLinkURL in full.
+
+Also ensure the existing bank-status 
+helper (normalised: status, verified, 
+last4, bankName, accountType) is used to 
+detect completion for Plaid-linked 
+accounts — Plaid completion is confirmed 
+by the funding source appearing/verified 
+in Rollfi, not by our own state.
+
+PART 2 — FRONTEND (company bank step + 
+company settings)
+
+Present a clear choice in production:
+
+Option 1 (recommended): "Connect 
+instantly with Plaid"
+- Short explainer: log in to your bank 
+  securely; verified in seconds; no 
+  waiting for test deposits.
+- Two sub-actions: "Connect now" (uses 
+  generateURL, opens plaidLinkURL in a 
+  new tab/popup) and "Email the link to 
+  me instead" (uses sendInviteByEmail; 
+  show the destination email and allow 
+  overriding it).
+
+Option 2: "Enter bank details manually"
+- The existing form, unchanged 
+  (bank name, routing, account number, 
+  account type, account holder name), 
+  with the existing note that two small 
+  deposits will be sent to verify, 
+  taking 1-3 business days.
+
+After launching the Plaid URL:
+- Show a waiting state: "Complete the 
+  connection in the Plaid window, then 
+  return here."
+- Poll the bank-status endpoint 
+  (reasonable interval, e.g. every 5 
+  seconds for up to 5 minutes, then stop 
+  with a "Check again" button) until 
+  verified is true.
+- On success: show the connected account 
+  (bank name + last4 + verified badge).
+- If the user closes the window without 
+  finishing: keep the waiting state 
+  dismissible and offer "Try again" and 
+  "Switch to manual entry".
+- Link expiry: if a generated link is 
+  older than 72 hours, offer 
+  "Regenerate link" rather than reusing 
+  it.
+
+For the email invite flow: show 
+"Invitation sent to [email] — the link 
+expires in about 72 hours", with 
+"Resend" and "Switch to manual entry" 
+options, and the same status polling so 
+the UI updates once the owner completes 
+it.
+
+Both options must be reachable from 
+Company Settings for an existing company 
+that needs to link or replace a bank 
+account, not only during the onboarding 
+wizard.
+
+PART 3 — RULES
+1. Sandbox unchanged: keep the existing 
+   auto-submitted test bank; Plaid 
+   options are hidden or disabled in 
+   sandbox with a short note that Plaid 
+   is production-only.
+2. Manual entry remains fully functional 
+   and is never removed — some banks are 
+   not supported by Plaid, and some 
+   owners will prefer manual.
+3. Status truth: never show "connected" 
+   unless the normalised bank-status 
+   reports the funding source as present/
+   verified in Rollfi.
+4. TypeScript, brand colours, existing 
+   card/modal patterns, empty/loading/
+   error states.
+5. No account numbers or link URLs in 
+   logs.
+
+TESTING CHECKLIST:
+- Sandbox: unchanged behaviour, Plaid 
+  options hidden/disabled with the note
+- Production, Plaid generateURL: link 
+  returned and opened; waiting state 
+  polls; success shows verified account 
+  from real Rollfi status
+- Production, Plaid sendInviteByEmail: 
+  confirmation state shown; resend works; 
+  status polling updates when completed
+- User abandons Plaid: can retry or 
+  switch to manual without a broken state
+- Manual path still works end to end, 
+  including accountName and the 
+  micro-deposit note
+- Both options available from Company 
+  Settings for an existing company
+- Link older than 72 hours offers 
+  regeneration
+- No link URLs or account numbers in 
+  logs
+
+DELIVERABLE SUMMARY: files changed, the 
+request shapes sent for each flow, how 
+completion is detected, where link 
+generation time is stored, and 
+confirmation that the manual path is 
+unchanged.

@@ -1718,7 +1718,7 @@ router.post("/rollfi/fix-pay-schedule", async (req, res) => {
 // ── Bank account linking ─────────────────────────────────────
 
 router.post("/rollfi/onboard/bank-account", async (req, res) => {
-  // ── Auth guard (additive — no business logic changed below) ─────────────
+  // ── Auth guard ───────────────────────────────────────────────────────────
   if (!req.session?.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const _bankAccCaller = store.getUserById(req.session.userId);
   if (!_bankAccCaller || !["super_admin", "owner"].includes(_bankAccCaller.role)) { res.status(403).json({ error: "Insufficient permissions" }); return; }
@@ -1728,7 +1728,9 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
     res.status(400).json({ error: "Rollfi credentials not configured" });
     return;
   }
-  const { companyId } = req.body as { companyId: string };
+  const { companyId, linkType = "Manual", plaidOptions, email } = req.body as {
+    companyId: string; linkType?: "Manual" | "Plaid"; plaidOptions?: "generateURL" | "sendInviteByEmail"; email?: string;
+  };
   const rollfiCompany = store.getRollfiCompany(companyId);
   if (!rollfiCompany) {
     res.status(400).json({ error: "Company not onboarded to Rollfi" });
@@ -1736,6 +1738,54 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
   }
 
   const isProduction = getRollfiConfig().env === "production";
+
+  // ── Plaid path ─────────────────────────────────────────────────────────
+  if (linkType === "Plaid") {
+    if (!isProduction) {
+      res.status(400).json({ error: "Plaid bank linking is only available in production. Sandbox uses the auto-configured test bank account." });
+      return;
+    }
+    if (plaidOptions !== "generateURL" && plaidOptions !== "sendInviteByEmail") {
+      res.status(400).json({ error: "plaidOptions must be 'generateURL' or 'sendInviteByEmail' when linkType is 'Plaid'" });
+      return;
+    }
+    req.log.info({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, plaidOptions }, "onboard/bank-account: initiating Plaid link");
+    try {
+      const plaidPayload: Record<string, unknown> = {
+        method: "addCompanyBankAccount",
+        linkType: "Plaid",
+        plaidOptions,
+        companyFundingSourceEntity: { companyId: rollfiCompany.rollfiCompanyId },
+      };
+      if (plaidOptions === "sendInviteByEmail" && email?.trim()) plaidPayload.email = email.trim();
+      const r = await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, plaidPayload, { headers: rollfiHeaders() });
+      req.log.info({ rollfiResult: safeRollfiLog(r.data), plaidOptions }, "Rollfi addCompanyBankAccount (Plaid) response");
+      const raw = r.data as Record<string, unknown>;
+      const generatedAt = new Date().toISOString();
+      // Persist link method + generation time for 72-hour expiry tracking — never log the URL itself
+      await db.update(companiesTable).set({ bankLinkMethod: "Plaid", bankLinkGeneratedAt: generatedAt, updatedAt: generatedAt }).where(eq(companiesTable.id, companyId));
+      if (plaidOptions === "generateURL") {
+        const plaidLinkURL = (raw.plaidLinkURL ?? raw.linkURL ?? raw.url ?? null) as string | null;
+        if (!plaidLinkURL) {
+          req.log.warn({ rollfiResult: safeRollfiLog(raw) }, "Rollfi Plaid generateURL: no URL in response");
+          res.status(502).json({ error: "Rollfi did not return a Plaid link URL. Contact support or try sendInviteByEmail instead." });
+          return;
+        }
+        req.log.info({ companyId, plaidOptions, generatedAt }, "Plaid link generated — URL omitted from log");
+        res.json({ method: "Plaid", plaidOptions, plaidLinkURL, generatedAt, expiresNote: "This link expires in approximately 72 hours." });
+      } else {
+        req.log.info({ companyId, plaidOptions, sentTo: email ? "[overridden]" : "[payroll admin default]" }, "Plaid invite email sent via Rollfi");
+        res.json({ method: "Plaid", plaidOptions, success: true, sentTo: email?.trim() || null, generatedAt, expiresNote: "The link expires in approximately 72 hours." });
+      }
+    } catch (err: unknown) {
+      const e = err as { response?: { data: unknown } };
+      req.log.error({ err, rollfiErrorBody: e.response?.data }, "addCompanyBankAccount (Plaid) failed");
+      res.status(500).json({ error: err instanceof Error ? err.message : String(err), details: e.response?.data });
+    }
+    return;
+  }
+
+  // ── Manual path (unchanged) ──────────────────────────────────
   const { bankName: bodyBankName, routingNumber: bodyRouting, accountNumber: bodyAccount, accountType: bodyAccountType, accountName: bodyAccountName } =
     req.body as { bankName?: string; routingNumber?: string; accountNumber?: string; accountType?: string; accountName?: string };
 
@@ -1773,6 +1823,8 @@ router.post("/rollfi/onboard/bank-account", async (req, res) => {
     );
     req.log.info({ rollfiResult: safeRollfiLog(r.data) }, "Rollfi addCompanyBankAccount response");
     const raw = r.data as Record<string, unknown>;
+    // Record link method in DB
+    await db.update(companiesTable).set({ bankLinkMethod: "Manual", updatedAt: new Date().toISOString() }).where(eq(companiesTable.id, companyId));
     // Rollfi returns 200 with error body when bank already linked — treat as success
     const isAlreadyLinked = JSON.stringify(raw).toLowerCase().includes("already");
     res.json({ success: true, alreadyLinked: isAlreadyLinked, ...raw });

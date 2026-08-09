@@ -45,6 +45,7 @@ interface CompanyBankInput {
   accountNumber?: string;
   accountType?: string;
   accountName?: string;  // Account holder name — required by Rollfi's addCompanyBankAccount schema
+  linkType?: "Plaid";    // When set, bank step is deferred — user links via Plaid flow separately
 }
 
 function validateBankDetails(b: CompanyBankInput): string | null {
@@ -80,17 +81,22 @@ async function ensureFullOnboarding(
 
   await new Promise((r) => setTimeout(r, 2000));
 
-  try {
-    const isProduction = getRollfiConfig().env === "production";
-    const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
-      ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: bankInput.accountName ?? "Payroll Funding" }
-      : { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
-    log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: maskAcct(bank.accountNumber), maskedRouting: maskAcct(bank.routingNumber) }, "addCompanyBankAccount: using bank details");
-    const _bankPayload = { method: "addCompanyBankAccount", companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName } };
-    rollfiVerboseLog("OUT", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload);
-    const _bankResp = await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload, { headers: rollfiHeaders() });
-    rollfiVerboseLog("IN", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankResp.data);
-  } catch (e) { log.warn({ e }, "addCompanyBankAccount failed"); }
+  // Bank step — skip entirely for Plaid in production (user links bank separately via Plaid flow)
+  const _isProductionForBank = getRollfiConfig().env === "production";
+  if (bankInput?.linkType === "Plaid" && _isProductionForBank) {
+    log.info({ rollfiCompanyId }, "ensureFullOnboarding: bank step deferred — Plaid link pending");
+  } else {
+    try {
+      const bank = (_isProductionForBank && bankInput?.routingNumber && bankInput?.accountNumber)
+        ? { accountNumber: bankInput.accountNumber, routingNumber: bankInput.routingNumber, bankName: bankInput.bankName ?? "Payroll Funding", accountType: bankInput.accountType ?? "checking", accountName: bankInput.accountName ?? "Payroll Funding" }
+        : { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
+      log.info({ env: getRollfiConfig().env, bankName: bank.bankName, maskedAcct: maskAcct(bank.accountNumber), maskedRouting: maskAcct(bank.routingNumber) }, "addCompanyBankAccount: using bank details");
+      const _bankPayload = { method: "addCompanyBankAccount", companyFundingSourceEntity: { companyId: rollfiCompanyId, accountNumber: bank.accountNumber, routingNumber: bank.routingNumber, bankName: bank.bankName, accountType: bank.accountType, accountName: bank.accountName } };
+      rollfiVerboseLog("OUT", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload);
+      const _bankResp = await axios.post(`${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankPayload, { headers: rollfiHeaders() });
+      rollfiVerboseLog("IN", `${getBaseUrl()}/adminPortal#addCompanyBankAccount`, _bankResp.data);
+    } catch (e) { log.warn({ e }, "addCompanyBankAccount failed"); }
+  }
 
   try {
     const compensationFrequency = payScheduleParams?.payFrequency ?? "BiWeekly";
@@ -215,6 +221,7 @@ router.post("/companies", async (req: Request, res: Response) => {
     payrollRunThisYear: string;
     payFrequency: string; payBeginDate: string; payDate: string; workerType: string;
     fundingBankName?: string; fundingRoutingNumber?: string; fundingAccountNumber?: string; fundingAccountType?: string; fundingAccountName?: string;
+    bankSetupMethod?: "Manual" | "Plaid";
     stateTaxRegistrations?: Array<{
       stateCode: string; stateName: string; fieldValues: Record<string, string>;
     }>;
@@ -225,7 +232,7 @@ router.post("/companies", async (req: Request, res: Response) => {
     return;
   }
 
-  if (getRollfiConfig().env === "production") {
+  if (getRollfiConfig().env === "production" && body.bankSetupMethod !== "Plaid") {
     const bankErr = validateBankDetails({
       routingNumber: body.fundingRoutingNumber,
       accountNumber: body.fundingAccountNumber,
@@ -262,6 +269,7 @@ router.post("/companies", async (req: Request, res: Response) => {
       fundingBankName: body.fundingBankName,
       fundingAccountLast4: body.fundingAccountNumber ? body.fundingAccountNumber.slice(-4) : null,
       fundingAccountType: body.fundingAccountType,
+      bankLinkMethod: body.bankSetupMethod ?? "Manual",
       kybStatus: "not_started",
       bankAccountAdded: false,
       payScheduleAdded: false,
@@ -385,6 +393,7 @@ router.post("/companies", async (req: Request, res: Response) => {
             accountNumber: body.fundingAccountNumber,
             accountType: body.fundingAccountType,
             accountName: body.fundingAccountName,
+            linkType: body.bankSetupMethod === "Plaid" ? "Plaid" as const : undefined,
           }).then(async () => {
             await db.update(companies).set({ bankAccountAdded: true, payScheduleAdded: true, status: "active", updatedAt: new Date().toISOString() }).where(eq(companies.id, companyId));
             req.log.info({ companyId }, "Rollfi full onboarding complete");

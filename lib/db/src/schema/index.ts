@@ -119,6 +119,8 @@ export const companies = pgTable("companies", {
   fundingBankName:       text("funding_bank_name"),
   fundingAccountLast4:   text("funding_account_last4"),
   fundingAccountType:    text("funding_account_type"),
+  bankLinkMethod:        text("bank_link_method"),          // "Manual" | "Plaid"
+  bankLinkGeneratedAt:   text("bank_link_generated_at"),    // ISO-8601; Plaid links expire ~72 h
   // Onboarding
   kybStatus:         text("kyb_status").notNull().default("not_started"),
   bankAccountAdded:  boolean("bank_account_added").notNull().default(false),
