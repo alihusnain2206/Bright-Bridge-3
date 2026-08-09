@@ -1,0 +1,81 @@
+You are a senior full-stack TypeScript engineer auditing BrightBridge Assist,
+a LIVE PRODUCTION payroll application.
+
+⚠️ THIS IS A READ-ONLY AUDIT.
+REPORT ONLY. DO NOT MODIFY, CREATE, DELETE, OR REFACTOR ANY FILE.
+Do not "helpfully" fix anything you find. Do not run anything in parallel
+with a publish. If you are unsure, say so rather than guessing.
+
+I need to know what ALREADY EXISTS for company bank account handling before
+deciding what to build. Answer every question with FILE PATH + LINE NUMBERS,
+and quote the relevant code. If something does not exist, say
+"NOT FOUND" explicitly rather than staying silent.
+
+═══════════════════════════════════════════════════════════
+A. EVERY DOOR INTO BANK SETUP
+═══════════════════════════════════════════════════════════
+List every route, page, tab, card, modal, or button in the app from which a
+user can view, enter, or change a COMPANY bank account. For each one give:
+  - the file path and the route/URL
+  - which roles can reach it (super_admin / owner / manager / employee)
+  - what it renders today
+Check at minimum, but do not limit yourself to:
+  - pages/bank-account-setup.tsx
+  - the /clients/:companyId/bank-account route
+  - Company Settings "Bank Account" card
+  - client-detail.tsx SettingsTab
+  - the owner dashboard and any owner-facing settings area
+  - pages/clients-new.tsx Step 6 (company wizard)
+
+═══════════════════════════════════════════════════════════
+B. DOES A MANUAL ENTRY FORM ALREADY EXIST?
+═══════════════════════════════════════════════════════════
+1. Is there ANY form anywhere that collects bankName, accountName,
+   routingNumber, accountNumber, accountType for a COMPANY? List every one.
+2. For each: is it gated by environment (sandbox vs production), by role,
+   by company status, or by any feature flag? Quote the exact condition.
+3. Is there already a SHARED/reusable bank form component, or are these
+   separate copy-pasted implementations? Name the component(s).
+4. Does each one collect "Account Holder Name" (accountName), or is that
+   value still hardcoded to "default" / "Payroll Funding" anywhere?
+
+═══════════════════════════════════════════════════════════
+C. DOES A DEACTIVATE / REPLACE FLOW ALREADY EXIST?
+═══════════════════════════════════════════════════════════
+1. Search the ENTIRE codebase for "deactivateCompanyBankAccount".
+   Report every match, or NOT FOUND.
+2. Is there any UI anywhere that lets a user change, replace, remove, or
+   re-link an existing company bank account?
+3. If a company already has an active bank account and a user opens the
+   bank setup page, what happens today? Walk through the actual code path.
+
+═══════════════════════════════════════════════════════════
+D. CURRENT PAGE BEHAVIOUR
+═══════════════════════════════════════════════════════════
+For pages/bank-account-setup.tsx, list every UI state it can render and the
+exact condition that triggers each. Include loading, error, no-account,
+pending-verification, and verified states. Quote the conditions.
+
+═══════════════════════════════════════════════════════════
+E. BACKEND REALITY
+═══════════════════════════════════════════════════════════
+1. What does POST /rollfi/onboard/bank-account accept TODAY? Full body shape,
+   validation applied, and how linkType is handled.
+2. Does any backend route exist for deactivating a company bank account?
+3. What exactly does GET /rollfi/onboard/bank-status return today?
+4. Which companies-table columns related to banking exist right now?
+   Include bank_link_method and bank_link_generated_at — confirm present or not.
+
+═══════════════════════════════════════════════════════════
+F. WIZARD STEP 6 — CURRENT CODE STATE
+═══════════════════════════════════════════════════════════
+Without changing anything: does company wizard Step 6 currently render a
+Plaid vs Manual choice, and does it collect Account Holder Name? Quote the
+code. If it renders a read-only card in sandbox, quote that condition too.
+
+═══════════════════════════════════════════════════════════
+DELIVERABLE
+═══════════════════════════════════════════════════════════
+A written report only. Confirm explicitly at the end that you modified
+NO files. Mark anything you could not determine as UNVERIFIED rather
+than guessing.
