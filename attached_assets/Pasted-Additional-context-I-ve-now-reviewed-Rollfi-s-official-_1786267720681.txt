@@ -1,0 +1,94 @@
+Additional context: I've now reviewed 
+Rollfi's official "Company Bank Account 
+Linking" documentation. It confirms 
+several things your audit flagged and 
+reveals one missing required field. 
+Please apply these on top of the bank 
+fixes you're already making.
+
+VERIFIED FROM ROLLFI DOCS:
+
+addCompanyBankAccount REQUIRED fields:
+companyId, accountNumber, routingNumber, 
+bankName, accountName
+Account types: checking | savings
+
+verifyMicroDeposits takes the REAL 
+deposited amounts, e.g.:
+{ "method": "verifyMicroDeposits",
+  "companyId": "...",
+  "debitAmount1": 0.12,
+  "debitAmount2": 0.15 }
+
+linkType options on 
+addCompanyBankAccount: "Manual" | 
+"Plaid" | "CustomProvider". Plaid needs 
+NO separate endpoint — it is the same 
+call with linkType "Plaid" plus 
+plaidOptions "generateURL" (response 
+returns plaidLinkURL) or 
+"sendInviteByEmail" (Rollfi emails the 
+payroll admin; optional "email" 
+overrides). Plaid links expire after 
+~72 hours.
+
+Replacing an account: 
+deactivateCompanyBankAccount, then 
+addCompanyBankAccount. Never reactivate; 
+always keep one active account.
+
+ADDITIONAL FIXES:
+
+FIX A — accountName is REQUIRED and we 
+do not collect it:
+Add an "Account name / account holder 
+name" field to the company bank form and 
+include it in the addCompanyBankAccount 
+payload. Do the same for the employee 
+bank form if addUserBankAccount also 
+expects an account name (check its 
+schema and report).
+
+FIX B — Micro-deposit amounts must be 
+real:
+POST /rollfi/onboard/verify-bank 
+currently hardcodes debitAmount1: 0.01 
+and debitAmount2: 0.01. Per the docs 
+these must be the actual amounts 
+deposited into the account. Change the 
+endpoint to REQUIRE both amounts in the 
+request body, validated as positive 
+numbers under $1.00. Remove the 
+hardcoded defaults entirely — a 
+hardcoded guess will fail in production.
+
+FIX C — Stop returning the raw Rollfi 
+response:
+GET /rollfi/onboard/bank-status returns 
+the full raw response to the client. 
+Return a normalised shape only: status, 
+verified (boolean), last4, bankName, 
+accountType.
+
+FIX D — Account number validation:
+The frontend validates routing number 
+but not account number. Add: digits 
+only, length 4-17, required. Mask in 
+logs.
+
+FIX E — Report only (do not build yet):
+Given the current structure of our 
+addCompanyBankAccount call, how much 
+work would it be to support Plaid — 
+i.e. passing linkType "Plaid" with 
+plaidOptions "generateURL" and surfacing 
+the returned plaidLinkURL in our UI, 
+and/or "sendInviteByEmail"? Report the 
+files that would change and any 
+complications. We will decide the Plaid 
+flow next.
+
+DELIVERABLE: files changed for A-D, 
+whether addUserBankAccount also needs an 
+account name, and your Plaid readiness 
+assessment for E.

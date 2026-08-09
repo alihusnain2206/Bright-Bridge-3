@@ -1,0 +1,123 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer fixing two 
+high-severity bank-linking defects you 
+identified in your own audit.
+
+SCOPE: Bank submission + status 
+handling only. Do NOT change the 
+onboarding sequence, payroll math, KYC/
+KYB logic, or EasyTeam. Do not build 
+Plaid or micro-deposit UI in this task.
+
+THE TWO DEFECTS (from your audit):
+
+DEFECT 1 — Production company bank 
+submission is silently skipped:
+In the company onboarding route and the 
+retry-KYB flow, production bank 
+submission is skipped on the assumption 
+Rollfi already has the account. There is 
+no failure and no alert — it marks the 
+step done regardless. The gap is 
+explicitly commented in the code.
+
+DEFECT 2 — Employee bank "already 
+linked" assumption is unverified:
+In the shared employee onboarding 
+helper, if a production retry runs and 
+no bank credentials are supplied, the 
+code sets bankAdded = true without 
+checking with Rollfi.
+
+THE FIX (same principle for both): 
+never assume, always verify, and never 
+report success for something that did 
+not happen.
+
+1. COMPANY BANK:
+- In production, if bank details are 
+  available (the real details we now 
+  store), SUBMIT them to Rollfi rather 
+  than skipping.
+- If bank details are NOT available for 
+  a retry path, do NOT mark the step 
+  complete. Instead, VERIFY with Rollfi 
+  whether a funding source actually 
+  exists (see point 3) and set the 
+  status from that real answer.
+- If neither submission nor verification 
+  confirms an account, record the step 
+  as INCOMPLETE with a clear reason, and 
+  surface it in the response so the UI 
+  can show it.
+
+2. EMPLOYEE BANK:
+- Same rule: never set bankAdded = true 
+  without either (a) a successful 
+  addUserBankAccount call in this run, 
+  or (b) a verification response from 
+  Rollfi confirming an account exists 
+  for that user.
+- If neither, bankAdded stays false and 
+  the failure/pending reason is recorded 
+  and returned.
+
+3. VERIFICATION HELPER:
+Create one small helper that asks Rollfi 
+for the current bank state and returns a 
+normalised result. It must handle BOTH 
+response shapes: getCompanyInfo can 
+return bank data under FundingSources OR 
+BankAccounts — the existing dashboard 
+helper (fetchFundingSource) merges both 
+correctly; the bank-status route does 
+not. Use the merged approach everywhere.
+
+4. FIX THE DERIVED FLAG:
+Both /rollfi/company-tasks and the 
+dashboard currently infer bankLinked 
+from whether a Rollfi task named 
+"Connect bank account" still exists. 
+Replace this with the real funding-
+source check from the helper in point 3.
+
+5. LOGGING: log the real outcome of 
+every bank submission/verification 
+(masked account numbers only, never full 
+numbers).
+
+RULES:
+- Sandbox behaviour unchanged (test bank 
+  values keep working)
+- No silent success anywhere: if we 
+  cannot confirm, the status is pending/
+  failed, never "connected"
+- Report, do not guess: if a Rollfi 
+  response shape is ambiguous, log it 
+  and treat as unverified
+
+TESTING CHECKLIST:
+- Sandbox company onboarding still 
+  completes as before
+- Production path with bank details: 
+  submission actually happens; success/
+  failure recorded from the real response
+- Production retry with no bank details: 
+  step is NOT auto-marked complete; 
+  verification is attempted; unverified 
+  results in a pending/failed status with 
+  a reason
+- Employee retry with no bank credentials: 
+  bankAdded is NOT set true without 
+  verification
+- bankLinked now reflects an actual 
+  funding source, not task absence
+- bank-status handles both FundingSources 
+  and BankAccounts shapes
+- No full account/routing numbers in logs
+
+DELIVERABLE: files changed, where the 
+silent skips were, the new verification 
+helper, and the reproduction you 
+performed for each of the four testing 
+scenarios.

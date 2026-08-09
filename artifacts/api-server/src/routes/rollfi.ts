@@ -209,14 +209,16 @@ async function runEmployeeKycOnboarding(
   }
 
   // Step 5 — add employee bank account (first-time only: full numbers come from wizard in memory).
-  // Production: submit only if bankInput has full account number (first-time wizard flow);
-  //   skip on retry — Rollfi already holds the account after first submission.
+  // Production: submit if bankInput has full credentials; if not, report bankAdded = false with
+  //   a clear reason — never assume Rollfi holds the account without verifying.
   // Sandbox: always use hardcoded test values.
   let bankAdded = false;
+  let bankPendingReason: string | undefined;
   const isProduction = getRollfiConfig().env === "production";
   if (isProduction && !bankInput?.accountNumber) {
-    log.info({}, "addUserBankAccount: production retry — Rollfi already holds account, skipping");
-    bankAdded = true;
+    bankPendingReason = "No bank credentials supplied on this run — submit via POST /rollfi/onboard/bank-account to link the employee's bank account";
+    log.warn({ rollfiUserId }, `addUserBankAccount: production retry — ${bankPendingReason}`);
+    // bankAdded stays false — do NOT assume the account is already linked
   } else {
     try {
       const bank = (isProduction && bankInput?.routingNumber && bankInput?.accountNumber)
@@ -248,7 +250,47 @@ async function runEmployeeKycOnboarding(
     } catch (e) { log.warn({ e }, "addUserBankAccount failed (ignoring)"); }
   }
 
-  return { kycInitiated, kycBlockedByKyb, bankAdded };
+  return { kycInitiated, kycBlockedByKyb, bankAdded, bankPendingReason };
+}
+
+/**
+ * Verify whether Rollfi holds an active funding source for a company.
+ * Merges BOTH response shapes (FundingSources and BankAccounts) so the
+ * result is accurate regardless of which shape Rollfi returns.
+ * Never throws — returns { linked: false } on any error so callers can
+ * treat an inconclusive answer as unverified rather than guessing.
+ */
+async function verifyCompanyFundingSource(
+  rollfiCompanyId: string,
+  log: Pick<typeof console, "info" | "warn">,
+): Promise<{ linked: boolean; source: Record<string, unknown> | null; status: string | null }> {
+  try {
+    const r = await axios.post(
+      `${getBaseUrl()}/reports#getCompanyInfo`,
+      { method: "getCompanyInfo", companyId: rollfiCompanyId },
+      { headers: rollfiHeaders() },
+    );
+    const raw = r.data as Record<string, unknown>;
+    const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+    const co = companies[0] ?? {};
+    // Rollfi may return bank data under FundingSources OR BankAccounts — merge both
+    const sources = [
+      ...(Array.isArray(co.FundingSources) ? co.FundingSources as Record<string, unknown>[] : []),
+      ...(Array.isArray(co.BankAccounts)   ? co.BankAccounts   as Record<string, unknown>[] : []),
+    ];
+    const active =
+      sources.find((f) => ["active", "verified", "ready"].includes(String(f.status ?? "").toLowerCase())) ??
+      sources.find((f) => String(f.status ?? "").toLowerCase() !== "deactivated") ??
+      sources[0] ??
+      null;
+    const status = active ? (active.status as string ?? null) : null;
+    const linked = active !== null && String(status ?? "").toLowerCase() !== "deactivated";
+    log.info({ rollfiCompanyId, linked, status, sourceCount: sources.length }, "verifyCompanyFundingSource result");
+    return { linked, source: active, status };
+  } catch (e) {
+    log.warn({ e, rollfiCompanyId }, "verifyCompanyFundingSource: getCompanyInfo failed — treating as unverified");
+    return { linked: false, source: null, status: null };
+  }
 }
 
 // Derive a stable UUID-shaped ID from a seed string (for recovery fallback)
@@ -1215,7 +1257,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
   // Helper: run the full post-registration onboarding chain so getPayPeriod works.
   // Steps: 0. addKybInformation  1. initiateCompanyKyb  2. addCompanyBankAccount  3. addPaySchedule
   // All steps are fire-and-forget: errors are logged but never fail company onboarding.
-  async function ensureFullOnboarding(rollfiCompanyId: string, localCompanyId: string): Promise<void> {
+  async function ensureFullOnboarding(rollfiCompanyId: string, localCompanyId: string): Promise<{ bankLinked: boolean; bankStatus: string | null; bankReason: string }> {
     // Read the stored EIN (set by createBusiness before this is called)
     const ein = store.getRollfiCompany(localCompanyId)?.ein ?? randomNineDigits();
 
@@ -1252,9 +1294,10 @@ router.post("/rollfi/onboard/company", async (req, res) => {
     // Brief pause — Rollfi sandbox may need a moment to commit KYB status before bank account check
     await new Promise((resolve) => setTimeout(resolve, 3000));
 
-    // 2 — Bank account: sandbox uses test values; production skips — Rollfi holds the real account
-    //     after first-time submission. To re-add in production use POST /rollfi/onboard/bank-account
-    //     with full bank details in the request body.
+    // 2 — Bank account: sandbox submits test values; production verifies via getCompanyInfo
+    //     rather than assuming Rollfi already holds the account (which was the silent-skip bug).
+    //     bankResult is returned to callers so the response can surface the real status.
+    let bankResult: { bankLinked: boolean; bankStatus: string | null; bankReason: string };
     if (getRollfiConfig().env !== "production") {
       try {
         const bankAcct = { accountNumber: ein, routingNumber: "221982389", bankName: "BrightBridge Test Bank", accountType: "checking", accountName: "Payroll Account" };
@@ -1275,9 +1318,22 @@ router.post("/rollfi/onboard/company", async (req, res) => {
           { headers: rollfiHeaders() }
         );
         req.log.info({ rollfiResult: safeRollfiLog(r2.data) }, "Rollfi addCompanyBankAccount response");
-      } catch (e) { req.log.warn({ e }, "addCompanyBankAccount failed (ignoring)"); }
+        bankResult = { bankLinked: true, bankStatus: "submitted", bankReason: "sandbox bank account submitted successfully" };
+      } catch (e) {
+        req.log.warn({ e }, "addCompanyBankAccount failed (ignoring)");
+        bankResult = { bankLinked: false, bankStatus: null, bankReason: "sandbox bank account submission failed" };
+      }
     } else {
-      req.log.info({ companyId: localCompanyId }, "addCompanyBankAccount: production — Rollfi already holds bank account, skipping");
+      // Production: verify whether Rollfi actually holds a funding source — never assume
+      req.log.info({ rollfiCompanyId, localCompanyId }, "addCompanyBankAccount: production — verifying funding source via getCompanyInfo");
+      const { linked, status } = await verifyCompanyFundingSource(rollfiCompanyId, req.log);
+      if (linked) {
+        req.log.info({ rollfiCompanyId, status }, "addCompanyBankAccount: production — active funding source confirmed");
+        bankResult = { bankLinked: true, bankStatus: status, bankReason: "funding source confirmed via getCompanyInfo" };
+      } else {
+        req.log.warn({ rollfiCompanyId }, "addCompanyBankAccount: production — no active funding source found; owner must submit bank details via POST /rollfi/onboard/bank-account");
+        bankResult = { bankLinked: false, bankStatus: null, bankReason: "no active funding source found — submit bank details via POST /rollfi/onboard/bank-account" };
+      }
     }
 
     // 3 — Pay schedule (BiWeekly W2, starting 2 weeks ago so a period exists now)
@@ -1304,6 +1360,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       );
       req.log.info({ rollfiResponse: r3.data }, "Rollfi addPaySchedule response");
     } catch (e) { req.log.warn({ e }, "addPaySchedule failed (ignoring)"); }
+    return bankResult;
   }
 
   // Generate fresh random EIN and owner SSN — avoids Rollfi's "EIN already in use" KYB rejection
@@ -1389,7 +1446,7 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       ownerSsn: newOwnerSsn,
     });
 
-    await ensureFullOnboarding(rollfiCompanyId, companyId);
+    const { bankLinked: onboardBankLinked, bankStatus: onboardBankStatus, bankReason: onboardBankReason } = await ensureFullOnboarding(rollfiCompanyId, companyId);
 
     res.json({
       success: true,
@@ -1397,6 +1454,9 @@ router.post("/rollfi/onboard/company", async (req, res) => {
       rollfiLocationId: rollfiLocationId ?? "",
       status: reg.status as string | undefined,
       message: reg.message as string | undefined,
+      bankLinked: onboardBankLinked,
+      bankStatus: onboardBankStatus,
+      ...(!onboardBankLinked && { bankWarning: onboardBankReason }),
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1414,9 +1474,9 @@ router.post("/rollfi/onboard/company", async (req, res) => {
             rollfiLocationId,
             onboardedAt: new Date().toISOString(),
           });
-          await ensureFullOnboarding(found.companyID, companyId);
-          req.log.info({ rollfiCompanyId: found.companyID, rollfiLocationId }, "Recovered existing Rollfi company");
-          res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID, rollfiLocationId });
+          const { bankLinked: recBankLinked, bankReason: recBankReason } = await ensureFullOnboarding(found.companyID, companyId);
+          req.log.info({ rollfiCompanyId: found.companyID, rollfiLocationId, bankLinked: recBankLinked }, "Recovered existing Rollfi company");
+          res.json({ success: true, recovered: true, rollfiCompanyId: found.companyID, rollfiLocationId, bankLinked: recBankLinked, ...(!recBankLinked && { bankWarning: recBankReason }) });
           return;
         }
         req.log.error({ companyName: company.name }, "Could not find existing Rollfi company by name");
@@ -1554,8 +1614,14 @@ router.post("/rollfi/retry-kyb", async (req, res) => {
       steps.addCompanyBankAccountError = err.response?.data ?? String(e);
     }
   } else {
-    req.log.info({ companyId }, "retry-kyb: production — Rollfi already holds bank account, skipping bank step");
-    steps.addCompanyBankAccount = { skipped: true, reason: "production: Rollfi holds account" };
+    req.log.info({ rollfiCompanyId, companyId }, "retry-kyb: production — verifying funding source rather than assuming bank account exists");
+    const { linked: kybBankLinked, status: kybBankStatus } = await verifyCompanyFundingSource(rollfiCompanyId, req.log);
+    steps.addCompanyBankAccount = kybBankLinked
+      ? { verified: true, status: kybBankStatus, reason: "funding source confirmed via getCompanyInfo" }
+      : { verified: false, status: null, reason: "no active funding source found — submit bank details via POST /rollfi/onboard/bank-account" };
+    if (!kybBankLinked) {
+      req.log.warn({ rollfiCompanyId, companyId }, "retry-kyb: production — no active funding source confirmed; bank account needs to be submitted");
+    }
   }
 
   // Persist the new EIN + SSN so future retries don't reuse the same values
@@ -1738,11 +1804,19 @@ router.get("/rollfi/onboard/bank-status", async (req, res) => {
     // Extract funding source info from Company array
     const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
     const company = companies[0] ?? {};
-    const fundingSources = Array.isArray(company.FundingSources)
-      ? company.FundingSources as Record<string, unknown>[]
-      : [];
-    const active = fundingSources.find((f) => f.status !== "Deactivated") ?? fundingSources[0];
-    res.json({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, fundingSource: active ?? null, raw });
+    // Merge both shapes Rollfi may use for bank data (FundingSources and BankAccounts)
+    const sources = [
+      ...(Array.isArray(company.FundingSources) ? company.FundingSources as Record<string, unknown>[] : []),
+      ...(Array.isArray(company.BankAccounts)   ? company.BankAccounts   as Record<string, unknown>[] : []),
+    ];
+    const active =
+      sources.find((f) => ["active", "verified", "ready"].includes(String(f.status ?? "").toLowerCase())) ??
+      sources.find((f) => String(f.status ?? "").toLowerCase() !== "deactivated") ??
+      sources[0] ??
+      null;
+    const linked = active !== null && String(active?.status ?? "").toLowerCase() !== "deactivated";
+    // Omit raw — it may contain bank metadata; callers only need the normalised result
+    res.json({ rollfiCompanyId: rollfiCompany.rollfiCompanyId, fundingSource: active, linked });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     req.log.warn({ err }, "getCompanyInfo failed");
@@ -5060,16 +5134,21 @@ router.get("/rollfi/company-tasks", async (req, res) => {
     return;
   }
   try {
-    const r = await axios.post(
-      `${getBaseUrl()}/reports#getCompanyTask`,
-      { method: "getCompanyTask", companyId: rollfiCompany.rollfiCompanyId },
-      { headers: rollfiHeaders() }
-    );
+    // Run task fetch and funding-source verification in parallel so bankLinked reflects
+    // a real Rollfi check rather than task-absence inference
+    const [r, bankVerification] = await Promise.all([
+      axios.post(
+        `${getBaseUrl()}/reports#getCompanyTask`,
+        { method: "getCompanyTask", companyId: rollfiCompany.rollfiCompanyId },
+        { headers: rollfiHeaders() },
+      ),
+      verifyCompanyFundingSource(rollfiCompany.rollfiCompanyId, req.log),
+    ]);
     req.log.info({ rollfiResponse: r.data }, "Rollfi getCompanyTask response");
     const raw = r.data as Record<string, unknown>;
     const tasks = (raw.tasks ?? []) as Array<{ task: string; description: string }>;
     const kybTask = tasks.find((t) => t.task === "KYB verification");
-    const bankTask = tasks.find((t) => t.task === "Connect bank account");
+    const bankTask = tasks.find((t) => t.task === "Connect bank account"); // kept for reference only
     // kybStatus derivation:
     //   "approved" — no pending KYB task (Rollfi removes the task once approved), OR task description says approved/verified
     //   "pending"  — task exists and description contains "pending"
@@ -5085,7 +5164,8 @@ router.get("/rollfi/company-tasks", async (req, res) => {
       else if (desc.includes("approved") || desc.includes("verified") || desc.includes("success")) kybStatus = "approved";
       else kybStatus = "issue";
     }
-    res.json({ tasks, kybStatus, bankLinked: !bankTask });
+    void bankTask; // variable retained for future reference; bankLinked now comes from verifyCompanyFundingSource
+    res.json({ tasks, kybStatus, bankLinked: bankVerification.linked, bankStatus: bankVerification.status });
   } catch (err: unknown) {
     const e = err as { response?: { data: unknown } };
     res.status(500).json({ error: String(err), rollfiErrorBody: e.response?.data });

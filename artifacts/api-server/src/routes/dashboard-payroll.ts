@@ -418,6 +418,12 @@ router.get("/dashboard/payroll", requireAuth, async (req: Request, res: Response
     req.log.warn({ err: fundingResult.reason, companyId }, "dashboard/payroll: fundingSource fetch failed");
   }
 
+  // Override bankLinked in companyTasks with the real funding-source check —
+  // never derive it from task absence (which was the bug: a missing task ≠ a confirmed bank link)
+  if (companyTasks) {
+    companyTasks = { ...companyTasks, bankLinked: fundingSource !== null };
+  }
+
   // ── Bank balance — probe FundingSource fields then dedicated endpoints ──────
   let bankBalance: number | null = null;
   let bankBalanceUpdatedAt: string | null = null;
