@@ -135,7 +135,12 @@ export default function BankAccountSetupPage() {
       const data = await r.json() as { plaidLinkURL?: string; sentTo?: string | null; error?: string };
       if (!r.ok) throw new Error(data.error ?? "Failed to initiate Plaid link");
       void queryClient.invalidateQueries({ queryKey: ["company-detail", companyId] });
-      if (subOption === "generateURL" && data.plaidLinkURL) {
+      if (subOption === "generateURL") {
+        // Backend returns 502 when URL is missing, but guard here too so the
+        // UI never silently stays in "loading" if an unexpected 200 arrives.
+        if (!data.plaidLinkURL) {
+          throw new Error("Rollfi returned success but no Plaid link URL was included in the response. Try 'Send invite by email' instead.");
+        }
         window.open(data.plaidLinkURL, "_blank", "noopener,noreferrer");
         setPlaidStep("waiting");
         startPolling();
