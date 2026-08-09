@@ -13,7 +13,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 import {
   Landmark, ChevronLeft, CheckCircle2, AlertTriangle, Loader2,
-  ExternalLink, Mail, RefreshCw, ArrowRight,
+  ExternalLink, Mail, RefreshCw, ArrowRight, DollarSign, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,14 @@ export default function BankAccountSetupPage() {
   const [emailSentTo, setEmailSentTo] = useState<string | null>(null);
   const pollCountRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Micro-deposit verification state ──────────────────────────────────
+  const [mdAmt1, setMdAmt1] = useState("");
+  const [mdAmt2, setMdAmt2] = useState("");
+  const [mdErr1, setMdErr1] = useState("");
+  const [mdErr2, setMdErr2] = useState("");
+  const [mdState, setMdState] = useState<"idle" | "submitting" | "success" | "error" | "exhausted">("idle");
+  const [mdError, setMdError] = useState("");
 
   // ── Manual state ───────────────────────────────────────────────────────
   const [manualForm, setManualForm] = useState({
@@ -119,6 +127,62 @@ export default function BankAccountSetupPage() {
         })
         .catch(() => { /* non-fatal — keep polling */ });
     }, 5000);
+  };
+
+  // ── Micro-deposit helpers ──────────────────────────────────────────────
+  const validateMdAmount = (raw: string): string => {
+    const trimmed = raw.trim();
+    if (!trimmed) return "Required";
+    const val = parseFloat(trimmed);
+    if (isNaN(val) || !isFinite(val)) return "Enter a number (e.g. 0.12)";
+    if (val <= 0) return "Must be greater than $0.00";
+    if (val >= 1.00) return "Must be less than $1.00";
+    if (!/^\d*\.\d{1,2}$/.test(trimmed)) return "Up to two decimal places only (e.g. 0.12)";
+    return "";
+  };
+
+  const handleVerifyDeposits = async () => {
+    const e1 = validateMdAmount(mdAmt1);
+    const e2 = validateMdAmount(mdAmt2);
+    setMdErr1(e1);
+    setMdErr2(e2);
+    if (e1 || e2) return;
+    setMdState("submitting");
+    setMdError("");
+    try {
+      const r = await fetch("/api/rollfi/onboard/verify-bank", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        // Amounts are sent as numbers; the server validates range and logs them separately.
+        body: JSON.stringify({ companyId, debitAmount1: parseFloat(mdAmt1), debitAmount2: parseFloat(mdAmt2) }),
+      });
+      const data = await r.json() as { success?: boolean; currentStatus?: string; error?: string; verifyResponse?: Record<string, unknown> };
+      if (!r.ok) {
+        const msg = data.error ?? "Verification failed";
+        const isExhausted = /exhaust|limit|no.more.attempt|too.many/i.test(msg);
+        setMdState(isExhausted ? "exhausted" : "error");
+        setMdError(msg);
+        return;
+      }
+      if (data.success) {
+        setMdState("success");
+        void queryClient.invalidateQueries({ queryKey: ["bank-status", companyId] });
+        void refetchBankStatus();
+      } else {
+        // 200 but success:false — Rollfi rejected the amounts or they're still pending
+        const body = data.verifyResponse ?? {};
+        const raw = JSON.stringify(body);
+        const isExhausted = /exhaust|limit|no.more.attempt|too.many/i.test(raw);
+        const msg = data.error ?? (body.message as string | undefined) ?? raw;
+        setMdState(isExhausted ? "exhausted" : "error");
+        setMdError(msg);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Verification failed";
+      const isExhausted = /exhaust|limit|no.more.attempt|too.many/i.test(msg);
+      setMdState(isExhausted ? "exhausted" : "error");
+      setMdError(msg);
+    }
   };
 
   const handlePlaidConnect = async (subOption: "generateURL" | "sendInviteByEmail") => {
@@ -222,6 +286,122 @@ export default function BankAccountSetupPage() {
                 <p className="text-sm font-semibold text-amber-800">No verified bank account</p>
                 <p className="text-sm text-amber-700 mt-0.5">Payroll cannot run until a bank account is linked and verified.</p>
               </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Micro-deposit verification card ─────────────────────────────── */}
+      {/* Show only when: status is pending AND bank was linked manually (not Plaid) */}
+      {bankStatus && !bankStatus.verified &&
+        (bankStatus.status?.toLowerCase() === "microdeposit pending" || bankStatus.status?.toLowerCase() === "pending") &&
+        companyData?.bankLinkMethod !== "Plaid" && (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 overflow-hidden">
+          <div className="px-5 py-4 border-b border-blue-200 flex items-center gap-3">
+            <DollarSign className="h-5 w-5 text-blue-600 shrink-0" />
+            <div>
+              <p className="text-sm font-bold text-blue-900">Verify your bank account</p>
+              <p className="text-xs text-blue-700 mt-0.5">Rollfi sent two small deposits to confirm you own this account</p>
+            </div>
+          </div>
+
+          <div className="px-5 py-5 space-y-4">
+            {mdState !== "success" && mdState !== "exhausted" && (
+              <p className="text-sm text-blue-800">
+                Check your bank statement for two deposits under $1.00 (usually $0.01–$0.99). They arrive within{" "}
+                <strong>1–3 business days</strong>. Enter the exact amounts below — the order doesn't matter.
+              </p>
+            )}
+
+            {/* Success */}
+            {mdState === "success" && (
+              <div className="flex items-start gap-3">
+                <ShieldCheck className="h-6 w-6 text-emerald-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-bold text-emerald-800">Bank account verified!</p>
+                  {bankStatus.bankName && (
+                    <p className="text-sm text-emerald-700 mt-0.5">
+                      {bankStatus.bankName}{bankStatus.last4 ? ` ···· ${bankStatus.last4}` : ""}
+                      {bankStatus.accountType ? ` · ${bankStatus.accountType}` : ""} is now active.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Exhausted — no retry */}
+            {mdState === "exhausted" && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 space-y-1.5">
+                <p className="text-sm font-semibold text-red-800">Verification attempts exhausted</p>
+                <p className="text-sm text-red-700">{mdError}</p>
+                <p className="text-xs text-red-600 mt-1">Contact Rollfi support to reset the micro-deposit verification for this account, or link a new bank account.</p>
+              </div>
+            )}
+
+            {/* Error — wrong amounts, retry allowed */}
+            {mdState === "error" && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 space-y-2">
+                <p className="text-sm font-semibold text-red-800">Amounts didn't match</p>
+                <p className="text-sm text-red-700">{mdError}</p>
+                <Button size="sm" variant="outline" onClick={() => { setMdState("idle"); setMdError(""); setMdAmt1(""); setMdAmt2(""); setMdErr1(""); setMdErr2(""); }}>
+                  Try again
+                </Button>
+              </div>
+            )}
+
+            {/* Amount form — idle or submitting */}
+            {(mdState === "idle" || mdState === "submitting") && (
+              <div className="space-y-4">
+                <div className="flex gap-3">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-blue-900">First deposit amount ($)</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. 0.12"
+                      value={mdAmt1}
+                      onChange={(e) => { setMdAmt1(e.target.value); if (mdErr1) setMdErr1(validateMdAmount(e.target.value)); }}
+                      onBlur={() => setMdErr1(validateMdAmount(mdAmt1))}
+                      className={`${mdErr1 ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+                      disabled={mdState === "submitting"}
+                    />
+                    {mdErr1 && <p className="text-xs text-red-600">{mdErr1}</p>}
+                  </div>
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-blue-900">Second deposit amount ($)</Label>
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="e.g. 0.37"
+                      value={mdAmt2}
+                      onChange={(e) => { setMdAmt2(e.target.value); if (mdErr2) setMdErr2(validateMdAmount(e.target.value)); }}
+                      onBlur={() => setMdErr2(validateMdAmount(mdAmt2))}
+                      className={`${mdErr2 ? "border-red-400 focus-visible:ring-red-400" : ""}`}
+                      disabled={mdState === "submitting"}
+                    />
+                    {mdErr2 && <p className="text-xs text-red-600">{mdErr2}</p>}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={() => { void handleVerifyDeposits(); }}
+                    disabled={mdState === "submitting"}
+                    className="gap-1.5 text-white border-0"
+                    style={{ background: NAVY }}
+                  >
+                    {mdState === "submitting"
+                      ? <><Loader2 className="h-4 w-4 animate-spin" />Verifying…</>
+                      : <><ShieldCheck className="h-4 w-4" />Verify deposits</>}
+                  </Button>
+                  <button
+                    className="text-xs text-blue-600 hover:underline underline-offset-2"
+                    onClick={() => void refetchBankStatus()}
+                  >
+                    Deposits not arrived yet? Check status
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         </div>

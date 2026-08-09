@@ -1,0 +1,83 @@
+ROLE: You are a senior full-stack 
+TypeScript engineer completing the manual 
+bank verification flow.
+
+CONTEXT: POST /rollfi/onboard/verify-bank 
+now correctly REQUIRES the two real 
+micro-deposit amounts (it no longer 
+hardcodes 0.01/0.01). But there is no UI 
+for the company owner to enter them, so 
+the manual bank path cannot currently be 
+completed. Rollfi's documented request 
+shape: { method: "verifyMicroDeposits", 
+companyId, debitAmount1: 0.12, 
+debitAmount2: 0.15 }.
+
+SCOPE: Add the micro-deposit verification 
+UI only. Do NOT change the Plaid flow, 
+the manual submission flow, payroll, 
+KYC/KYB, or EasyTeam.
+
+BUILD:
+
+1. On the bank-account-setup page (and 
+anywhere the bank status is shown for a 
+company), when the funding source status 
+indicates micro-deposit verification is 
+pending, show a "Verify your bank 
+account" card explaining: Rollfi has sent 
+two small deposits (under $1.00) to the 
+account; they usually arrive in 1-3 
+business days; enter the exact amounts 
+from the bank statement.
+
+2. The form: two amount inputs 
+(debitAmount1, debitAmount2), accepting 
+values like 0.12 — validate each as a 
+positive number less than 1.00, up to two 
+decimal places. Submit to the existing 
+verify-bank endpoint.
+
+3. States:
+- Success: show a verified badge, the 
+  connected account (bank name + last4), 
+  and refresh the bank status.
+- Failure (wrong amounts): show Rollfi's 
+  error message clearly and allow retry. 
+  If Rollfi indicates attempts are 
+  limited or exhausted, surface that 
+  message rather than letting the user 
+  retry blindly.
+- Deposits not arrived yet: a note that 
+  they may take 1-3 business days, with a 
+  "Check status" action.
+
+4. Status source: use the existing 
+normalised bank-status endpoint to decide 
+whether to show this card — never assume 
+pending or verified from local state.
+
+5. Reachable from Company Settings → Bank 
+Account for an existing company, not only 
+during onboarding.
+
+RULES: TypeScript, brand colours, existing 
+card patterns, loading/empty/error states, 
+amounts never logged.
+
+TESTING CHECKLIST:
+- Card appears only when status is 
+  micro-deposit pending
+- Validation rejects 0, negative, ≥ 1.00, 
+  and more than two decimals
+- Correct amounts → verified state and 
+  refreshed status
+- Wrong amounts → Rollfi's error shown, 
+  retry possible
+- Plaid-linked companies never see this 
+  card
+- Sandbox behaviour unaffected
+
+DELIVERABLE: files changed, how pending 
+status is detected, and the reproduction 
+performed.
