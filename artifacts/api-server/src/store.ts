@@ -226,6 +226,10 @@ const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
 const ignoredEtUuids = new Set<string>();
 
 // ─── PEOPLE MODULE STORAGE ────────────────────────────────────
+// DEAD CODE — department data is now persisted to the DB `departments` table.
+// seedDepartmentsForCompany() in people.ts writes to DB; CRUD routes read/write DB directly.
+// This in-memory array and the store methods below (getDepartments, addDepartment, etc.)
+// are intentionally left here for reference but are no longer called by any live route.
 const departments: Department[] = [];
 const onboardingTasks: OnboardingTask[] = [];
 const complianceItems: ComplianceItem[] = [];

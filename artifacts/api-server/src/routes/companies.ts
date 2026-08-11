@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type IRouter } from "express";
 import axios from "axios";
-import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, rollfiEmployeeRecords, userAccounts, stateRegistrations as stateRegistrationsTable, onboardingTasks as onboardingTasksTable } from "@workspace/db";
+import { db, companies, employees, beneficialOwners, rollfiCompanyRecords, rollfiEmployeeRecords, userAccounts, stateRegistrations as stateRegistrationsTable, onboardingTasks as onboardingTasksTable, locations as locationsTable } from "@workspace/db";
 import { buildStateRegistrationPayload } from "../lib/rollfi-state-fields.js";
 import { eq, and, inArray } from "drizzle-orm";
 import { store } from "../store.js";
@@ -406,10 +406,30 @@ router.post("/companies", async (req: Request, res: Response) => {
       }
     }
 
-    // Seed default departments for this company (in-memory, fast)
+    // Seed default departments for this company (DB-backed, idempotent)
     const isDaycare = body.industry === "daycare" || body.package === "full_daycare";
-    seedDepartmentsForCompany(companyId, isDaycare);
+    await seedDepartmentsForCompany(companyId, isDaycare);
     req.log.info({ companyId, isDaycare }, "Departments seeded");
+
+    // Create a location row for this company — data foundation for multi-location (Phase 1).
+    // etLocId mirrors what resolveCompanyLocationId will return for this company.
+    const etLocId = rollfiResult.rollfiLocationId ?? `LOC-${companyId}`;
+    await db.insert(locationsTable).values({
+      id: etLocId,
+      companyId,
+      code: "100",
+      name: body.locationName ?? body.companyName ?? companyId,
+      address1: body.address1 ?? "",
+      address2: body.address2 ?? null,
+      city: body.city ?? "",
+      state: body.state ?? "",
+      zipcode: body.zipcode ?? "",
+      easyteamLocationId: etLocId,
+      rollfiLocationId: (rollfiResult.rollfiLocationId as string | undefined) ?? null,
+      isActive: true,
+      createdAt: now,
+    }).onConflictDoNothing().catch((e: unknown) => req.log.warn({ e, companyId }, "Location row insert failed (non-fatal)"));
+    req.log.info({ companyId, locationId: etLocId }, "Location row created for new company");
 
     void logPeopleActivity({ companyId, action: "company.created", description: `Company "${body.companyName}" created`, category: "company", performedBy: req.session.userId ?? "system" });
 
@@ -744,6 +764,12 @@ router.post("/employees", async (req: Request, res: Response) => {
   const dob = body.dateOfBirth?.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") ?? "1990-01-15";
 
   try {
+    // Resolve this company's primary location so the employee row has a locationId FK
+    const [empLoc] = await db.select({ id: locationsTable.id })
+      .from(locationsTable)
+      .where(and(eq(locationsTable.companyId, body.companyId), eq(locationsTable.isActive, true)))
+      .catch(() => [undefined]);
+
     // 1. Save employee to DB
     await db.insert(employees).values({
       id: employeeId,
@@ -784,6 +810,7 @@ router.post("/employees", async (req: Request, res: Response) => {
       bankName: body.bankSetupMethod === "manual" ? (body.bankName ?? null) : null,
       accountLast4: body.bankSetupMethod === "manual" && body.accountNumber ? body.accountNumber.slice(-4) : null,
       accountType: body.bankSetupMethod === "manual" ? (body.accountType ?? null) : null,
+      locationId: empLoc?.id ?? null,
       status: "onboarding",
       kycStatus: "not_started",
       bankAccountAdded: false,   // updated after sync with actual Rollfi result

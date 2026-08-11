@@ -8,9 +8,10 @@ import {
   emergencyContacts as emergencyContactsTable,
   peopleActivityLog as peopleActivityLogTable,
   taskNotes as taskNotesTable,
+  departments as departmentsTable,
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
-import { store, type Department } from "../store.js";
+import { store } from "../store.js";
 import { requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
 import multer from "multer";
 import path from "path";
@@ -334,22 +335,31 @@ export async function logPeopleActivity(params: {
   });
 }
 
-// ─── DEFAULT DEPARTMENTS (in-memory — small, static) ─────────
+// ─── DEFAULT DEPARTMENTS (DB-backed) ─────────────────────────
+// Departments are now persisted in the DB departments table.
+// The in-memory store.departments array is dead code (kept in store.ts for reference).
 
 const STANDARD_DEPTS = ["Operations","Finance","Human Resources","Sales","Marketing","IT","Customer Service","Administration"];
 const DAYCARE_DEPTS  = ["Infant Room","Toddler Room","Preschool","Pre-K","Kitchen","Front Desk"];
 
-export function seedDepartmentsForCompany(companyId: string, isDaycare: boolean): void {
-  if (store.hasDepartmentsForCompany(companyId)) return;
+export async function seedDepartmentsForCompany(companyId: string, isDaycare: boolean): Promise<void> {
+  // Idempotent: skip if this company already has at least one active department row in DB
+  const existing = await db
+    .select({ id: departmentsTable.id })
+    .from(departmentsTable)
+    .where(and(eq(departmentsTable.companyId, companyId), eq(departmentsTable.isActive, true)));
+  if (existing.length > 0) return;
+
   const now = nowIso();
-  for (const name of STANDARD_DEPTS) {
-    store.addDepartment({ id: `dept-${uid()}`, companyId, name, type: "standard", isDefault: true, isActive: true, createdAt: now });
-  }
-  if (isDaycare) {
-    for (const name of DAYCARE_DEPTS) {
-      store.addDepartment({ id: `dept-${uid()}`, companyId, name, type: "daycare", isDefault: true, isActive: true, createdAt: now });
-    }
-  }
+  const rows = [
+    ...STANDARD_DEPTS.map((name) => ({
+      id: `dept-${uid()}`, companyId, name, type: "standard", isDefault: true, isActive: true, createdAt: now,
+    })),
+    ...(isDaycare ? DAYCARE_DEPTS.map((name) => ({
+      id: `dept-${uid()}`, companyId, name, type: "daycare", isDefault: true, isActive: true, createdAt: now,
+    })) : []),
+  ];
+  if (rows.length > 0) await db.insert(departmentsTable).values(rows);
 }
 
 // ─── STARTUP BACKFILL ─────────────────────────────────────────
@@ -479,10 +489,10 @@ export async function backfillEmployeeScores(): Promise<void> {
 export async function backfillPeopleModule(): Promise<void> {
   const allCompanies = await db.select().from(companies);
 
-  // Seed departments for every existing company
+  // Seed departments for every existing company (async DB-backed — idempotent per company)
   for (const company of allCompanies) {
     const isDaycare = company.industry === "daycare" || company.package === "full_daycare";
-    seedDepartmentsForCompany(company.id, isDaycare);
+    await seedDepartmentsForCompany(company.id, isDaycare);
   }
 
   const allEmployees = await db.select().from(employees);
@@ -943,9 +953,12 @@ router.get("/departments", requireRole("super_admin", "owner", "manager"), async
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
   if (!assertCompanyAccess(req, res, companyId)) return;
 
-  const depts = store.getDepartments(companyId);
-  const empRows = await db.select({ id: employees.id, dept: employees.department })
-    .from(employees).where(eq(employees.companyId, companyId));
+  const [depts, empRows] = await Promise.all([
+    db.select().from(departmentsTable)
+      .where(and(eq(departmentsTable.companyId, companyId), eq(departmentsTable.isActive, true))),
+    db.select({ id: employees.id, dept: employees.department })
+      .from(employees).where(eq(employees.companyId, companyId)),
+  ]);
 
   const result = depts.map((d) => ({
     ...d,
@@ -954,33 +967,34 @@ router.get("/departments", requireRole("super_admin", "owner", "manager"), async
   res.json({ departments: result });
 });
 
-router.post("/departments", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
+router.post("/departments", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
   const { companyId, name } = req.body as { companyId?: string; name?: string };
   if (!companyId || !name) { res.status(400).json({ error: "companyId and name required" }); return; }
   if (!assertCompanyAccess(req, res, companyId)) return;
 
-  const dept: Department = { id: `dept-${uid()}`, companyId, name: name.trim(), type: "custom", isDefault: false, isActive: true, createdAt: nowIso() };
-  store.addDepartment(dept);
-  res.status(201).json({ department: dept });
+  const newDept = { id: `dept-${uid()}`, companyId, name: name.trim(), type: "custom", isDefault: false, isActive: true, createdAt: nowIso() };
+  await db.insert(departmentsTable).values(newDept);
+  res.status(201).json({ department: newDept });
 });
 
-router.put("/departments/:id", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
-  const dept = store.getDepartmentById(req.params.id as string);
+router.put("/departments/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
+  const [dept] = await db.select().from(departmentsTable).where(eq(departmentsTable.id, req.params.id as string));
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
   if (!assertCompanyAccess(req, res, dept.companyId)) return;
   if (dept.isDefault) { res.status(400).json({ error: "Cannot rename a default department" }); return; }
   const { name } = req.body as { name?: string };
   if (!name) { res.status(400).json({ error: "name required" }); return; }
-  store.updateDepartment(dept.id, { name: name.trim() });
-  res.json({ department: { ...dept, name: name.trim() } });
+  const trimmed = name.trim();
+  await db.update(departmentsTable).set({ name: trimmed }).where(eq(departmentsTable.id, dept.id));
+  res.json({ department: { ...dept, name: trimmed } });
 });
 
-router.delete("/departments/:id", requireRole("super_admin", "owner", "manager"), (req: Request, res: Response) => {
-  const dept = store.getDepartmentById(req.params.id as string);
+router.delete("/departments/:id", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
+  const [dept] = await db.select().from(departmentsTable).where(eq(departmentsTable.id, req.params.id as string));
   if (!dept) { res.status(404).json({ error: "Department not found" }); return; }
   if (!assertCompanyAccess(req, res, dept.companyId)) return;
   if (dept.isDefault) { res.status(400).json({ error: "Cannot delete a default department" }); return; }
-  store.deleteDepartment(dept.id);
+  await db.update(departmentsTable).set({ isActive: false }).where(eq(departmentsTable.id, dept.id));
   res.json({ success: true });
 });
 

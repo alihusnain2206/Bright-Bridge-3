@@ -3,7 +3,7 @@ import { requireAuth, requireRole, assertCompanyAccess } from "../lib/auth-middl
 import { store, type EmployeeStatus } from "../store";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount, deleteUserAccount } from "../lib/user-account-persist.js";
-import { db, companies as companiesTable, employees as employeesTable } from "@workspace/db";
+import { db, companies as companiesTable, employees as employeesTable, locations as locationsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 
 const router: IRouter = Router();
@@ -227,6 +227,12 @@ router.post("/clients/:clientId/employees", requireRole("super_admin", "owner"),
   const finalStatus: EmployeeStatus = status ?? "active";
   const now = new Date().toISOString();
 
+  // Resolve this company's primary location for the locationId FK
+  const [empLoc] = await db.select({ id: locationsTable.id })
+    .from(locationsTable)
+    .where(and(eq(locationsTable.companyId, clientId), eq(locationsTable.isActive, true)))
+    .catch(() => [undefined]);
+
   await db.insert(employeesTable).values({
     id: employeeId,
     companyId: clientId,
@@ -237,6 +243,7 @@ router.post("/clients/:clientId/employees", requireRole("super_admin", "owner"),
     startDate: now.split("T")[0],
     payType: "hourly",
     hourlyWage: hourlyWageCents,
+    locationId: empLoc?.id ?? null,
     status: finalStatus,
     easyteamSynced: false,
     syncStatus: "pending",

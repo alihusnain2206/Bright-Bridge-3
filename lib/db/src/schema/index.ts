@@ -200,6 +200,7 @@ export const employees = pgTable("employees", {
   jobTitle:          text("job_title"),
   employeeType:      text("employee_type"),
   workLocation:      text("work_location"),
+  locationId:        text("location_id"),             // FK to locations.id (nullable; backfilled at boot for existing employees)
   // People Module — compliance
   complianceScore:   integer("compliance_score"),
   i9Status:          text("i9_status").default("not_started"),
@@ -416,6 +417,39 @@ export const appActivityLog = pgTable("app_activity_log", {
   actorName:   text("actor_name"),
   actorRole:   text("actor_role"),
   createdAt:   text("created_at").notNull(),
+});
+
+// ─── LOCATIONS ────────────────────────────────────────────────
+// One row per physical company location. Phase 1: one location per company.
+// easyteamLocationId is the string used in all EasyTeam and Rollfi API calls.
+// rollfiLocationId stores the Rollfi-assigned location string (may differ).
+export const locations = pgTable("locations", {
+  id:                 text("id").primaryKey(),
+  companyId:          text("company_id").notNull(),
+  code:               text("code").notNull().default("100"),
+  name:               text("name").notNull(),
+  address1:           text("address1").notNull().default(""),
+  address2:           text("address2"),
+  city:               text("city").notNull().default(""),
+  state:              text("state").notNull().default(""),
+  zipcode:            text("zipcode").notNull().default(""),
+  easyteamLocationId: text("easyteam_location_id"),
+  rollfiLocationId:   text("rollfi_location_id"),
+  isActive:           boolean("is_active").notNull().default(true),
+  createdAt:          text("created_at").notNull(),
+});
+
+// ─── DEPARTMENTS ──────────────────────────────────────────────
+// Persistent department rows (migrated from the in-memory store.departments array).
+// type: "standard" | "daycare" | "custom"; isDefault = seeded at company creation.
+export const departments = pgTable("departments", {
+  id:        text("id").primaryKey(),
+  companyId: text("company_id").notNull(),
+  name:      text("name").notNull(),
+  type:      text("type").notNull().default("standard"),
+  isDefault: boolean("is_default").notNull().default(false),
+  isActive:  boolean("is_active").notNull().default(true),
+  createdAt: text("created_at").notNull(),
 });
 
 export const timesheetShifts = pgTable("timesheet_shifts", {

@@ -9,7 +9,7 @@ import { restoreActivityFromDb } from "./store.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
 import { store } from "./store.js";
-import { db, companies, employees, rollfiEmployeeRecords } from "@workspace/db";
+import { db, companies, employees, rollfiEmployeeRecords, locations as locationsTable } from "@workspace/db";
 import { userAccounts } from "@workspace/db/schema";
 import { eq, isNull, isNotNull, and, or } from "drizzle-orm";
 
@@ -459,6 +459,100 @@ async function bootBackfillRollfiUserIds() {
 }
 
 /**
+ * Seed one locations row per company that doesn't already have one.
+ * Safe to run on every boot — skips companies that already have a row.
+ * Uses resolveCompanyLocationId so the seeded easyteamLocationId is identical
+ * to what all existing callers (EasyTeam, Rollfi, JWTs) already use.
+ */
+async function bootSeedLocations() {
+  try {
+    const allCompanies = await db.select({
+      id: companies.id,
+      name: companies.name,
+      locationName: companies.locationName,
+      address1: companies.address1,
+      address2: companies.address2,
+      city: companies.city,
+      state: companies.state,
+      zipcode: companies.zipcode,
+      rollfiLocationId: companies.rollfiLocationId,
+    }).from(companies);
+
+    let seeded = 0;
+    for (const co of allCompanies) {
+      const existing = await db.select({ id: locationsTable.id })
+        .from(locationsTable).where(eq(locationsTable.companyId, co.id));
+      if (existing.length > 0) continue;
+
+      const etLocId = await resolveCompanyLocationId(co.id);
+      await db.insert(locationsTable).values({
+        id: etLocId,
+        companyId: co.id,
+        code: "100",
+        name: co.locationName ?? co.name ?? co.id,
+        address1: co.address1 ?? "",
+        address2: co.address2 ?? null,
+        city: co.city ?? "",
+        state: co.state ?? "",
+        zipcode: co.zipcode ?? "",
+        easyteamLocationId: etLocId,
+        rollfiLocationId: co.rollfiLocationId ?? null,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+      }).onConflictDoNothing();
+      logger.info({ companyId: co.id, locationId: etLocId }, "Boot: seeded location for company");
+      seeded++;
+    }
+    if (seeded > 0) logger.info({ seeded }, "Boot: bootSeedLocations complete");
+    else logger.info("Boot: bootSeedLocations no-op — all companies already have location rows");
+  } catch (err) {
+    logger.warn({ err }, "Boot: bootSeedLocations failed (non-fatal)");
+  }
+}
+
+/**
+ * Assign a locationId to every employee row that doesn't have one.
+ * Runs after bootSeedLocations so location rows are guaranteed to exist.
+ * Safe to run on every boot — WHERE locationId IS NULL guards are idempotent.
+ */
+async function bootAssignEmployeeLocations() {
+  try {
+    const empsWithout = await db
+      .select({ id: employees.id, companyId: employees.companyId })
+      .from(employees)
+      .where(isNull(employees.locationId));
+
+    if (empsWithout.length === 0) {
+      logger.info("Boot: bootAssignEmployeeLocations no-op — all employees already have locationId");
+      return;
+    }
+
+    const allLocs = await db
+      .select({ id: locationsTable.id, companyId: locationsTable.companyId })
+      .from(locationsTable)
+      .where(eq(locationsTable.isActive, true));
+    const locByCompany = new Map(allLocs.map((l) => [l.companyId, l.id]));
+
+    const now = new Date().toISOString();
+    let fixed = 0;
+    for (const emp of empsWithout) {
+      const locId = locByCompany.get(emp.companyId);
+      if (!locId) {
+        logger.warn({ empId: emp.id, companyId: emp.companyId }, "Boot: no location row found for employee — skipping");
+        continue;
+      }
+      await db.update(employees)
+        .set({ locationId: locId, updatedAt: now })
+        .where(and(eq(employees.id, emp.id), isNull(employees.locationId)));
+      fixed++;
+    }
+    logger.info({ fixed, total: empsWithout.length }, "Boot: bootAssignEmployeeLocations complete");
+  } catch (err) {
+    logger.warn({ err }, "Boot: bootAssignEmployeeLocations failed (non-fatal)");
+  }
+}
+
+/**
  * Log the active Rollfi environment and assert coherence with the database tier.
  *
  * Coherence rule:
@@ -538,7 +632,10 @@ app.listen(port, (err) => {
   // Run all boot tasks in the background after the server is up.
   Promise.all([
     bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()),
-    bootSeedCompanies().then(() => bootSeedEmployees()),
+    bootSeedCompanies()
+      .then(() => bootSeedEmployees())
+      .then(() => bootSeedLocations())
+      .then(() => bootAssignEmployeeLocations()),
     loadRollfiStateFromDb().then(({ companies, employees }) => {
       logger.info({ companies, employees }, "Rollfi state restored from DB");
     }),

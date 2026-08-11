@@ -1,0 +1,50 @@
+⚠️ PRODUCTION system with live data. This is PHASE 1 of the multi-location feature: data foundation only. When complete, the app must look and behave EXACTLY as it does today — this phase is invisible by design. No UI changes, no new screens, no behavior changes.
+
+STEP 1 — BRIEF AUDIT (report before building)
+Confirm current state of the in-memory Location and Department stores (store.ts) — shape, how they're seeded, everywhere they're read from.
+List every code path that reads resolveCompanyLocationId or the in-memory location/department stores — these are the integration points the migration must not break.
+Report-only (do NOT act on this): trace what the employee-creation flow (POST /api/employees → syncEmployeeToIntegrations) does for a company that will not use payroll. If Gail (Urban Concepts) adds an employee today: does the Rollfi chain fire? What happens on failure — does the owner see error banners / "payroll setup incomplete" prompts? Is there any existing condition that skips Rollfi? Report the exact behavior; we'll decide separately whether it blocks their go-live.
+
+Report findings, then proceed.
+
+STEP 2 — BUILD
+A. New locations table
+
+Columns: id, companyId, code (text — client convention like "100", "200"), name, address1, address2, city, state, zipcode, easyteamLocationId, rollfiLocationId, isActive, createdAt. Follow existing schema conventions (snake_case, Drizzle, same file structure as other tables).
+
+B. New departments table
+
+Migrate the in-memory department model as-is: id, companyId, name, type (standard|daycare|custom), isDefault, isActive, createdAt. Seed with the same standard + daycare defaults currently seeded in memory.
+
+C. Seed one location per existing company
+
+Boot migration (idempotent, same pattern as bootBackfillRollfiUserIds): for every company, create one location from its existing data — name from locationName or company name, address fields from the company row, easyteamLocationId from the current resolved EasyTeam location, rollfiLocationId from companies.rollfiLocationId. Code defaults to "100". Log each created location. No-op on subsequent boots.
+
+D. employees.locationId
+
+New nullable FK column to locations.id. Boot migration: assign every existing employee to their company's (single) location. Keep the old workLocation text column untouched for now (removal is a later cleanup) — but nothing should write to it going forward; new employee creation writes locationId (the company's single location, since no picker exists yet).
+
+E. Store/read migration
+Departments: all reads/writes that currently hit the in-memory department array must go to the DB table. Department CRUD endpoints (Settings → Departments tab) now persist. The in-memory array becomes dead code — remove it or leave clearly commented as removed.
+Locations: reads that currently hit the in-memory Location store must read from the table. resolveCompanyLocationId keeps its exact signature and fallback chain (store → DB companies.rollfiLocationId → LOC-{companyId} derived) but now consults the locations table first. Additionally create (but do not yet use anywhere new) a helper resolveEmployeeLocationId(employeeId) that returns the employee's location — this is the function later phases will use.
+EasyTeam JWT building, employee registration, and shift sync must resolve to exactly the same location IDs as before — this is the highest-risk area (the schedule-grid bug lived here). Do not change what IDs get passed; only change where they're read from.
+SCOPE BOUNDARY — DO NOT TOUCH
+No UI changes anywhere (no location screens, no wizard fields, no directory columns)
+No new roles, no permission changes
+No Rollfi addCompanyLocation calls, no new EasyTeam locations
+No changes to the employee sync chain behavior (Step 1.3 is report-only)
+No changes to payroll, timesheet approval logic, or the recently fixed auth guards
+TESTING CHECKLIST (paste actual outputs, not descriptions)
+ Migrations run clean on dev; paste locations and departments row counts per company after seed
+ Restart server twice — seed migrations are no-ops on second boot (paste log lines)
+ Every existing employee has a locationId (paste count of employees with null locationId — must be 0)
+ Departments tab in Settings: add/rename/delete a department → restart server → changes SURVIVE (this was broken before — in-memory departments were lost on restart; paste before/after)
+ Employee clock-in still works (EasyTeam token resolves same location ID as before — paste the resolved ID for one test employee pre/post migration)
+ Pull Hours / timesheet sync still matches shifts correctly for a test company
+ Wizard employee creation still works end-to-end on a test company; new employee gets locationId set
+ No visual change anywhere: People directory, Settings, Payroll screens render as before
+DELIVERABLE
+Step 1 findings — especially the non-payroll company employee-creation trace (1.3)
+Files changed, tables created
+Testing checklist outputs (actual data, not claims)
+Anything you noticed but deliberately did not change
