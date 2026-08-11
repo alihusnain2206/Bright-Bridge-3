@@ -162,6 +162,29 @@ router.post("/auth/login", async (req, res) => {
     return;
   }
 
+  // Always re-read role + locationId from DB so role changes made after boot
+  // (e.g. grant-access, change-role) take effect on the very next login without
+  // requiring a server restart.
+  const [freshDbRow] = await db
+    .select({ role: userAccounts.role, locationId: userAccounts.locationId })
+    .from(userAccounts)
+    .where(eq(userAccounts.id, user.id))
+    .catch(() => [undefined]);
+  if (freshDbRow && (freshDbRow.role !== user.role || freshDbRow.locationId !== (user.locationId ?? null))) {
+    req.log.info(
+      { userId: user.id, storeRole: user.role, dbRole: freshDbRow.role },
+      "Login: refreshing stale store role from DB"
+    );
+    user.role       = freshDbRow.role as import("../store.js").UserRole;
+    user.locationId = freshDbRow.locationId ?? undefined;
+    // Patch the store entry so /auth/me returns the same fresh values
+    const storeEntry = store.getUserById(user.id);
+    if (storeEntry) {
+      storeEntry.role       = user.role;
+      storeEntry.locationId = user.locationId;
+    }
+  }
+
   req.session.userId = user.id;
   const { password: _p, ...safeUser } = user;
   const company = await resolveUserCompany(user.companyId || undefined);
@@ -335,12 +358,27 @@ router.get("/auth/me", async (req, res) => {
 
   const company = await resolveUserCompany(user.companyId || undefined);
   const location = await resolveUserLocation(user.id);
-  // Attach photoUrl from DB (not stored in in-memory TestUser)
+  // Re-read role + locationId + photoUrl from DB on every /me call so that
+  // role changes made after the server booted (grant-access, change-role, direct DB edits)
+  // are reflected immediately — no logout/login required.
   const [dbRow] = await db
-    .select({ photoUrl: userAccounts.photoUrl })
+    .select({ photoUrl: userAccounts.photoUrl, role: userAccounts.role, locationId: userAccounts.locationId })
     .from(userAccounts)
     .where(eq(userAccounts.id, user.id))
     .catch(() => [undefined]);
+  if (dbRow && (dbRow.role !== user.role || dbRow.locationId !== (user.locationId ?? null))) {
+    req.log.info(
+      { userId: user.id, storeRole: user.role, dbRole: dbRow.role },
+      "/me: refreshing stale store role from DB"
+    );
+    // Patch the store so future lookups are also fresh
+    const storeEntry = store.getUserById(user.id);
+    if (storeEntry) {
+      storeEntry.role       = dbRow.role as import("../store.js").UserRole;
+      storeEntry.locationId = dbRow.locationId ?? undefined;
+    }
+    user = { ...user, role: dbRow.role as import("../store.js").UserRole, locationId: dbRow.locationId ?? undefined };
+  }
   // getUserById already strips password — spread directly
   res.json({ user: { ...user, photoUrl: dbRow?.photoUrl ?? null }, company, location });
 });
