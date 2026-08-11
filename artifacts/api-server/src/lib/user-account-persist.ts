@@ -36,23 +36,17 @@ export async function persistUserAccount(user: TestUser): Promise<void> {
     });
 }
 
-/**
- * Boot migration: upgrade any remaining "manager" role accounts to "owner".
- * Safe to run on every boot — no-op when no manager accounts exist.
- */
-export async function migrateManagerAccountsToOwner(): Promise<{ upgraded: number }> {
-  const result = await db
-    .update(userAccounts)
-    .set({ role: "owner" })
-    .where(eq(userAccounts.role, "manager"))
-    .returning({ id: userAccounts.id });
-  // Sync in-memory store for any already-loaded accounts
-  for (const row of result) {
-    const u = store.getAllStaffUsers().find((u) => u.id === row.id);
-    if (u) (u as { role: string }).role = "owner";
-  }
-  return { upgraded: result.length };
-}
+// migrateManagerAccountsToOwner() was removed.
+//
+// History: added July 2026 (commit fc456b6) to promote legacy "manager" accounts
+// (e.g. David Brown) to "owner" at a time when the system had no distinct manager
+// access tier and all operator accounts were expected to behave as owners.
+//
+// Why removed: createManagerUser() now stores role:"manager" correctly (the bug it
+// was masking is fixed). The migration ran WHERE role='manager' with no ID filter,
+// so it would have promoted every newly created manager to owner on the next boot —
+// directly undoing the fix. No manager accounts existed in production at the time
+// of removal, so the migration was already a no-op and is now dead code.
 
 export async function loadUserAccountsFromDb(): Promise<{ count: number }> {
   const rows = await db.select().from(userAccounts);

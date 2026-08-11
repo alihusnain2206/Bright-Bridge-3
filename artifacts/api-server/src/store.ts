@@ -461,7 +461,7 @@ export const store = {
       name: data.name,
       email: data.email,
       password,
-      role: "owner",
+      role: "manager",
       companyId: data.companyId,
       locationId,
       employeeId,

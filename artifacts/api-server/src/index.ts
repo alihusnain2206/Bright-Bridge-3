@@ -4,7 +4,7 @@ import { pool } from "@workspace/db";
 import { getRollfiConfig } from "./lib/rollfi-config.js";
 import { loadRollfiStateFromDb } from "./lib/rollfi-persist.js";
 import { loadTimesheetEntriesFromDb } from "./lib/easyteam-persist.js";
-import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts, migrateManagerAccountsToOwner } from "./lib/user-account-persist.js";
+import { loadUserAccountsFromDb, reconcileEmployeeLoginAccounts } from "./lib/user-account-persist.js";
 import { restoreActivityFromDb } from "./store.js";
 import { registerEmployeeInEasyTeam } from "./lib/easyteam-employee-sync.js";
 import { resolveCompanyLocationId } from "./lib/location.js";
@@ -550,11 +550,9 @@ app.listen(port, (err) => {
     }),
     loadUserAccountsFromDb().then(({ count }) => {
       logger.info({ count }, "User accounts restored from DB");
-      return migrateManagerAccountsToOwner().then(({ upgraded }) => {
-        if (upgraded > 0) logger.info({ upgraded }, "Boot migration: manager accounts upgraded to owner");
-        return reconcileEmployeeLoginAccounts().then(({ created }) => {
-          if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
-        });
+      // migrateManagerAccountsToOwner() removed — see user-account-persist.ts for history.
+      return reconcileEmployeeLoginAccounts().then(({ created }) => {
+        if (created > 0) logger.info({ created }, "Reconciled missing employee login accounts");
       });
     }),
     bootRepairLeticiaDuplicateEmployee(),
