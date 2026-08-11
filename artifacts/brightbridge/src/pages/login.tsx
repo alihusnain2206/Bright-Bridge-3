@@ -4,11 +4,10 @@ import { useAuth, dashboardPath, type UserRole } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { AlertCircle, AlertTriangle, CheckCircle2, FlaskConical, LogIn, X, Zap } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Eye, EyeOff, FlaskConical, LogIn, X, Zap } from "lucide-react";
 import { useRollfiEnv } from "@/hooks/useRollfiEnv";
 
 const QUICK_LOGINS = [
-  { label: "Super Admin — Joanne",  email: "joanne@brightbridgeassist.com", password: "Admin123!",   dot: "#ef4444" },
   { label: "Owner — Sunshine",      email: "manager@sunshine.com",          password: "Manager123!", dot: "#7c3aed" },
   { label: "Owner — Rainbow",       email: "manager@rainbow.com",           password: "Manager123!", dot: "#7c3aed" },
   { label: "Employee — John Smith", email: "john@sunshine.com",             password: "Staff123!",   dot: "#22c55e" },
@@ -250,7 +249,8 @@ export default function Login() {
   const [error, setError]       = useState("");
   const [pending, setPending]   = useState(false);
   const [mounted, setMounted]   = useState(false);
-  const [showFP, setShowFP]     = useState(false);
+  const [showFP, setShowFP]         = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const rollfiEnv = useRollfiEnv();
 
   useEffect(() => { const t = setTimeout(() => setMounted(true), 80); return () => clearTimeout(t); }, []);
@@ -412,10 +412,19 @@ export default function Login() {
                       Forgot password?
                     </button>
                   </div>
-                  <Input id="password" type="password" value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••" autoComplete="current-password" required
-                    className="dark-input h-9 text-sm rounded-lg" />
+                  <div className="relative">
+                    <Input id="password" type={showPassword ? "text" : "password"} value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••" autoComplete="current-password" required
+                      className="dark-input h-9 text-sm rounded-lg pr-9" />
+                    <button type="button" tabIndex={-1}
+                      onClick={() => setShowPassword(v => !v)}
+                      className="absolute inset-y-0 right-0 flex items-center px-2.5 transition-opacity hover:opacity-100"
+                      style={{ color: "rgba(255,255,255,0.35)" }}
+                      aria-label={showPassword ? "Hide password" : "Show password"}>
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
                 {error && (
                   <div className="flex items-center gap-2 text-xs rounded-lg px-3 py-2"
