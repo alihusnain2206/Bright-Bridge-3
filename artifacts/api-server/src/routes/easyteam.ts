@@ -676,15 +676,38 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
   let entries = store.getTimesheetEntriesForPeriod(periodKey);
   if (companyId) entries = entries.filter((e) => e.companyId === companyId);
 
-  // Managers see only their assigned location's employees
+  // Managers see only their assigned location's employees.
+  // Also guarantee a 0m placeholder row for any location employee who has no stored entry,
+  // so the table always shows the full roster even in a fresh period with no clock-in data.
   if (sessionUser?.role === "manager" && sessionUser.locationId) {
     const locationEmployees = await db
       .select({ id: employeesTable.id })
       .from(employeesTable)
-      .where(eq(employeesTable.locationId, sessionUser.locationId))
+      .where(and(
+        eq(employeesTable.companyId, companyId ?? ""),
+        eq(employeesTable.locationId, sessionUser.locationId),
+      ))
       .catch(() => [] as { id: string }[]);
     const empIdSet = new Set(locationEmployees.map((e) => e.id));
+    // Keep only entries for location employees
     entries = entries.filter((e) => empIdSet.has(e.employeeId));
+    // Pad: add a synthetic 0m row for any location employee missing from store entries
+    const coveredIds = new Set(entries.map((e) => e.employeeId));
+    const now = new Date().toISOString();
+    for (const { id } of locationEmployees) {
+      if (!coveredIds.has(id)) {
+        entries.push({
+          employeeId: id,
+          companyId: companyId ?? "",
+          periodKey,
+          hoursWorked: 0,
+          breakDeduction: 0,
+          approvedHours: 0,
+          source: "estimated",
+          syncedAt: now,
+        });
+      }
+    }
   }
 
   res.json({ periodKey, entries, synced: entries.length > 0 });
