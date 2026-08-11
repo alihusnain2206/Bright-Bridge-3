@@ -125,8 +125,8 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
         const headers = { Authorization: `Basic ${encoded}`, "Content-Type": "application/json" };
         const payload = {
           method: "addCompanyLocation",
-          companyId: rollfiCo.rollfiCompanyId,
           companyLocation: {
+            companyId: rollfiCo.rollfiCompanyId,
             companyLocation: name,
             address1: body.address1 ?? "",
             address2: body.address2 ?? "",
@@ -140,15 +140,17 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
           },
         };
         req.log.info({ payload }, "POST /locations: Rollfi addCompanyLocation");
-        const r = await axios.post(`${rollfiCfg.baseUrl}/adminPortal#addCompanyLocation`, payload, { headers, timeout: 15000 });
+        const r = await axios.post(`${rollfiCfg.baseUrl}/companyOnboarding/addCompanyLocation`, payload, { headers, timeout: 15000 });
         const rollfiErr = extractRollfiError(r.data as Record<string, unknown>);
         if (rollfiErr) {
           rollfiWarning = `Rollfi: ${rollfiErr}`;
           req.log.warn({ rollfiErr, rowId }, "POST /locations: Rollfi error in response body (non-fatal)");
         } else {
           const data = r.data as Record<string, unknown>;
-          const reg = (data.registration ?? data) as Record<string, unknown>;
-          const rollfiLocId = String(reg.companyLocationId ?? reg.locationId ?? reg.companyLocationID ?? "").trim();
+          // Documented response: { companyLocation: { companyLocationId, status, message } }
+          // Fallback paths in case Rollfi varies the envelope key
+          const inner = (data.companyLocation ?? data.registration ?? data) as Record<string, unknown>;
+          const rollfiLocId = String(inner.companyLocationId ?? inner.locationId ?? inner.companyLocationID ?? "").trim();
           if (rollfiLocId) {
             await db.update(locationsTable).set({ rollfiLocationId: rollfiLocId }).where(eq(locationsTable.id, rowId));
             req.log.info({ rollfiLocId, rowId }, "POST /locations: Rollfi location registered");
