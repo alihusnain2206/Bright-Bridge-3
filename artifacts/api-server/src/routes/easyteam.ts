@@ -141,7 +141,7 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
     : [];
   const dbWageMap = new Map(dbWageRows.map(e => [e.id, e.hourlyWage]));
   const employees = users
-    .filter((u) => u.employeeId && u.role === "employee" && (!u.status || u.status === "active" || u.status === "onboarding"))
+    .filter((u) => u.employeeId && (u.role === "employee" || u.role === "manager") && (!u.status || u.status === "active" || u.status === "onboarding"))
     .map((u) => ({
       id: u.employeeId as string,
       name: u.name,
@@ -388,7 +388,8 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && u.role === "employee");
+  // Include managers with an employeeId so promoted employees are still tracked in timesheets
+  const allStaff = store.getAllStaffUsers().filter((u) => u.employeeId && (u.role === "employee" || u.role === "manager"));
 
   // Helper: scan exportLog for a matching entry, write to store + persist to DB.
   // Removes the consumed entry from exportLog so stale webhook payloads cannot be
@@ -654,15 +655,23 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 // ── GET /easyteam/company-members — employee names for timesheet approval panel ──
 // Returns { [employeeId]: fullName } from store staff users (covers both seeded and
 // wizard-created employees). Used by the timesheets page to show names in the approval table.
-router.get("/easyteam/company-members", requireRole("super_admin", "owner", "manager"), (req, res) => {
+router.get("/easyteam/company-members", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { companyId } = req.query as { companyId?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
   if (!assertCompanyAccess(req, res, companyId)) return;
   const caller = store.getUserById(req.session.userId!);
-  let staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
-  // Managers see only employees in their assigned location
+  // Include managers who also have an employeeId (promoted employees retain their employee identity)
+  let staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.employeeId && (u.role === "employee" || u.role === "manager"));
+  // Managers see only employees in their assigned location — use DB employees.locationId
+  // (store user_accounts.location_id is only reliably set for manager accounts, not regular employees)
   if (caller?.role === "manager" && caller.locationId) {
-    staff = staff.filter((u) => u.locationId === caller.locationId);
+    const locationEmpRows = await db
+      .select({ id: employeesTable.id })
+      .from(employeesTable)
+      .where(and(eq(employeesTable.companyId, companyId), eq(employeesTable.locationId, caller.locationId)))
+      .catch(() => [] as { id: string }[]);
+    const locationEmpIds = new Set(locationEmpRows.map(r => r.id));
+    staff = staff.filter((u) => u.employeeId != null && locationEmpIds.has(u.employeeId));
   }
   const names: Record<string, string> = {};
   for (const u of staff) {
@@ -1068,8 +1077,9 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
   // This prevents the payroll fallback from picking up stale approvals from a prior period.
   const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
   const existingEmpIds = new Set(existing.map((e) => e.employeeId));
+  // Include managers with an employeeId — promoted employees retain their timesheet identity
   const companyStaff = store.getAllStaffUsers()
-    .filter((u) => u.employeeId && u.companyId === companyId && u.role === "employee");
+    .filter((u) => u.employeeId && u.companyId === companyId && (u.role === "employee" || u.role === "manager"));
   const zeroNow = new Date().toISOString();
   const missingStaff = companyStaff.filter((u) => !existingEmpIds.has(u.employeeId!));
   for (const u of missingStaff) {
