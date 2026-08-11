@@ -1051,7 +1051,20 @@ router.get("/onboarding-tasks/pipeline", requireRole("super_admin", "owner", "ma
   if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
-    const all = await db.select().from(onboardingTasksTable).where(eq(onboardingTasksTable.companyId, companyId));
+    // Managers see only their assigned location's employees
+    const caller = store.getUserById(req.session.userId!);
+    const managerLocationId = caller?.role === "manager" ? (caller.locationId ?? null) : null;
+    let locationEmpIds: string[] | null = null;
+    if (managerLocationId) {
+      const empRows = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.companyId, companyId), eq(employees.locationId, managerLocationId)));
+      locationEmpIds = empRows.map(e => e.id);
+    }
+
+    const whereClause = locationEmpIds
+      ? and(eq(onboardingTasksTable.companyId, companyId), inArray(onboardingTasksTable.employeeId, locationEmpIds.length > 0 ? locationEmpIds : [""]))
+      : eq(onboardingTasksTable.companyId, companyId);
+    const all = await db.select().from(onboardingTasksTable).where(whereClause);
     const STAGES = ["preboarding","documents","training","equipment","manager_tasks","compliance","ready_to_start"];
     const pipeline = STAGES.map((stage) => {
       const s = all.filter((t) => t.stage === stage);
@@ -1336,7 +1349,20 @@ router.get("/compliance/company-overview", requireRole("super_admin", "owner", "
   if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
-    const all = await db.select().from(complianceItemsTable).where(eq(complianceItemsTable.companyId, companyId));
+    // Managers see only their assigned location's employees
+    const caller = store.getUserById(req.session.userId!);
+    const managerLocationId = caller?.role === "manager" ? (caller.locationId ?? null) : null;
+    let locationEmpIds: string[] | null = null;
+    if (managerLocationId) {
+      const empRows = await db.select({ id: employees.id }).from(employees)
+        .where(and(eq(employees.companyId, companyId), eq(employees.locationId, managerLocationId)));
+      locationEmpIds = empRows.map(e => e.id);
+    }
+
+    const whereClause = locationEmpIds
+      ? and(eq(complianceItemsTable.companyId, companyId), inArray(complianceItemsTable.employeeId, locationEmpIds.length > 0 ? locationEmpIds : [""]))
+      : eq(complianceItemsTable.companyId, companyId);
+    const all = await db.select().from(complianceItemsTable).where(whereClause);
     const types = ["i9","w4","direct_deposit","background_check","handbook","policy","fingerprint","certification","training"];
     const overview = types.map((cat) => {
       const items = all.filter((i) => i.type === cat);

@@ -114,9 +114,13 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
     ? requestedCompanyId
     : (sessionUser?.companyId ?? requestedCompanyId);
   if (companyId && !assertCompanyAccess(req, res, companyId)) return;
-  const users = companyId
+  let users = companyId
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
+  // Managers are scoped to their assigned location only
+  if (sessionUser?.role === "manager" && sessionUser.locationId) {
+    users = users.filter((u) => u.locationId === sessionUser.locationId);
+  }
   // Batch-fetch canonical wages from employees table (People module writes here).
   // Store hourlyWage is a last-resort fallback for test-only employees with no DB record.
   const empIds = users.map(u => u.employeeId).filter((id): id is string => !!id);
