@@ -620,7 +620,22 @@ router.get("/employees", async (req: Request, res: Response) => {
       }
     }
 
-    res.json({ employees: rows });
+    // Enrich each row with locationName by batch-fetching distinct locations
+    const locationIds = [...new Set(rows.map(r => r.locationId).filter((id): id is string => !!id))];
+    const locationNameMap = new Map<string, string>();
+    if (locationIds.length > 0) {
+      const locRows = await db.select({ id: locationsTable.id, name: locationsTable.name })
+        .from(locationsTable)
+        .where(inArray(locationsTable.id, locationIds))
+        .catch(() => []);
+      for (const loc of locRows) locationNameMap.set(loc.id, loc.name);
+    }
+    const enriched = rows.map(r => ({
+      ...r,
+      locationName: r.locationId ? (locationNameMap.get(r.locationId) ?? null) : null,
+    }));
+
+    res.json({ employees: enriched });
   } catch (err) {
     req.log.error({ err }, "Failed to list employees");
     res.status(500).json({ error: "Failed to list employees" });

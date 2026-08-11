@@ -31,6 +31,8 @@ interface PeopleEmployee {
   startDate?: string | null;
   employeeDisplayId?: string | null;
   department?: string | null;
+  locationId?: string | null;
+  locationName?: string | null;
   managerId?: string | null;
   managerName?: string | null;
   jobTitle?: string | null;
@@ -50,6 +52,7 @@ interface PeopleEmployee {
 
 interface Company { id: string; name: string; }
 interface Department { id: string; name: string; }
+interface Location { id: string; name: string; }
 interface ComplianceItem { id: string; type: string; name: string; status: string; isRequired: boolean; }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -355,13 +358,13 @@ function ActionsDropdown({ emp, hasRollfi, onLeave, terminate, reactivate, onTas
 // ── CSV Export ────────────────────────────────────────────────
 
 function exportCsv(employees: PeopleEmployee[]) {
-  const headers = ["Display ID","Name","Email","Job Title","Department","Manager","Status","Hire Date","Compliance Score"];
+  const headers = ["Display ID","Name","Email","Job Title","Location","Manager","Status","Hire Date","Compliance Score"];
   const rows = employees.map(e => [
     e.employeeDisplayId ?? "",
     `${e.firstName} ${e.lastName}`,
     e.email,
     e.jobTitle ?? e.position ?? "",
-    e.department ?? "",
+    e.locationName ?? "",
     e.managerName ?? "",
     e.status,
     e.startDate ? fmtDate(e.startDate) : "",
@@ -406,7 +409,7 @@ export default function PeoplePage() {
 
   // Filters
   const [search, setSearch]       = useState("");
-  const [filterDept, setFilterDept]   = useState("");
+  const [filterLocation, setFilterLocation] = useState("");
   const [filterStatus, setFilterStatus] = useState("");
   const [filterEmpType, setFilterEmpType] = useState("");
   const [filterComp, setFilterComp]   = useState("");
@@ -454,21 +457,21 @@ export default function PeoplePage() {
   });
   const allEmployees: PeopleEmployee[] = empData?.employees ?? [];
 
-  const { data: deptData } = useQuery<{ departments: Department[] }>({
-    queryKey: ["people-departments", companyId],
-    queryFn: () => fetch(`/api/departments?companyId=${companyId}`, { credentials: "include" })
-      .then(r => r.json() as Promise<{ departments: Department[] }>),
+  const { data: locData } = useQuery<{ locations: Location[] }>({
+    queryKey: ["people-locations", companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: Location[] }>),
     enabled: !!companyId,
     staleTime: 5 * 60 * 1000,
   });
-  const departments = deptData?.departments ?? [];
+  const locations = locData?.locations ?? [];
 
   // ── Filtering ─────────────────────────────────────────────
 
-  const activeFilterCount = [filterDept, filterStatus, filterEmpType, filterComp].filter(Boolean).length;
+  const activeFilterCount = [filterLocation, filterStatus, filterEmpType, filterComp].filter(Boolean).length;
 
   const clearFilters = () => {
-    setFilterDept(""); setFilterStatus(""); setFilterEmpType(""); setFilterComp(""); setSearch(""); setPage(1);
+    setFilterLocation(""); setFilterStatus(""); setFilterEmpType(""); setFilterComp(""); setSearch(""); setPage(1);
   };
 
   const filtered = useMemo(() => {
@@ -499,7 +502,7 @@ export default function PeoplePage() {
       );
     }
 
-    if (filterDept)    list = list.filter(e => e.department === filterDept);
+    if (filterLocation) list = list.filter(e => e.locationId === filterLocation);
     if (filterEmpType) list = list.filter(e => e.employmentType === filterEmpType);
 
     if (filterComp === "90+")     list = list.filter(e => (e.complianceScore ?? 0) >= 90);
@@ -507,7 +510,7 @@ export default function PeoplePage() {
     if (filterComp === "below70") list = list.filter(e => (e.complianceScore ?? 0) < 70);
 
     return list;
-  }, [allEmployees, subTab, search, filterStatus, filterDept, filterEmpType, filterComp]);
+  }, [allEmployees, subTab, search, filterStatus, filterLocation, filterEmpType, filterComp]);
 
   // ── Sorting ───────────────────────────────────────────────
 
@@ -517,7 +520,7 @@ export default function PeoplePage() {
       let va: string | number = "";
       let vb: string | number = "";
       if (sortCol === "name")       { va = `${a.firstName} ${a.lastName}`; vb = `${b.firstName} ${b.lastName}`; }
-      if (sortCol === "department") { va = a.department ?? ""; vb = b.department ?? ""; }
+      if (sortCol === "location") { va = a.locationName ?? ""; vb = b.locationName ?? ""; }
       if (sortCol === "status")     { va = a.status; vb = b.status; }
       if (sortCol === "hireDate")   { va = a.startDate ?? ""; vb = b.startDate ?? ""; }
       if (sortCol === "compliance") { va = a.complianceScore ?? -1; vb = b.complianceScore ?? -1; }
@@ -658,11 +661,11 @@ export default function PeoplePage() {
                     />
                   </div>
 
-                  {/* Department */}
-                  <select value={filterDept} onChange={e => { setFilterDept(e.target.value); setPage(1); }}
+                  {/* Location */}
+                  <select value={filterLocation} onChange={e => { setFilterLocation(e.target.value); setPage(1); }}
                     className="h-8 rounded-md border border-gray-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#0EA5C9]/30">
-                    <option value="">All Departments</option>
-                    {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    <option value="">All Locations</option>
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                   </select>
 
                   {/* Status */}
@@ -724,7 +727,7 @@ export default function PeoplePage() {
                       <tr>
                         <SortTh col="name"       label="Employee"   current={sortCol} dir={sortDir} onSort={handleSort} className="min-w-[180px]" />
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Job Title</th>
-                        <SortTh col="department" label="Department" current={sortCol} dir={sortDir} onSort={handleSort} />
+                        <SortTh col="location" label="Location" current={sortCol} dir={sortDir} onSort={handleSort} />
                         <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Manager</th>
                         <SortTh col="status"     label="Status"     current={sortCol} dir={sortDir} onSort={handleSort} />
                         <SortTh col="hireDate"   label="Hire Date"  current={sortCol} dir={sortDir} onSort={handleSort} />
@@ -809,8 +812,8 @@ export default function PeoplePage() {
                               {/* Job Title */}
                               <td className="px-4 py-4 text-sm text-gray-700 max-w-[160px] truncate" title={title}>{title}</td>
 
-                              {/* Department */}
-                              <td className="px-4 py-4 text-sm text-gray-600">{emp.department ?? <span className="text-gray-300">—</span>}</td>
+                              {/* Location */}
+                              <td className="px-4 py-4 text-sm text-gray-600">{emp.locationName ?? <span className="text-gray-300">—</span>}</td>
 
                               {/* Manager */}
                               <td className="px-4 py-4 text-sm text-gray-600">{emp.managerName ?? <span className="text-gray-300">—</span>}</td>
