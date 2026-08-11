@@ -1,0 +1,25 @@
+⚠️ AUDIT ONLY — do not modify, build, or fix anything. Read and report. We're planning Phase 3 of multi-location (location-aware time tracking + manager scoping) and need the current, post-Phase-2 state of everything the phase would touch.
+
+1. The EasyTeam JWT today (post-Phase-2)
+For each role (employee, manager, owner, super_admin): what exactly goes into the JWT now — locationId, accessRole, permissions? Show the current token-building code paths (auth.ts token-by-role and easyteam.ts /easyteam/token).
+Does anything pass locations[] or employees[] arrays yet, anywhere?
+For an employee ASSIGNED to a non-primary location (e.g. Gerald → location 200 at Sunshine): which locationId does his clock-in token carry today — his assigned location's easyteamLocationId, or the company primary? Trace the actual resolution path and confirm with the real data (Gerald's account/employee row).
+2. Where shifts actually land
+Run a check on recent timesheet_shifts rows for Sunshine: for employees assigned to location 200, which easyteamLocationId did their shifts record under? (If no such shifts exist, state that — do not create any.)
+The Pull Hours sync: it filters shifts by an expected location ID (the cross-company guard). Post-Phase-2, what does it filter by — the company primary only, or all the company's locations? If an employee clocked in under location 200's EasyTeam ID today, would the sync ACCEPT or SKIP that shift? This matters: Phase 3 makes multi-location punches real, and the sync must not silently drop them.
+3. EasyTeam multi-location membership — per their guidance
+
+Per EasyTeam support, sessions should pass locations and employees dicts where each location lists its assigned employees, and multi-location employees get a location dropdown at clock-in. Report:
+
+Where in our code the SDK session/launcher is configured (useEasyTeamLauncher etc.) and what it currently passes
+What data we'd need to feed it that we now have (locations table, employees.locationId) vs. anything missing (e.g. do we support an employee belonging to MULTIPLE locations anywhere in our data model? Currently employees.locationId is single-valued — confirm)
+4. Manager scoping groundwork
+user_accounts.locationId for manager accounts: confirmed populated by the Phase 2 Grant Access/Change Role flows (check Gerald's row as the real example)
+List the endpoints a manager currently uses (People directory, employees list, timesheets, hours, approvals) and for each: what would location-filtering need — does the endpoint already know the caller's user_account (and thus their locationId), or does it only see companyId?
+The EasyTeam-embedded pages a manager sees (Timesheets embed): what would scope THOSE to one location — our JWT's locationId/permissions, per EasyTeam's docs?
+5. Risks and collisions
+Anything in the current webhook/shift-sync/EasyTeam-UUID persistence that assumes one location per company and would break when shifts start arriving from multiple locations
+The timezone patch (ensureLocationTimezone): confirmed it ran for the new location 200 created in testing? Date-sensitive displays depend on it.
+DELIVERABLE
+
+Findings per section with code references and real data. End with: the minimal set of changes Phase 3 actually requires, anything that makes it harder or easier than expected, and anything you'd sequence differently. Build NOTHING.
