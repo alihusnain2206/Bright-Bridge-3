@@ -285,11 +285,11 @@ router.post("/auth/reset-password", async (req, res) => {
     .set({ password: hashed })
     .where(eq(userAccounts.id, row.userId));
 
-  // Also update in-memory store so active sessions pick up the new password immediately
-  const memUser = store.getUserById(row.userId);
-  if (memUser) {
-    (memUser as unknown as Record<string, unknown>).password = hashed;
-  }
+  // Also update in-memory store so subsequent logins work without a restart.
+  // getRawUser returns the actual TestUser reference; getUserById returns a
+  // password-stripped copy, so mutating it would be a dead write.
+  const rawUser = store.getRawUser(row.userId);
+  if (rawUser) rawUser.password = hashed;
 
   // Mark token as used
   await db
