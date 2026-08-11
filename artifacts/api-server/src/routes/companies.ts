@@ -596,6 +596,10 @@ router.get("/employees", async (req: Request, res: Response) => {
     const conditions = [];
     if (targetCompanyId) conditions.push(eq(employees.companyId, targetCompanyId));
     if (statusQ) conditions.push(eq(employees.status, statusQ));
+    // Managers are scoped to their assigned location only
+    if (caller.role === "manager" && caller.locationId) {
+      conditions.push(eq(employees.locationId, caller.locationId));
+    }
     const rows = conditions.length > 0
       ? await db.select().from(employees).where(and(...conditions))
       : await db.select().from(employees);

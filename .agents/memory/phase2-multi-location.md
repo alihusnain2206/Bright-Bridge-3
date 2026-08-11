@@ -53,3 +53,10 @@ description: What was built for Phase 2 (locations visible + manageable); archit
 ## Outstanding (Phase 3)
 
 Access-control enforcement: managers scoped to their locationId. Guards in `people.ts`, `easyteam.ts`, `companies.ts` etc. not yet applied for location-level scoping.
+
+## Manager location scoping (Aug 2026)
+- GET /employees: add `eq(employees.locationId, caller.locationId)` condition when caller.role === "manager"
+- GET /easyteam/hours: DB lookup for employee IDs at manager's location, filter entries by empIdSet
+- GET /easyteam/company-members: filter store staff users by locationId for managers
+- EasyTeam JWT for managers: REMOVE `LOCATION_ADMIN` (grants org-wide switching) — use `LOCATION_READ` only; set `location_picker: false` to suppress "All locations" dropdown
+- Auth login + /me: always refresh role+locationId from DB after boot so stale store values don't persist across role changes

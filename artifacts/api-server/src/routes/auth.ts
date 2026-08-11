@@ -458,12 +458,15 @@ router.post("/auth/token-by-role", async (req, res) => {
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "manager",
-        permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
+        // LOCATION_ADMIN removed: grants org-wide location switching in EasyTeam UI.
+        // Managers are scoped to their single assigned location only.
+        permissions: ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE"],
       },
       role: { name: user.position, hourlyWage: wageCents / 100 },
       wage: wageCents / 100,
       wageType: "hourly",
-      features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
+      // location_picker: false — prevents the EasyTeam "All locations" dropdown from appearing
+      features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: false, timesheets_wages: true },
     };
   } else if (user.role === "employee") {
     // Resolve locationId: user record first, then company (in-memory store), then DB fallback

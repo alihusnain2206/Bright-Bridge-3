@@ -643,7 +643,12 @@ router.get("/easyteam/company-members", requireRole("super_admin", "owner", "man
   const { companyId } = req.query as { companyId?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
   if (!assertCompanyAccess(req, res, companyId)) return;
-  const staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
+  const caller = store.getUserById(req.session.userId!);
+  let staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
+  // Managers see only employees in their assigned location
+  if (caller?.role === "manager" && caller.locationId) {
+    staff = staff.filter((u) => u.locationId === caller.locationId);
+  }
   const names: Record<string, string> = {};
   for (const u of staff) {
     if (u.employeeId) names[u.employeeId] = u.name;
@@ -651,7 +656,7 @@ router.get("/easyteam/company-members", requireRole("super_admin", "owner", "man
   res.json({ names });
 });
 
-router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), (req, res) => {
+router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { from, to, companyId: requestedCompanyId } = req.query as { from?: string; to?: string; companyId?: string };
   // Company-scope guard: super_admin may omit companyId to get all; owner/manager are
   // always scoped to their own company regardless of what the query param says.
@@ -666,6 +671,17 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), (r
 
   let entries = store.getTimesheetEntriesForPeriod(periodKey);
   if (companyId) entries = entries.filter((e) => e.companyId === companyId);
+
+  // Managers see only their assigned location's employees
+  if (sessionUser?.role === "manager" && sessionUser.locationId) {
+    const locationEmployees = await db
+      .select({ id: employeesTable.id })
+      .from(employeesTable)
+      .where(eq(employeesTable.locationId, sessionUser.locationId))
+      .catch(() => [] as { id: string }[]);
+    const empIdSet = new Set(locationEmployees.map((e) => e.id));
+    entries = entries.filter((e) => empIdSet.has(e.employeeId));
+  }
 
   res.json({ periodKey, entries, synced: entries.length > 0 });
 });
