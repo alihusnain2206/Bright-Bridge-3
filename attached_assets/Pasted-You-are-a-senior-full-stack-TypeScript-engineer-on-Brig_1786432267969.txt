@@ -1,0 +1,66 @@
+You are a senior full-stack TypeScript engineer on BrightBridge Assist. We are in PRODUCTION with live payroll data. This is a security fix on easyteam.ts — the one route file that was never covered in our earlier auth-hardening pass (clients.ts, people.ts, and rollfi.ts were audited and fixed; easyteam.ts was not).
+
+THE PROBLEM
+
+Your recent audit found a cluster of endpoints in easyteam.ts protected by requireAuth only — no role check, and assertCompanyAccess absent:
+
+POST /easyteam/hours/approve ← most serious: any logged-in user can approve timesheets
+GET /easyteam/employees
+GET /easyteam/company-members
+GET /easyteam/hours
+GET /easyteam/timesheets
+POST /easyteam/token
+GET /easyteam/status
+GET /timesheets/trend
+
+Two distinct gaps per endpoint: (a) no role authorization, (b) no verified company scoping.
+
+STEP 1 — VERIFY THE SCOPING GAP (read-only, report before fixing)
+
+"No assertCompanyAccess call" does not automatically mean data is exposed — the data may be scoped some other way. Confirm what is actually reachable before changing anything:
+
+For each endpoint above, report how companyId is currently obtained (from the session? a query param the caller controls? a body field?).
+Test the real exposure: as a user belonging to Company A, call each endpoint passing Company B's companyId. Report exactly what comes back — Company B's data, an empty result, or an error. Use two dev/test companies, never production data.
+For POST /easyteam/hours/approve specifically: confirm whether a user with role employee can successfully approve timesheets, and whether they can approve for a company they don't belong to.
+Report which of these endpoints legitimately need to be callable by low-privilege users (e.g. POST /easyteam/token is presumably needed by employees for the time clock; GET /easyteam/status may be needed for the embed to load). We must not break normal employee clock-in.
+
+Report findings before proceeding to Step 2.
+
+STEP 2 — FIX (after findings reviewed)
+
+For each endpoint, apply BOTH dimensions:
+
+Role authorization — appropriate to the action, following the role guard patterns already used elsewhere in the codebase (requireRole / inline role arrays — match the existing convention, don't invent a new one):
+
+Timesheet approval and any write/mutation → super_admin, owner, manager only
+Company-wide employee/member/hours/timesheet reads → super_admin, owner, manager
+Token issuance and status → must remain reachable by employees (they need it for the time clock), but still company-scoped
+Propose the specific role set per endpoint in your report and flag any you're unsure about rather than guessing
+
+Company scoping — use the same assertCompanyAccess pattern applied in the earlier hardening pass on clients.ts / people.ts / rollfi.ts. A caller must never receive or affect data for a company they don't belong to, regardless of what companyId they pass. Derive company from the session where possible rather than trusting caller-supplied values.
+
+SCOPE BOUNDARY — DO NOT TOUCH
+Payroll submission/processing logic
+The Rollfi sync chain
+The EasyTeam SDK embed components themselves (only the API routes)
+The multi-location work (not started)
+Do not remove or weaken any existing guard on any other endpoint
+TESTING CHECKLIST
+
+Legitimate flows must still work — verify each:
+
+ An employee can still load the time clock and clock in/out (token + status endpoints)
+ An owner can still view timesheets, pull hours, and approve
+ A manager can still view timesheets and approve (per the role decision above)
+ Timesheet trend and hours widgets still load for owner/super_admin
+
+Attacks must now fail — verify each:
+
+ An employee account calling POST /easyteam/hours/approve → 403
+ A user from Company A passing Company B's companyId to each endpoint → denied or empty, never Company B's data
+ Paste the actual request/response output for these tests — not a description. I want evidence, not assurance.
+DELIVERABLE
+Step 1 findings first (what was actually exposed vs. merely unguarded)
+Files changed and the role set applied per endpoint, with reasoning
+Actual test output for both the legitimate-flow and attack checks
+Any endpoint you were unsure about, flagged rather than silently decided

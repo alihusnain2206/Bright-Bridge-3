@@ -105,8 +105,15 @@ const webhookLog: Array<{
   status: string;
 }> = [];
 
-router.get("/easyteam/employees", requireAuth, async (req, res) => {
-  const companyId = req.query.companyId as string | undefined;
+router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager"), async (req, res) => {
+  // Company-scope guard: super_admin may pass any companyId or omit to get all;
+  // owner/manager are restricted to their own company regardless of query param.
+  const sessionUser = store.getUserById(req.session.userId!);
+  const requestedCompanyId = req.query.companyId as string | undefined;
+  const companyId = sessionUser?.role === "super_admin"
+    ? requestedCompanyId
+    : (sessionUser?.companyId ?? requestedCompanyId);
+  if (companyId && !assertCompanyAccess(req, res, companyId)) return;
   const users = companyId
     ? store.getUsersForCompany(companyId)
     : store.getAllStaffUsers();
@@ -174,6 +181,15 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
   if (!EASYTEAM_API_KEY) {
     res.status(500).json({ success: false, error: "EASYTEAM_API_KEY not configured" });
     return;
+  }
+
+  // Company-scope guard: the effective companyId being requested (via client_id or company_id)
+  // must match the caller's own company unless they are super_admin.
+  // This prevents Company A's employee from obtaining a JWT scoped to Company B's location.
+  const tokenCaller = store.getUserById(req.session.userId!);
+  const requestedCompanyId = client_id ?? company_id;
+  if (tokenCaller?.role !== "super_admin" && requestedCompanyId) {
+    if (!assertCompanyAccess(req, res, requestedCompanyId)) return;
   }
 
   // Resolve client and employee from store when client_id is provided
@@ -267,7 +283,7 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
   res.json({ success: true, token: signedJwt });
 });
 
-router.get("/easyteam/timesheets", requireAuth, (_req, res) => {
+router.get("/easyteam/timesheets", requireRole("super_admin", "owner", "manager"), (_req, res) => {
   res.json({
     success: true,
     timesheets: [],
@@ -623,9 +639,10 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 // ── GET /easyteam/company-members — employee names for timesheet approval panel ──
 // Returns { [employeeId]: fullName } from store staff users (covers both seeded and
 // wizard-created employees). Used by the timesheets page to show names in the approval table.
-router.get("/easyteam/company-members", requireAuth, (req, res) => {
+router.get("/easyteam/company-members", requireRole("super_admin", "owner", "manager"), (req, res) => {
   const { companyId } = req.query as { companyId?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
   const staff = store.getAllStaffUsers().filter((u) => u.companyId === companyId && u.role === "employee");
   const names: Record<string, string> = {};
   for (const u of staff) {
@@ -634,8 +651,15 @@ router.get("/easyteam/company-members", requireAuth, (req, res) => {
   res.json({ names });
 });
 
-router.get("/easyteam/hours", requireAuth, (req, res) => {
-  const { from, to, companyId } = req.query as { from?: string; to?: string; companyId?: string };
+router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), (req, res) => {
+  const { from, to, companyId: requestedCompanyId } = req.query as { from?: string; to?: string; companyId?: string };
+  // Company-scope guard: super_admin may omit companyId to get all; owner/manager are
+  // always scoped to their own company regardless of what the query param says.
+  const sessionUser = store.getUserById(req.session.userId!);
+  const companyId = sessionUser?.role === "super_admin"
+    ? requestedCompanyId
+    : (sessionUser?.companyId ?? requestedCompanyId);
+  if (companyId && !assertCompanyAccess(req, res, companyId)) return;
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
@@ -851,7 +875,7 @@ async function fetchEasyTeamShiftsForLocation(
   }
 }
 
-router.post("/easyteam/hours/approve", requireAuth, async (req, res) => {
+router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const userId = req.session.userId!;
 
   const body = req.body as {
@@ -863,6 +887,7 @@ router.post("/easyteam/hours/approve", requireAuth, async (req, res) => {
   // Accept both "overrides" (sent by timesheets page) and legacy "entries"
   const managerEntries = body.overrides ?? body.entries ?? [];
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
   // Build a quick lookup map for manager-supplied overrides keyed by employeeId
   const managerOverrides = new Map(
     (managerEntries ?? []).map((e) => [e.employeeId, e])
@@ -1520,10 +1545,11 @@ router.get("/timesheets/shifts", requireRole("super_admin", "owner", "manager"),
 });
 
 // ── GET /api/timesheets/trend — proxy EasyTeam /timesheets/reports for trend chart ──
-router.get("/timesheets/trend", requireAuth, async (req, res) => {
+router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), async (req, res) => {
 
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
   if (!companyId) { res.status(400).json({ error: "companyId is required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
   if (!from || !to)  { res.status(400).json({ error: "from and to dates are required — omitting them returns 0-day response" }); return; }
 
   const fromDate = new Date(from);
