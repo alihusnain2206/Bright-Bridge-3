@@ -1,0 +1,29 @@
+Here's the audit prompt:
+
+⚠️ AUDIT ONLY — do not modify, build, or refactor anything. Read and report only.
+
+We're planning a multi-location feature. The client's driving use case is: each physical site has its own manager, staff request time off, and those requests must reach the right site's manager (not all managers). Before designing, we need to know what time-off functionality exists today.
+
+Report on the following:
+
+1. Time-off in our app
+Is there ANY time-off / PTO / leave request functionality currently built in BrightBridge? Search for routes, pages, components, and DB tables related to time off, PTO, leave, absence, vacation.
+If partial: what exists (e.g. a "Time Off Calendar" quick action, a placeholder page, a manager approval item)? Is it wired to real data or a stub?
+Is there anything in the manager quick-actions ("Approve PTO", "Time Off Calendar") that currently does something real, or are those placeholder links?
+2. Time-off in EasyTeam
+What does EasyTeam's SDK/API provide for time off — request submission, approval, balances, calendar? Check our integration code and their docs.
+Do we currently call ANY EasyTeam time-off endpoints, or embed any time-off SDK component? If yes, where and what does it show?
+If the SDK provides an embeddable time-off component like the time clock component: what would embedding it require (JWT permissions, props, location scoping)?
+3. What a manager sees today
+When a user with role manager logs in, what do they actually see and control? List their current effective permissions in our app (which pages, which data, which actions).
+Are there ANY endpoints today that filter by anything narrower than companyId? Or is companyId the only scoping dimension across the API?
+How is the EasyTeam JWT built today — where in the code, and what does it currently pass for locations, employees, accessRole, and permissions?
+4. The timezone issue
+We previously parked EasyTeam Phase 2 widgets (Time Off, Schedule Coverage, Attendance Rate) on a timezone problem (partner account set to Asia/Karachi rather than the location's timezone). Report the current state: is that still unresolved? Does it block time-off functionality specifically, or only scheduling display?
+5. Locations groundwork recap
+Confirm current state of: the in-memory location store, employees.workLocation (free text), user_accounts.locationId, timesheet_shifts.easyteamLocationId, and companies.rollfiLocationId. (Your earlier audit covered this — just confirm nothing has changed since.)
+DELIVERABLE
+
+Structured findings per section. Most important question to answer clearly: if we added location-scoped managers today, would there actually be time-off requests for them to see — or does the time-off flow itself still need building?
+
+No code changes. Findings only.
