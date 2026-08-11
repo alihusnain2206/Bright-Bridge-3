@@ -175,8 +175,12 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
       const tzResult = await ensureLocationTimezone(easyteamLocationId, { country: "US", state: body.state || "NJ" });
       if (!tzResult.ok) easyteamWarning = `EasyTeam timezone: ${tzResult.detail ?? "failed"}`;
 
+      // ensureTimeOffPolicy returns 404 on orgs that don't have the policy feature enabled.
+      // This is a known permanent limitation — log it but never surface it to the owner.
       const polResult = await ensureTimeOffPolicy(easyteamLocationId);
-      if (!polResult.ok && !easyteamWarning) easyteamWarning = `EasyTeam policy: ${polResult.detail ?? "failed"}`;
+      if (!polResult.ok) {
+        req.log.warn({ detail: polResult.detail, rowId }, "POST /locations: time-off policy setup skipped (non-fatal, not shown to user)");
+      }
     } catch (err) {
       easyteamWarning = `EasyTeam setup: ${String(err)}`;
       req.log.warn({ err, rowId }, "POST /locations: EasyTeam location setup failed (non-fatal)");
