@@ -420,7 +420,7 @@ export default function Login() {
                     <button type="button" tabIndex={-1}
                       onClick={() => setShowPassword(v => !v)}
                       className="absolute inset-y-0 right-0 flex items-center px-2.5 transition-opacity hover:opacity-100"
-                      style={{ color: "rgba(255,255,255,0.35)" }}
+                      style={{ color: "rgba(0,0,0,0.5)" }}
                       aria-label={showPassword ? "Hide password" : "Show password"}>
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
