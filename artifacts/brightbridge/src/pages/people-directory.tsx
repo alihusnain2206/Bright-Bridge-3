@@ -40,6 +40,7 @@ interface Employee {
   id: string;
   firstName: string; lastName: string; email: string;
   position: string; department?: string | null;
+  locationId?: string | null;
   employmentType: string; status: string;
   startDate?: string | null;
   complianceScore?: number | null;
@@ -47,6 +48,7 @@ interface Employee {
 }
 
 interface Department { id: string; name: string; }
+interface LocationRow { id: string; code: string; name: string; isActive: boolean; }
 
 type SortKey = "name" | "position" | "department" | "status" | "startDate";
 
@@ -94,17 +96,29 @@ export default function PeopleDirectoryPage() {
     staleTime: 5 * 60_000,
   });
 
-  const [search, setSearch]           = useState("");
-  const [filterDept, setFilterDept]   = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  const [filterType, setFilterType]   = useState("");
-  const [filterComp, setFilterComp]   = useState("");
-  const [sortCol, setSortCol]         = useState<SortKey>("name");
-  const [sortDir, setSortDir]         = useState<"asc" | "desc">("asc");
-  const [page, setPage]               = useState(1);
+  const { data: locData } = useQuery<{ locations: LocationRow[] }>({
+    queryKey: ["people-dir-locations", companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: LocationRow[] }>),
+    enabled: !!companyId,
+    staleTime: 5 * 60_000,
+  });
 
-  const employees  = data?.employees ?? [];
-  const departments = deptData?.departments ?? [];
+  const [search, setSearch]               = useState("");
+  const [filterDept, setFilterDept]       = useState("");
+  const [filterLocation, setFilterLocation] = useState("");
+  const [filterStatus, setFilterStatus]   = useState("");
+  const [filterType, setFilterType]       = useState("");
+  const [filterComp, setFilterComp]       = useState("");
+  const [sortCol, setSortCol]             = useState<SortKey>("name");
+  const [sortDir, setSortDir]             = useState<"asc" | "desc">("asc");
+  const [page, setPage]                   = useState(1);
+
+  const employees    = data?.employees ?? [];
+  const departments  = deptData?.departments ?? [];
+  const locations    = (locData?.locations ?? []).filter(l => l.isActive);
+  // location lookup map: id → "code — name"
+  const locMap = new Map(locations.map(l => [l.id, `${l.code} — ${l.name}`]));
   const addEmpHref = companyId ? `/clients/${companyId}/employees/new` : "/clients";
 
   const empTypes = useMemo(
@@ -125,7 +139,8 @@ export default function PeopleDirectoryPage() {
       );
     }
     if (filterStatus && filterStatus !== "all") list = list.filter(e => e.status === filterStatus);
-    if (filterDept)   list = list.filter(e => e.department === filterDept);
+    if (filterDept)     list = list.filter(e => e.department === filterDept);
+    if (filterLocation) list = list.filter(e => e.locationId === filterLocation);
     if (filterType)   list = list.filter(e => e.employmentType === filterType);
     if (filterComp === "90+")     list = list.filter(e => (e.complianceScore ?? 0) >= 90);
     if (filterComp === "70-89")   list = list.filter(e => { const s = e.complianceScore ?? 0; return s >= 70 && s < 90; });
@@ -151,8 +166,8 @@ export default function PeopleDirectoryPage() {
     setPage(1);
   }
 
-  const anyFilter = !!(search || filterDept || filterStatus || filterType || filterComp);
-  function clearAll() { setSearch(""); setFilterDept(""); setFilterStatus(""); setFilterType(""); setFilterComp(""); setPage(1); }
+  const anyFilter = !!(search || filterDept || filterLocation || filterStatus || filterType || filterComp);
+  function clearAll() { setSearch(""); setFilterDept(""); setFilterLocation(""); setFilterStatus(""); setFilterType(""); setFilterComp(""); setPage(1); }
 
   return (
     <div className="space-y-5 max-w-7xl">
@@ -200,6 +215,13 @@ export default function PeopleDirectoryPage() {
             <option value="">All Departments</option>
             {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
           </FilterSelect>
+          {/* Locations — only shown when company has 2+ active locations */}
+          {locations.length >= 2 && (
+            <FilterSelect value={filterLocation} onChange={v => { setFilterLocation(v); setPage(1); }}>
+              <option value="">All Locations</option>
+              {locations.map(l => <option key={l.id} value={l.id}>{l.code} — {l.name}</option>)}
+            </FilterSelect>
+          )}
           {/* Statuses */}
           <FilterSelect value={filterStatus} onChange={v => { setFilterStatus(v); setPage(1); }}>
             <option value="">All Statuses</option>
@@ -251,6 +273,11 @@ export default function PeopleDirectoryPage() {
                 <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 whitespace-nowrap">
                   Employment
                 </th>
+                {locations.length >= 2 && (
+                  <th className="text-left text-xs font-semibold text-gray-500 uppercase tracking-wider px-4 py-3 whitespace-nowrap">
+                    Location
+                  </th>
+                )}
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -264,7 +291,7 @@ export default function PeopleDirectoryPage() {
               ))}
               {!isLoading && pageEmployees.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-gray-400 text-sm">
+                  <td colSpan={locations.length >= 2 ? 8 : 7} className="px-4 py-12 text-center text-gray-400 text-sm">
                     {anyFilter ? "No employees match your filters." : "No employees found."}
                   </td>
                 </tr>
@@ -291,6 +318,11 @@ export default function PeopleDirectoryPage() {
                     <td className="px-4 py-3"><StatusBadge status={emp.status} /></td>
                     <td className="px-4 py-3 text-gray-500 text-sm whitespace-nowrap">{startFmt}</td>
                     <td className="px-4 py-3 text-gray-500 text-sm">{empTypeFmt}</td>
+                    {locations.length >= 2 && (
+                      <td className="px-4 py-3 text-gray-500 text-sm whitespace-nowrap">
+                        {emp.locationId ? (locMap.get(emp.locationId) ?? "—") : "—"}
+                      </td>
+                    )}
                     <td className="px-4 py-3 text-right">
                       <Link href={`/people/${emp.id}`}>
                         <span className="text-xs text-[#0EA5C9] hover:underline opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer">

@@ -10,7 +10,7 @@
  * Overview data comes from GET /api/companies/:companyId.
  */
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -35,6 +35,10 @@ import {
   Landmark,
   CheckCircle2,
   XCircle,
+  MapPin,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -741,9 +745,325 @@ function PageSkeleton() {
   );
 }
 
+// ── Locations Tab ──────────────────────────────────────────────────────────────
+
+interface LocationRow {
+  id: string; companyId: string; code: string; name: string;
+  address1?: string|null; address2?: string|null;
+  city?: string|null; state?: string|null; zipcode?: string|null;
+  rollfiLocationId?: string|null; easyteamLocationId?: string|null;
+  isActive: boolean; createdAt?: string|null;
+}
+
+interface LocationFormState {
+  code: string; name: string;
+  address1: string; address2: string;
+  city: string; state: string; zipcode: string;
+}
+
+function blankForm(): LocationFormState {
+  return { code: "", name: "", address1: "", address2: "", city: "", state: "", zipcode: "" };
+}
+
+const US_STATES_SHORT = [
+  "AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA",
+  "KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ",
+  "NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT",
+  "VA","WA","WV","WI","WY","DC",
+];
+
+function LocationFormFields({ form, set }: { form: LocationFormState; set: (k: keyof LocationFormState, v: string) => void }) {
+  const inputCls = "w-full h-9 text-sm border border-gray-200 rounded-md px-2.5 focus:outline-none focus:ring-2 focus:ring-[#1B3A6B]/30 bg-white";
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">Location Code <span className="text-red-500">*</span></span>
+          <input className={inputCls} placeholder="e.g. 100" value={form.code} onChange={e => set("code", e.target.value)} maxLength={20} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">Location Name <span className="text-red-500">*</span></span>
+          <input className={inputCls} placeholder="e.g. Main Office" value={form.name} onChange={e => set("name", e.target.value)} />
+        </label>
+      </div>
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-gray-600">Street Address</span>
+        <input className={inputCls} placeholder="123 Main St" value={form.address1} onChange={e => set("address1", e.target.value)} />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-gray-600">Suite / Unit <span className="text-gray-400 text-[10px]">optional</span></span>
+        <input className={inputCls} placeholder="Suite 200" value={form.address2} onChange={e => set("address2", e.target.value)} />
+      </label>
+      <div className="grid grid-cols-3 gap-3">
+        <label className="col-span-1 block space-y-1">
+          <span className="text-xs font-medium text-gray-600">City</span>
+          <input className={inputCls} placeholder="Newark" value={form.city} onChange={e => set("city", e.target.value)} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">State</span>
+          <select className={inputCls} value={form.state} onChange={e => set("state", e.target.value)}>
+            <option value="">—</option>
+            {US_STATES_SHORT.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">Zip</span>
+          <input className={inputCls} placeholder="07101" value={form.zipcode} onChange={e => set("zipcode", e.target.value)} maxLength={10} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function LocationsTab({ companyId }: { companyId: string }) {
+  const qc = useQueryClient();
+  const [showAdd, setShowAdd]   = useState(false);
+  const [editing, setEditing]   = useState<LocationRow | null>(null);
+  const [addForm, setAddForm]   = useState<LocationFormState>(blankForm);
+  const [editForm, setEditForm] = useState<LocationFormState>(blankForm);
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[] | null>(null);
+  const [deactivating, setDeactivating] = useState<LocationRow | null>(null);
+
+  const { data, isLoading, refetch } = useQuery<{ locations: LocationRow[] }>({
+    queryKey: ["company-settings-locations", companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: LocationRow[] }>),
+    enabled: !!companyId,
+    staleTime: 30_000,
+  });
+  const locations = data?.locations ?? [];
+
+  function setA(k: keyof LocationFormState, v: string) { setAddForm(f => ({ ...f, [k]: v })); }
+  function setE(k: keyof LocationFormState, v: string) { setEditForm(f => ({ ...f, [k]: v })); }
+
+  async function handleAdd() {
+    setError(null); setWarnings(null);
+    if (!addForm.code.trim()) { setError("Location code is required."); return; }
+    if (!addForm.name.trim()) { setError("Location name is required."); return; }
+    setSaving(true);
+    try {
+      const r = await fetch("/api/locations", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ companyId, ...addForm }),
+      });
+      const body = await r.json() as { location?: LocationRow; warnings?: string[]; error?: string };
+      if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
+      if (body.warnings?.length) setWarnings(body.warnings);
+      else { setShowAdd(false); setAddForm(blankForm); }
+      void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create location");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleEdit() {
+    if (!editing) return;
+    setError(null); setWarnings(null);
+    if (!editForm.code.trim()) { setError("Location code is required."); return; }
+    if (!editForm.name.trim()) { setError("Location name is required."); return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/locations/${editing.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editForm),
+      });
+      const body = await r.json() as { location?: LocationRow; warnings?: string[]; error?: string };
+      if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
+      if (body.warnings?.length) setWarnings(body.warnings);
+      else setEditing(null);
+      void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update location");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDeactivate(loc: LocationRow) {
+    setSaving(true); setError(null);
+    try {
+      const r = await fetch(`/api/locations/${loc.id}`, { method: "DELETE", credentials: "include" });
+      const body = await r.json() as { success?: boolean; error?: string; assignedCount?: number };
+      if (!r.ok) { setError(body.error ?? `Error ${r.status}`); setDeactivating(null); return; }
+      setDeactivating(null);
+      void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to deactivate location");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const btnCls = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors";
+
+  return (
+    <div className="space-y-5 max-w-3xl">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-800 flex items-center gap-2">
+            <MapPin className="h-4 w-4 text-[#1B3A6B]" /> Locations
+          </h2>
+          <p className="text-xs text-gray-500 mt-0.5">Manage your company's physical locations. Each location syncs with Rollfi payroll and EasyTeam scheduling.</p>
+        </div>
+        <button
+          className={`${btnCls} bg-[#1B3A6B] text-white hover:bg-[#254d8c]`}
+          onClick={() => { setShowAdd(true); setAddForm(blankForm); setError(null); setWarnings(null); }}
+        >
+          <Plus className="h-3.5 w-3.5" /> Add Location
+        </button>
+      </div>
+
+      {/* Error / warning banners */}
+      {error && (
+        <div className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2.5">{error}</div>
+      )}
+      {warnings && warnings.length > 0 && (
+        <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 space-y-1">
+          <p className="font-medium">Location saved with provider warnings:</p>
+          {warnings.map((w, i) => <p key={i}>• {w}</p>)}
+          <button className="text-[#1B3A6B] font-medium underline mt-1" onClick={() => { setWarnings(null); setShowAdd(false); setEditing(null); }}>Dismiss</button>
+        </div>
+      )}
+
+      {/* Add Location form */}
+      {showAdd && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-gray-800">New Location</h3>
+          <LocationFormFields form={addForm} set={setA} />
+          <div className="flex gap-2 justify-end pt-1">
+            <button className={`${btnCls} border border-gray-200 text-gray-700 hover:bg-gray-50`}
+              onClick={() => { setShowAdd(false); setError(null); }}>Cancel</button>
+            <button className={`${btnCls} bg-[#1B3A6B] text-white hover:bg-[#254d8c]`}
+              disabled={saving} onClick={() => void handleAdd()}>
+              {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+              {saving ? "Saving…" : "Create Location"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Locations list */}
+      {isLoading ? (
+        <div className="space-y-3">
+          {[1,2].map(i => <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />)}
+        </div>
+      ) : locations.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-100 p-10 text-center text-sm text-gray-400">
+          No locations yet. Add your first location above.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {locations.map(loc => (
+            <div key={loc.id}>
+              {/* View row */}
+              {editing?.id !== loc.id && (
+                <div className={`bg-white rounded-xl border ${loc.isActive ? "border-gray-200" : "border-gray-100 opacity-60"} shadow-sm px-4 py-3`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#1B3A6B]/10 text-[#1B3A6B]">
+                          {loc.code}
+                        </span>
+                        <span className="text-sm font-medium text-gray-900">{loc.name}</span>
+                        {!loc.isActive && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-400">Inactive</span>
+                        )}
+                      </div>
+                      {(loc.address1 || loc.city) && (
+                        <p className="text-xs text-gray-400">
+                          {[loc.address1, loc.address2, loc.city, loc.state, loc.zipcode].filter(Boolean).join(", ")}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-3 mt-1">
+                        {loc.rollfiLocationId
+                          ? <span className="text-[10px] text-emerald-600">✓ Rollfi synced</span>
+                          : <span className="text-[10px] text-amber-500">⚠ Rollfi not synced</span>}
+                      </div>
+                    </div>
+                    {loc.isActive && (
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          className={`${btnCls} border border-gray-200 text-gray-600 hover:bg-gray-50`}
+                          onClick={() => { setEditing(loc); setEditForm({ code: loc.code, name: loc.name, address1: loc.address1 ?? "", address2: loc.address2 ?? "", city: loc.city ?? "", state: loc.state ?? "", zipcode: loc.zipcode ?? "" }); setError(null); setWarnings(null); }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" /> Edit
+                        </button>
+                        <button
+                          className={`${btnCls} border border-red-100 text-red-600 hover:bg-red-50`}
+                          onClick={() => { setDeactivating(loc); setError(null); }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Deactivate
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Edit form inline */}
+              {editing?.id === loc.id && (
+                <div className="bg-white rounded-xl border border-[#1B3A6B]/20 shadow-sm p-5 space-y-4">
+                  <h3 className="text-sm font-semibold text-gray-800">Edit Location — {loc.code}</h3>
+                  <LocationFormFields form={editForm} set={setE} />
+                  <div className="flex gap-2 justify-end pt-1">
+                    <button className={`${btnCls} border border-gray-200 text-gray-700 hover:bg-gray-50`}
+                      onClick={() => { setEditing(null); setError(null); }}>Cancel</button>
+                    <button className={`${btnCls} bg-[#1B3A6B] text-white hover:bg-[#254d8c]`}
+                      disabled={saving} onClick={() => void handleEdit()}>
+                      {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      {saving ? "Saving…" : "Save Changes"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Deactivate confirmation */}
+      {deactivating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-red-50">
+                <Trash2 className="h-4.5 w-4.5 text-red-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Deactivate Location?</h2>
+                <p className="text-xs text-gray-500">{deactivating.code} — {deactivating.name}</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600">
+              This location will be hidden from all dropdowns. Employees assigned here will keep their assignment until manually changed. This cannot be undone from this UI.
+            </p>
+            {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+            <div className="flex gap-2 justify-end">
+              <button className={`${btnCls} border border-gray-200 text-gray-700 hover:bg-gray-50`}
+                onClick={() => { setDeactivating(null); setError(null); }}>Cancel</button>
+              <button className={`${btnCls} bg-red-600 text-white hover:bg-red-700`}
+                disabled={saving} onClick={() => void handleDeactivate(deactivating)}>
+                {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                {saving ? "Deactivating…" : "Deactivate"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────────
 
-type TabId = "overview" | "payroll" | "settings";
+type TabId = "overview" | "payroll" | "settings" | "locations";
 
 export default function CompanySettingsPage() {
   const { user } = useAuth();
@@ -822,9 +1142,10 @@ export default function CompanySettingsPage() {
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-gray-200 mb-6 ml-11">
         {([
-          { id: "overview",  label: "Overview" },
-          { id: "payroll",   label: "Payroll Settings" },
-          { id: "settings",  label: "Settings" },
+          { id: "overview",   label: "Overview" },
+          { id: "payroll",    label: "Payroll Settings" },
+          { id: "settings",   label: "Settings" },
+          { id: "locations",  label: "Locations" },
         ] as { id: TabId; label: string }[]).map(({ id, label }) => (
           <button
             key={id}
@@ -869,6 +1190,13 @@ export default function CompanySettingsPage() {
         ) : (
           <div className="text-sm text-gray-500 py-8 text-center">Company details unavailable.</div>
         )
+      )}
+
+      {/* Locations tab */}
+      {tab === "locations" && companyId && (
+        <div className="ml-11">
+          <LocationsTab companyId={companyId} />
+        </div>
       )}
 
       {/* Settings tab */}

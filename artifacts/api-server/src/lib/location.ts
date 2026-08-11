@@ -1,5 +1,31 @@
 import { eq, and } from "drizzle-orm";
 import { db, companies as companiesTable, locations as locationsTable, employees as employeesTable } from "@workspace/db";
+
+/**
+ * Resolve the Rollfi companyLocationId for a specific employee.
+ * Returns the employee's assigned location's rollfiLocationId when available;
+ * otherwise returns the provided fallback (usually the company's primary rollfiLocationId).
+ * Used in addUser and updateUser calls so multi-location employees are placed correctly.
+ */
+export async function resolveEmployeeRollfiLocationId(
+  employeeId: string,
+  fallbackRollfiLocationId: string
+): Promise<string> {
+  try {
+    const [emp] = await db
+      .select({ locationId: employeesTable.locationId })
+      .from(employeesTable)
+      .where(eq(employeesTable.id, employeeId));
+    if (emp?.locationId) {
+      const [loc] = await db
+        .select({ rollfiLocationId: locationsTable.rollfiLocationId })
+        .from(locationsTable)
+        .where(eq(locationsTable.id, emp.locationId));
+      if (loc?.rollfiLocationId) return loc.rollfiLocationId;
+    }
+  } catch { /* DB unavailable — fall through to fallback */ }
+  return fallbackRollfiLocationId;
+}
 import { store } from "../store.js";
 
 /**

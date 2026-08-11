@@ -50,7 +50,7 @@ interface FormData {
   // Step 1
   firstName: string; lastName: string; email: string; phone: string;
   position: string; employmentType: string; workerType: string; startDate: string;
-  department: string; managerId: string; managerName: string;
+  locationId: string; department: string; managerId: string; managerName: string;
   // Step 2
   payType: string; wageAmount: number; overtimeEligible: boolean;
   paymentMethod: string; taxExempt: boolean;
@@ -237,7 +237,7 @@ export default function ClientEmployeesNew() {
   const makeInitialForm = (): FormData => ({
     firstName: "", lastName: "", email: "", phone: "",
     position: "", employmentType: "Full Time (30+ Hours per week)", workerType: "W2", startDate: today(),
-    department: "", managerId: "", managerName: "",
+    locationId: "", department: "", managerId: "", managerName: "",
     payType: "hourly", wageAmount: 0, overtimeEligible: true, paymentMethod: "Direct Deposit", taxExempt: false,
     ssn: "", dateOfBirth: "", homeAddress: "", homeCity: "", homeState: "", homeZip: "",
     w4FilingStatus: "Single", w4MultipleJobs: false,
@@ -285,6 +285,15 @@ export default function ClientEmployeesNew() {
     staleTime: 60_000,
   });
   const departments = deptData?.departments ?? [];
+
+  const { data: locData } = useQuery<{ locations: Array<{ id: string; code: string; name: string; isActive: boolean }> }>({
+    queryKey: ["loc-wizard", companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: Array<{ id: string; code: string; name: string; isActive: boolean }> }>),
+    enabled: !!companyId,
+    staleTime: 60_000,
+  });
+  const activeLocations = (locData?.locations ?? []).filter(l => l.isActive);
 
   const { data: empListData } = useQuery<{ employees: Array<{ id: string; firstName: string; lastName: string; position: string; status: string }> }>({
     queryKey: ["emp-wizard", companyId],
@@ -653,6 +662,21 @@ export default function ClientEmployeesNew() {
                 </div>
               )}
             </div>
+
+            {/* Location — shown only when company has 2+ active locations */}
+            {activeLocations.length >= 2 && (
+              <div className="space-y-1.5">
+                <Label>Location *</Label>
+                <Select value={form.locationId || ""} onValueChange={v => set("locationId", v)}>
+                  <SelectTrigger><SelectValue placeholder="Select location…" /></SelectTrigger>
+                  <SelectContent>
+                    {activeLocations.map(l => (
+                      <SelectItem key={l.id} value={l.id}>{l.code} — {l.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             {/* Manager */}
             <div className="space-y-1.5">

@@ -111,14 +111,104 @@ adminRouter.get("/admin/users", async (req, res) => {
       email:      emp.email,
       position:   emp.position,
       companyId:  emp.companyId,
+      locationId: emp.locationId ?? null,
       status:     emp.status,
       hasAccount: !!acct,
-      accountId:  acct?.id  ?? null,
-      role:       acct?.role ?? null,
+      accountId:  acct?.id    ?? null,
+      role:       acct?.role  ?? null,
+      accountLocationId: acct?.locationId ?? null,
     };
   });
 
   res.json({ users });
+});
+
+// ── POST /api/admin/users/:employeeId/grant-access ────────────────────────────
+// Creates a login account for an employee who does not already have one.
+// super_admin: any employee. owner: their company only.
+// Body: { role: "employee" | "manager" | "owner", locationId?: string }
+// locationId is REQUIRED when role = "manager".
+adminRouter.post("/admin/users/:employeeId/grant-access", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || !["super_admin", "owner"].includes(caller.role)) {
+    res.status(401).json({ error: "Not authorized" }); return;
+  }
+
+  const employeeId = String(req.params.employeeId);
+  const { role, locationId } = req.body as { role?: string; locationId?: string };
+
+  const allowedRoles = ["employee", "manager", "owner"];
+  if (!role || !allowedRoles.includes(role)) {
+    res.status(400).json({ error: `role must be one of: ${allowedRoles.join(", ")}` }); return;
+  }
+  if (role === "manager" && !locationId) {
+    res.status(400).json({ error: "locationId is required when role is manager" }); return;
+  }
+
+  // Fetch the employee
+  const [emp] = await db.select().from(employees).where(eq(employees.id, employeeId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  // Scope check: owner can only grant access for their own company
+  if (caller.role === "owner" && emp.companyId !== caller.companyId) {
+    res.status(403).json({ error: "Not authorized for this employee" }); return;
+  }
+
+  // Owners cannot grant owner-level access (super_admin only)
+  if (caller.role === "owner" && role === "owner") {
+    res.status(403).json({ error: "Owners cannot grant owner-level access. Contact a super_admin." }); return;
+  }
+
+  // Check if account already exists
+  const [existingAcct] = await db.select({ id: userAccounts.id, role: userAccounts.role })
+    .from(userAccounts)
+    .where(eq(userAccounts.email, emp.email.toLowerCase().trim()));
+  if (existingAcct) {
+    res.status(409).json({ error: "This employee already has a login account.", accountId: existingAcct.id, currentRole: existingAcct.role }); return;
+  }
+
+  // Create the account
+  const accountId = `UA-${Date.now().toString(36).toUpperCase()}`;
+  const tempPassword = "Staff123!";
+  const hashed = await bcrypt.hash(tempPassword, 12);
+  const now = new Date().toISOString();
+
+  await db.insert(userAccounts).values({
+    id: accountId,
+    name: `${emp.firstName} ${emp.lastName}`,
+    email: emp.email.toLowerCase().trim(),
+    password: hashed,
+    role: role as "employee" | "manager" | "owner",
+    companyId: emp.companyId,
+    locationId: role === "manager" ? (locationId ?? null) : null,
+    employeeId: emp.id,
+    position: emp.position,
+    isActive: true,
+    createdAt: now,
+  });
+
+  // Sync to in-memory store
+  store.addTestUser({
+    id: accountId,
+    name: `${emp.firstName} ${emp.lastName}`,
+    email: emp.email.toLowerCase().trim(),
+    password: hashed,
+    role: role as "employee" | "manager" | "owner",
+    companyId: emp.companyId,
+    locationId: role === "manager" ? (locationId ?? undefined) : undefined,
+    employeeId: emp.id,
+    position: emp.position,
+    hourlyWage: 0,
+    payType: "hourly",
+  });
+
+  res.status(201).json({
+    accountId,
+    role,
+    locationId: role === "manager" ? locationId : null,
+    tempPassword,
+    message: "Account created. Share the temporary password with the employee and ask them to reset it.",
+  });
 });
 
 // ── POST /api/admin/users/:employeeId/set-password ────────────────────────────

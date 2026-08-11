@@ -1,0 +1,121 @@
+⚠️ PRODUCTION system with live data. This is PHASE 2 of the multi-location feature:
+location management UI + assignment. Phase 1 (locations/departments tables, seeded one
+location per company, employees.locationId) is complete and deployed. Phase 2 makes
+locations VISIBLE and MANAGEABLE. It does NOT include location-based access enforcement
+(managers still see the whole company — scoping is Phase 3).
+
+## STEP 1 — BRIEF AUDIT (report, then proceed)
+
+1. Confirm the current state of the Grant Access flow (Settings → Users & Access): which
+   component, which endpoint, what fields it collects today.
+2. Confirm how the employee wizard Step 1 collects department (the pattern to mirror for
+   location).
+3. Check Rollfi's addCompanyLocation docs (developer.rollfi.xyz/api-reference — search
+   there before concluding anything doesn't exist): exact request shape, and what it
+   returns (companyLocationId?).
+4. Check how our EasyTeam location creation works today (the code path that created
+   LOC-SUNSHINE etc. / registers locations with EasyTeam) — what's needed to create a new
+   EasyTeam location for a new site, and does ensureLocationTimezone / ensureTimeOffPolicy
+   need to run for it?
+
+## STEP 2 — BUILD
+
+### A. Location management UI (Company Settings)
+
+New "Locations" tab in Company Settings (owner + super_admin), same visual pattern as the
+Departments tab:
+
+- List all locations: code, name, address, active status. The auto-created Phase 1
+  location appears here like any other — it is EDITABLE (Urban Concepts will rename
+  theirs from the company name to "152nd Street").
+- Add Location: code (text, e.g. "200"), name, address1/2, city, state, zip. On save:
+  1. Insert the locations row
+  2. If the company has a Rollfi record: call Rollfi addCompanyLocation (per the docs
+     shape from the audit) and store the returned rollfiLocationId on the row. If the
+     company has NO Rollfi record (non-payroll company like Urban Concepts): skip Rollfi
+     entirely — same if (rollfiCompany) guard pattern as employee sync. No error, no
+     warning; just store null rollfiLocationId.
+  3. Create the EasyTeam location for the site (per the audit finding) and store
+     easyteamLocationId. Run ensureLocationTimezone and ensureTimeOffPolicy for it, same
+     as existing locations get.
+  4. If Rollfi or EasyTeam creation fails: save the location row anyway with the failed
+     ID null, show a clear non-blocking warning with retry (same honest-failure pattern
+     as the 8655 upload) — never lose the owner's input, never fake success.
+- Edit: code, name, address editable. If address changes and rollfiLocationId exists,
+  call updateCompanyLocation (the endpoint we already fixed — companyLocation-wrapped
+  payload). Address edit also PATCHes the EasyTeam location.
+- Delete/deactivate: soft-deactivate only (isActive=false), and BLOCK if any active
+  employee is assigned to it ("Reassign N employees first") — same guard pattern as
+  department delete.
+- Code uniqueness per company; friendly validation error on duplicates.
+
+### B. Employee location assignment
+
+1. Wizard Step 1: "Location" dropdown next to Department. ONLY render when the company
+   has 2+ active locations; with 1 location, silently assign it (no UI change for
+   single-site companies). Required when shown. Sets employees.locationId.
+2. Employee edit form (Basic Info or Employment tab — match where department lives):
+   same conditional dropdown so existing employees can be assigned.
+3. Employee profile header/Job tab: display location (code + name) alongside department.
+4. Directory: Location column (code + name) + a filter dropdown (only when 2+ locations),
+   matching the existing department filter pattern.
+5. Rollfi side: when an employee is created at a company WITH payroll and 2+ locations,
+   pass their location's rollfiLocationId as companyLocationId in addUser (today it
+   passes the company's single location). When an existing employee's location changes
+   and they have a rollfiUserId, call updateUser with the new companyLocationId. For
+   non-payroll companies / employees with no rollfiUserId: skip, no error (existing
+   guard).
+6. EasyTeam side: employee registration should use the employee's own location
+   (resolveEmployeeLocationId from Phase 1) rather than the company's single location —
+   BUT verify this doesn't change behavior for single-location companies (it resolves to
+   the same ID). Do not build multi-location JWT arrays yet — that's Phase 3.
+
+### C. Manager assignment with location (assignment only — NO enforcement)
+
+Grant Access flow (Settings → Users & Access): when role "Manager" is selected, show a
+"Location" dropdown (required, from the company's active locations). Store it in
+user_accounts.locationId. Display the location in the Users & Access list for manager
+accounts. UI label for this role in dropdowns/badges: "Manager" is fine (do not invent a
+new role value — role stays `manager`).
+
+Explicitly OUT of scope: any change to what managers can see or do. A manager account
+created now still sees company-wide data until Phase 3 ships the scoping. Do not add
+locationId filtering to any endpoint in this phase.
+
+## SCOPE BOUNDARY — DO NOT TOUCH
+- No access-control/scoping changes anywhere (Phase 3)
+- No EasyTeam JWT changes (no locations[]/employees[] arrays yet)
+- No time-off features
+- No payroll logic changes beyond passing companyLocationId as specified in B5
+- No changes to the recently hardened auth guards
+- Locations tab is owner/super_admin only (same guard as other Company Settings tabs)
+
+## TESTING CHECKLIST (paste actual outputs/screenshots, not claims)
+
+Single-location company (e.g. Sunshine) — NOTHING changes:
+- [ ] Wizard shows NO location dropdown; new employee auto-assigned the single location
+      (paste the created employee's locationId)
+- [ ] Directory shows no location filter (or trivially shows one location)
+- [ ] Clock-in still works for a test employee
+
+Multi-location company (use a DEV test company — create a second location on it):
+- [ ] Add Location saves; paste the row showing easyteamLocationId populated (and
+      rollfiLocationId if it's a Rollfi company / null if not)
+- [ ] Simulated EasyTeam-creation failure: location row saved, warning + retry shown
+- [ ] Wizard now shows the location dropdown; created employee has chosen locationId
+- [ ] Edit an existing employee's location; paste before/after locationId — and if they
+      have a rollfiUserId, paste the updateUser call result
+- [ ] Directory shows location column + filter working
+- [ ] Deactivating a location with assigned employees is blocked with the reassign message
+- [ ] Rename the auto-created location (code/name) — persists, shows everywhere
+- [ ] Grant Access as Manager: location dropdown required, stored in
+      user_accounts.locationId (paste the row)
+- [ ] Manager login still sees company-wide data (confirming NO enforcement yet — this is
+      expected in Phase 2)
+
+## DELIVERABLE
+1. Step 1 audit answers (especially the addCompanyLocation request/response shape and the
+   EasyTeam location-creation path)
+2. Files changed, endpoints added
+3. Testing checklist outputs with real data
+4. Anything deferred or flagged

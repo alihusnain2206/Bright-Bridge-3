@@ -1663,7 +1663,7 @@ router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), 
 // For wizard-created companies, add a `state` field to the company record and pass it here.
 // Currently defaults to US/NJ because all demo companies are in New Jersey.
 
-async function ensureLocationTimezone(
+export async function ensureLocationTimezone(
   locationId: string,
   opts: { country?: string; state?: string } = {}
 ): Promise<{ ok: boolean; detail?: string }> {
@@ -1742,7 +1742,7 @@ async function ensureLocationTimezone(
 // ── Ensure a time-off policy exists for the organisation ──────────────────────────────────────
 // Without at least one policy, EasyTeam's "Time off" panel leaves the policy dropdown empty and
 // disables the Save button. This function creates a default policy if none exist yet. Idempotent.
-async function ensureTimeOffPolicy(
+export async function ensureTimeOffPolicy(
   locationId: string,
   opts: { policyName?: string } = {},
 ): Promise<{ ok: boolean; detail?: string }> {

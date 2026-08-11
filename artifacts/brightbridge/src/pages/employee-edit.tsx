@@ -19,7 +19,7 @@ interface EmployeeDetail {
   firstName: string; lastName: string; email: string; phone: string;
   position: string; jobTitle?: string|null; employmentType: string; workerType: string;
   startDate?: string|null; status: string; employeeDisplayId?: string|null;
-  department?: string|null; managerId?: string|null; managerName?: string|null;
+  department?: string|null; locationId?: string|null; managerId?: string|null; managerName?: string|null;
   payType?: string|null; hourlyWage?: number|null; annualSalary?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
   ssn?: string|null; dateOfBirth?: string|null;
   homeAddress?: string|null; homeCity?: string|null; homeState?: string|null; homeZip?: string|null;
@@ -183,6 +183,15 @@ export default function EmployeeEditPage() {
     enabled: !!empId,
   });
 
+  const { data: locData } = useQuery<{ locations: Array<{ id: string; code: string; name: string; isActive: boolean }> }>({
+    queryKey: ["loc-edit", data?.employee?.companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${data!.employee.companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: Array<{ id: string; code: string; name: string; isActive: boolean }> }>),
+    enabled: !!data?.employee?.companyId,
+    staleTime: 60_000,
+  });
+  const activeLocations = (locData?.locations ?? []).filter(l => l.isActive);
+
   // Form state — initialised once employee loads
   const [form, setForm] = useState<Record<string, unknown> | null>(null);
 
@@ -202,6 +211,7 @@ export default function EmployeeEditPage() {
         startDate:      e.startDate      ?? "",
         status:         e.status         ?? "active",
         department:     e.department     ?? "",
+        locationId:     e.locationId     ?? "",
         managerName:    e.managerName    ?? "",
         managerId:      e.managerId      ?? "",
         // Compensation (display in dollars — load from the right column based on payType)
@@ -253,7 +263,7 @@ export default function EmployeeEditPage() {
       position: form.position, jobTitle: form.jobTitle,
       employmentType: form.employmentType, workerType: form.workerType,
       startDate: form.startDate, status: form.status,
-      department: form.department, managerName: form.managerName, managerId: form.managerId,
+      department: form.department, locationId: form.locationId || null, managerName: form.managerName, managerId: form.managerId,
       payType: form.payType, hourlyWage: hourlyWageCents, annualSalary: annualSalaryCents,
       overtimeEligible: form.overtimeEligible, paymentMethod: form.paymentMethod,
       ssn: form.ssn || null, dateOfBirth: form.dateOfBirth || null,
@@ -429,6 +439,20 @@ export default function EmployeeEditPage() {
             <Field label="Department">
               <Input value={form.department as string} onChange={e => set("department", e.target.value)} className="h-9 text-sm" placeholder="e.g. Teaching Staff" />
             </Field>
+            {activeLocations.length >= 2 && (
+              <Field label="Location">
+                <select
+                  value={form.locationId as string}
+                  onChange={e => set("locationId", e.target.value)}
+                  className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-[#0EA5C9] bg-white"
+                >
+                  <option value="">Select location…</option>
+                  {activeLocations.map(l => (
+                    <option key={l.id} value={l.id}>{l.code} — {l.name}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
             <Field label="Manager / Supervisor">
               <Input value={form.managerName as string} onChange={e => set("managerName", e.target.value)} className="h-9 text-sm" placeholder="Manager name" />
             </Field>

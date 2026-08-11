@@ -376,6 +376,8 @@ export interface RollfiEmployeeInput {
   routingNumber?: string;
   accountNumber?: string;
   accountType?: string;
+  /** Override companyLocationId for this employee (multi-location). Falls back to rollfiCompany.rollfiLocationId. */
+  companyLocationId?: string;
 }
 
 export async function onboardEmployeeToRollfi(
@@ -411,7 +413,7 @@ export async function onboardEmployeeToRollfi(
         jobTitle: emp.roleName,
         companyLocationCategory: "Office",
         stateCode: emp.homeState ?? "NJ",
-        companyLocationId: rollfiCompany.rollfiLocationId,
+        companyLocationId: emp.companyLocationId ?? rollfiCompany.rollfiLocationId,
       },
     };
     rollfiVerboseLog("OUT", `${baseUrl}/adminPortal#addUser`, _addUserPayload);

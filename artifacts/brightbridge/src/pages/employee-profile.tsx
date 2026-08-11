@@ -27,7 +27,7 @@ interface EmployeeDetail {
   firstName: string; lastName: string; email: string; phone: string;
   position: string; jobTitle?: string|null; employmentType: string; workerType: string;
   startDate?: string|null; status: string; employeeDisplayId?: string|null;
-  department?: string|null; managerId?: string|null; managerName?: string|null;
+  department?: string|null; locationId?: string|null; managerId?: string|null; managerName?: string|null;
   payType?: string|null; hourlyWage?: number|null; annualSalary?: number|null; overtimeEligible?: boolean|null; paymentMethod?: string|null;
   homeAddress?: string|null; homeCity?: string|null; homeState?: string|null; homeZip?: string|null;
   complianceScore?: number|null; onboardingProgress?: number|null;
@@ -411,6 +411,17 @@ function AccountTab({ emp }: { emp: EmployeeDetail }) {
 
 // ── Overview Tab ───────────────────────────────────────────────
 function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (t: string) => void }) {
+  const { data: locData } = useQuery<{ locations: Array<{ id: string; code: string; name: string }> }>({
+    queryKey: ["loc-overview", emp.companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${emp.companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: Array<{ id: string; code: string; name: string }> }>),
+    enabled: !!emp.companyId && !!emp.locationId,
+    staleTime: 5 * 60_000,
+  });
+  const locationLabel = emp.locationId
+    ? (() => { const l = (locData?.locations ?? []).find(x => x.id === emp.locationId); return l ? `${l.code} — ${l.name}` : null; })()
+    : null;
+
   const { data: compData } = useQuery<{ items: Array<{ name: string; status: string; isRequired: boolean }>; score: number }>({
     queryKey: ["compliance", emp.id],
     queryFn: () => fetch(`/api/compliance?employeeId=${emp.id}`, { credentials: "include" })
@@ -448,6 +459,7 @@ function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (
         <InfoRow label="Employment Type" value={emp.employmentType} icon={<Briefcase className="h-3.5 w-3.5" />} />
         <InfoRow label="Worker Type" value={emp.workerType} />
         <InfoRow label="Department" value={emp.department} icon={<Building2 className="h-3.5 w-3.5" />} />
+        {locationLabel && <InfoRow label="Location" value={locationLabel} icon={<MapPin className="h-3.5 w-3.5" />} />}
         {emp.managerName && <InfoRow label="Reports To" value={emp.managerName} icon={<User className="h-3.5 w-3.5" />} />}
       </Card>
 
@@ -534,6 +546,17 @@ function OverviewTab({ emp, onTabChange }: { emp: EmployeeDetail; onTabChange: (
 
 // ── Job & Pay Tab ──────────────────────────────────────────────
 function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: string) => void }) {
+  const { data: locData } = useQuery<{ locations: Array<{ id: string; code: string; name: string }> }>({
+    queryKey: ["loc-jobpay", emp.companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${emp.companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: Array<{ id: string; code: string; name: string }> }>),
+    enabled: !!emp.companyId && !!emp.locationId,
+    staleTime: 5 * 60_000,
+  });
+  const locationLabel = emp.locationId
+    ? (() => { const l = (locData?.locations ?? []).find(x => x.id === emp.locationId); return l ? `${l.code} — ${l.name}` : null; })()
+    : null;
+
   const _isSalary = emp.payType === "salary" || emp.payType?.startsWith("salary_");
   const wageDisplay = _isSalary
     ? (emp.annualSalary != null ? `$${(emp.annualSalary / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}/yr` : null)
@@ -545,6 +568,7 @@ function JobPayTab({ emp, navigate }: { emp: EmployeeDetail; navigate: (p: strin
       <Card title="Position">
         <InfoRow label="Job Title" value={emp.jobTitle ?? emp.position} icon={<Briefcase className="h-3.5 w-3.5" />} />
         <InfoRow label="Department" value={emp.department} icon={<Building2 className="h-3.5 w-3.5" />} />
+        {locationLabel && <InfoRow label="Location" value={locationLabel} icon={<MapPin className="h-3.5 w-3.5" />} />}
         <InfoRow label="Manager" value={emp.managerName} icon={<User className="h-3.5 w-3.5" />} />
         <InfoRow label="Employment Type" value={emp.employmentType} />
         <InfoRow label="Worker Type" value={emp.workerType} />

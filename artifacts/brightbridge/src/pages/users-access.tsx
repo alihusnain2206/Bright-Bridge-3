@@ -6,7 +6,7 @@ import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, KeyRound, CheckCircle2, XCircle, Search,
-  Lock, Eye, EyeOff, ShieldCheck, RefreshCw,
+  Lock, Eye, EyeOff, ShieldCheck, RefreshCw, UserPlus, MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,17 +23,144 @@ interface UserRow {
   email:      string;
   position:   string;
   companyId:  string;
+  locationId?: string | null;
   status:     string;
   hasAccount: boolean;
   accountId:  string | null;
   role:       string | null;
+  accountLocationId?: string | null;
 }
+
+interface LocationRow { id: string; code: string; name: string; isActive: boolean; }
 
 async function apiFetch(path: string, init: RequestInit = {}) {
   const r = await fetch(path, { credentials: "include", ...init });
   const data = await r.json().catch(() => ({})) as Record<string, unknown>;
   if (!r.ok) throw new Error((data.error as string | undefined) ?? `Request failed (${r.status})`);
   return data;
+}
+
+// ── Grant Access Modal ────────────────────────────────────────────────────────
+function GrantAccessModal({
+  employee,
+  onClose,
+  onSuccess,
+}: {
+  employee: UserRow;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [role, setRole]         = useState("employee");
+  const [locationId, setLocId]  = useState("");
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState<string | null>(null);
+  const [done, setDone]         = useState(false);
+
+  const { data: locData } = useQuery<{ locations: LocationRow[] }>({
+    queryKey: ["grant-access-locs", employee.companyId],
+    queryFn: () => fetch(`/api/locations?companyId=${employee.companyId}`, { credentials: "include" })
+      .then(r => r.json() as Promise<{ locations: LocationRow[] }>),
+    staleTime: 60_000,
+  });
+  const activeLocations = (locData?.locations ?? []).filter(l => l.isActive);
+
+  async function handleGrant() {
+    setError(null);
+    if (role === "manager" && !locationId) { setError("Select a location for this manager."); return; }
+    setSaving(true);
+    try {
+      await apiFetch(`/api/admin/users/${employee.employeeId}/grant-access`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, locationId: role === "manager" ? locationId : undefined }),
+      });
+      setDone(true);
+      setTimeout(() => { onSuccess(); onClose(); }, 1600);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to grant access");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${NAVY}15` }}>
+            <UserPlus className="h-4.5 w-4.5" style={{ color: NAVY }} />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold text-gray-900">Grant Access</h2>
+            <p className="text-xs text-gray-500">{employee.firstName} {employee.lastName}</p>
+          </div>
+        </div>
+
+        {done ? (
+          <div className="flex flex-col items-center gap-3 py-4">
+            <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+            <p className="text-sm font-medium text-gray-700">Account created! Temporary password: <code className="bg-gray-100 px-1 rounded">Staff123!</code></p>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-1">
+              <Label>Role</Label>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value)}
+                className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              >
+                <option value="employee">Employee</option>
+                <option value="manager">Manager</option>
+                <option value="owner">Owner</option>
+              </select>
+            </div>
+
+            {role === "manager" && (
+              <div className="space-y-1">
+                <Label className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-gray-400" /> Location <span className="text-red-500">*</span>
+                </Label>
+                <select
+                  value={locationId}
+                  onChange={e => setLocId(e.target.value)}
+                  className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="">Select location…</option>
+                  {activeLocations.map(l => (
+                    <option key={l.id} value={l.id}>{l.code} — {l.name}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400">Managers can only view employees in their assigned location.</p>
+              </div>
+            )}
+
+            {error && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
+            )}
+
+            <p className="text-xs text-gray-400">A temporary password <code className="bg-gray-100 px-1 rounded">Staff123!</code> will be created. Ask the employee to reset it immediately.</p>
+          </>
+        )}
+
+        <div className="flex gap-2 justify-end pt-1">
+          <Button variant="outline" onClick={onClose} size="sm">Cancel</Button>
+          {!done && (
+            <Button
+              size="sm"
+              disabled={saving}
+              onClick={() => void handleGrant()}
+              className="text-white text-xs gap-1.5"
+              style={{ background: NAVY }}
+            >
+              {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
+              {saving ? "Creating…" : "Grant Access"}
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Reset Password Modal ──────────────────────────────────────────────────────
@@ -184,7 +311,8 @@ export default function UsersAccessPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [search,   setSearch]   = useState("");
-  const [resetting, setResetting] = useState<UserRow | null>(null);
+  const [resetting, setResetting]       = useState<UserRow | null>(null);
+  const [grantingAccess, setGrantingAccess] = useState<UserRow | null>(null);
 
   const { data, isLoading } = useQuery<{ users: UserRow[] }>({
     queryKey: ["admin-users"],
@@ -312,17 +440,30 @@ export default function UsersAccessPage() {
 
                   {/* Actions */}
                   <td className="px-4 py-3 text-right">
-                    {u.hasAccount && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="text-xs gap-1.5"
-                        onClick={() => setResetting(u)}
-                      >
-                        <Lock className="h-3.5 w-3.5" />
-                        Reset Password
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-2 justify-end">
+                      {!u.hasAccount && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs gap-1.5 border-[#1B3A6B]/20 text-[#1B3A6B] hover:bg-[#1B3A6B]/5"
+                          onClick={() => setGrantingAccess(u)}
+                        >
+                          <UserPlus className="h-3.5 w-3.5" />
+                          Grant Access
+                        </Button>
+                      )}
+                      {u.hasAccount && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs gap-1.5"
+                          onClick={() => setResetting(u)}
+                        >
+                          <Lock className="h-3.5 w-3.5" />
+                          Reset Password
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -336,6 +477,15 @@ export default function UsersAccessPage() {
         <ResetPasswordModal
           employee={resetting}
           onClose={() => setResetting(null)}
+          onSuccess={() => void qc.invalidateQueries({ queryKey: ["admin-users"] })}
+        />
+      )}
+
+      {/* Grant Access modal */}
+      {grantingAccess && (
+        <GrantAccessModal
+          employee={grantingAccess}
+          onClose={() => setGrantingAccess(null)}
           onSuccess={() => void qc.invalidateQueries({ queryKey: ["admin-users"] })}
         />
       )}

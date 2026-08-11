@@ -1,7 +1,7 @@
 import { store } from "../store.js";
 import { registerEmployeeInEasyTeam } from "./easyteam-employee-sync.js";
 import { onboardEmployeeToRollfi, enrollEmployeeInNewPayPeriods } from "./rollfi-employee-sync.js";
-import { resolveCompanyLocationId } from "./location.js";
+import { resolveCompanyLocationId, resolveEmployeeLocationId, resolveEmployeeRollfiLocationId } from "./location.js";
 import type { Logger } from "pino";
 
 export interface EmployeeSyncInput {
@@ -79,7 +79,8 @@ export async function syncEmployeeToIntegrations(
   emp: EmployeeSyncInput,
   log: Logger
 ): Promise<EmployeeSyncResult> {
-  const locationId = await resolveCompanyLocationId(emp.companyId);
+  // B6: use employee's own location when assigned (falls back to company location for single-site companies)
+  const locationId = (await resolveEmployeeLocationId(emp.id)) ?? await resolveCompanyLocationId(emp.companyId);
 
   // EasyTeam registration — EasyTeam upserts the employee on token exchange.
   const etResult = await registerEmployeeInEasyTeam(
@@ -103,9 +104,12 @@ export async function syncEmployeeToIntegrations(
 
   const rollfiCompany = store.getRollfiCompany(emp.companyId);
   if (rollfiCompany) {
+    // B5: resolve employee's own location's rollfiLocationId (for multi-location companies)
+    const employeeRollfiLocationId = await resolveEmployeeRollfiLocationId(emp.id, rollfiCompany.rollfiLocationId);
     const r = await onboardEmployeeToRollfi(
       {
         id: emp.id, name: emp.name, email: emp.email, roleName: emp.position, wage: emp.hourlyWageCents / 100,
+        companyLocationId: employeeRollfiLocationId,
         payType: emp.payType,
         annualSalaryCents: emp.annualSalaryCents,
         overtimeEligible: emp.overtimeEligible,

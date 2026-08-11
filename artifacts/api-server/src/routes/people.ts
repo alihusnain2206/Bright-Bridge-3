@@ -9,6 +9,7 @@ import {
   peopleActivityLog as peopleActivityLogTable,
   taskNotes as taskNotesTable,
   departments as departmentsTable,
+  locations as locationsTable,
 } from "@workspace/db";
 import { eq, and, inArray } from "drizzle-orm";
 import { store } from "../store.js";
@@ -568,8 +569,8 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
 
   const result: RollfiSyncResult = { skipped: false, updateUser: null, updateKycInfo: null, updateWage: null };
 
-  // updateUser — syncs: email, phoneNumber, dateOfJoin, workerType, jobTitle
-  const userFields = ["email","phone","startDate","workerType","jobTitle"];
+  // updateUser — syncs: email, phoneNumber, dateOfJoin, workerType, jobTitle, locationId
+  const userFields = ["email","phone","startDate","workerType","jobTitle","locationId"];
   if (userFields.some(f => changed.has(f))) {
     try {
       const user: Record<string, unknown> = { userId: rollfiUserId };
@@ -579,6 +580,12 @@ async function syncEmployeeToRollfi(emp: EmpRow, changed: Set<string>): Promise<
       if (changed.has("startDate"))  user.dateOfJoin    = emp.startDate;
       if (changed.has("workerType")) user.workerType    = emp.workerType;
       if (changed.has("jobTitle"))   user.jobTitle      = emp.jobTitle;
+      // locationId change: look up the location's Rollfi companyLocationId
+      if (changed.has("locationId") && emp.locationId) {
+        const [loc] = await db.select({ rollfiLocationId: locationsTable.rollfiLocationId })
+          .from(locationsTable).where(eq(locationsTable.id, emp.locationId));
+        if (loc?.rollfiLocationId) user.companyLocationId = loc.rollfiLocationId;
+      }
       const r = await axios.put(
         `${rollfiCfg.baseUrl}/adminPortal/updateUser`,
         { method: "updateUser", user },
@@ -706,7 +713,7 @@ router.patch("/employees/:id", requireRole("super_admin", "owner", "manager"), a
     "department","managerId","managerName","startDate","status",
     "payType","paymentMethod","ssn","dateOfBirth",
     "homeAddress","homeCity","homeState","homeZip",
-    "w4FilingStatus","notes",
+    "w4FilingStatus","notes","locationId",
   ] as const;
 
   // Integer fields

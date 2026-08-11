@@ -764,11 +764,22 @@ router.post("/employees", async (req: Request, res: Response) => {
   const dob = body.dateOfBirth?.replace(/(\d{2})\/(\d{2})\/(\d{4})/, "$3-$1-$2") ?? "1990-01-15";
 
   try {
-    // Resolve this company's primary location so the employee row has a locationId FK
-    const [empLoc] = await db.select({ id: locationsTable.id })
-      .from(locationsTable)
-      .where(and(eq(locationsTable.companyId, body.companyId), eq(locationsTable.isActive, true)))
-      .catch(() => [undefined]);
+    // Resolve employee's location: use wizard-selected locationId when provided (2+ location companies),
+    // otherwise fall back to the company's first active location (single-location / Phase 1 behavior).
+    let resolvedLocationId: string | null = null;
+    if (body.locationId) {
+      const [pickedLoc] = await db.select({ id: locationsTable.id })
+        .from(locationsTable)
+        .where(and(eq(locationsTable.id, body.locationId), eq(locationsTable.companyId, body.companyId), eq(locationsTable.isActive, true)))
+        .catch(() => [undefined]);
+      resolvedLocationId = pickedLoc?.id ?? null;
+    } else {
+      const [primaryLoc] = await db.select({ id: locationsTable.id })
+        .from(locationsTable)
+        .where(and(eq(locationsTable.companyId, body.companyId), eq(locationsTable.isActive, true)))
+        .catch(() => [undefined]);
+      resolvedLocationId = primaryLoc?.id ?? null;
+    }
 
     // 1. Save employee to DB
     await db.insert(employees).values({
@@ -810,7 +821,7 @@ router.post("/employees", async (req: Request, res: Response) => {
       bankName: body.bankSetupMethod === "manual" ? (body.bankName ?? null) : null,
       accountLast4: body.bankSetupMethod === "manual" && body.accountNumber ? body.accountNumber.slice(-4) : null,
       accountType: body.bankSetupMethod === "manual" ? (body.accountType ?? null) : null,
-      locationId: empLoc?.id ?? null,
+      locationId: resolvedLocationId,
       status: "onboarding",
       kycStatus: "not_started",
       bankAccountAdded: false,   // updated after sync with actual Rollfi result
