@@ -211,6 +211,67 @@ adminRouter.post("/admin/users/:employeeId/grant-access", async (req, res) => {
   });
 });
 
+// ── PATCH /api/admin/users/:employeeId/role ───────────────────────────────────
+// Changes the role (and optional locationId) on an EXISTING login account.
+// super_admin: any employee. owner: their company only (cannot set owner role).
+adminRouter.patch("/admin/users/:employeeId/role", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || !["super_admin", "owner"].includes(caller.role)) {
+    res.status(401).json({ error: "Not authorized" }); return;
+  }
+
+  const employeeId = String(req.params.employeeId);
+  const { role, locationId } = req.body as { role?: string; locationId?: string };
+
+  const allowedRoles = ["employee", "manager", "owner"];
+  if (!role || !allowedRoles.includes(role)) {
+    res.status(400).json({ error: `role must be one of: ${allowedRoles.join(", ")}` }); return;
+  }
+  if (role === "manager" && !locationId) {
+    res.status(400).json({ error: "locationId is required when role is manager" }); return;
+  }
+  if (caller.role === "owner" && role === "owner") {
+    res.status(403).json({ error: "Owners cannot assign owner-level access. Contact a super_admin." }); return;
+  }
+
+  const [emp] = await db.select().from(employees).where(eq(employees.id, employeeId));
+  if (!emp) { res.status(404).json({ error: "Employee not found" }); return; }
+
+  if (caller.role === "owner" && emp.companyId !== caller.companyId) {
+    res.status(403).json({ error: "Not authorized for this employee" }); return;
+  }
+
+  const [acct] = await db.select().from(userAccounts)
+    .where(eq(userAccounts.email, emp.email.toLowerCase().trim()));
+  if (!acct) { res.status(404).json({ error: "No login account found for this employee. Use Grant Access to create one." }); return; }
+
+  // Prevent owners from modifying super_admin or other owner accounts
+  if (caller.role === "owner" && acct.role && ["super_admin", "owner"].includes(acct.role)) {
+    res.status(403).json({ error: "Cannot modify this account's role." }); return;
+  }
+
+  const newLocationId = role === "manager" ? (locationId ?? null) : null;
+  await db.update(userAccounts)
+    .set({ role: role as "employee" | "manager" | "owner", locationId: newLocationId })
+    .where(eq(userAccounts.id, acct.id));
+
+  // Sync to in-memory store
+  const storeUser = store.getUserById(acct.id);
+  if (storeUser) {
+    storeUser.role = role as "employee" | "manager" | "owner";
+    storeUser.locationId = newLocationId ?? undefined;
+  }
+
+  req.log.info({
+    audit: "change-role",
+    callerUserId: caller.id, callerEmail: caller.email,
+    employeeId, accountId: acct.id,
+    previousRole: acct.role, newRole: role, newLocationId,
+  }, `[AUDIT] change-role: ${caller.email} changed role for ${emp.firstName} ${emp.lastName} → ${role}`);
+
+  res.json({ accountId: acct.id, role, locationId: newLocationId, message: "Role updated." });
+});
+
 // ── POST /api/admin/users/:employeeId/set-password ────────────────────────────
 // Resets a user's password without requiring their current password.
 // super_admin: any employee. owner: their company only.

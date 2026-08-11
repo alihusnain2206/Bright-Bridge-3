@@ -1,33 +1,32 @@
 /**
- * Users & Access — admin page for managing employee login accounts and passwords.
+ * Users & Access — manage employee login accounts and roles.
  * Accessible to: super_admin, owner
  */
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Users, KeyRound, CheckCircle2, XCircle, Search,
-  Lock, Eye, EyeOff, ShieldCheck, RefreshCw, UserPlus, MapPin,
+  Lock, Eye, EyeOff, ShieldCheck, RefreshCw, UserPlus, MapPin, Shield,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/hooks/useAuth";
 
-const NAVY   = "#1B3A6B";
-const ACCENT = "#0EA5C9";
+const NAVY = "#1B3A6B";
 
 interface UserRow {
-  employeeId: string;
-  firstName:  string;
-  lastName:   string;
-  email:      string;
-  position:   string;
-  companyId:  string;
-  locationId?: string | null;
-  status:     string;
-  hasAccount: boolean;
-  accountId:  string | null;
-  role:       string | null;
+  employeeId:       string;
+  firstName:        string;
+  lastName:         string;
+  email:            string;
+  position:         string;
+  companyId:        string;
+  locationId?:      string | null;
+  status:           string;
+  hasAccount:       boolean;
+  accountId:        string | null;
+  role:             string | null;
   accountLocationId?: string | null;
 }
 
@@ -40,58 +39,91 @@ async function apiFetch(path: string, init: RequestInit = {}) {
   return data;
 }
 
-// ── Grant Access Modal ────────────────────────────────────────────────────────
-function GrantAccessModal({
+// ── Manage Access Modal (create OR change role) ───────────────────────────────
+function ManageAccessModal({
   employee,
+  mode,          // "grant" = no account yet | "change" = update existing role
   onClose,
   onSuccess,
+  callerRole,
 }: {
-  employee: UserRow;
-  onClose: () => void;
-  onSuccess: () => void;
+  employee:   UserRow;
+  mode:       "grant" | "change";
+  onClose:    () => void;
+  onSuccess:  () => void;
+  callerRole: string;
 }) {
-  const [role, setRole]         = useState("employee");
-  const [locationId, setLocId]  = useState("");
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState<string | null>(null);
-  const [done, setDone]         = useState(false);
+  const initialRole = mode === "change" && employee.role ? employee.role : "employee";
+  const [role, setRole]        = useState(initialRole);
+  const [locationId, setLocId] = useState(
+    mode === "change" && employee.role === "manager" ? (employee.accountLocationId ?? "") : ""
+  );
+  const [saving, setSaving]    = useState(false);
+  const [error, setError]      = useState<string | null>(null);
+  const [done, setDone]        = useState(false);
 
   const { data: locData } = useQuery<{ locations: LocationRow[] }>({
-    queryKey: ["grant-access-locs", employee.companyId],
-    queryFn: () => fetch(`/api/locations?companyId=${employee.companyId}`, { credentials: "include" })
-      .then(r => r.json() as Promise<{ locations: LocationRow[] }>),
+    queryKey: ["manage-access-locs", employee.companyId],
+    queryFn: () =>
+      fetch(`/api/locations?companyId=${employee.companyId}`, { credentials: "include" })
+        .then(r => r.json() as Promise<{ locations: LocationRow[] }>),
     staleTime: 60_000,
   });
   const activeLocations = (locData?.locations ?? []).filter(l => l.isActive);
 
-  async function handleGrant() {
+  async function handleSubmit() {
     setError(null);
-    if (role === "manager" && !locationId) { setError("Select a location for this manager."); return; }
+    if (role === "manager" && !locationId) {
+      setError("Select a location for this manager."); return;
+    }
     setSaving(true);
     try {
-      await apiFetch(`/api/admin/users/${employee.employeeId}/grant-access`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, locationId: role === "manager" ? locationId : undefined }),
-      });
+      if (mode === "grant") {
+        await apiFetch(`/api/admin/users/${employee.employeeId}/grant-access`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role, locationId: role === "manager" ? locationId : undefined }),
+        });
+      } else {
+        await apiFetch(`/api/admin/users/${employee.employeeId}/role`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role, locationId: role === "manager" ? locationId : undefined }),
+        });
+      }
       setDone(true);
       setTimeout(() => { onSuccess(); onClose(); }, 1600);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to grant access");
+      setError(err instanceof Error ? err.message : "Failed");
     } finally {
       setSaving(false);
     }
   }
 
+  const isGrant = mode === "grant";
+  const title   = isGrant ? "Grant Access" : "Change Role";
+  const btnLabel = isGrant
+    ? (saving ? "Creating…" : "Grant Access")
+    : (saving ? "Saving…"   : "Save Changes");
+
+  // owners cannot assign owner role
+  const roleOptions = callerRole === "owner"
+    ? [{ value: "employee", label: "Employee" }, { value: "manager", label: "Manager" }]
+    : [{ value: "employee", label: "Employee" }, { value: "manager", label: "Manager" }, { value: "owner", label: "Owner" }];
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-5">
+
+        {/* Header */}
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: `${NAVY}15` }}>
-            <UserPlus className="h-4.5 w-4.5" style={{ color: NAVY }} />
+            {isGrant
+              ? <UserPlus className="h-4 w-4" style={{ color: NAVY }} />
+              : <Shield   className="h-4 w-4" style={{ color: NAVY }} />}
           </div>
           <div>
-            <h2 className="text-base font-semibold text-gray-900">Grant Access</h2>
+            <h2 className="text-base font-semibold text-gray-900">{title}</h2>
             <p className="text-xs text-gray-500">{employee.firstName} {employee.lastName}</p>
           </div>
         </div>
@@ -99,62 +131,101 @@ function GrantAccessModal({
         {done ? (
           <div className="flex flex-col items-center gap-3 py-4">
             <CheckCircle2 className="h-8 w-8 text-emerald-500" />
-            <p className="text-sm font-medium text-gray-700">Account created! Temporary password: <code className="bg-gray-100 px-1 rounded">Staff123!</code></p>
+            <p className="text-sm font-medium text-gray-700 text-center">
+              {isGrant
+                ? <>Account created! Temporary password: <code className="bg-gray-100 px-1 rounded">Staff123!</code></>
+                : "Role updated successfully."}
+            </p>
           </div>
         ) : (
           <>
-            <div className="space-y-1">
-              <Label>Role</Label>
-              <select
-                value={role}
-                onChange={e => setRole(e.target.value)}
-                className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              >
-                <option value="employee">Employee</option>
-                <option value="manager">Manager</option>
-                <option value="owner">Owner</option>
-              </select>
+            {/* Current role indicator for change mode */}
+            {!isGrant && employee.role && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 rounded-lg px-3 py-2">
+                <span>Current role:</span>
+                <RoleBadge role={employee.role} />
+                {employee.role === "manager" && employee.accountLocationId && (
+                  <span className="text-gray-400 flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />{employee.accountLocationId}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Role picker */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-gray-700">Role</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {roleOptions.map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setRole(opt.value); if (opt.value !== "manager") setLocId(""); }}
+                    className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors text-left ${
+                      role === opt.value
+                        ? "border-[#1B3A6B] bg-[#1B3A6B]/5 text-[#1B3A6B]"
+                        : "border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
+            {/* Location picker — required for manager */}
             {role === "manager" && (
-              <div className="space-y-1">
-                <Label className="flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 text-gray-400" /> Location <span className="text-red-500">*</span>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-gray-400" />
+                  Location <span className="text-red-500">*</span>
                 </Label>
-                <select
-                  value={locationId}
-                  onChange={e => setLocId(e.target.value)}
-                  className="w-full h-9 text-sm border border-gray-200 rounded-md px-2 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                >
-                  <option value="">Select location…</option>
-                  {activeLocations.map(l => (
-                    <option key={l.id} value={l.id}>{l.code} — {l.name}</option>
-                  ))}
-                </select>
+                {activeLocations.length === 0 ? (
+                  <p className="text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg">
+                    No active locations found. Add a location in Company Settings first.
+                  </p>
+                ) : (
+                  <select
+                    value={locationId}
+                    onChange={e => setLocId(e.target.value)}
+                    className="w-full h-9 text-sm border border-gray-200 rounded-md px-2.5 focus:outline-none focus:ring-2 focus:ring-[#1B3A6B]/30 bg-white"
+                  >
+                    <option value="">Select location…</option>
+                    {activeLocations.map(l => (
+                      <option key={l.id} value={l.id}>{l.code} — {l.name}</option>
+                    ))}
+                  </select>
+                )}
                 <p className="text-[11px] text-gray-400">Managers can only view employees in their assigned location.</p>
               </div>
+            )}
+
+            {/* Grant-mode notice */}
+            {isGrant && (
+              <p className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+                A temporary password <code className="bg-white border border-gray-200 px-1 rounded">Staff123!</code> will be set. Ask the employee to change it after their first login.
+              </p>
             )}
 
             {error && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>
             )}
-
-            <p className="text-xs text-gray-400">A temporary password <code className="bg-gray-100 px-1 rounded">Staff123!</code> will be created. Ask the employee to reset it immediately.</p>
           </>
         )}
 
         <div className="flex gap-2 justify-end pt-1">
-          <Button variant="outline" onClick={onClose} size="sm">Cancel</Button>
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
           {!done && (
             <Button
               size="sm"
               disabled={saving}
-              onClick={() => void handleGrant()}
+              onClick={() => void handleSubmit()}
               className="text-white text-xs gap-1.5"
               style={{ background: NAVY }}
             >
-              {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <UserPlus className="h-3.5 w-3.5" />}
-              {saving ? "Creating…" : "Grant Access"}
+              {saving
+                ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                : isGrant ? <UserPlus className="h-3.5 w-3.5" /> : <Shield className="h-3.5 w-3.5" />}
+              {btnLabel}
             </Button>
           )}
         </div>
@@ -173,12 +244,12 @@ function ResetPasswordModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
-  const [password, setPassword]     = useState("");
-  const [confirm,  setConfirm]      = useState("");
-  const [showPw,   setShowPw]       = useState(false);
-  const [saving,   setSaving]       = useState(false);
-  const [error,    setError]        = useState<string | null>(null);
-  const [done,     setDone]         = useState(false);
+  const [password, setPassword] = useState("");
+  const [confirm,  setConfirm]  = useState("");
+  const [showPw,   setShowPw]   = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState<string | null>(null);
+  const [done,     setDone]     = useState(false);
 
   const mismatch = confirm.length > 0 && password !== confirm;
   const tooShort = password.length > 0 && password.length < 8;
@@ -187,8 +258,8 @@ function ResetPasswordModal({
   async function handleSave() {
     setError(null);
     if (!password || !confirm) { setError("Both fields are required"); return; }
-    if (password !== confirm)  { setError("Passwords do not match");    return; }
-    if (password.length < 8)   { setError("Minimum 8 characters");       return; }
+    if (password !== confirm)  { setError("Passwords do not match");   return; }
+    if (password.length < 8)   { setError("Minimum 8 characters");     return; }
     setSaving(true);
     try {
       await apiFetch(`/api/admin/users/${employee.employeeId}/set-password`, {
@@ -208,7 +279,6 @@ function ResetPasswordModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6">
-        {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${NAVY}15` }}>
             <KeyRound className="h-5 w-5" style={{ color: NAVY }} />
@@ -268,18 +338,14 @@ function ResetPasswordModal({
             )}
 
             <div className="flex gap-3 pt-2">
-              <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>
-                Cancel
-              </Button>
+              <Button variant="outline" className="flex-1" onClick={onClose} disabled={saving}>Cancel</Button>
               <Button
                 className="flex-1 text-white"
                 style={{ background: NAVY }}
                 onClick={handleSave}
                 disabled={!canSave}
               >
-                {saving ? (
-                  <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Saving…</>
-                ) : "Set Password"}
+                {saving ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Saving…</> : "Set Password"}
               </Button>
             </div>
           </div>
@@ -310,9 +376,9 @@ function RoleBadge({ role }: { role: string | null }) {
 export default function UsersAccessPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
-  const [search,   setSearch]   = useState("");
-  const [resetting, setResetting]       = useState<UserRow | null>(null);
-  const [grantingAccess, setGrantingAccess] = useState<UserRow | null>(null);
+  const [search,   setSearch]  = useState("");
+  const [resetting, setResetting]   = useState<UserRow | null>(null);
+  const [managing,  setManaging]    = useState<{ employee: UserRow; mode: "grant" | "change" } | null>(null);
 
   const { data, isLoading } = useQuery<{ users: UserRow[] }>({
     queryKey: ["admin-users"],
@@ -331,6 +397,9 @@ export default function UsersAccessPage() {
 
   const withAccount    = rows.filter(u => u.hasAccount).length;
   const withoutAccount = rows.filter(u => !u.hasAccount).length;
+  const callerRole     = user?.role ?? "owner";
+
+  function invalidate() { void qc.invalidateQueries({ queryKey: ["admin-users"] }); }
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
@@ -342,7 +411,7 @@ export default function UsersAccessPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900">Users & Access</h1>
-          <p className="text-sm text-gray-500">Manage employee login accounts and reset passwords</p>
+          <p className="text-sm text-gray-500">Manage employee login accounts and roles</p>
         </div>
       </div>
 
@@ -350,13 +419,13 @@ export default function UsersAccessPage() {
       {!isLoading && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: "Total employees", value: rows.length,       icon: Users,         color: NAVY   },
-            { label: "Have accounts",   value: withAccount,       icon: CheckCircle2,  color: "#16a34a" },
-            { label: "No account yet",  value: withoutAccount,    icon: XCircle,       color: "#9ca3af" },
+            { label: "Total employees", value: rows.length,       icon: Users,        color: NAVY       },
+            { label: "Have accounts",   value: withAccount,       icon: CheckCircle2, color: "#16a34a"  },
+            { label: "No account yet",  value: withoutAccount,    icon: XCircle,      color: "#9ca3af"  },
           ].map(({ label, value, icon: Icon, color }) => (
             <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `${color}15` }}>
-                <Icon className="h-4.5 w-4.5" style={{ color }} />
+                <Icon className="h-4 w-4" style={{ color }} />
               </div>
               <div>
                 <p className="text-xl font-bold text-gray-900">{value}</p>
@@ -367,7 +436,7 @@ export default function UsersAccessPage() {
         </div>
       )}
 
-      {/* Search + Table */}
+      {/* Table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="p-4 border-b border-gray-100">
           <div className="relative max-w-sm">
@@ -393,12 +462,13 @@ export default function UsersAccessPage() {
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide hidden sm:table-cell">Email</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide hidden md:table-cell">Role</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Account</th>
-                <th className="px-4 py-3" />
+                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wide">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {rows.map(u => (
                 <tr key={u.employeeId} className="hover:bg-gray-50/50 transition-colors">
+
                   {/* Name + position */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
@@ -416,9 +486,7 @@ export default function UsersAccessPage() {
                   </td>
 
                   {/* Email */}
-                  <td className="px-4 py-3 text-gray-600 hidden sm:table-cell">
-                    {u.email}
-                  </td>
+                  <td className="px-4 py-3 text-gray-600 hidden sm:table-cell">{u.email}</td>
 
                   {/* Role */}
                   <td className="px-4 py-3 hidden md:table-cell">
@@ -438,29 +506,42 @@ export default function UsersAccessPage() {
                     )}
                   </td>
 
-                  {/* Actions */}
+                  {/* Actions — always visible */}
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center gap-2 justify-end">
-                      {!u.hasAccount && (
+                    <div className="flex items-center gap-2 justify-end flex-wrap">
+                      {u.hasAccount ? (
+                        <>
+                          {/* Change role — only for non-owner callers changing non-protected accounts */}
+                          {!(callerRole === "owner" && u.role && ["super_admin", "owner"].includes(u.role)) && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="text-xs gap-1.5 border-[#1B3A6B]/20 text-[#1B3A6B] hover:bg-[#1B3A6B]/5"
+                              onClick={() => setManaging({ employee: u, mode: "change" })}
+                            >
+                              <Shield className="h-3.5 w-3.5" />
+                              Change Role
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="text-xs gap-1.5"
+                            onClick={() => setResetting(u)}
+                          >
+                            <Lock className="h-3.5 w-3.5" />
+                            Reset Password
+                          </Button>
+                        </>
+                      ) : (
                         <Button
                           size="sm"
                           variant="outline"
                           className="text-xs gap-1.5 border-[#1B3A6B]/20 text-[#1B3A6B] hover:bg-[#1B3A6B]/5"
-                          onClick={() => setGrantingAccess(u)}
+                          onClick={() => setManaging({ employee: u, mode: "grant" })}
                         >
                           <UserPlus className="h-3.5 w-3.5" />
                           Grant Access
-                        </Button>
-                      )}
-                      {u.hasAccount && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-xs gap-1.5"
-                          onClick={() => setResetting(u)}
-                        >
-                          <Lock className="h-3.5 w-3.5" />
-                          Reset Password
                         </Button>
                       )}
                     </div>
@@ -472,21 +553,23 @@ export default function UsersAccessPage() {
         )}
       </div>
 
-      {/* Reset modal */}
+      {/* Reset Password modal */}
       {resetting && (
         <ResetPasswordModal
           employee={resetting}
           onClose={() => setResetting(null)}
-          onSuccess={() => void qc.invalidateQueries({ queryKey: ["admin-users"] })}
+          onSuccess={invalidate}
         />
       )}
 
-      {/* Grant Access modal */}
-      {grantingAccess && (
-        <GrantAccessModal
-          employee={grantingAccess}
-          onClose={() => setGrantingAccess(null)}
-          onSuccess={() => void qc.invalidateQueries({ queryKey: ["admin-users"] })}
+      {/* Manage Access modal (grant or change role) */}
+      {managing && (
+        <ManageAccessModal
+          employee={managing.employee}
+          mode={managing.mode}
+          onClose={() => setManaging(null)}
+          onSuccess={invalidate}
+          callerRole={callerRole}
         />
       )}
     </div>

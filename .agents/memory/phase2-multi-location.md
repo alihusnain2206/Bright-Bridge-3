@@ -43,6 +43,13 @@ description: What was built for Phase 2 (locations visible + manageable); archit
 
 `POST /api/admin/users/:employeeId/grant-access` body: `{ role, locationId? }` → `{ accountId, role, locationId, tempPassword, message }`
 
+## Grant Access / Change Role bugs fixed (Aug 2026)
+- Grant Access button was gated on `!u.hasAccount` → invisible when all employees have accounts
+- Fixed: employees WITH accounts get a "Change Role" button; employees WITHOUT get "Grant Access"
+- Added `PATCH /api/admin/users/:employeeId/role` endpoint with same guards as grant-access
+- Fixed drizzle column name bug: `.set({ location_id })` → `.set({ locationId })` (drizzle uses JS camelCase property, not DB snake_case column; silent ignore caused locationId to never persist)
+- Modal merged into single `ManageAccessModal` with `mode: "grant" | "change"`
+
 ## Outstanding (Phase 3)
 
 Access-control enforcement: managers scoped to their locationId. Guards in `people.ts`, `easyteam.ts`, `companies.ts` etc. not yet applied for location-level scoping.
