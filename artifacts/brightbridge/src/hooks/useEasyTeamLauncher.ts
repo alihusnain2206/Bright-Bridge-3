@@ -82,17 +82,14 @@ export function useEasyTeamLauncher(
     if (!container) return;
     container.innerHTML = "";
 
-    // Phase 3: build per-location employee maps.
-    // Employees with a locationId are scoped to their assigned location only.
-    // Employees without locationId (e.g. manager-self entries, legacy data) appear in all
-    // locations — this preserves backward compatibility and ensures the JWT's employeeId
-    // is always present in the EasyTeam employees list regardless of location.
+    // All employees go into every location's dict (pre-Phase-3 flat behaviour).
+    // Phase 3 per-location filtering broke per-employee hour attribution — EasyTeam
+    // was not recognising our internal location IDs. Reverted pending confirmation
+    // of the correct multi-location payload shape from EasyTeam.
     const resolvedLocations = config.locations.map((loc) => ({
       ...loc,
       employees: Object.fromEntries(
-        config.employees
-          .filter((e) => !e.locationId || e.locationId === loc.id)
-          .map((e) => [e.id, {}])
+        config.employees.map((e) => [e.id, {}])
       ),
     }));
 
@@ -101,6 +98,12 @@ export function useEasyTeamLauncher(
     // recognise our internal IDs and interprets the field as a location filter,
     // which causes every per-employee row to show 0m while the total stays correct.
     const sdkEmployees = config.employees.map(({ locationId: _loc, ...rest }) => rest);
+
+    // TEMP DIAGNOSTIC — remove after confirming payload shape
+    console.log("[EasyTeam SDK payload]", JSON.stringify({
+      employees: sdkEmployees,
+      locations: resolvedLocations,
+    }, null, 2));
 
     const launcher = new EasyTeamEmbedLauncher(token, {
       employees: sdkEmployees,

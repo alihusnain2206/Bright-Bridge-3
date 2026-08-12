@@ -360,7 +360,10 @@ export default function Timesheets() {
         timeTrackingEnabled: true,
         wage: e.wage ?? 1500,
         wageType: "hourly" as const,
-        locationId: e.locationId ?? undefined,
+        // locationId intentionally omitted from SDK payload — Phase 3 fallback.
+        // EasyTeam misinterprets our internal location IDs as its own UUIDs and
+        // silently zeroes per-employee rows. Restoring pre-Phase-3 flat behaviour
+        // until the correct multi-location payload shape is confirmed with EasyTeam.
       }));
 
       // Use freshly-fetched pay period dates for the iframe URL.
@@ -394,23 +397,14 @@ export default function Timesheets() {
         ? [selfEntry, ...apiEmployees]
         : apiEmployees;
 
-      // Phase 3: fetch all active locations for this company from the API.
-      // This replaces the hardcoded ALL_STATIC_LOCATIONS approach so multi-location companies
-      // get per-location employee maps instead of mapping all employees to all locations.
-      const companyIdEnc2 = encodeURIComponent(user.companyId ?? "");
-      const locData = await fetch(`/api/locations?companyId=${companyIdEnc2}`, { credentials: "include" })
-        .then(r => r.json() as Promise<{ locations?: Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> }>)
-        .catch(() => ({ locations: [] as Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> }));
-
-      const apiLocations2 = (locData.locations ?? [])
-        .filter((l) => l.isActive)
-        .map((l) => ({ id: l.id, name: l.name, latitude: l.latitude ?? 40.7357, longitude: l.longitude ?? -74.1724 }));
-
-      // Fall back to COMPANY_LOCATIONS (seeded coords) or auth-provided location
-      const companyFallbackLocs = COMPANY_LOCATIONS[user.companyId ?? ""] ?? (authLocation
+      // SDK launcher locations: use static COMPANY_LOCATIONS (pre-Phase-3 fallback).
+      // Fetching locations from the API and splitting employees per-location broke
+      // per-employee hour attribution in the EasyTeam iframe (all rows showed 0m).
+      // Reverting to a flat single-location payload while the correct multi-location
+      // SDK shape is confirmed with EasyTeam. Backend Phase 3 changes are untouched.
+      const locations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? (authLocation
         ? [{ id: authLocation.id, name: authLocation.name, latitude: authLocation.latitude, longitude: authLocation.longitude }]
         : []);
-      const locations = apiLocations2.length > 0 ? apiLocations2 : companyFallbackLocs;
 
       if (locations.length === 0) { setTokenError("No location data available for this company"); return; }
 
