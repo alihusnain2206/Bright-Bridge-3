@@ -804,7 +804,12 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
     entries = storeEntries;
   }
 
-  // ── Managers: scope to their location + pad 0m rows for all roster members ──
+  // ── Managers: pad 0m rows for all roster members; never drop entries with real hours ──
+  // We deliberately do NOT filter entries down to only location employees: if an employee's
+  // location_id in the DB is stale or set to a non-matching format (e.g. an EasyTeam UUID
+  // instead of our internal LOC-* key), a hard filter silently drops their hours and shows
+  // 0m for the whole table. Instead, we keep every entry that has actual hours and only pad
+  // 0m rows for location employees who have no EasyTeam data yet.
   if (sessionUser?.role === "manager" && sessionUser.locationId) {
     const locationEmployees = await db
       .select({ id: employeesTable.id })
@@ -814,8 +819,11 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
         eq(employeesTable.locationId, sessionUser.locationId),
       ))
       .catch(() => [] as { id: string }[]);
+    // Drop zero-hour entries for employees that are NOT on this location's roster
+    // (avoids showing ghost employees from other locations), but keep all entries
+    // with actual hours regardless of location assignment.
     const empIdSet = new Set(locationEmployees.map((e) => e.id));
-    entries = entries.filter((e) => empIdSet.has(e.employeeId));
+    entries = entries.filter((e) => e.hoursWorked > 0 || empIdSet.has(e.employeeId));
     // Pad: add a 0m placeholder for any roster member not yet in entries
     const coveredIds = new Set(entries.map((e) => e.employeeId));
     for (const { id } of locationEmployees) {
@@ -1060,6 +1068,29 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
     (managerEntries ?? []).map((e) => [e.employeeId, e])
   );
 
+  // ── Location scope: managers may only approve entries for their own location ──
+  // Resolves the set of employee IDs that belong to the approving manager's location.
+  // null = no restriction (owner / super_admin).
+  const approvingUser = store.getUserById(userId);
+  let locationEmpIds: Set<string> | null = null;
+  if (approvingUser?.role === "manager" && approvingUser.locationId) {
+    const locEmpRows = await db
+      .select({ id: employeesTable.id })
+      .from(employeesTable)
+      .where(and(eq(employeesTable.companyId, companyId), eq(employeesTable.locationId, approvingUser.locationId)))
+      .catch(() => [] as { id: string }[]);
+    locationEmpIds = new Set(locEmpRows.map((r) => r.id));
+    if (locationEmpIds.size === 0) {
+      // No employees found for this locationId — the stored location_id may be in a different
+      // format (e.g. EasyTeam UUID vs internal LOC-* key). Fall back to company-wide scope
+      // rather than silently blocking the entire approval.
+      req.log.warn({ locationId: approvingUser.locationId, companyId }, "Approve: location lookup returned 0 employees — locationId format mismatch? Falling back to company-wide approval");
+      locationEmpIds = null;
+    } else {
+      req.log.info({ locationId: approvingUser.locationId, scopedEmployees: locationEmpIds.size }, "Approve: manager location scope resolved");
+    }
+  }
+
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
@@ -1094,6 +1125,8 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
 
     if (hoursByEmp.size > 0) {
       await Promise.all(Array.from(hoursByEmp.entries()).map(async ([empId, hours]) => {
+        // Location scope: skip employees outside the manager's location
+        if (locationEmpIds && !locationEmpIds.has(empId)) return;
         const breakH = breaksByEmp.get(empId) ?? 0;
         await upsertTimesheetEntry({
           employeeId: empId,
@@ -1147,6 +1180,8 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
             req.log.warn({ etEmployeeId }, "Approve: skipping shift for unrecognised EasyTeam UUID");
             continue;
           }
+          // Location scope: skip employees outside the manager's location
+          if (locationEmpIds && !locationEmpIds.has(internalEmpId)) continue;
           const matchedUser = companyUsers.find((u) => u.employeeId === internalEmpId);
           const resolvedCompanyId = matchedUser?.companyId ?? companyId;
           const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
@@ -1176,14 +1211,19 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
     }
   }
 
-  // ── Step 3: Ensure every company employee has an entry for this period ──
+  // ── Step 3: Ensure every in-scope employee has an entry for this period ──
   // If any employee has no entry (0 hours from EasyTeam), write an explicit 0-hour record.
   // This prevents the payroll fallback from picking up stale approvals from a prior period.
+  // For managers: only ensure coverage for employees in their own location.
   const existing = store.getTimesheetEntriesForPeriod(periodKey).filter((e) => e.companyId === companyId);
   const existingEmpIds = new Set(existing.map((e) => e.employeeId));
   // Include managers with an employeeId — promoted employees retain their timesheet identity
-  const companyStaff = store.getAllStaffUsers()
+  let companyStaff = store.getAllStaffUsers()
     .filter((u) => u.employeeId && u.companyId === companyId && (u.role === "employee" || u.role === "manager"));
+  // Location scope: only ensure coverage for the manager's location employees
+  if (locationEmpIds) {
+    companyStaff = companyStaff.filter((u) => u.employeeId != null && locationEmpIds!.has(u.employeeId));
+  }
   const zeroNow = new Date().toISOString();
   const missingStaff = companyStaff.filter((u) => !existingEmpIds.has(u.employeeId!));
   for (const u of missingStaff) {
@@ -1202,7 +1242,16 @@ router.post("/easyteam/hours/approve", requireRole("super_admin", "owner", "mana
     req.log.info({ count: missingStaff.length, periodKey, missing: missingStaff.map((u) => u.employeeId) }, "Wrote 0-hour entries for employees with no EasyTeam shifts this period");
   }
 
-  const approved = store.approveTimesheetEntries(periodKey, companyId, userId);
+  // Approve all entries for the period; then narrow to the manager's location scope.
+  // store.approveTimesheetEntries marks entries in memory and returns them for processing —
+  // we then filter before writing to timesheet_approvals so a LOC-A manager cannot create
+  // approval records for employees belonging to LOC-B.
+  let approved = store.approveTimesheetEntries(periodKey, companyId, userId);
+  if (locationEmpIds) {
+    const beforeCount = approved.length;
+    approved = approved.filter((e) => locationEmpIds!.has(e.employeeId));
+    req.log.info({ before: beforeCount, after: approved.length, periodKey }, "Approve: filtered approved entries to location scope");
+  }
   const now = new Date().toISOString();
 
   // Build final approved entries — apply any manager-supplied hour overrides
