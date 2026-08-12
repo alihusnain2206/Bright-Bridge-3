@@ -210,6 +210,9 @@ router.put("/locations/:id", requireRole("super_admin", "owner"), async (req: Re
     code?: string; name?: string;
     address1?: string; address2?: string;
     city?: string; state?: string; zipcode?: string;
+    isActive?: boolean;
+    latitude?: number | null;
+    longitude?: number | null;
   };
 
   try {
@@ -230,17 +233,71 @@ router.put("/locations/:id", requireRole("super_admin", "owner"), async (req: Re
     }
 
     const updates: Record<string, unknown> = {};
-    if (body.code     !== undefined) updates.code     = body.code.trim();
-    if (body.name     !== undefined) updates.name     = body.name.trim();
-    if (body.address1 !== undefined) updates.address1 = body.address1;
-    if (body.address2 !== undefined) updates.address2 = body.address2 || null;
-    if (body.city     !== undefined) updates.city     = body.city;
-    if (body.state    !== undefined) updates.state    = body.state;
-    if (body.zipcode  !== undefined) updates.zipcode  = body.zipcode;
+    if (body.code      !== undefined) updates.code      = body.code.trim();
+    if (body.name      !== undefined) updates.name      = body.name.trim();
+    if (body.address1  !== undefined) updates.address1  = body.address1;
+    if (body.address2  !== undefined) updates.address2  = body.address2 || null;
+    if (body.city      !== undefined) updates.city      = body.city;
+    if (body.state     !== undefined) updates.state     = body.state;
+    if (body.zipcode   !== undefined) updates.zipcode   = body.zipcode;
+    if (body.latitude  !== undefined) updates.latitude  = body.latitude;
+    if (body.longitude !== undefined) updates.longitude = body.longitude;
+
+    // ── isActive toggle ────────────────────────────────────────────────────────
+    if (body.isActive === false && loc.isActive) {
+      // Deactivation: block if this is the primary location
+      if ((loc as Record<string, unknown>).isPrimary) {
+        res.status(409).json({ error: "Cannot deactivate the primary location. Designate another location as primary first." });
+        return;
+      }
+      // Block if active employees are assigned
+      const activeEmps = await db.select({ id: employeesTable.id })
+        .from(employeesTable)
+        .where(and(eq(employeesTable.locationId, id), eq(employeesTable.status, "active")));
+      if (activeEmps.length > 0) {
+        res.status(409).json({
+          error: `Reassign ${activeEmps.length} employee${activeEmps.length !== 1 ? "s" : ""} before deactivating this location.`,
+          assignedCount: activeEmps.length,
+        });
+        return;
+      }
+      updates.isActive = false;
+    } else if (body.isActive === true && !loc.isActive) {
+      // Activation: coordinates (lat/lng) must exist (in update or already in DB)
+      const finalLat = body.latitude  ?? (loc as Record<string, unknown>).latitude as number | null | undefined;
+      const finalLng = body.longitude ?? (loc as Record<string, unknown>).longitude as number | null | undefined;
+      if (finalLat == null || finalLng == null) {
+        res.status(400).json({ error: "Coordinates (latitude and longitude) are required before activating a location. Fill them in and save, then activate." });
+        return;
+      }
+      updates.isActive  = true;
+      updates.latitude  = finalLat;
+      updates.longitude = finalLng;
+    }
 
     if (Object.keys(updates).length === 0) { res.json({ location: loc, noChange: true }); return; }
 
     await db.update(locationsTable).set(updates).where(eq(locationsTable.id, id));
+
+    // ── EasyTeam: re-run setup if location just got activated ─────────────────
+    let easyteamWarning: string | null = null;
+    if (body.isActive === true && !loc.isActive && loc.easyteamLocationId) {
+      const stateToUse = (updates.state as string | undefined) ?? loc.state;
+      try {
+        const tzResult = await ensureLocationTimezone(loc.easyteamLocationId, { country: "US", state: stateToUse || "NJ" });
+        if (!tzResult.ok) easyteamWarning = `EasyTeam timezone: ${tzResult.detail ?? "failed"}`;
+
+        const polResult = await ensureTimeOffPolicy(loc.easyteamLocationId);
+        if (!polResult.ok) {
+          const polMsg = `EasyTeam time-off policy: ${polResult.detail ?? "failed"}`;
+          easyteamWarning = easyteamWarning ? `${easyteamWarning}; ${polMsg}` : polMsg;
+          req.log.warn({ detail: polResult.detail, id }, "PUT /locations: time-off policy setup failed on activation");
+        }
+      } catch (err) {
+        easyteamWarning = `EasyTeam setup: ${String(err)}`;
+        req.log.warn({ err, id }, "PUT /locations: EasyTeam setup failed on activation (non-fatal)");
+      }
+    }
 
     // Rollfi: update address if changed and rollfiLocationId exists
     let rollfiWarning: string | null = null;
@@ -274,14 +331,17 @@ router.put("/locations/:id", requireRole("super_admin", "owner"), async (req: Re
       }
     }
 
-    // EasyTeam: re-patch timezone if state changed
-    if (updates.state && loc.easyteamLocationId) {
+    // EasyTeam: re-patch timezone if state changed (skip if we already ran setup above for activation)
+    if (updates.state && loc.easyteamLocationId && body.isActive !== true) {
       ensureLocationTimezone(loc.easyteamLocationId, { country: "US", state: updates.state as string })
         .catch(() => { /* non-fatal, already logged inside */ });
     }
 
     const [updated] = await db.select().from(locationsTable).where(eq(locationsTable.id, id));
-    res.json({ location: updated, warnings: rollfiWarning ? [rollfiWarning] : undefined });
+    const allWarnings: string[] = [];
+    if (rollfiWarning) allWarnings.push(rollfiWarning);
+    if (easyteamWarning) allWarnings.push(easyteamWarning);
+    res.json({ location: updated, warnings: allWarnings.length > 0 ? allWarnings : undefined });
   } catch (err) {
     req.log.error({ err }, "PUT /locations failed");
     res.status(500).json({ error: "Failed to update location" });
@@ -300,6 +360,12 @@ router.delete("/locations/:id", requireRole("super_admin", "owner"), async (req:
     if (!loc) { res.status(404).json({ error: "Location not found" }); return; }
     if (caller.role === "owner" && loc.companyId !== caller.companyId) {
       res.status(403).json({ error: "Not authorized for this location" }); return;
+    }
+
+    // Guard: block deactivation of the primary location
+    if ((loc as Record<string, unknown>).isPrimary) {
+      res.status(409).json({ error: "Cannot deactivate the primary location. Designate another location as primary first." });
+      return;
     }
 
     // Guard: block if any ACTIVE employees are assigned here

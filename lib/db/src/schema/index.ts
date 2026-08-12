@@ -435,6 +435,9 @@ export const locations = pgTable("locations", {
   zipcode:            text("zipcode").notNull().default(""),
   easyteamLocationId: text("easyteam_location_id"),
   rollfiLocationId:   text("rollfi_location_id"),
+  isPrimary:          boolean("is_primary").notNull().default(false),
+  latitude:           real("latitude"),
+  longitude:          real("longitude"),
   isActive:           boolean("is_active").notNull().default(true),
   createdAt:          text("created_at").notNull(),
 });

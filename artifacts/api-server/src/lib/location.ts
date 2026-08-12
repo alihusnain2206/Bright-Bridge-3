@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import { db, companies as companiesTable, locations as locationsTable, employees as employeesTable } from "@workspace/db";
 
 /**
@@ -45,11 +45,14 @@ export async function resolveCompanyLocationId(companyId: string): Promise<strin
   if (storeLocationId) return storeLocationId;
 
   try {
-    // 2. Locations table — authoritative for wizard companies after Phase 1 boot migration
+    // 2. Locations table — authoritative for wizard companies after Phase 1 boot migration.
+    //    Prefer the is_primary row; break ties by creation date (oldest first) for determinism.
     const [loc] = await db
       .select({ easyteamLocationId: locationsTable.easyteamLocationId })
       .from(locationsTable)
-      .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)));
+      .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)))
+      .orderBy(sql`is_primary DESC, created_at ASC`)
+      .limit(1);
     if (loc?.easyteamLocationId) return loc.easyteamLocationId;
 
     // 3. Legacy fallback: companies.rollfiLocationId (pre-Phase 1 companies)

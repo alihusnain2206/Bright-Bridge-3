@@ -759,10 +759,11 @@ interface LocationFormState {
   code: string; name: string;
   address1: string; address2: string;
   city: string; state: string; zipcode: string;
+  latitude: string; longitude: string;
 }
 
 function blankForm(): LocationFormState {
-  return { code: "", name: "", address1: "", address2: "", city: "", state: "", zipcode: "" };
+  return { code: "", name: "", address1: "", address2: "", city: "", state: "", zipcode: "", latitude: "", longitude: "" };
 }
 
 const US_STATES_SHORT = [
@@ -811,6 +812,17 @@ function LocationFormFields({ form, set }: { form: LocationFormState; set: (k: k
           <input className={inputCls} placeholder="07101" value={form.zipcode} onChange={e => set("zipcode", e.target.value)} maxLength={10} />
         </label>
       </div>
+      {/* Coordinates — required to activate a location for EasyTeam geofencing */}
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">Latitude <span className="text-gray-400 text-[10px]">required to activate</span></span>
+          <input className={inputCls} placeholder="e.g. 40.7357" type="number" step="any" value={form.latitude} onChange={e => set("latitude", e.target.value)} />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-xs font-medium text-gray-600">Longitude <span className="text-gray-400 text-[10px]">required to activate</span></span>
+          <input className={inputCls} placeholder="e.g. -74.1724" type="number" step="any" value={form.longitude} onChange={e => set("longitude", e.target.value)} />
+        </label>
+      </div>
     </div>
   );
 }
@@ -821,10 +833,11 @@ function LocationsTab({ companyId }: { companyId: string }) {
   const [editing, setEditing]   = useState<LocationRow | null>(null);
   const [addForm, setAddForm]   = useState<LocationFormState>(blankForm);
   const [editForm, setEditForm] = useState<LocationFormState>(blankForm);
-  const [saving, setSaving]     = useState(false);
-  const [error, setError]       = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[] | null>(null);
+  const [saving, setSaving]           = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+  const [warnings, setWarnings]       = useState<string[] | null>(null);
   const [deactivating, setDeactivating] = useState<LocationRow | null>(null);
+  const [activating,   setActivating]   = useState<LocationRow | null>(null);
 
   const { data, isLoading, refetch } = useQuery<{ locations: LocationRow[] }>({
     queryKey: ["company-settings-locations", companyId],
@@ -847,7 +860,12 @@ function LocationsTab({ companyId }: { companyId: string }) {
       const r = await fetch("/api/locations", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyId, ...addForm }),
+        body: JSON.stringify({
+          companyId,
+          ...addForm,
+          latitude:  addForm.latitude  ? parseFloat(addForm.latitude)  : undefined,
+          longitude: addForm.longitude ? parseFloat(addForm.longitude) : undefined,
+        }),
       });
       const body = await r.json() as { location?: LocationRow; warnings?: string[]; error?: string };
       if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
@@ -871,7 +889,11 @@ function LocationsTab({ companyId }: { companyId: string }) {
       const r = await fetch(`/api/locations/${editing.id}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editForm),
+        body: JSON.stringify({
+          ...editForm,
+          latitude:  editForm.latitude  ? parseFloat(editForm.latitude)  : undefined,
+          longitude: editForm.longitude ? parseFloat(editForm.longitude) : undefined,
+        }),
       });
       const body = await r.json() as { location?: LocationRow; warnings?: string[]; error?: string };
       if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
@@ -880,6 +902,33 @@ function LocationsTab({ companyId }: { companyId: string }) {
       void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update location");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleActivate(loc: LocationRow) {
+    if (!editForm.latitude || !editForm.longitude) {
+      setError("Enter latitude and longitude above before activating."); return;
+    }
+    setSaving(true); setError(null);
+    try {
+      const r = await fetch(`/api/locations/${loc.id}`, {
+        method: "PUT", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isActive: true,
+          latitude:  parseFloat(editForm.latitude),
+          longitude: parseFloat(editForm.longitude),
+        }),
+      });
+      const body = await r.json() as { location?: LocationRow; warnings?: string[]; error?: string };
+      if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
+      if (body.warnings?.length) setWarnings(body.warnings);
+      else { setActivating(null); setEditing(null); }
+      void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to activate location");
     } finally {
       setSaving(false);
     }
@@ -987,22 +1036,35 @@ function LocationsTab({ companyId }: { companyId: string }) {
                           : <span className="text-[10px] text-amber-500">⚠ Rollfi not synced</span>}
                       </div>
                     </div>
-                    {loc.isActive && (
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          className={`${btnCls} border border-gray-200 text-gray-600 hover:bg-gray-50`}
-                          onClick={() => { setEditing(loc); setEditForm({ code: loc.code, name: loc.name, address1: loc.address1 ?? "", address2: loc.address2 ?? "", city: loc.city ?? "", state: loc.state ?? "", zipcode: loc.zipcode ?? "" }); setError(null); setWarnings(null); }}
-                        >
-                          <Pencil className="h-3.5 w-3.5" /> Edit
-                        </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        className={`${btnCls} border border-gray-200 text-gray-600 hover:bg-gray-50`}
+                        onClick={() => {
+                          setEditing(loc);
+                          setEditForm({
+                            code: loc.code, name: loc.name,
+                            address1: loc.address1 ?? "", address2: loc.address2 ?? "",
+                            city: loc.city ?? "", state: loc.state ?? "", zipcode: loc.zipcode ?? "",
+                            latitude: loc.latitude?.toString() ?? "",
+                            longitude: loc.longitude?.toString() ?? "",
+                          });
+                          setError(null); setWarnings(null);
+                        }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" /> Edit
+                      </button>
+                      {loc.isActive && !loc.isPrimary && (
                         <button
                           className={`${btnCls} border border-red-100 text-red-600 hover:bg-red-50`}
                           onClick={() => { setDeactivating(loc); setError(null); }}
                         >
                           <Trash2 className="h-3.5 w-3.5" /> Deactivate
                         </button>
-                      </div>
-                    )}
+                      )}
+                      {loc.isPrimary && loc.isActive && (
+                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">Primary</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1010,15 +1072,22 @@ function LocationsTab({ companyId }: { companyId: string }) {
               {/* Edit form inline */}
               {editing?.id === loc.id && (
                 <div className="bg-white rounded-xl border border-[#1B3A6B]/20 shadow-sm p-5 space-y-4">
-                  <h3 className="text-sm font-semibold text-gray-800">Edit Location — {loc.code}</h3>
+                  <h3 className="text-sm font-semibold text-gray-800">{loc.isActive ? "Edit" : "Edit / Activate"} Location — {loc.code}</h3>
                   <LocationFormFields form={editForm} set={setE} />
-                  <div className="flex gap-2 justify-end pt-1">
+                  <div className="flex gap-2 justify-end pt-1 flex-wrap">
                     <button className={`${btnCls} border border-gray-200 text-gray-700 hover:bg-gray-50`}
                       onClick={() => { setEditing(null); setError(null); }}>Cancel</button>
+                    {!loc.isActive && (
+                      <button className={`${btnCls} bg-emerald-600 text-white hover:bg-emerald-700`}
+                        disabled={saving} onClick={() => { setActivating(loc); void handleActivate(loc); }}>
+                        {saving && activating?.id === loc.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                        {saving && activating?.id === loc.id ? "Activating…" : "Activate"}
+                      </button>
+                    )}
                     <button className={`${btnCls} bg-[#1B3A6B] text-white hover:bg-[#254d8c]`}
                       disabled={saving} onClick={() => void handleEdit()}>
-                      {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
-                      {saving ? "Saving…" : "Save Changes"}
+                      {saving && activating?.id !== loc.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                      {saving && activating?.id !== loc.id ? "Saving…" : "Save Changes"}
                     </button>
                   </div>
                 </div>

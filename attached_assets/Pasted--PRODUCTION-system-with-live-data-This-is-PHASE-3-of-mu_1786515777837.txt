@@ -1,0 +1,150 @@
+⚠️ PRODUCTION system with live data. This is PHASE 3 of multi-location: making time
+tracking location-aware. Your pre-audit findings and EasyTeam's official docs
+(docs.easyteam.com/integration-passing-data) drive this spec.
+
+## ⚠️ CRITICAL ORDERING RULE
+
+Do NOT activate any second location for any company until the employee JWT fix (Part C)
+is built and verified. If a second location goes active first, shifts will silently land
+under the wrong location's UUID and be permanently mis-attributed, and the sync will drop
+them. The test sequence at the end respects this order — follow it exactly.
+
+## PART A — Schema additions
+
+1. `locations.is_primary` (boolean, default false). Backfill: for every company, set
+   is_primary=true on its original location (the one seeded in Phase 1 — the single
+   currently-active row per company). Exactly one primary per company; enforce in the
+   create/edit endpoints (a location cannot be deactivated while is_primary=true;
+   reassigning primary is out of scope this phase — just protect it).
+2. `locations.latitude` + `locations.longitude` (numeric, nullable). Per EasyTeam's docs,
+   Location objects passed to the SDK REQUIRE latitude and longitude. Backfill the two
+   seeded locations (LOC-SUNSHINE, LOC-RAINBOW) from the in-memory store's coordinates.
+   Add Latitude/Longitude fields to the Add/Edit Location form (plain numeric inputs,
+   with helper text: "Find these on Google Maps — right-click the building → copy
+   coordinates"). Required on CREATE of new locations; existing rows may stay null until
+   edited, but any location being ACTIVATED (is_active → true) must have coordinates —
+   block activation with a clear message if missing.
+
+## PART B — resolveCompanyLocationId determinism
+
+Update lib/location.ts: when reading from the locations table, select the is_primary=true
+row (fallback: ORDER BY created_at ASC LIMIT 1 if none marked). This removes the
+non-deterministic first-active-row behavior once multiple locations are active. The
+in-memory store short-circuit for seeded companies can remain (their store value IS their
+primary), but confirm the DB path is deterministic.
+
+## PART C — Employee JWT uses the employee's own location
+
+In auth.ts token-by-role (~line 476), the employee branch currently falls back:
+user.locationId ?? resolveCompanyLocationId(companyId). Change the resolution to:
+
+1. user_accounts.locationId if set
+2. else resolveEmployeeLocationId(employeeId) — the employee's assigned location's
+   easyteamLocationId (helper built in Phase 1)
+3. else resolveCompanyLocationId(companyId) (existing behavior, now the last resort)
+
+Apply the same resolution to the manager branch (managers are employees too — their
+personal clock-in should use their own location; their MANAGEMENT scope comes from
+user_accounts.locationId which step 1 already covers).
+
+Also: backfill user_accounts.location_id from the linked employee's employees.location_id
+for all existing accounts (boot migration, idempotent, log each). Your audit found all 16
+ORG-SUNSHINE accounts have it NULL. And ensure the auto-account-creation path (wizard)
+sets user_accounts.locationId from the employee's location at creation time going forward.
+
+## PART D — Hours sync iterates ALL active locations per company
+
+easyteam.ts sync (~line 519): today it builds one {companyId, locationId} entry per
+company. Change to: for each company, query ALL is_active=true locations and call
+fetchEasyTeamShiftsForLocation once per location, unioning results into the same
+minutesByEmp / shift-persist flow. The existing foreign-location guard
+(s.locationId !== etLocId) stays — it now correctly scopes each per-location batch.
+Ensure no double-counting if EasyTeam returns the same shift in two fetches (dedupe by
+shift id before persisting). skippedForeignShifts should now only count genuinely
+foreign (other-company) shifts.
+
+## PART E — SDK launcher: per-location employee maps
+
+useEasyTeamLauncher.ts (~line 80): stop spreading all employees into every location.
+Build each location's `employees` map from actual assignment: employee.id included in a
+location's map only when employees.locationId matches that location. Per EasyTeam docs,
+each Location object passed must include: id (easyteamLocationId), latitude, longitude,
+name, timezone (when known), employees map. The endpoints feeding the launcher
+(GET /api/easyteam/employees or equivalent) must return each employee's locationId so
+the frontend can build the maps — add it to the response if absent.
+
+Also update the pages that pass ALL_STATIC_LOCATIONS (dashboard-manager.tsx etc.) to
+instead fetch the company's active locations from GET /api/locations and build the
+per-location maps. Employees assigned to exactly one location should see NO location
+picker at clock-in; the picker appears only if an employee appears in 2+ location maps
+(not applicable yet — our model is single-location per employee — but the data shape now
+follows the docs contract so it works when that changes).
+
+## PART F — Cleanups
+
+1. Legacy POST /easyteam/token (easyteam.ts ~255): it grants LOCATION_ADMIN to all
+   callers. Align its permission set with token-by-role's role-appropriate sets (manager
+   must NOT get LOCATION_ADMIN). Report which pages still use this endpoint.
+2. Timezone on activation: PATCH /api/locations/:id must run ensureLocationTimezone and
+   ensureTimeOffPolicy when is_active transitions false→true.
+   IMPORTANT — the time-off-policy 404 was OUR bug, not a plan limitation: EasyTeam
+   support confirmed the API root must be `/embed/api` (same as our other EasyTeam
+   calls). Fix ensureTimeOffPolicy's path accordingly (e.g.
+   POST {base}/embed/api/organizations/{orgId}/time-off-policies — align with however
+   our working EasyTeam calls build their URLs), then VERIFY it succeeds against a real
+   location and paste the response. Revert the earlier "suppress this warning
+   permanently" change: now that the call works, a failure is a real failure — log it
+   and surface actionable errors per the normal pattern.
+3. Pass `timezone` in the SDK Location objects where we know it.
+
+## SCOPE BOUNDARY — DO NOT TOUCH
+- No manager data-scoping changes on our API endpoints this phase (the audit says several
+  already exist from a prior session — do not extend them; Part G only verifies)
+- No time-off features
+- No payroll logic
+- No changes to the hardened auth guards
+- Do not activate any location for URBAN CONCEPTS or any production company — test
+  companies only
+
+## PART G — Re-verify the prior session's scoping claims
+
+Your audit stated several endpoints were made location-scoped "this session"
+(GET /api/employees, /easyteam/employees, /easyteam/hours, /easyteam/company-members,
+pipeline, compliance overview). These were built outside a reviewed prompt. With a real
+manager account (create one via Change Role with a location on the test company), TEST
+each of these endpoints as that manager and paste the actual responses proving they
+return only that location's data. If any returns company-wide data, report it — do not
+fix beyond what this spec covers; we'll scope the fixes deliberately.
+
+## TEST SEQUENCE (in this exact order — paste real outputs for every step)
+
+On ORG-SUNSHINE (dev/test only):
+1. Run migrations. Paste: locations table rows showing is_primary and lat/lng columns;
+   confirm exactly one is_primary per company.
+2. Backfill check: paste user_accounts rows for ORG-SUNSHINE showing location_id now
+   populated from employees.
+3. JWT check BEFORE activating anything: for an employee assigned to LOC-SUNSHINE, paste
+   the token payload locationId (expect LOC-SUNSHINE — unchanged behavior).
+4. Set coordinates on location 200 (Amsterdam Avenue) via the edit form path, then
+   ACTIVATE it. Confirm timezone patch ran (log line).
+5. Assign a test employee (e.g. Mary Johnson) to location 200 (employees.locationId +
+   user_accounts.locationId via the normal edit flow). Paste both rows.
+6. JWT check for Mary: paste her token payload locationId — must be location 200's
+   easyteamLocationId, NOT LOC-SUNSHINE. THE core assertion of this phase.
+7. Simulate/perform a clock-in for Mary (or construct the equivalent shift via the same
+   flow the SDK uses). Then run the hours sync. Paste: sync summary showing shifts
+   fetched for BOTH locations, and Mary's timesheet_shifts row carrying location 200's
+   EasyTeam UUID. skippedForeignShifts must be 0.
+8. Sync dedupe: run the sync twice; paste both summaries — no double counting.
+9. Launcher data: paste the resolvedLocations structure now produced for Sunshine — two
+   location entries, each with lat/lng and ONLY its own employees in the map.
+10. Regression: an employee assigned to the primary location clocks in fine; Pull Hours
+    still matches their shifts; single-location companies (e.g. ORG-RAINBOW) behave
+    exactly as before (paste one token payload + one sync summary for Rainbow).
+11. Part G outputs: the manager-scoped endpoint responses.
+
+## DELIVERABLE
+1. Files changed per part
+2. All test-sequence outputs (real data)
+3. Part G verdict per endpoint
+4. Anything flagged/deferred — especially any page still on the legacy token endpoint

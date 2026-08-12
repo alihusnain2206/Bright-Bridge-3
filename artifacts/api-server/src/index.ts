@@ -31,6 +31,71 @@ async function bootSessionTable() {
   logger.info("Session table ready");
 }
 
+/**
+ * Phase 3 location schema migration.
+ * Adds is_primary, latitude, longitude columns to the locations table.
+ * Backfills is_primary (earliest active row per company) and known coordinates.
+ * Safe to run on every boot — IF NOT EXISTS / WHERE guards prevent re-execution.
+ */
+async function bootPhase3LocationSchema() {
+  try {
+    // Add columns — safe to re-run on every boot
+    await pool.query(`
+      ALTER TABLE locations
+        ADD COLUMN IF NOT EXISTS is_primary BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS latitude   REAL,
+        ADD COLUMN IF NOT EXISTS longitude  REAL;
+    `);
+
+    // Backfill is_primary: mark the earliest-created active row per company
+    await pool.query(`
+      UPDATE locations
+      SET is_primary = TRUE
+      WHERE id IN (
+        SELECT DISTINCT ON (company_id) id
+        FROM locations
+        WHERE is_active = TRUE
+        ORDER BY company_id, created_at ASC
+      )
+      AND is_primary = FALSE;
+    `);
+
+    // Backfill known seeded-company coordinates
+    await pool.query(`UPDATE locations SET latitude = 40.7357, longitude = -74.1724 WHERE id = 'LOC-SUNSHINE' AND (latitude IS NULL OR longitude IS NULL);`);
+    await pool.query(`UPDATE locations SET latitude = 40.7178, longitude = -74.0431 WHERE id = 'LOC-RAINBOW'  AND (latitude IS NULL OR longitude IS NULL);`);
+
+    logger.info("Boot: bootPhase3LocationSchema complete (is_primary, latitude, longitude)");
+  } catch (err) {
+    logger.warn({ err }, "Boot: bootPhase3LocationSchema failed (non-fatal)");
+  }
+}
+
+/**
+ * Backfill user_accounts.location_id from linked employees.location_id.
+ * Runs after bootAssignEmployeeLocations so employees always have a locationId.
+ * Safe to re-run — WHERE location_id IS NULL guards prevent overwriting manual assignments.
+ */
+async function bootBackfillUserAccountLocations() {
+  try {
+    const result = await pool.query(`
+      UPDATE user_accounts ua
+      SET    location_id = e.location_id
+      FROM   employees e
+      WHERE  ua.employee_id    = e.id
+        AND  ua.location_id   IS NULL
+        AND  e.location_id    IS NOT NULL;
+    `);
+    const count = (result as { rowCount?: number }).rowCount ?? 0;
+    if (count > 0) {
+      logger.info({ count }, "Boot: bootBackfillUserAccountLocations — backfilled location_id from employees table");
+    } else {
+      logger.info("Boot: bootBackfillUserAccountLocations no-op — all user_accounts already have location_id or no matching employees");
+    }
+  } catch (err) {
+    logger.warn({ err }, "Boot: bootBackfillUserAccountLocations failed (non-fatal)");
+  }
+}
+
 async function bootCompanySignedFormsSchema() {
   // Add signature_image column introduced for drawn-signature support.
   // Safe to run on every boot — IF NOT EXISTS guards prevent duplicate columns.
@@ -632,10 +697,13 @@ app.listen(port, (err) => {
   // Run all boot tasks in the background after the server is up.
   Promise.all([
     bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()),
-    bootSeedCompanies()
+    // Phase 3: run schema migration FIRST so is_primary/lat/lng columns exist before seeding
+    bootPhase3LocationSchema()
+      .then(() => bootSeedCompanies())
       .then(() => bootSeedEmployees())
       .then(() => bootSeedLocations())
-      .then(() => bootAssignEmployeeLocations()),
+      .then(() => bootAssignEmployeeLocations())
+      .then(() => bootBackfillUserAccountLocations()),
     loadRollfiStateFromDb().then(({ companies, employees }) => {
       logger.info({ companies, employees }, "Rollfi state restored from DB");
     }),

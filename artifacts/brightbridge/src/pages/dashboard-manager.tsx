@@ -60,19 +60,13 @@ function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
 
-interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly"; status?: string; }
+interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly"; status?: string; locationId?: string; }
 
+// Fallback coords for seeded companies when API locations haven't been fetched yet.
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
   "ORG-SUNSHINE": [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }],
   "ORG-RAINBOW": [{ id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 }],
 };
-
-// All static known locations — always passed to EasyTeam SDK so it has valid location data.
-// The JWT's locationId scopes what the manager can actually see.
-const ALL_STATIC_LOCATIONS = [
-  { id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 },
-  { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
-];
 
 const CAN_DO = ["View own company timesheets", "Edit timesheets", "Manage schedules", "Approve time off", "Clock in/out"];
 const CANNOT_DO = ["See other companies", "BrightBridge admin panel", "Super admin features", "View all-company reports"];
@@ -244,8 +238,9 @@ export default function ManagerDashboard() {
     setTokenLoading(true);
     setTokenError("");
     try {
-      // Fetch token and fresh employees in parallel
-      const [tokenRes, freshEmployees] = await Promise.all([
+      // Fetch token, employees, and locations in parallel
+      const companyIdEnc = encodeURIComponent(user.companyId ?? "");
+      const [tokenRes, freshEmployees, locData] = await Promise.all([
         fetch("/api/auth/token-by-role", {
           method: "POST",
           credentials: "include",
@@ -253,33 +248,32 @@ export default function ManagerDashboard() {
           body: JSON.stringify({ userId: user.id }),
         }),
         fetchCompanyEmployees(),
+        fetch(`/api/locations?companyId=${companyIdEnc}`, { credentials: "include" })
+          .then(r => r.json() as Promise<{ locations?: Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> }>)
+          .catch(() => ({ locations: [] as Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> })),
       ]);
 
       const data = await tokenRes.json() as TokenData;
       if (!tokenRes.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
 
-      const isStaticCompany = !!(COMPANY_LOCATIONS[user.companyId ?? ""]);
+      // Phase 3: use locations from API — covers all locations for this company including
+      // wizard-created ones. Fall back to hardcoded coords for backward compatibility.
+      const apiLocations = (locData.locations ?? [])
+        .filter((l) => l.isActive)
+        .map((l) => ({ id: l.id, name: l.name, latitude: l.latitude ?? 40.7357, longitude: l.longitude ?? -74.1724 }));
 
-      let allLaunchLocations: Array<{ id: string; name: string; latitude: number; longitude: number }>;
-      if (isStaticCompany) {
-        // Known company: pass all static locations; the JWT's locationId scopes the view.
-        allLaunchLocations = ALL_STATIC_LOCATIONS;
-      } else {
-        // Dynamic company (created via wizard): pass ONLY this manager's own location.
-        // Including other locations (LOC-SUNSHINE, LOC-RAINBOW) would cause resolvedLocations
-        // to map Sunshine/Rainbow employees to this location, which makes EasyTeam show a
-        // blank timesheet because those employees have no shifts here.
-        const authLoc = companyLocations[0];
-        if (!authLoc) {
-          setTokenError("No location data available for this company");
-          return;
-        }
-        allLaunchLocations = [{
-          ...authLoc,
-          latitude: authLoc.latitude !== 0 ? authLoc.latitude : (company?.latitude ?? 40.7357),
-          longitude: authLoc.longitude !== 0 ? authLoc.longitude : (company?.longitude ?? -74.1724),
-        }];
+      const allLaunchLocations = apiLocations.length > 0
+        ? apiLocations
+        : (COMPANY_LOCATIONS[user.companyId ?? ""] ?? companyLocations).map(loc => ({
+            ...loc,
+            latitude: loc.latitude !== 0 ? loc.latitude : 40.7357,
+            longitude: loc.longitude !== 0 ? loc.longitude : -74.1724,
+          }));
+
+      if (allLaunchLocations.length === 0) {
+        setTokenError("No location data available for this company");
+        return;
       }
 
       // Company employees for dynamic companies may be empty (not seeded in our store).

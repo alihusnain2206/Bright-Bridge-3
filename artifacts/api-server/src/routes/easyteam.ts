@@ -5,7 +5,7 @@ import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
 import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
-import { db, pool, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable } from "@workspace/db";
+import { db, pool, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable, locations as locationsTable } from "@workspace/db";
 import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
@@ -132,14 +132,15 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
     const locationEmpIds = new Set(locationEmpRows.map(r => r.id));
     users = users.filter((u) => u.employeeId != null && locationEmpIds.has(u.employeeId));
   }
-  // Batch-fetch canonical wages from employees table (People module writes here).
+  // Batch-fetch canonical wages and locationId from employees table (People module writes here).
   // Store hourlyWage is a last-resort fallback for test-only employees with no DB record.
   const empIds = users.map(u => u.employeeId).filter((id): id is string => !!id);
-  const dbWageRows = empIds.length > 0
-    ? await db.select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage })
+  const dbEmpRows = empIds.length > 0
+    ? await db.select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage, locationId: employeesTable.locationId })
         .from(employeesTable).where(inArray(employeesTable.id, empIds)).catch(() => [])
     : [];
-  const dbWageMap = new Map(dbWageRows.map(e => [e.id, e.hourlyWage]));
+  const dbWageMap     = new Map(dbEmpRows.map(e => [e.id, e.hourlyWage]));
+  const dbLocationMap = new Map(dbEmpRows.map(e => [e.id, e.locationId]));
   const employees = users
     .filter((u) => u.employeeId && (u.role === "employee" || u.role === "manager") && (!u.status || u.status === "active" || u.status === "onboarding"))
     .map((u) => ({
@@ -147,6 +148,7 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
       name: u.name,
       role: u.role,
       companyId: u.companyId,
+      locationId: dbLocationMap.get(u.employeeId!) ?? null,
       timeTrackingEnabled: true,
       wage: dbWageMap.get(u.employeeId!) ?? u.hourlyWage ?? 1500,
       wageType: "hourly" as const,
@@ -243,6 +245,21 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
     }
   }
 
+  // Scope permissions by role — LOCATION_ADMIN / ORGANIZATION_ADMIN grant org-wide switching
+  // in the EasyTeam UI and must not be issued to employees or managers.
+  const tokenPermissions =
+    resolvedAccessRole === "employee"
+      ? ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE"]
+      : resolvedAccessRole === "manager"
+        ? ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE"]
+        : [
+            // admin / super_admin only
+            "LOCATION_READ", "LOCATION_ADMIN",
+            "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+            "SCHEDULE_READ", "SCHEDULE_WRITE",
+            "ORGANIZATION_ADMIN",
+          ];
+
   const payload = {
     employeeId: resolvedEtEmployeeId,
     locationId: resolvedLocationId,
@@ -250,17 +267,7 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
     accessRole: {
       name: resolvedAccessRole,
-      permissions: [
-        "LOCATION_READ",
-        "LOCATION_ADMIN",
-        "SHIFT_READ",
-        "SHIFT_WRITE",
-        "SHIFT_ADD",
-        "SHIFT_UPDATE",
-        "SCHEDULE_READ",
-        "SCHEDULE_WRITE",
-        "ORGANIZATION_ADMIN",
-      ],
+      permissions: tokenPermissions,
     },
     role: {
       name: resolvedRoleName,
@@ -489,139 +496,166 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     : (await db.select({ id: companiesTable.id }).from(companiesTable).catch(() => []))
         .map((c) => c.id)
         .filter((id) => id !== "ORG-BRIGHTBRIDGE");
-  const storeCompaniesToSync = allClientIds
-    .map((id) => store.getCompany(id))
-    .filter((c): c is NonNullable<typeof c> => c != null && !!c.locationId);
 
-  // Fall back to DB for companies not in the in-memory store (wizard-created companies)
-  const storeIds = new Set(storeCompaniesToSync.map((c) => c.id));
-  const missingIds = allClientIds.filter((id) => !storeIds.has(id));
-  type SyncableCompany = { id: string; locationId: string };
-  const dbFallback: SyncableCompany[] = [];
-  for (const id of missingIds) {
-    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, id)).catch(() => [undefined]);
-    if (dbCo) {
-      // Use rollfiLocationId if set, otherwise derive a stable EasyTeam locationId from company ID
-      const locationId = dbCo.rollfiLocationId || `LOC-${id}`;
-      dbFallback.push({ id, locationId });
+  // Phase 3: build per-company list of ALL active location IDs (not just one).
+  // Each company may have multiple active locations; we collect shifts from all of them.
+  type SyncableCompany = { id: string; locationIds: string[] };
+  const companiesToSync: SyncableCompany[] = [];
+  for (const id of allClientIds) {
+    const activeLocRows = await db
+      .select({ easyteamLocationId: locationsTable.easyteamLocationId })
+      .from(locationsTable)
+      .where(and(eq(locationsTable.companyId, id), eq(locationsTable.isActive, true)))
+      .catch(() => [] as { easyteamLocationId: string | null }[]);
+
+    let locationIds = activeLocRows
+      .map((l) => l.easyteamLocationId)
+      .filter((lid): lid is string => !!lid);
+
+    // Fall back to store / resolveCompanyLocationId for companies whose location row predates Phase 1
+    if (locationIds.length === 0) {
+      const resolved = store.getCompany(id)?.locationId ?? await resolveCompanyLocationId(id);
+      if (resolved) locationIds = [resolved];
+    }
+
+    if (locationIds.length > 0) {
+      companiesToSync.push({ id, locationIds });
+    } else {
+      req.log.warn({ companyId: id }, "Sync: no active locations found for company — skipping");
     }
   }
-
-  const companiesToSync: SyncableCompany[] = [
-    ...storeCompaniesToSync.map((c) => ({ id: c.id, locationId: c.locationId! })),
-    ...dbFallback,
-  ];
 
   let restSynced = 0;
   let restApiResponded = false;
   let totalSkippedForeign = 0;
   const skippedUnknownUuids: Array<{ etEmpId: string; minutesLost: number }> = [];
+  const fromDateStr = fromDate.toISOString().split("T")[0]!;
+  const toDateStr   = toDate.toISOString().split("T")[0]!;
+
   for (const co of companiesToSync) {
-    const locId = co.locationId;
-    const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
-    req.log.info({ locationId: locId, companyId: co.id, result: "error" in result ? result.error : `${result.shifts.length} shifts` }, "Sync: REST API result");
+    // ── Collect shifts from ALL active locations for this company ──────────────
+    // EasyTeam's flat /timesheets endpoint returns ALL org shifts regardless of which
+    // location JWT was used, so we deduplicate by shift ID across location fetches.
+    const allShiftsMap = new Map<string, EasyTeamShift>(); // keyed by EasyTeam shift ID
+    const companyEtLocIds = new Set<string>(); // EasyTeam UUIDs for this company's locations
 
-    if ("shifts" in result) {
-      restApiResponded = true; // API responded — don't fall through to seed even if 0 in range
-      const etLocId = result.easyteamLocationId;
-      let skippedForeignShifts = 0;
-      // FIX 1: use utcStartTime (genuine UTC) — the old norm(startTime) appended Z to a local
-      //   timestamp, misclassifying shifts near pay-period boundaries.
-      // FIX 2: location guard — flat /timesheets returns all org shifts regardless of which
-      //   location's JWT was used; only persist shifts whose locationId matches this company's
-      //   EasyTeam location UUID to prevent cross-company contamination.
-      // Compare by local calendar date (utcStartTime + utcOffset) so shifts that
-      // start near midnight are attributed to the correct pay-period day.
-      const fromDateStr = fromDate.toISOString().split("T")[0]!;
-      const toDateStr   = toDate.toISOString().split("T")[0]!;
-      const inRange = result.shifts.filter((s) => {
-        if (!s.utcStartTime) return false;
-        if (s.locationId !== etLocId) {
-          req.log.warn(
-            { shiftId: s.id, shiftLocationId: s.locationId, expectedLocationId: etLocId, companyId: co.id },
-            "Sync: skipping shift from foreign location",
-          );
-          skippedForeignShifts++;
-          return false;
+    for (const locId of co.locationIds) {
+      const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
+      req.log.info(
+        { locationId: locId, companyId: co.id, result: "error" in result ? result.error : `${result.shifts.length} shifts` },
+        "Sync: REST API result",
+      );
+
+      if ("shifts" in result) {
+        restApiResponded = true;
+        companyEtLocIds.add(result.easyteamLocationId);
+
+        for (const s of result.shifts) {
+          if (!s.utcStartTime) continue;
+          // Date filter: compare by local calendar date (utcStartTime + utcOffset) so shifts
+          // near midnight are attributed to the correct pay-period day.
+          const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0);
+          if (ld < fromDateStr || ld > toDateStr) continue;
+          // Deduplicate: first-write-wins (every location fetch returns all org shifts)
+          if (!allShiftsMap.has(s.id)) allShiftsMap.set(s.id, s);
         }
-        const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0);
-        return ld >= fromDateStr && ld <= toDateStr;
+      }
+    }
+
+    if (companyEtLocIds.size === 0) continue; // no API response from any location — skip
+
+    // Foreign-location guard: keep only shifts whose EasyTeam locationId belongs to THIS company.
+    // Prevents cross-company contamination when multiple companies share one EasyTeam org.
+    let skippedForeignShifts = 0;
+    const inRange: EasyTeamShift[] = [];
+    for (const s of allShiftsMap.values()) {
+      if (companyEtLocIds.has(s.locationId)) {
+        inRange.push(s);
+      } else {
+        req.log.warn(
+          { shiftId: s.id, shiftLocationId: s.locationId, knownEtLocIds: [...companyEtLocIds], companyId: co.id },
+          "Sync: skipping shift from foreign location",
+        );
+        skippedForeignShifts++;
+      }
+    }
+    totalSkippedForeign += skippedForeignShifts;
+    req.log.info(
+      { companyId: co.id, locationIds: co.locationIds, totalCollected: allShiftsMap.size, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() },
+      "Sync: date-filtered shifts for company",
+    );
+
+    const minutesByEmp = new Map<string, number>();
+    const breaksByEmp2 = new Map<string, number>();
+    for (const s of inRange) {
+      minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + shiftDurationMinutes(s));
+      breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + breakDurationMinutes(s));
+    }
+    // Clear stale entries for this company+period before writing fresh data
+    if (minutesByEmp.size > 0) {
+      await clearTimesheetEntriesForCompanyPeriod(co.id, periodKey);
+    }
+    const companyUsers = store.getUsersForCompany(co.id);
+
+    // Persist raw shifts to timesheet_shifts (upsert — last-write-wins so open shifts update on close)
+    const syncedAt = new Date().toISOString();
+    await Promise.all(inRange.map(async (s) => {
+      if (store.isEasyTeamUuidIgnored(s.employeeId)) return; // blocklisted — skip entirely
+      const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
+      const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
+      if (!mappedEmpId) {
+        req.log.warn({ etEmpId: s.employeeId }, "Sync: persisting shift with null employeeId — EasyTeam UUID not in registry");
+      }
+      await upsertTimesheetShift({
+        easyteamShiftId:     s.id,
+        employeeId:          mappedEmpId,
+        companyId:           co.id,
+        easyteamLocationId:  s.locationId,
+        roleId:              s.roleId ?? null,
+        utcStartTime:        s.utcStartTime ?? s.startTime,
+        utcEndTime:          s.utcEndTime ?? s.endTime ?? null,
+        utcOffset:           s.utcOffset ?? 0,
+        localDate:           shiftLocalDate(s.utcStartTime ?? s.startTime, s.utcOffset ?? 0),
+        durationMs:          s.duration ?? 0,
+        payableDurationMs:   (s.payableDuration != null && s.payableDuration > 10000) ? s.payableDuration : (s.payableDuration ?? 0) * 60000,
+        totalPaidBreakMin:   s.totalPaidBreaks ?? null,
+        totalUnpaidBreakMin: s.totalUnpaidBreaks ?? null,
+        breaks:              s.breaks ?? null,
+        active:              s.active ?? false,
+        locked:              s.locked ?? false,
+        manualEntry:         s.manualEntry ?? false,
+        scheduleShiftId:     s.scheduleShiftId ?? null,
+        deletedAt:           s.deletedAt ?? null,
+        syncedAt,
       });
-      totalSkippedForeign += skippedForeignShifts;
-      req.log.info({ locationId: locId, etLocId, total: result.shifts.length, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() }, "Sync: date-filtered shifts");
-      const minutesByEmp = new Map<string, number>();
-      const breaksByEmp2 = new Map<string, number>();
-      for (const s of inRange) {
-        minutesByEmp.set(s.employeeId, (minutesByEmp.get(s.employeeId) ?? 0) + shiftDurationMinutes(s));
-        breaksByEmp2.set(s.employeeId, (breaksByEmp2.get(s.employeeId) ?? 0) + breakDurationMinutes(s));
-      }
-      // Clear stale entries for this company+period before writing fresh data
-      if (minutesByEmp.size > 0) {
-        await clearTimesheetEntriesForCompanyPeriod(co.id, periodKey);
-      }
-      const companyUsers = store.getUsersForCompany(co.id);
+    }));
 
-      // Persist raw shifts to timesheet_shifts (upsert — last-write-wins so open shifts update on close)
-      const syncedAt = new Date().toISOString();
-      await Promise.all(inRange.map(async (s) => {
-        if (store.isEasyTeamUuidIgnored(s.employeeId)) return; // blocklisted — skip entirely
-        const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
-        const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
-        if (!mappedEmpId) {
-          req.log.warn({ etEmpId: s.employeeId }, "Sync: persisting shift with null employeeId — EasyTeam UUID not in registry");
-        }
-        await upsertTimesheetShift({
-          easyteamShiftId:     s.id,
-          employeeId:          mappedEmpId,
-          companyId:           co.id,
-          easyteamLocationId:  s.locationId,
-          roleId:              s.roleId ?? null,
-          utcStartTime:        s.utcStartTime ?? s.startTime,
-          utcEndTime:          s.utcEndTime ?? s.endTime ?? null,
-          utcOffset:           s.utcOffset ?? 0,
-          localDate:           shiftLocalDate(s.utcStartTime ?? s.startTime, s.utcOffset ?? 0),
-          durationMs:          s.duration ?? 0,
-          payableDurationMs:   (s.payableDuration != null && s.payableDuration > 10000) ? s.payableDuration : (s.payableDuration ?? 0) * 60000,
-          totalPaidBreakMin:   s.totalPaidBreaks ?? null,
-          totalUnpaidBreakMin: s.totalUnpaidBreaks ?? null,
-          breaks:              s.breaks ?? null,
-          active:              s.active ?? false,
-          locked:              s.locked ?? false,
-          manualEntry:         s.manualEntry ?? false,
-          scheduleShiftId:     s.scheduleShiftId ?? null,
-          deletedAt:           s.deletedAt ?? null,
-          syncedAt,
-        });
-      }));
-
-      for (const [etEmpId, totalMinutes] of minutesByEmp) {
-        // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
-        const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
-        // Collect entries whose UUID we can't map — accumulate for response, then skip
-        if (store.isEasyTeamUuidIgnored(etEmpId)) {
-          req.log.info({ etEmpId, minutesLost: totalMinutes }, "Sync: silently skipping blocklisted EasyTeam UUID");
-          continue;
-        }
-        if (internalEmpId === etEmpId) {
-          req.log.warn({ etEmpId, minutesLost: totalMinutes }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
-          skippedUnknownUuids.push({ etEmpId, minutesLost: totalMinutes });
-          continue;
-        }
-        const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
-        const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
-        const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 10000) / 10000;
-        await upsertTimesheetEntry({
-          employeeId: internalEmpId,
-          companyId:  matched?.companyId ?? co.id,
-          periodKey,
-          hoursWorked,
-          breakDeduction: breakHours,
-          approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 10000) / 10000),
-          source: "easyteam",
-          syncedAt,
-        });
-        restSynced++;
+    for (const [etEmpId, totalMinutes] of minutesByEmp) {
+      // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
+      const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
+      if (store.isEasyTeamUuidIgnored(etEmpId)) {
+        req.log.info({ etEmpId, minutesLost: totalMinutes }, "Sync: silently skipping blocklisted EasyTeam UUID");
+        continue;
       }
+      if (internalEmpId === etEmpId) {
+        req.log.warn({ etEmpId, minutesLost: totalMinutes }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
+        skippedUnknownUuids.push({ etEmpId, minutesLost: totalMinutes });
+        continue;
+      }
+      const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
+      const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
+      const breakHours  = Math.round(((breaksByEmp2.get(etEmpId) ?? 0) / 60) * 10000) / 10000;
+      await upsertTimesheetEntry({
+        employeeId: internalEmpId,
+        companyId:  matched?.companyId ?? co.id,
+        periodKey,
+        hoursWorked,
+        breakDeduction: breakHours,
+        approvedHours:  Math.max(0, Math.round((hoursWorked - breakHours) * 10000) / 10000),
+        source: "easyteam",
+        syncedAt,
+      });
+      restSynced++;
     }
   }
 

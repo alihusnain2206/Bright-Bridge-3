@@ -28,3 +28,4 @@
 - [EasyTeam auth hardening](easyteam-auth-hardening.md) — role + company-scope guards added Aug 2026; token endpoint keeps requireAuth but scopes client_id; employees get own-company fallback on optional-companyId endpoints
 - [Phase 1 multi-location foundation](phase1-multi-location-foundation.md) — locations + departments tables; employees.locationId FK; boot migrations; resolver updated; drizzle-kit rename-prompt gotcha
 - [Phase 2 multi-location feature](phase2-multi-location.md) — Locations CRUD, company-settings tab, directory/profile/edit/wizard UI, grant-access, B5/B6 integration fixes
+- [Phase 3 multi-location time tracking](phase3-multi-location.md) — JWT scoping, per-location sync, SDK launcher filtering, lat/lng schema, company-settings UI

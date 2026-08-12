@@ -14,6 +14,9 @@ export interface LauncherEmployee {
   timeTrackingEnabled?: boolean;
   wage?: number;
   wageType?: "hourly" | "weekly" | "monthly";
+  /** Phase 3: employee's assigned location. When set, this employee appears ONLY in that
+   *  location's dict. When absent (legacy / manager-self entries), employee appears in all. */
+  locationId?: string;
 }
 
 export interface LauncherLocation {
@@ -21,6 +24,8 @@ export interface LauncherLocation {
   name: string;
   latitude: number;
   longitude: number;
+  /** Optional timezone string (IANA format). Passed to EasyTeam for display purposes. */
+  timezone?: string;
 }
 
 export interface LauncherOrg {
@@ -77,9 +82,18 @@ export function useEasyTeamLauncher(
     if (!container) return;
     container.innerHTML = "";
 
+    // Phase 3: build per-location employee maps.
+    // Employees with a locationId are scoped to their assigned location only.
+    // Employees without locationId (e.g. manager-self entries, legacy data) appear in all
+    // locations — this preserves backward compatibility and ensures the JWT's employeeId
+    // is always present in the EasyTeam employees list regardless of location.
     const resolvedLocations = config.locations.map((loc) => ({
       ...loc,
-      employees: Object.fromEntries(config.employees.map((e) => [e.id, {}])),
+      employees: Object.fromEntries(
+        config.employees
+          .filter((e) => !e.locationId || e.locationId === loc.id)
+          .map((e) => [e.id, {}])
+      ),
     }));
 
     const launcher = new EasyTeamEmbedLauncher(token, {

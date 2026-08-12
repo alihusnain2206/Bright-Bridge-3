@@ -6,6 +6,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { store } from "../store.js";
 import { syncEmployeeToIntegrations } from "../lib/employee-onboard.js";
 import { persistUserAccount } from "../lib/user-account-persist.js";
+import { resolveEmployeeLocationId } from "../lib/location.js";
 import { createOnboardingTasksInDb, createComplianceItemsInDb, generateDisplayIdFromExisting, seedDepartmentsForCompany, logPeopleActivity, calculateComplianceScore, calculateReadinessFlags } from "./people.js";
 import { getRollfiConfig } from "../lib/rollfi-config.js";
 import { safeRollfiLog, rollfiVerboseLog } from "../lib/safe-rollfi-log.js";
@@ -922,6 +923,9 @@ router.post("/employees", async (req: Request, res: Response) => {
     // 6. Auto-create login account and persist to DB so it survives restarts
     const existingUser = store.getUserByEmail(body.email);
     if (!existingUser) {
+      // Resolve the employee's location so user_accounts.location_id is set at creation time.
+      // This prevents the Phase 3 gap where user_accounts.location_id stays NULL until next boot.
+      const empLocationId = await resolveEmployeeLocationId(employeeId).catch(() => null);
       const newLoginUser = {
         id: `USER-DYN-${Date.now()}`,
         name: `${body.firstName} ${body.lastName}`,
@@ -930,6 +934,7 @@ router.post("/employees", async (req: Request, res: Response) => {
         role: "employee" as const,
         companyId: body.companyId,
         employeeId,
+        locationId: empLocationId ?? undefined,
         position: body.position,
         hourlyWage: hourlyWageCents,
         /** FIX 2: carry payType so payroll preview works even when the DB lookup hasn't run yet. */

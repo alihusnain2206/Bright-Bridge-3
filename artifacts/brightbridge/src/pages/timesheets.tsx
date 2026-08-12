@@ -58,14 +58,11 @@ function getCurrentWeek(): { from: string; to: string } {
   return { from: fmt(monday), to: fmt(sunday) };
 }
 
+// Fallback coords for seeded companies when API locations haven't been fetched yet.
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
   "ORG-SUNSHINE": [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }],
   "ORG-RAINBOW":  [{ id: "LOC-RAINBOW",  name: "Rainbow Kids Daycare",    latitude: 40.7178, longitude: -74.0431 }],
 };
-const ALL_STATIC_LOCATIONS = [
-  { id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 },
-  { id: "LOC-RAINBOW",  name: "Rainbow Kids Daycare",    latitude: 40.7178, longitude: -74.0431 },
-];
 
 interface ApiEmployee {
   id?: string; employeeId?: string; employeeDisplayId?: string;
@@ -346,7 +343,7 @@ export default function Timesheets() {
       const tokenData = await tokenRes.json() as { token?: string; error?: string };
       if (!tokenRes.ok || !tokenData.token) { setTokenError(tokenData.error ?? "Token generation failed"); return; }
 
-      const empData = await empRes.json() as { employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string }> };
+      const empData = await empRes.json() as { employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string; locationId?: string }> };
       const apiEmployees = (empData.employees ?? []).map(e => ({
         id: e.id,
         name: e.name,
@@ -354,6 +351,7 @@ export default function Timesheets() {
         timeTrackingEnabled: true,
         wage: e.wage ?? 1500,
         wageType: "hourly" as const,
+        locationId: e.locationId ?? undefined,
       }));
 
       // Use freshly-fetched pay period dates for the iframe URL.
@@ -387,14 +385,25 @@ export default function Timesheets() {
         ? [selfEntry, ...apiEmployees]
         : apiEmployees;
 
-      const isStaticCompany = !!(COMPANY_LOCATIONS[user.companyId ?? ""]);
-      const locations = isStaticCompany
-        ? ALL_STATIC_LOCATIONS
-        : authLocation
-          ? [{ id: authLocation.id, name: authLocation.name, latitude: authLocation.latitude, longitude: authLocation.longitude }]
-          : null;
+      // Phase 3: fetch all active locations for this company from the API.
+      // This replaces the hardcoded ALL_STATIC_LOCATIONS approach so multi-location companies
+      // get per-location employee maps instead of mapping all employees to all locations.
+      const companyIdEnc2 = encodeURIComponent(user.companyId ?? "");
+      const locData = await fetch(`/api/locations?companyId=${companyIdEnc2}`, { credentials: "include" })
+        .then(r => r.json() as Promise<{ locations?: Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> }>)
+        .catch(() => ({ locations: [] as Array<{ id: string; name: string; latitude: number | null; longitude: number | null; isActive: boolean }> }));
 
-      if (!locations) { setTokenError("No location data available for this company"); return; }
+      const apiLocations2 = (locData.locations ?? [])
+        .filter((l) => l.isActive)
+        .map((l) => ({ id: l.id, name: l.name, latitude: l.latitude ?? 40.7357, longitude: l.longitude ?? -74.1724 }));
+
+      // Fall back to COMPANY_LOCATIONS (seeded coords) or auth-provided location
+      const companyFallbackLocs = COMPANY_LOCATIONS[user.companyId ?? ""] ?? (authLocation
+        ? [{ id: authLocation.id, name: authLocation.name, latitude: authLocation.latitude, longitude: authLocation.longitude }]
+        : []);
+      const locations = apiLocations2.length > 0 ? apiLocations2 : companyFallbackLocs;
+
+      if (locations.length === 0) { setTokenError("No location data available for this company"); return; }
 
       launch(tokenData.token, {
         page: Pages.TIMESHEET,
