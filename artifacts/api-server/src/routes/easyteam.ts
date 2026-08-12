@@ -224,8 +224,16 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
       const locationEtId = internalLocId
         ? (locEtIdMap.get(internalLocId) ?? internalLocId)
         : undefined;
+      // Per EasyTeam "Using Identifiers": pass the same stable external ID used in the JWT
+      // (user.employeeId, e.g. "EMP-SUNSHINE-001").
+      // Exception: the shared ORG-BRIGHTBRIDGE org contains manually-added employees (Arbab
+      // Nasir) whose only known identifier is the EasyTeam-assigned UUID — preserve that path
+      // so their shifts continue to appear on Rainbow.
+      const employeePayloadId = resolveEasyTeamOrgId(companyId) === "ORG-BRIGHTBRIDGE"
+        ? (store.getEasyTeamUuidForEmployee(empId) ?? empId)
+        : empId;
       return {
-        id:                   store.getEasyTeamUuidForEmployee(empId) ?? empId,
+        id:                   employeePayloadId,
         name:                 u.name,
         role:                 u.role,
         wage:                 dbWageMap.get(empId) ?? u.hourlyWage ?? 1500,
