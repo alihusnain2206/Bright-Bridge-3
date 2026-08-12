@@ -37,27 +37,6 @@ the boot sync only registered `status='active'` employees, so any onboarding emp
 wizard-created hires) would have their shifts silently dropped on restart. The DB column makes
 the UUID durable; Phase 1 repopulates the map in <1 ms without any API calls.
 
-## Stale UUID correction (Phase 0a)
-
-If an employee's `easyteam_uuid` in the DB is from an OLD EasyTeam org (non-null but wrong),
-Phase 2 will silently skip them and their timesheet hours appear under an unresolved UUID.
-
-Fix pattern added to `index.ts` `STALE_UUID_CORRECTIONS`:
-- `force_set`: employee has a confirmed correct UUID → overwrite even if column is non-null.
-  Condition: `WHERE id = empId AND easyteam_uuid = staleUuid` (idempotent).
-- `reset_null`: correct UUID unknown → clear to null so Phase 2 re-discovers via token exchange.
-  Condition: same WHERE → runs only while stale value present.
-
-Phase 0a runs BEFORE Phase 0b (KNOWN_EASYTEAM_UUIDS backfill) and Phase 1 (map population).
-
-**Why the null check in Phase 0b/Phase 2 isn't enough**: these steps only act on `IS NULL` rows;
-a stale non-null UUID blocks both, so shifts are stored under the wrong UUID forever.
-
-Confirmed stale-UUID employees for ORG-SUNSHINE (Amsterdam Ave):
-- Natalie Reed (EMP-MS1Q4OT4-U8EPXX): stale `d4f0d77c-...`, correct `644fe0ab-a60b-47fd-b39c-b23ee2a91c96`
-- Diane Whitfield (EMP-MS1JLSXM-3TOPI7): stale `245d3a22-...`, reset to null
-- Gerald Foster (EMP-MS1QJQW4-XV29AQ): stale `fa563e5c-...`, reset to null
-
 ## Quick-add path (rollfi.ts POST /rollfi/employees)
 Now **awaited** (not fire-and-forget). `registerEmployeeInEasyTeam` internally calls
 `setEasyTeamUuidMapping` and attempts a DB UPDATE. Store-only employees (no DB row) get a

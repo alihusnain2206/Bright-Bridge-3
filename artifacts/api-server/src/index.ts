@@ -318,76 +318,9 @@ async function bootBackfillKnownEasyTeamUuids(): Promise<{ written: number; skip
 }
 
 /**
- * Corrects stale EasyTeam UUIDs for employees whose DB value is known to be from an
- * old EasyTeam org. Runs idempotently — only triggers when the stale UUID is still
- * present, so it is safe to leave in permanently and will no-op after the first fix.
+ * Two-phase EasyTeam boot sync:
  *
- * Two kinds of corrections:
- *   FORCE_SET  — employee has a confirmed correct ORG-SUNSHINE UUID; write it.
- *   RESET_NULL — employee has a stale old-org UUID; clear it so Phase 2 re-discovers
- *                the correct UUID via a live token exchange on the next restart.
- */
-const STALE_UUID_CORRECTIONS: Array<
-  | { kind: "force_set"; empId: string; staleUuid: string; correctUuid: string }
-  | { kind: "reset_null"; empId: string; staleUuid: string }
-> = [
-  // Natalie Reed — ORG-SUNSHINE UUID confirmed from production timesheet_shifts.
-  {
-    kind: "force_set",
-    empId:       "EMP-MS1Q4OT4-U8EPXX",
-    staleUuid:   "d4f0d77c-471f-4db0-9d23-11a2b39a37ae",
-    correctUuid: "644fe0ab-a60b-47fd-b39c-b23ee2a91c96",
-  },
-  // Diane Whitfield — stale UUID from old org; Phase 2 will re-discover the real one.
-  { kind: "reset_null", empId: "EMP-MS1JLSXM-3TOPI7", staleUuid: "245d3a22-4746-415c-998d-cbcb8882b06a" },
-  // Gerald Foster — stale UUID from old org; Phase 2 will re-discover the real one.
-  { kind: "reset_null", empId: "EMP-MS1QJQW4-XV29AQ", staleUuid: "fa563e5c-d658-45b2-be87-78af35b6c286" },
-];
-
-async function bootCorrectStaleEasyTeamUuids(): Promise<{ corrected: number }> {
-  let corrected = 0;
-  for (const entry of STALE_UUID_CORRECTIONS) {
-    try {
-      if (entry.kind === "force_set") {
-        const result = await db
-          .update(employees)
-          .set({ easyteamUuid: entry.correctUuid, easyteamSynced: true })
-          .where(and(eq(employees.id, entry.empId), eq(employees.easyteamUuid, entry.staleUuid)))
-          .returning({ id: employees.id });
-        if (result.length > 0) {
-          corrected++;
-          logger.info(
-            { empId: entry.empId, staleUuid: entry.staleUuid, correctUuid: entry.correctUuid },
-            "Boot correction: replaced stale EasyTeam UUID with confirmed ORG-SUNSHINE UUID"
-          );
-        }
-      } else {
-        // reset_null — clear stale UUID so Phase 2 re-registers with live token exchange
-        const result = await db
-          .update(employees)
-          .set({ easyteamUuid: null, easyteamSynced: false })
-          .where(and(eq(employees.id, entry.empId), eq(employees.easyteamUuid, entry.staleUuid)))
-          .returning({ id: employees.id });
-        if (result.length > 0) {
-          corrected++;
-          logger.info(
-            { empId: entry.empId, staleUuid: entry.staleUuid },
-            "Boot correction: cleared stale EasyTeam UUID — Phase 2 will re-register"
-          );
-        }
-      }
-    } catch (err) {
-      logger.warn({ empId: entry.empId, err }, "Boot correction: DB update failed (non-fatal)");
-    }
-  }
-  return { corrected };
-}
-
-/**
- * Three-phase EasyTeam boot sync:
- *
- * Phase 0a — correct known-stale UUIDs (idempotent; only fires while stale value present).
- * Phase 0b — backfill historically known UUIDs into DB (idempotent, non-fatal).
+ * Phase 0 — backfill historically known UUIDs into DB (idempotent, non-fatal).
  *
  * Phase 1 — read from DB (instant, no EasyTeam API calls):
  *   SELECT id, easyteam_uuid FROM employees WHERE easyteam_uuid IS NOT NULL
@@ -400,13 +333,7 @@ async function bootCorrectStaleEasyTeamUuids(): Promise<{ corrected: number }> {
  *   No status filter — an "onboarding" employee can clock in and must be matched.
  */
 async function bootEasyTeamSync() {
-  // ── Phase 0a: correct known-stale UUIDs ────────────────────────────────
-  const { corrected } = await bootCorrectStaleEasyTeamUuids();
-  if (corrected > 0) {
-    logger.info({ corrected }, "Boot sync: stale EasyTeam UUID corrections applied");
-  }
-
-  // ── Phase 0b: backfill known UUIDs ─────────────────────────────────────
+  // ── Phase 0: backfill known UUIDs ──────────────────────────────────────
   const { written: backfilled, skipped: backfillSkipped } = await bootBackfillKnownEasyTeamUuids();
   if (backfilled > 0 || backfillSkipped > 0) {
     logger.info({ backfilled, backfillSkipped }, "Boot sync: backfill of known EasyTeam UUIDs complete");
