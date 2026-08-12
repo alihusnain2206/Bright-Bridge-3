@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
@@ -385,7 +386,7 @@ export default function ManagerDashboard() {
       launch(data.token, {
         page: Pages.TIMESHEET,
         employees: allLaunchEmployees,
-        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+        organization: resolveEasyTeamOrg(user?.companyId, company?.name),
         locations: allLaunchLocations,
         fromDate,
         toDate,

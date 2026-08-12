@@ -8,6 +8,7 @@ import { Calendar, Key, Play, Activity, AlertCircle, RefreshCw, Building2 } from
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import { ScheduleIllustration } from "@/components/daycare-illustrations";
 import { useAuth } from "@/hooks/useAuth";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 
 const CONTAINER_ID = "easyteam-schedule-container";
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
@@ -82,7 +83,7 @@ export default function Schedule() {
         }
         launch(data.token, {
           page: Pages.WEEKLY_SCHEDULE,
-          organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+          organization: resolveEasyTeamOrg(cId, client.locationName),
           locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
           employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
         });

@@ -447,6 +447,7 @@ adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
           wageType: "hourly",
         },
         locationId,
+        companyId,
         req.log
       );
       results.push({

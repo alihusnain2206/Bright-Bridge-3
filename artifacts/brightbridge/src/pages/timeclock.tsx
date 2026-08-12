@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Clock, Key, Play, Activity, AlertCircle, RefreshCw } from "lucide-react";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import { ClockIllustration } from "@/components/daycare-illustrations";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 
 const CONTAINER_ID = "easyteam-timeclock-container";
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
@@ -64,7 +65,7 @@ export default function TimeClock() {
         }
         launch(data.token, {
           page: Pages.TIME_CLOCK,
-          organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+          organization: resolveEasyTeamOrg(cId, client.locationName),
           locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
           employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
         });

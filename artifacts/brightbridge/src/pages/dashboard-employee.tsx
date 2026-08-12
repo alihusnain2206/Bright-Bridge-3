@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   User, Briefcase, Clock, DollarSign, Building2, Zap, Play,
@@ -120,7 +121,7 @@ export default function EmployeeDashboard() {
       launch(data.token, {
         page: Pages.TIME_CLOCK,
         employees: myEmployees,
-        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+        organization: resolveEasyTeamOrg(user.companyId, company?.name),
         locations: myLocations,
       });
     } catch { setTokenError("Network error"); }

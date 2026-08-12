@@ -93,6 +93,7 @@ export async function syncEmployeeToIntegrations(
       wageType: "hourly",
     },
     locationId,
+    emp.companyId,
     log
   );
   // UUID mapping + DB persist now happen inside registerEmployeeInEasyTeam itself.

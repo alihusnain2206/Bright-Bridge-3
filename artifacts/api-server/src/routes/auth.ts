@@ -5,6 +5,7 @@ import * as crypto from "crypto";
 import { store } from "../store";
 import { persistUserAccount } from "../lib/user-account-persist.js";
 import { resolveCompanyLocationId, resolveEmployeeLocationId } from "../lib/location.js";
+import { resolveEasyTeamOrgId } from "../lib/easyteam-org.js";
 import { db, companies, userAccounts, employees as employeesTable, passwordResetTokens } from "@workspace/db";
 import { eq, and, gt, isNull } from "drizzle-orm";
 import { sendPasswordResetEmail, APP_URL } from "../lib/email.js";
@@ -438,7 +439,7 @@ router.post("/auth/token-by-role", async (req, res) => {
     // "LOC-SUNSHINE") rather than EasyTeam's UUID it silently filters all shifts to 0m.
     payload = {
       employeeId: user.employeeId,
-      organizationId: "ORG-BRIGHTBRIDGE",
+      organizationId: resolveEasyTeamOrgId(user.companyId),
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "manager",
@@ -459,7 +460,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
     payload = {
       employeeId: user.employeeId,
-      organizationId: "ORG-BRIGHTBRIDGE",
+      organizationId: resolveEasyTeamOrgId(user.companyId),
       locationId: mgrLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
@@ -486,7 +487,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       ?? "LOC-SUNSHINE";
     payload = {
       employeeId: user.employeeId,
-      organizationId: "ORG-BRIGHTBRIDGE",
+      organizationId: resolveEasyTeamOrgId(user.companyId),
       locationId: empLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {

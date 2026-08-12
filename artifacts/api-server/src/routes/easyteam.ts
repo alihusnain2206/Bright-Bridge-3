@@ -11,6 +11,7 @@ import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
 import { resolveCompanyLocationId } from "../lib/location.js";
 import { requireAuth, requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
+import { resolveEasyTeamOrgId } from "../lib/easyteam-org.js";
 
 const router: IRouter = Router();
 
@@ -314,7 +315,7 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
   // client_id is a companyId in the unified model — resolve its EasyTeam location id.
   if (client_id) {
     resolvedLocationId = await resolveCompanyLocationId(client_id);
-    resolvedOrgId = "ORG-BRIGHTBRIDGE";
+    resolvedOrgId = resolveEasyTeamOrgId(client_id);
   }
 
   let resolvedEtEmployeeId = employee_id;
@@ -407,7 +408,7 @@ router.get("/easyteam/timesheets", requireRole("super_admin", "owner", "manager"
 });
 
 // ── Trigger EasyTeam export programmatically (replicates "Email Report" button) ──────
-async function triggerEasyTeamExportForLocation(locationId: string): Promise<boolean> {
+async function triggerEasyTeamExportForLocation(locationId: string, companyId?: string): Promise<boolean> {
   if (!EASYTEAM_API_KEY) return false;
   const managerUser = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
   if (!managerUser?.employeeId) return false;
@@ -416,7 +417,7 @@ async function triggerEasyTeamExportForLocation(locationId: string): Promise<boo
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -581,7 +582,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     const co = store.getCompany(companyId);
     if (co?.locationId) {
       req.log.info({ locationId: co.locationId }, "Sync: triggering EasyTeam export programmatically");
-      const triggered = await triggerEasyTeamExportForLocation(co.locationId);
+      const triggered = await triggerEasyTeamExportForLocation(co.locationId, co.id);
       req.log.info({ triggered, locationId: co.locationId }, "Sync: export trigger result");
 
       if (triggered) {
@@ -1098,7 +1099,7 @@ async function fetchEasyTeamShiftsForLocation(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -1423,11 +1424,19 @@ router.get("/easyteam/debug/shifts", requireRole("super_admin", "owner"), async 
   const mgr = store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner"));
   if (!mgr?.employeeId) { res.json({ error: `No manager for ${locationId}` }); return; }
 
+  // Resolve the company that owns this location (for correct per-company org scoping)
+  const [debugLocRow] = await db
+    .select({ companyId: locationsTable.companyId })
+    .from(locationsTable)
+    .where(eq(locationsTable.id, locationId))
+    .catch(() => [undefined]);
+  const debugCompanyId = debugLocRow?.companyId ?? mgr.companyId;
+
   try {
     const adminJwt = jwt.sign(
       {
         employeeId: mgr.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(debugCompanyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: { name: "manager", permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"] },
@@ -1610,16 +1619,19 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner", "
       }
 
       // Generate a token with SHIFT_DELETE permission for the delete calls
-      const adminJwt = result.shifts[0] ? await (async () => {
+      // Exchange a properly-signed RS256 JWT to get an access token + real internal IDs.
+      // Previous code used HS256 (wrong algorithm) and the raw JWT as a Bearer (also wrong);
+      // the delete URL also hardcoded the org string instead of the real internal org UUID.
+      const deleteAuth = result.shifts[0] ? await (async () => {
         try {
           const managerUser =
             store.getAllStaffUsers().find((u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")) ??
             store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
           if (!managerUser?.employeeId) return null;
-          return jwt.sign(
+          const rawJwt = jwt.sign(
             {
               employeeId: managerUser.employeeId,
-              organizationId: "ORG-BRIGHTBRIDGE",
+              organizationId: resolveEasyTeamOrgId(companyId),
               locationId,
               ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
               accessRole: {
@@ -1630,18 +1642,35 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner", "
               wage: 25, wageType: "hourly",
               features: { geolocation: false },
             },
-            EASYTEAM_API_KEY ?? "",
-            { expiresIn: "1h", algorithm: "HS256" }
+            EASYTEAM_API_KEY!,
+            { expiresIn: "1h", algorithm: "RS256" }
           );
+          const exResp = await axios.post<{ accessToken: string }>(
+            `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
+            { token: rawJwt },
+            { timeout: 8000 }
+          );
+          const accessToken = exResp.data.accessToken;
+          let internalOrgId = resolveEasyTeamOrgId(companyId);
+          let internalLocId = locationId;
+          try {
+            const parts = accessToken.split(".");
+            if (parts.length === 3) {
+              const p = JSON.parse(Buffer.from(parts[1]!, "base64url").toString("utf8")) as Record<string, unknown>;
+              if (typeof p.organizationId === "string") internalOrgId = p.organizationId;
+              if (typeof p.locationId === "string") internalLocId = p.locationId;
+            }
+          } catch { /* keep defaults */ }
+          return { accessToken, internalOrgId, internalLocId };
         } catch { return null; }
       })() : null;
 
-      if (adminJwt) {
+      if (deleteAuth) {
         for (const s of targetShifts) {
-          const deleteUrl = `${EASYTEAM_EMBED_API}/organizations/ORG-BRIGHTBRIDGE/locations/${locationId}/shifts/${s.id}`;
+          const deleteUrl = `${EASYTEAM_EMBED_API}/organizations/${deleteAuth.internalOrgId}/locations/${deleteAuth.internalLocId}/shifts/${s.id}`;
           try {
             const dr = await axios.delete(deleteUrl, {
-              headers: { Authorization: `Bearer ${adminJwt}` },
+              headers: { Authorization: `Bearer ${deleteAuth.accessToken}` },
               timeout: 8000,
               validateStatus: () => true,
             });
@@ -1933,7 +1962,7 @@ router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), 
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -2017,7 +2046,7 @@ router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), 
 
 export async function ensureLocationTimezone(
   locationId: string,
-  opts: { country?: string; state?: string } = {}
+  opts: { country?: string; state?: string; companyId?: string } = {}
 ): Promise<{ ok: boolean; detail?: string }> {
   if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
 
@@ -2037,7 +2066,7 @@ export async function ensureLocationTimezone(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(opts.companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -2096,7 +2125,7 @@ export async function ensureLocationTimezone(
 // disables the Save button. This function creates a default policy if none exist yet. Idempotent.
 export async function ensureTimeOffPolicy(
   locationId: string,
-  opts: { policyName?: string } = {},
+  opts: { policyName?: string; companyId?: string } = {},
 ): Promise<{ ok: boolean; detail?: string }> {
   if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
 
@@ -2115,7 +2144,7 @@ export async function ensureTimeOffPolicy(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(opts.companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -2195,14 +2224,14 @@ export async function ensureTimeOffPolicy(
 // Runs after a short delay so the server is fully up before making outbound calls.
 setTimeout(() => {
   if (!EASYTEAM_API_KEY) return;
-  const seedLocations: Array<{ locationId: string; country: string; state: string }> = [
-    { locationId: "LOC-SUNSHINE", country: "US", state: "NJ" },
-    { locationId: "LOC-RAINBOW",  country: "US", state: "NJ" },
+  const seedLocations: Array<{ locationId: string; country: string; state: string; companyId: string }> = [
+    { locationId: "LOC-SUNSHINE", country: "US", state: "NJ", companyId: "ORG-SUNSHINE" },
+    { locationId: "LOC-RAINBOW",  country: "US", state: "NJ", companyId: "ORG-RAINBOW"  },
   ];
-  for (const { locationId, country, state } of seedLocations) {
-    ensureLocationTimezone(locationId, { country, state }).catch(() => { /* already logged inside */ });
+  for (const { locationId, country, state, companyId } of seedLocations) {
+    ensureLocationTimezone(locationId, { country, state, companyId }).catch(() => { /* already logged inside */ });
     // Also ensure at least one time-off policy exists so the Save button is enabled in the SDK.
-    ensureTimeOffPolicy(locationId).catch(() => { /* already logged inside */ });
+    ensureTimeOffPolicy(locationId, { companyId }).catch(() => { /* already logged inside */ });
   }
 }, 5000);
 

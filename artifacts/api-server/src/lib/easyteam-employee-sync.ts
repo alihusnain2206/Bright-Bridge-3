@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { store } from "../store.js";
 import { db, employees } from "@workspace/db";
 import type { Logger } from "pino";
+import { resolveEasyTeamOrgId } from "./easyteam-org.js";
 
 function normalizePemKey(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -39,6 +40,7 @@ export interface EasyTeamRegistrationResult {
 export async function registerEmployeeInEasyTeam(
   employee: { id: string; name: string; email?: string; roleName: string; wage: number; wageType: string },
   locationId: string,
+  companyId?: string,
   log?: Logger
 ): Promise<EasyTeamRegistrationResult> {
   if (!EASYTEAM_API_KEY) {
@@ -59,7 +61,7 @@ export async function registerEmployeeInEasyTeam(
     const employeeJwt = jwt.sign(
       {
         employeeId: etEmployeeId,
-        organizationId: "ORG-BRIGHTBRIDGE",
+        organizationId: resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {

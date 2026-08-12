@@ -12,6 +12,7 @@ import {
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import { TimesheetIllustration } from "@/components/daycare-illustrations";
 import { useAuth } from "@/hooks/useAuth";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 
 const CONTAINER_ID = "easyteam-timesheets-container";
 const PANEL = { background: "#284362", borderColor: "rgba(255,255,255,0.1)" } as const;
@@ -413,7 +414,7 @@ export default function Timesheets() {
       launch(tokenData.token, {
         page: Pages.TIMESHEET,
         employees: allEmployees,
-        organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+        organization: resolveEasyTeamOrg(user?.companyId, company?.name),
         locations,
         fromDate: launchFrom,
         toDate: launchTo,
@@ -439,7 +440,7 @@ export default function Timesheets() {
         if (client) {
           launch(data.token, {
             page,
-            organization: { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" },
+            organization: resolveEasyTeamOrg(cId, client.locationName),
             locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
             employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
           });

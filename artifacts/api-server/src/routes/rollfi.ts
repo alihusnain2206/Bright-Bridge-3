@@ -880,6 +880,7 @@ router.post("/rollfi/employees", async (req, res) => {
       wageType: "hourly",
     },
     resolvedEtLocationId,
+    companyId,
     req.log
   );
   if (!etResult.success) {

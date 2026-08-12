@@ -383,6 +383,7 @@ async function bootEasyTeamSync() {
         wageType: "hourly",
       },
       locationId,
+      emp.companyId,
       logger
     );
     // registerEmployeeInEasyTeam handles store.setEasyTeamUuidMapping + DB persist internally.
