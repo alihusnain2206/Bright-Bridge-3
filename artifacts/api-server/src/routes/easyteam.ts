@@ -683,6 +683,24 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 
     if (companyEtLocIds.size === 0) continue; // no API response from any location — skip
 
+    // Expand the known-location set with any historical EasyTeam location UUIDs already present
+    // in this company's own timesheet_shifts rows.  This handles the case where EasyTeam
+    // internally reassigned a location to a new UUID (e.g. a7649c10-... → 53f6b890-...) while
+    // old shifts still carry the original UUID.  We do NOT add a fake locations row for the old
+    // UUID — it is the same physical site, just a different EasyTeam internal identifier.
+    try {
+      const historicalLocRows = await db
+        .selectDistinct({ etLocId: timesheetShiftsTable.easyteamLocationId })
+        .from(timesheetShiftsTable)
+        .where(eq(timesheetShiftsTable.companyId, co.id));
+      for (const { etLocId } of historicalLocRows) {
+        if (etLocId) companyEtLocIds.add(etLocId);
+      }
+    } catch (histErr) {
+      req.log.warn({ companyId: co.id, histErr }, "Sync: could not read historical location UUIDs from timesheet_shifts (non-fatal)");
+    }
+    req.log.info({ companyId: co.id, knownEtLocIds: [...companyEtLocIds] }, "Sync: expanded known location UUIDs (current + historical)");
+
     // Foreign-location guard: keep only shifts whose EasyTeam locationId belongs to THIS company.
     // Prevents cross-company contamination when multiple companies share one EasyTeam org.
     let skippedForeignShifts = 0;
