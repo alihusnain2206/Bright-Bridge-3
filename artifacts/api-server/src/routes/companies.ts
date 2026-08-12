@@ -1206,6 +1206,31 @@ router.get("/companies/:companyId/pay-period", async (req: Request, res: Respons
         // Infer frequency from actual date range — more reliable than DB field
         const rangeDays = Math.round((new Date(rollfiTo).getTime() - new Date(rollfiFrom).getTime()) / MS_PER_DAY) + 1;
         const inferredFreq = rangeDays >= 28 ? "Monthly" : rangeDays >= 13 ? "BiWeekly" : rangeDays >= 10 ? "SemiMonthly" : "Weekly";
+
+        // Sandbox guard: Rollfi sandbox stays on the last unprocessed period and never
+        // advances automatically. If today falls AFTER the period end, advance the window
+        // by the period interval until it covers today. This keeps the UI date range
+        // current without waiting for sandbox to process the old period.
+        const todayStr = new Date().toISOString().split("T")[0]!;
+        let advFrom = rollfiFrom;
+        let advTo   = rollfiTo;
+        let advanced = false;
+        while (advTo < todayStr) {
+          const nextFrom = new Date(new Date(advFrom).getTime() + rangeDays * MS_PER_DAY);
+          const nextTo   = new Date(new Date(advTo).getTime()   + rangeDays * MS_PER_DAY);
+          advFrom = nextFrom.toISOString().split("T")[0]!;
+          advTo   = nextTo.toISOString().split("T")[0]!;
+          advanced = true;
+        }
+        if (advanced) {
+          req.log.info(
+            { companyId, originalFrom: rollfiFrom, originalTo: rollfiTo, advFrom, advTo, rangeDays },
+            "pay-period: advanced stale Rollfi period to cover today",
+          );
+          rollfiFrom = advFrom;
+          rollfiTo   = advTo;
+        }
+
         req.log.info({ companyId, from: rollfiFrom, to: rollfiTo, rangeDays, inferredFreq, source: "rollfi" }, "pay-period from Rollfi");
         res.json({ companyId, from: rollfiFrom, to: rollfiTo, frequency: inferredFreq, source: "rollfi" });
         return;
