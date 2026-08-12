@@ -449,11 +449,12 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "manager") {
-    // Resolution order: 1. user_accounts.location_id (backfilled from employees) → 2. employees.location_id
-    // → 3. company primary location.  This ensures managers assigned to a specific location (Phase 3)
-    // get a JWT scoped to that location, not the company's primary.
-    const mgrLocationId = user.locationId
-      ?? (user.employeeId ? (await resolveEmployeeLocationId(user.employeeId)) ?? undefined : undefined)
+    // Resolution order: 1. employees.location_id (DB-authoritative — updated by PATCH /employees/:id)
+    // → 2. user_accounts.location_id (in-memory fallback, covers seeded users without a DB employee row)
+    // → 3. company primary location.  DB is checked FIRST so a location reassignment takes effect on
+    // the very next token request without requiring a server restart or store refresh.
+    const mgrLocationId = (user.employeeId ? (await resolveEmployeeLocationId(user.employeeId)) ?? undefined : undefined)
+      ?? user.locationId
       ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
     payload = {
       employeeId: user.employeeId,
@@ -473,13 +474,13 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: false, timesheets_wages: true },
     };
   } else if (user.role === "employee") {
-    // Resolution order: 1. user_accounts.location_id (backfilled from employees table) →
-    //   2. employees.location_id (set by wizard / bootAssignEmployeeLocations) →
-    //   3. company's is_primary location → 4. LOC-SUNSHINE (absolute last resort).
-    // Step 2 is critical for Phase 3: employees assigned to a non-primary location must clock in
-    // under their own location's EasyTeam UUID, not the company-wide primary.
-    const empLocationId = user.locationId
-      ?? (user.employeeId ? (await resolveEmployeeLocationId(user.employeeId)) ?? undefined : undefined)
+    // Resolution order: 1. employees.location_id (DB-authoritative — updated by PATCH /employees/:id)
+    //   → 2. user_accounts.location_id (in-memory fallback, covers seeded/admin users without an employees row)
+    //   → 3. company's is_primary location → 4. LOC-SUNSHINE (absolute last resort).
+    // DB is checked FIRST so a location reassignment via PATCH /employees/:id takes effect on the very
+    // next token request without requiring a server restart.  This is the core Phase 3 assertion.
+    const empLocationId = (user.employeeId ? (await resolveEmployeeLocationId(user.employeeId)) ?? undefined : undefined)
+      ?? user.locationId
       ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : "LOC-SUNSHINE")
       ?? "LOC-SUNSHINE";
     payload = {
