@@ -29,3 +29,10 @@ ORG-BRIGHTBRIDGE shared org also has Bug B phantoms (wizard-company employees go
 
 ## Employee `644fe0ab-a60b-47fd-b39c-b23ee2a91c96`
 This EasyTeam UUID appears in ORG-SUNSHINE shift data but is NOT registered to any production employee. Synced via the wizard-company fallback path. Likely a dev test clock-in or manually-added EasyTeam employee — not Natalie Reed (her UUID is `d4f0d77c-471f-4db0-9d23-11a2b39a37ae`, already correctly set in DB).
+
+## Amsterdam Ave secondary location — confirmed production diagnosis (Aug 2026)
+Amsterdam Ave JWT (`locationId = "9defae07-3f8f-43ad-9062-9963820014fd"`) returns **0 shifts** from EasyTeam's flat `/timesheets` endpoint. Primary JWT returns 13 shifts from the same endpoint.
+
+Diane's clock-in (shift `b499504f-a0e0-4dff-a77d-2dd74ba62818`) was recorded under phantom `5e7b7483-4b10-4f43-a701-8bf2e9530450` — excluded by foreign-location guard.
+
+Root cause: EasyTeam is not correctly associating `"9defae07-3f8f-..."` as the registered external key for Amsterdam Ave. Clock-ins go to phantom locations instead of `06e611e0-67d6-...` (Amsterdam Ave's correct internal UUID). EasyTeam support ticket required — phantom cleanup + location registration verification needed.
