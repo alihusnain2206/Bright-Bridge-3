@@ -1,0 +1,91 @@
+Failed to load resource: the server responded with a status of 429 ()
+index-BK9fFjNQ.js:105 [EasyTeam SDK payload] {
+  "employees": [
+    {
+      "id": "MGR-SUNSHINE-001",
+      "name": "Susan Manager",
+      "role": "Daycare Manager",
+      "timeTrackingEnabled": false,
+      "isVisible": false,
+      "wage": 2500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "f765647e-0a5c-495b-9c14-984f7ae4d0e5",
+      "name": "John Smith",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 3500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "fc3c3015-3f79-470f-9642-806347b4eb91",
+      "name": "Mary Johnson",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "9f7baf27-1dc7-443d-976f-cb4551d3322c",
+      "name": "Bilal Nasir",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    },
+    {
+      "id": "fa563e5c-d658-45b2-be87-78af35b6c286",
+      "name": "Gerald Foster",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "7ea259a8-8103-41d3-adae-ba1cb4908c83",
+      "name": "Raymond Holt",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "245d3a22-4746-415c-998d-cbcb8882b06a",
+      "name": "Diane Whitfield",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "d4f0d77c-471f-4db0-9d23-11a2b39a37ae",
+      "name": "Natalie Reed",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-SUNSHINE",
+      "name": "Sunshine Daycare Centre",
+      "latitude": 40.7357,
+      "longitude": -74.1724,
+      "employees": {
+        "MGR-SUNSHINE-001": {},
+        "f765647e-0a5c-495b-9c14-984f7ae4d0e5": {},
+        "fc3c3015-3f79-470f-9642-806347b4eb91": {},
+        "9f7baf27-1dc7-443d-976f-cb4551d3322c": {},
+        "fa563e5c-d658-45b2-be87-78af35b6c286": {},
+        "7ea259a8-8103-41d3-adae-ba1cb4908c83": {},
+        "245d3a22-4746-415c-998d-cbcb8882b06a": {},
+        "d4f0d77c-471f-4db0-9d23-11a2b39a37ae": {}
+      }
+    }
+  ]
+}
+index-CocISxEf.js:491 EasyTeamProvider: Received data {token: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZ…e0AFMfICZNhkZ4R5zbVIvAlICeyTa4t7_IXpX_fTc29y0q6V4', customFont: undefined, employees: Array(8), basePath: 'https://www.easyteam.io/embed', isGlobalTimeTrackingEnabled: undefined, …}
+index-CocISxEf.js:491 EasyTeamProvider: Received data {token: 'eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJlbXBsb3llZ…e0AFMfICZNhkZ4R5zbVIvAlICeyTa4t7_IXpX_fTc29y0q6V4', customFont: undefined, employees: Array(8), basePath: 'https://www.easyteam.io/embed', isGlobalTimeTrackingEnabled: undefined, …}
+index-CocISxEf.js:507  POST https://o4504281953140736.ingest.us.sentry.io/api/4507481054773248/envelope/?sentry_key=700bd50f5e46a5c79b5a5d4948ba0390&sentry_version=7&sentry_client=sentry.javascript.react%2F8.32.0 429 (Too Many Requests)

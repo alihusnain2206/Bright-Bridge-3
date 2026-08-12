@@ -432,12 +432,13 @@ router.post("/auth/token-by-role", async (req, res) => {
       features: { geolocation: false, shiftNotes: true, timesheet_badges: true, location_picker: true, timesheets_wages: true },
     };
   } else if (user.role === "owner") {
-    // Company owner: admin-level EasyTeam access scoped to their own company's location
-    const ownerLocationId = user.locationId ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
+    // Company owner: org-wide EasyTeam access — no locationId in JWT so EasyTeam shows
+    // all locations/employees in the timesheets summary.  Adding locationId scopes the
+    // iframe to that specific location; if the value is our internal string (e.g.
+    // "LOC-SUNSHINE") rather than EasyTeam's UUID it silently filters all shifts to 0m.
     payload = {
       employeeId: user.employeeId,
       organizationId: "ORG-BRIGHTBRIDGE",
-      locationId: ownerLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "manager",
