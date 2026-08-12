@@ -1,0 +1,152 @@
+Ali husnain  [3:45 PM]
+Hi @Yaniv Gerber @Jimmy
+Hi Yaniv — we've hit a display issue on the embedded Timesheets summary and have isolated it to something org-side after thorough elimination on ours.
+Symptom: the Timesheets summary list shows 0m for every employee, while each employee's detail view shows correct hours (and the Total row sums correctly). Started after we activated a second location in the org and moved one employee's assignment to it.
+What we've verified on our side: the SDK payload (employees + locations arrays) and the JWT are byte-equivalent to the shape that worked for months — no locationId in the owner token, employees keyed by EasyTeam UUIDs, single location entry with all employees in its dict. Happy to share both verbatim.
+Org: ORG-BRIGHTBRIDGE, partner 73780ddd-f466-44a2-bf1c-a427121e0fd9. The org now has two locations (LOC-SUNSHINE and one created ~Aug 12, internal id 165c811a-…). Could something about a two-location org break the summary's per-employee attribution when the session passes only one location? What should the locations array contain for the org-wide summary to attribute correctly — all of the org's locations, even ones we're not displaying?
+Yaniv Gerber  [3:49 PM]
+In most cases, pass all locations, all employees, and all location -to-> employee relation in the dicts, for all sessions.
+
+This would allow each employee to view their data across all locations, based on their permission levels. E.g. with LOCATION_READ  they could read others' data in locations when assigned to the same locations. With just regular SHIFT_READ for example, they can only access their own data. (edited) 
+Yaniv Gerber  [3:50 PM]
+If you have a more complex use case, e.g. different entities under the same organization, you can pass or not pass specific locations/employees in the dicts. For example, this is useful if you are trying to split an organization into sub-entities or franchises where some admins access all data and some admins access partial data.
+But again, this is the more advanced use case. Most likely, passing all employee and all locations is the way to go.
+
+Happy to go over it in detail, let me know! @Ali husnain
+Ali husnain  [4:36 PM]
+Hi @Yaniv Gerber  — we've implemented the guidance exactly (all locations, all employees, all location→employee relations, every session) and the issue persists, so we'd like to take you up on going over it in detail.
+Current state, verified from the live browser session:
+SDK payload:
+
+json
+{
+  "employees": [
+    {
+      "id": "MGR-SUNSHINE-001",
+      "name": "Susan Manager",
+      "role": "Daycare Manager",
+      "timeTrackingEnabled": false,
+      "isVisible": false,
+      "wage": 2500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "f765647e-0a5c-495b-9c14-984f7ae4d0e5",
+      "name": "John Smith",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 3500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "fc3c3015-3f79-470f-9642-806347b4eb91",
+      "name": "Mary Johnson",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "9f7baf27-1dc7-443d-976f-cb4551d3322c",
+      "name": "Bilal Nasir",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    },
+    {
+      "id": "fa563e5c-d658-45b2-be87-78af35b6c286",
+      "name": "Gerald Foster",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "7ea259a8-8103-41d3-adae-ba1cb4908c83",
+      "name": "Raymond Holt",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "245d3a22-4746-415c-998d-cbcb8882b06a",
+      "name": "Diane Whitfield",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "d4f0d77c-471f-4db0-9d23-11a2b39a37ae",
+      "name": "Natalie Reed",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-SUNSHINE",
+      "name": "Sunshine Daycare Centre",
+      "latitude": 40.7357,
+      "longitude": -74.1724,
+      "employees": {
+        "MGR-SUNSHINE-001": {},
+        "f765647e-0a5c-495b-9c14-984f7ae4d0e5": {},
+        "fc3c3015-3f79-470f-9642-806347b4eb91": {},
+        "9f7baf27-1dc7-443d-976f-2806347b4eb91": {},
+        "7ea259a8-8103-41d3-adae-ba1cb4908c83": {}
+      }
+    },
+    {
+      "id": "9defae07-3f8f-43ad-9062-9963820014fd",
+      "name": "Amsterdam Avenue",
+      "latitude": 40.7887,
+      "longitude": -73.9754,
+      "employees": {
+        "MGR-SUNSHINE-001": {},
+        "fa563e5c-d658-45b2-be87-78af35b6c286": {},
+        "245d3a22-4746-415c-998d-cbcb8882b06a": {},
+        "d4f0d77c-471f-4db0-9d23-11a2b39a37ae": {}
+      }
+    }
+  ]
+}Owner JWT (decoded payload): employeeId MGR-SUNSHINE-001, organizationId ORG-BRIGHTBRIDGE, no locationId, permissions: LOCATION_ADMIN, LOCATION_READ, SHIFT_READ, SHIFT_WRITE, SHIFT_ADD, SHIFT_UPDATE, SCHEDULE_READ, SCHEDULE_WRITE.
+Symptoms:
+
+Timesheets summary (EmployeesList) shows 0m for every employee — both on "All locations" AND when filtered to a specific location
+Each employee's detail view shows correct hours (data is intact)
+New since the same timeframe: manually adding a shift from the owner/manager timesheets view no longer works (previously did)
+Timeline/context: org ORG-BRIGHTBRIDGE, partner 73780ddd-f466-44a2-bf1c-a427121e0fd9. All existing shifts live at location LOC-SUNSHINE, which is present in the dicts with its employees. The issues began after we created additional locations in the org (~Aug 12): one (165c811a-…) was later deactivated on our side and is not included in our dicts — should historical/deactivated locations still be passed? The currently passed second location is 9defae07-… (Amsterdam Avenue).
+Also relevant: our platform runs as one EasyTeam organization with each customer company as a sub-entity (the partial-dict pattern you described as the advanced use case).
+Could your team look at what the summary aggregation and shift form are doing for this org?Yaniv Gerber  [4:38 PM]
+OK thanks for the check .
+
+This detail could be the issue
+our platform runs as one EasyTeam organization with each customer company as a sub-entity (the partial-dict pattern you described as the advanced use case).
+
+Are you able to easily try the same setup, but with a unique Organization ID per entity?
+Ali husnain  [4:41 PM]
+Very likely it — testing a unique org per entity on one test company now, will report back.
+Ali husnain  [6:06 PM]
+@Yaniv Gerber
+Hi Yaniv — important update with new evidence.
+The per-entity org experiment shows real progress: under the new org (ORG-SUNSHINE), a fresh clock-in works and the employee's own view shows his time correctly (his dashboard shows "Total time today 00:01:11"). We also aligned identifiers per your Using Identifiers docs — the JWT employeeId and the payload employees[].id now both use our stable external IDs, and shifts sync correctly to our backend under the new org. The remaining issue on the new org is only the manager/owner summary list (EmployeesList), still 0m — we're testing one more fix on our side (the location id in our dicts was still our internal string rather than the org's location id).
+But the bigger finding is this: the summary is broken for every company still on the shared org — including companies we never experimented on. Example: a different company on the shared org shows Total 43h 18m with every per-employee row at 0m — the exact signature. This started when additional locations were created inside the shared org (~Aug 12): 165c811a-… (later deactivated on our side) and 9defae07-…. Before those existed, the summary worked for months.
+So it looks like the shared org's EmployeesList aggregation breaks once extra locations exist in the org — even for sessions whose dicts don't reference them. Two asks:
+
+Can your team look at the shared org's (partner 73780ddd-…, org ORG-BRIGHTBRIDGE / internal c280023c-…) summary aggregation, and/or remove the stray locations165c811a-… and 9defae07-… from it? That may restore the summary for all companies still on it.
+Any guidance on the remaining summary issue on the new org — we'll report once our location-id fix is tested.
+We're mid-migration toward one org per entity as you recommended — this affects live-adjacent companies, so appreciated urgently. Happy to jump on a call.
+Yaniv Gerber  [6:11 PM]
+Thank you, yes let us have a look @Ali husnain
+Nir Tayeb  [7:08 PM]
+i think there is a mismatch in the employees ids you set on the location. I see in the DB that the shifts was created for employees with the following external ids:
+EMP-MSGMME6S-QAW7XK
+EMP-SUNSHINE-001
+EMP-SUNSHINE-002but in the payload you shared above you use different ids (edited) 
+Yaniv Gerber  [9:52 PM]
+@Ali husnain
