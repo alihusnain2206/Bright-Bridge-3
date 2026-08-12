@@ -224,14 +224,17 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
       const locationEtId = internalLocId
         ? (locEtIdMap.get(internalLocId) ?? internalLocId)
         : undefined;
-      // Per EasyTeam "Using Identifiers": pass the same stable external ID used in the JWT
-      // (user.employeeId, e.g. "EMP-SUNSHINE-001").
-      // Exception: the shared ORG-BRIGHTBRIDGE org contains manually-added employees (Arbab
-      // Nasir) whose only known identifier is the EasyTeam-assigned UUID — preserve that path
-      // so their shifts continue to appear on Rainbow.
-      const employeePayloadId = resolveEasyTeamOrgId(companyId) === "ORG-BRIGHTBRIDGE"
-        ? (store.getEasyTeamUuidForEmployee(empId) ?? empId)
-        : empId;
+      // Per EasyTeam "Using Identifiers": pass the same stable external ID used when the
+      // employee was registered (e.g. "EMP-SUNSHINE-001", "MGR-...").  EasyTeam confirmed
+      // shifts are keyed to these external IDs across ALL orgs — including the shared
+      // ORG-BRIGHTBRIDGE org (Rainbow, Urban Concepts, etc.).
+      // Exception: employees who were manually created directly in EasyTeam's UI (e.g. Arbab)
+      // have no EMP-/MGR- external ID we ever registered — they exist only by EasyTeam's own
+      // UUID, so preserve the UUID for those employees so their shifts keep resolving.
+      const employeePayloadId =
+        empId.startsWith("EMP-") || empId.startsWith("MGR-")
+          ? empId                                            // registered via our system — use stable external ID
+          : (store.getEasyTeamUuidForEmployee(empId) ?? empId); // UUID-only (manually-created) — keep UUID
       return {
         id:                   employeePayloadId,
         name:                 u.name,
