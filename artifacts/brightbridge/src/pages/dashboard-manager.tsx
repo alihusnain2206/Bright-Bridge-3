@@ -4,8 +4,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
 import {
   Building2, Users, MapPin, Play, Zap,
-  Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle,
-  Clock, ThumbsUp, Loader2, Download,
+  Terminal, RefreshCw, CheckCircle2, XCircle, AlertTriangle, AlertCircle,
+  Clock, ThumbsUp, Loader2, Download, Search, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -101,6 +101,21 @@ export default function ManagerDashboard() {
   const [editedHours, setEditedHours] = useState<Record<string, number>>({});
   const [editNotes, setEditNotes] = useState<Record<string, string>>({});
 
+  // ── Unmatched-hours diagnostic ─────────────────────────────────
+  interface UnmatchedResult {
+    period: { from: string; to: string };
+    totalShifts: number;
+    matched: Array<{ etUuid: string; employeeId: string; name: string; hoursWorked: number; breakHours: number }>;
+    unmatched: Array<{ etUuid: string; hoursWorked: number; breakHours: number }>;
+    summary: { matchedEmployees: number; unmatchedEmployees: number; totalMatchedHours: number; totalUnmatchedHours: number };
+  }
+  const [unmatchedOpen,    setUnmatchedOpen]    = useState(false);
+  const [unmatchedLoading, setUnmatchedLoading] = useState(false);
+  const [unmatchedResult,  setUnmatchedResult]  = useState<UnmatchedResult | null>(null);
+  const [unmatchedError,   setUnmatchedError]   = useState<string | null>(null);
+  const [removingUuid,     setRemovingUuid]     = useState<string | null>(null);
+  const [removeResults,    setRemoveResults]    = useState<Record<string, string>>({});
+
   const initWeek = getCurrentWeek();
   const [fromDate, setFromDate] = useState(initWeek.from);
   const [toDate, setToDate] = useState(initWeek.to);
@@ -119,6 +134,45 @@ export default function ManagerDashboard() {
   const { launch, navigateToDate } = useEasyTeamLauncher("mgr-et-container", undefined, 700);
   // Track whether EasyTeam has been launched at least once so we know when auto-navigate is safe
   const etLaunchedRef = React.useRef(false);
+
+  const handleCheckUnmatched = useCallback(async () => {
+    if (!user?.companyId) return;
+    setUnmatchedLoading(true); setUnmatchedError(null); setUnmatchedOpen(true);
+    try {
+      const r = await fetch(
+        `/api/easyteam/debug/unmatched-shifts?companyId=${encodeURIComponent(user.companyId)}&from=${fromDate}&to=${toDate}&_t=${Date.now()}`,
+        { credentials: "include", cache: "no-store" }
+      );
+      const d = await r.json() as UnmatchedResult & { error?: string };
+      if (d.error) { setUnmatchedError(d.error); return; }
+      setUnmatchedResult(d);
+    } catch (e) {
+      setUnmatchedError(String(e));
+    } finally { setUnmatchedLoading(false); }
+  }, [user?.companyId, fromDate, toDate]);
+
+  const handleRemoveUuid = useCallback(async (etUuid: string) => {
+    if (!user?.companyId) return;
+    setRemovingUuid(etUuid);
+    try {
+      const r = await fetch("/api/easyteam/debug/remove-uuid", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ etUuid, companyId: user.companyId, from: fromDate, to: toDate }),
+      });
+      const d = await r.json() as { blocklisted?: boolean; shiftsDeleted?: number; deleteErrors?: string[]; error?: string };
+      if (d.error) {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: `Error: ${d.error}` }));
+      } else if (d.shiftsDeleted && d.shiftsDeleted > 0) {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: `Removed — ${d.shiftsDeleted} shift${d.shiftsDeleted !== 1 ? "s" : ""} deleted from EasyTeam` }));
+      } else {
+        setRemoveResults(prev => ({ ...prev, [etUuid]: "Blocklisted — will be ignored in all future syncs" }));
+      }
+      void handleCheckUnmatched();
+    } catch (e) {
+      setRemoveResults(prev => ({ ...prev, [etUuid]: `Error: ${String(e)}` }));
+    } finally { setRemovingUuid(null); }
+  }, [user?.companyId, fromDate, toDate, handleCheckUnmatched]);
 
   const fetchHours = useCallback(async () => {
     if (!user?.companyId) return;
@@ -173,17 +227,28 @@ export default function ManagerDashboard() {
     setApprovalDone(false);
     setApprovalDataSource(null);
     try {
-      await fetch("/api/easyteam/hours/sync", {
+      const r = await fetch("/api/easyteam/hours/sync", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ from: fromDate, to: toDate, companyId: user.companyId }),
       });
+      const d = await r.json() as {
+        success?: boolean;
+        skippedUnknownEmployees?: number;
+        skippedForeignShifts?: number;
+      };
       await fetchHours();
       setLastSyncedAt(new Date());
+      // Auto-expand the unmatched diagnostic panel when the sync found employees it couldn't match.
+      // Most managers will never click the manual "Check for unmatched hours" link,
+      // so surface it automatically when there's something to act on.
+      if (d.skippedUnknownEmployees && d.skippedUnknownEmployees > 0) {
+        void handleCheckUnmatched();
+      }
     } catch { /* ignore */ }
     finally { setPulling(false); }
-  }, [user?.companyId, fromDate, toDate, fetchHours]);
+  }, [user?.companyId, fromDate, toDate, fetchHours, handleCheckUnmatched]);
 
   const fetchCompanyEmployees = useCallback(async () => {
     if (!user?.companyId) return [];
@@ -560,6 +625,110 @@ export default function ManagerDashboard() {
                 )}
               </>
             )}
+
+            {/* ── Unmatched-hours diagnostic ───────────────────── */}
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <button
+                onClick={() => unmatchedResult || unmatchedLoading ? setUnmatchedOpen(o => !o) : void handleCheckUnmatched()}
+                className="flex items-center gap-2 text-sm text-white/50 hover:text-white/80 transition-colors"
+              >
+                <Search className="h-3.5 w-3.5" />
+                <span className="font-medium">Check for unmatched EasyTeam hours</span>
+                {unmatchedResult && (unmatchedOpen ? <ChevronUp className="h-3.5 w-3.5 ml-1" /> : <ChevronDown className="h-3.5 w-3.5 ml-1" />)}
+                {unmatchedLoading && <Loader2 className="h-3.5 w-3.5 animate-spin ml-1" />}
+                {unmatchedResult && !unmatchedLoading && (
+                  <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                    unmatchedResult.summary.unmatchedEmployees > 0
+                      ? "bg-amber-500/20 text-amber-400 border border-amber-500/20"
+                      : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20"
+                  }`}>
+                    {unmatchedResult.summary.unmatchedEmployees > 0
+                      ? `${unmatchedResult.summary.unmatchedEmployees} unmatched · ${unmatchedResult.summary.totalUnmatchedHours}h`
+                      : "All matched"}
+                  </span>
+                )}
+              </button>
+
+              {unmatchedError && (
+                <div className="mt-3 flex items-start gap-2 text-xs text-red-300 bg-red-500/10 rounded-lg px-3 py-2 border border-red-500/20">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />{unmatchedError}
+                </div>
+              )}
+
+              {unmatchedOpen && unmatchedResult && (
+                <div className="mt-3 space-y-3">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg px-3 py-2 border border-white/10" style={{ background: "rgba(255,255,255,0.05)" }}>
+                      <div className="text-white/40 mb-0.5">Total shifts in period</div>
+                      <div className="text-white font-semibold">{unmatchedResult.totalShifts}</div>
+                    </div>
+                    <div className={`rounded-lg px-3 py-2 border ${unmatchedResult.summary.unmatchedEmployees > 0 ? "border-amber-500/20 bg-amber-500/5" : "border-white/10 bg-white/5"}`}>
+                      <div className="text-white/40 mb-0.5">Unmatched hours</div>
+                      <div className={`font-semibold ${unmatchedResult.summary.unmatchedEmployees > 0 ? "text-amber-400" : "text-emerald-400"}`}>
+                        {unmatchedResult.summary.totalUnmatchedHours}h ({unmatchedResult.summary.unmatchedEmployees} UUID{unmatchedResult.summary.unmatchedEmployees !== 1 ? "s" : ""})
+                      </div>
+                    </div>
+                  </div>
+
+                  {unmatchedResult.matched.length > 0 && (
+                    <div>
+                      <div className="text-xs text-white/30 uppercase tracking-wide mb-1.5">Matched employees</div>
+                      <table className="w-full text-xs">
+                        <tbody className="divide-y divide-white/5">
+                          {unmatchedResult.matched.map(e => (
+                            <tr key={e.etUuid}>
+                              <td className="py-1.5 text-white/70">{e.name}</td>
+                              <td className="py-1.5 text-right text-white/50">{e.hoursWorked}h worked</td>
+                              <td className="py-1.5 text-right text-white/30 pl-3 font-mono text-[10px]">{e.etUuid.slice(0, 8)}…</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {unmatchedResult.unmatched.length > 0 && (
+                    <div>
+                      <div className="text-xs text-amber-400/70 uppercase tracking-wide mb-1.5">⚠ Unmatched UUIDs (hours not imported)</div>
+                      <div className="space-y-2">
+                        {unmatchedResult.unmatched.map(e => (
+                          <div key={e.etUuid} className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <span className="font-mono text-amber-300/80 text-[10px] break-all flex-1">{e.etUuid}</span>
+                              <span className="text-amber-400 font-semibold text-xs shrink-0">{e.hoursWorked}h</span>
+                            </div>
+                            {removeResults[e.etUuid] ? (
+                              <p className={`text-[10px] mt-1.5 ${removeResults[e.etUuid]?.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+                                ✓ {removeResults[e.etUuid]}
+                              </p>
+                            ) : (
+                              <button
+                                onClick={() => void handleRemoveUuid(e.etUuid)}
+                                disabled={removingUuid === e.etUuid}
+                                className="mt-1.5 flex items-center gap-1 text-[10px] text-amber-400/70 hover:text-amber-300 disabled:opacity-50 transition-colors"
+                              >
+                                {removingUuid === e.etUuid
+                                  ? <><Loader2 className="h-2.5 w-2.5 animate-spin" /> Removing…</>
+                                  : <><AlertTriangle className="h-2.5 w-2.5" /> Remove &amp; block from future syncs</>}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-white/25 text-[10px] mt-2">These EasyTeam employee IDs have no matching BrightBridge employee. Removing will block them from all future syncs and attempt to delete their shifts from EasyTeam.</p>
+                    </div>
+                  )}
+
+                  {unmatchedResult.unmatched.length === 0 && unmatchedResult.matched.length > 0 && (
+                    <p className="text-emerald-400/60 text-xs">All EasyTeam hours are accounted for — no unmatched UUIDs in this period.</p>
+                  )}
+
+                  <button onClick={() => void handleCheckUnmatched()} className="text-white/25 text-[10px] hover:text-white/50 underline underline-offset-2">
+                    Refresh
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

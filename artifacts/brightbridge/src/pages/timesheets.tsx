@@ -296,6 +296,12 @@ export default function Timesheets() {
       if (parts.length > 0) {
         setSyncWarning(`Sync complete — ${parts.join("; ")}. Contact support if this is unexpected.`);
       }
+      // Auto-expand the unmatched diagnostic panel when the sync found employees it couldn't match.
+      // Most managers will never click the manual "Check for unmatched hours" link,
+      // so surface it automatically when there's something to act on.
+      if (d.skippedUnknownEmployees && d.skippedUnknownEmployees > 0) {
+        void handleCheckUnmatched();
+      }
     } finally { setPulling(false); }
   }, [user?.companyId, fromDate, toDate, fetchHours]);
 

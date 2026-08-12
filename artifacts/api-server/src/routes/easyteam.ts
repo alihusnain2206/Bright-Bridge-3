@@ -407,27 +407,41 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
   // Helper: scan exportLog for a matching entry, write to store + persist to DB.
   // Removes the consumed entry from exportLog so stale webhook payloads cannot be
   // replayed on subsequent Pull Hours calls (each webhook payload is used at most once).
-  // Returns the number of entries persisted, or 0 if no usable export data was found.
-  async function applyExportIfFound(): Promise<number> {
+  // Returns synced count + skipped unknown counts so all sync paths surface them.
+  async function applyExportIfFound(): Promise<{
+    synced: number;
+    skippedUnknownEmployees: number;
+    skippedUnknownMinutes: number;
+  }> {
+    const zero = { synced: 0, skippedUnknownEmployees: 0, skippedUnknownMinutes: 0 };
     const foundIdx = exportLog.findIndex(
       (e) => e.status === "ready" && e.shifts && e.shifts.length > 0 &&
         (!e.startDate || new Date(e.startDate) <= toDate) &&
         (!e.endDate   || new Date(e.endDate)   >= fromDate)
     );
-    if (foundIdx === -1) return 0;
+    if (foundIdx === -1) return zero;
     const found = exportLog[foundIdx];
-    if (!found?.shifts || found.shifts.length === 0) return 0;
+    if (!found?.shifts || found.shifts.length === 0) return zero;
     // Consume the entry — remove it so future Pull Hours calls go to the REST API for fresh data.
     exportLog.splice(foundIdx, 1);
 
     const hoursByEmp  = new Map<string, number>();
     const breaksByEmp = new Map<string, number>();
+    const skippedUnknown: Array<{ etEmpId: string; minutes: number }> = [];
+
     for (const shift of found.shifts) {
-      if (store.isEasyTeamUuidIgnored(shift.employeeId)) continue;
+      if (store.isEasyTeamUuidIgnored(shift.employeeId, companyId ?? undefined)) continue;
       if (companyId) {
         const internalEmpId = store.resolveEasyTeamUuid(shift.employeeId);
         const ru = allStaff.find((u) => u.employeeId === internalEmpId);
-        if (!ru || ru.companyId !== companyId) continue;
+        if (!ru || ru.companyId !== companyId) {
+          // Track as unknown if the UUID is not in our registry (not just wrong-company)
+          if (internalEmpId === shift.employeeId) {
+            const mins = parseFloat(shift.total_paid_hours_decimal ?? "0") * 60;
+            skippedUnknown.push({ etEmpId: shift.employeeId, minutes: mins });
+          }
+          continue;
+        }
       }
       const h = parseFloat(shift.total_paid_hours_decimal ?? "0");
       const b = parseFloat(shift.total_unpaid_hours_decimal ?? "0");
@@ -457,17 +471,20 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
         synced++;
       })
     );
-    return synced;
+    const skippedUnknownMinutes = skippedUnknown.reduce((s, e) => s + e.minutes, 0);
+    return { synced, skippedUnknownEmployees: skippedUnknown.length, skippedUnknownMinutes };
   }
 
   // ── Step 1: In-memory exportLog (populated by previous webhook or trigger) ──
   const actorSync = req.session.userId ? store.getUserById(req.session.userId) : undefined;
 
   const step1 = await applyExportIfFound();
-  if (step1 > 0) {
-    req.log.info({ periodKey, companyId, synced: step1 }, "Sync: used cached export webhook data");
-    if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${step1} employee${step1 !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
-    res.json({ success: true, source: "easyteam", periodKey, synced: step1 });
+  // Return as soon as we consumed an export — even if every UUID was unknown (synced=0).
+  // Falling through to trigger/REST would re-fetch the same data and lose the skipped counts.
+  if (step1.synced > 0 || step1.skippedUnknownEmployees > 0) {
+    req.log.info({ periodKey, companyId, synced: step1.synced, skippedUnknownEmployees: step1.skippedUnknownEmployees }, "Sync: used cached export webhook data");
+    if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${step1.synced} employee${step1.synced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
+    res.json({ success: true, source: "easyteam", periodKey, synced: step1.synced, skippedUnknownEmployees: step1.skippedUnknownEmployees, skippedUnknownMinutes: step1.skippedUnknownMinutes });
     return;
   }
 
@@ -483,11 +500,11 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
       if (triggered) {
         for (let i = 0; i < 8; i++) {
           await new Promise<void>((resolve) => setTimeout(resolve, 500));
-          const synced = await applyExportIfFound();
-          if (synced > 0) {
-            req.log.info({ periodKey, companyId, synced, pollAttempt: i + 1 }, "Sync: webhook arrived after export trigger");
-            if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${synced} employee${synced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
-            res.json({ success: true, source: "easyteam", periodKey, synced });
+          const step2 = await applyExportIfFound();
+          if (step2.synced > 0 || step2.skippedUnknownEmployees > 0) {
+            req.log.info({ periodKey, companyId, synced: step2.synced, skippedUnknownEmployees: step2.skippedUnknownEmployees, pollAttempt: i + 1 }, "Sync: webhook arrived after export trigger");
+            if (companyId) store.logActivity({ companyId, type: "hours.synced", description: `Hours synced from EasyTeam (${step2.synced} employee${step2.synced !== 1 ? "s" : ""})`, actorName: actorSync?.name, actorRole: actorSync?.role });
+            res.json({ success: true, source: "easyteam", periodKey, synced: step2.synced, skippedUnknownEmployees: step2.skippedUnknownEmployees, skippedUnknownMinutes: step2.skippedUnknownMinutes });
             return;
           }
         }
@@ -606,7 +623,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     // Persist raw shifts to timesheet_shifts (upsert — last-write-wins so open shifts update on close)
     const syncedAt = new Date().toISOString();
     await Promise.all(inRange.map(async (s) => {
-      if (store.isEasyTeamUuidIgnored(s.employeeId)) return; // blocklisted — skip entirely
+      if (store.isEasyTeamUuidIgnored(s.employeeId, co.id)) return; // blocklisted for this company — skip
       const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
       const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
       if (!mappedEmpId) {
@@ -639,8 +656,8 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     for (const [etEmpId, totalMinutes] of minutesByEmp) {
       // Resolve EasyTeam UUID → our internal employeeId (populated during boot sync / employee add)
       const internalEmpId = store.resolveEasyTeamUuid(etEmpId);
-      if (store.isEasyTeamUuidIgnored(etEmpId)) {
-        req.log.info({ etEmpId, minutesLost: totalMinutes }, "Sync: silently skipping blocklisted EasyTeam UUID");
+      if (store.isEasyTeamUuidIgnored(etEmpId, co.id)) {
+        req.log.info({ etEmpId, minutesLost: totalMinutes, companyId: co.id }, "Sync: silently skipping blocklisted EasyTeam UUID");
         continue;
       }
       if (internalEmpId === etEmpId) {
@@ -1312,9 +1329,11 @@ router.get("/easyteam/debug/shifts", requireRole("super_admin", "owner"), async 
 // ── Unmatched-hours diagnostic ────────────────────────────────────────────────
 // Fetches raw EasyTeam shifts for a period, groups by employee UUID, resolves
 // known UUIDs to BrightBridge names, and surfaces unrecognised UUIDs with their hours.
-router.get("/easyteam/debug/unmatched-shifts", requireRole("super_admin", "owner"), async (req, res) => {
+router.get("/easyteam/debug/unmatched-shifts", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { companyId, from, to } = req.query as { companyId?: string; from?: string; to?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  // Company-scope guard: owner/manager may only query their own company.
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
@@ -1384,27 +1403,22 @@ router.get("/easyteam/debug/unmatched-shifts", requireRole("super_admin", "owner
 // Adds the UUID to the persistent blocklist so it is skipped on every future sync.
 // Also attempts to DELETE each shift from EasyTeam's API (best-effort — some API
 // plans don't support shift deletion; the blocklist fires regardless).
-router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner"), async (req, res) => {
+router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { etUuid, companyId, from, to } = req.body as { etUuid?: string; companyId?: string; from?: string; to?: string };
   if (!etUuid)     { res.status(400).json({ error: "etUuid required" });     return; }
   if (!companyId)  { res.status(400).json({ error: "companyId required" });  return; }
+  // Company-scope guard: owner/manager may only remove UUIDs for their own company.
+  if (!assertCompanyAccess(req, res, companyId)) return;
 
-  // 1. Persist to DB blocklist
-  await pool.query(
-    `INSERT INTO easyteam_ignored_uuids (et_uuid, company_id, reason)
-     VALUES ($1, $2, 'Manually removed via debug panel')
-     ON CONFLICT (et_uuid) DO NOTHING`,
-    [etUuid, companyId]
-  );
-  store.ignoreEasyTeamUuid(etUuid);
-
-  // 2. Try to fetch the shifts for this UUID and delete them from EasyTeam
+  // 1. Fetch shifts first — validate UUID belongs to this company's location before blocklisting.
+  //    This prevents a manager from blocklisting a UUID that doesn't appear in their shifts at all.
   const toDate   = to   ? new Date(to)   : new Date();
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 60 * 24 * 60 * 60 * 1000); // look back 60 days
 
   const locationId = await resolveCompanyLocationId(companyId);
   let shiftsDeleted = 0;
   let deleteErrors: string[] = [];
+  let belongsToCompany = false;
 
   if (locationId) {
     const result = await fetchEasyTeamShiftsForLocation(locationId, fromDate, toDate, companyId);
@@ -1413,11 +1427,20 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner"), 
       const fromStr = fromDate.toISOString().split("T")[0]!;
       const toStr   = toDate.toISOString().split("T")[0]!;
 
-      const targetShifts = result.shifts.filter((s) =>
-        s.employeeId === etUuid &&
-        s.locationId === etLocId &&
-        (() => { const ld = shiftLocalDate(s.utcStartTime, s.utcOffset ?? 0); return ld >= fromStr && ld <= toStr; })()
-      );
+      const targetShifts = result.shifts.filter((s) => {
+        const startTime = s.utcStartTime ?? s.startTime;
+        if (!startTime) return false; // skip shifts with no timestamp (can't determine date)
+        const ld = shiftLocalDate(startTime, s.utcOffset ?? 0);
+        return s.employeeId === etUuid && s.locationId === etLocId && ld >= fromStr && ld <= toStr;
+      });
+
+      // Validate ownership fail-closed: only blocklist when at least one matching shift was found.
+      // An empty API response (empty period or API outage) is NOT sufficient to authorize blocklisting.
+      belongsToCompany = targetShifts.length > 0;
+      if (!belongsToCompany) {
+        res.status(403).json({ error: "This EasyTeam UUID has no shifts in your company's location. Cannot blocklist." });
+        return;
+      }
 
       // Generate a token with SHIFT_DELETE permission for the delete calls
       const adminJwt = result.shifts[0] ? await (async () => {
@@ -1467,6 +1490,17 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner"), 
       }
     }
   }
+
+  // 2. Persist to DB blocklist (company-scoped composite key) and update in-memory map.
+  //    This runs after validation so we only blocklist UUIDs that belong to this company.
+  //    Falls through even if no locationId — assertCompanyAccess already verified scope.
+  await pool.query(
+    `INSERT INTO easyteam_ignored_uuids (et_uuid, company_id, reason)
+     VALUES ($1, $2, 'Manually removed via debug panel')
+     ON CONFLICT (et_uuid, company_id) DO NOTHING`,
+    [etUuid, companyId]
+  );
+  store.ignoreEasyTeamUuid(etUuid, companyId);
 
   res.json({
     blocklisted: true,

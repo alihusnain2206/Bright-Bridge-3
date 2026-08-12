@@ -223,7 +223,11 @@ const rollfiEmployees = new Map<string, RollfiEmployeeRecord>();
 // EasyTeam employee UUIDs in this set are silently skipped during every sync.
 // Used to block test/demo employees registered directly in EasyTeam that have no
 // corresponding BrightBridge employee record.
-const ignoredEtUuids = new Set<string>();
+// Company-scoped blocklist: companyId → Set of EasyTeam UUIDs.
+// Legacy rows loaded from DB without a company_id go under "__global__" and
+// are checked as a fallback so pre-migration entries still take effect.
+const ignoredEtUuids = new Map<string, Set<string>>();
+const IGNORED_GLOBAL_KEY = "__global__";
 
 // ─── PEOPLE MODULE STORAGE ────────────────────────────────────
 // DEAD CODE — department data is now persisted to the DB `departments` table.
@@ -343,18 +347,25 @@ export const store = {
     return undefined;
   },
 
-  // ── EasyTeam ignored UUID blocklist ──
-  ignoreEasyTeamUuid(etUuid: string): void {
-    ignoredEtUuids.add(etUuid);
+  // ── EasyTeam ignored UUID blocklist (company-scoped) ──
+  ignoreEasyTeamUuid(etUuid: string, companyId?: string): void {
+    const key = companyId ?? IGNORED_GLOBAL_KEY;
+    if (!ignoredEtUuids.has(key)) ignoredEtUuids.set(key, new Set());
+    ignoredEtUuids.get(key)!.add(etUuid);
   },
-  unignoreEasyTeamUuid(etUuid: string): void {
-    ignoredEtUuids.delete(etUuid);
+  unignoreEasyTeamUuid(etUuid: string, companyId?: string): void {
+    const key = companyId ?? IGNORED_GLOBAL_KEY;
+    ignoredEtUuids.get(key)?.delete(etUuid);
   },
-  isEasyTeamUuidIgnored(etUuid: string): boolean {
-    return ignoredEtUuids.has(etUuid);
+  /** Returns true if the UUID is ignored for this company OR on the global legacy list. */
+  isEasyTeamUuidIgnored(etUuid: string, companyId?: string): boolean {
+    if (companyId && ignoredEtUuids.get(companyId)?.has(etUuid)) return true;
+    return ignoredEtUuids.get(IGNORED_GLOBAL_KEY)?.has(etUuid) ?? false;
   },
   getAllIgnoredEtUuids(): string[] {
-    return Array.from(ignoredEtUuids);
+    const all = new Set<string>();
+    for (const s of ignoredEtUuids.values()) s.forEach(u => all.add(u));
+    return Array.from(all);
   },
 
   // ── EasyTeam Hours Bridge ──

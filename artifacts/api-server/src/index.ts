@@ -108,6 +108,7 @@ async function bootCompanySignedFormsSchema() {
 }
 
 async function bootIgnoredEtUuids() {
+  // Create table if not yet present (original schema: et_uuid as PK)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS easyteam_ignored_uuids (
       et_uuid     text        PRIMARY KEY,
@@ -116,8 +117,35 @@ async function bootIgnoredEtUuids() {
       ignored_at  timestamptz NOT NULL DEFAULT now()
     );
   `);
-  const { rows } = await pool.query<{ et_uuid: string }>(`SELECT et_uuid FROM easyteam_ignored_uuids`);
-  for (const row of rows) store.ignoreEasyTeamUuid(row.et_uuid);
+
+  // Migrate to composite-keyed blocklist so one company cannot blocklist a UUID
+  // on behalf of another company. We drop the single-column PK, add a surrogate
+  // bigserial PK, and add a composite UNIQUE(et_uuid, company_id) constraint.
+  // The DO block is idempotent — safe to run on every boot after migration.
+  await pool.query(`
+    DO $$ BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'easyteam_ignored_uuids'
+          AND constraint_name = 'easyteam_ignored_uuids_company_uuid_key'
+      ) THEN
+        ALTER TABLE easyteam_ignored_uuids DROP CONSTRAINT IF EXISTS easyteam_ignored_uuids_pkey;
+        ALTER TABLE easyteam_ignored_uuids ADD COLUMN IF NOT EXISTS id bigserial;
+        BEGIN
+          ALTER TABLE easyteam_ignored_uuids ADD CONSTRAINT easyteam_ignored_uuids_pkey PRIMARY KEY (id);
+        EXCEPTION WHEN duplicate_table THEN NULL; END;
+        ALTER TABLE easyteam_ignored_uuids
+          ADD CONSTRAINT easyteam_ignored_uuids_company_uuid_key UNIQUE (et_uuid, company_id);
+      END IF;
+    END $$;
+  `);
+
+  // Load into company-scoped in-memory map. Rows without company_id (legacy)
+  // go under the global fallback key so they still take effect during sync.
+  const { rows } = await pool.query<{ et_uuid: string; company_id: string | null }>(
+    `SELECT et_uuid, company_id FROM easyteam_ignored_uuids`
+  );
+  for (const row of rows) store.ignoreEasyTeamUuid(row.et_uuid, row.company_id ?? undefined);
   if (rows.length > 0) logger.info({ count: rows.length }, "Boot: loaded ignored EasyTeam UUIDs from DB");
 }
 
