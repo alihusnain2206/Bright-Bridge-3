@@ -145,6 +145,12 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
     .filter((u) => u.employeeId && (u.role === "employee" || u.role === "manager") && (!u.status || u.status === "active" || u.status === "onboarding"))
     .map((u) => ({
       id: u.employeeId as string,
+      // easyteamUuid: the UUID EasyTeam assigned to this employee in their own system.
+      // Employees who registered directly in EasyTeam have a separate UUID; those who
+      // registered through our wizard use our internal ID as their EasyTeam-side ID.
+      // The frontend uses this to pass the correct ID to the EasyTeam SDK so shift rows
+      // match the employees array and hours appear in the correct named row.
+      easyteamUuid: store.getEasyTeamUuidForEmployee(u.employeeId!),
       name: u.name,
       role: u.role,
       companyId: u.companyId,
@@ -727,12 +733,61 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
   const fromDate = from ? new Date(from) : new Date(toDate.getTime() - 14 * 24 * 60 * 60 * 1000);
   const periodKey = `${fromDate.toISOString().split("T")[0]}/${toDate.toISOString().split("T")[0]}`;
 
-  let entries = store.getTimesheetEntriesForPeriod(periodKey);
-  if (companyId) entries = entries.filter((e) => e.companyId === companyId);
+  // ── Primary source: aggregate from timesheet_shifts by local_date ────────────
+  // This is always up-to-date — shifts are written/updated on every Pull Hours.
+  // Using timesheet_entries alone was unreliable: old period keys were written by
+  // earlier syncs and never refreshed unless the user re-synced the exact same range.
+  let hoursFromShifts: Map<string, { payableMs: number; unpaidBreakMin: number }> | null = null;
+  if (companyId) {
+    const shiftRows = await getTimesheetShiftsByCompanyAndRange(companyId, fromDate, toDate).catch(() => null);
+    if (shiftRows && shiftRows.length > 0) {
+      hoursFromShifts = new Map();
+      for (const s of shiftRows) {
+        if (!s.employeeId) continue; // unknown UUID — skip (mirrors sync behaviour)
+        const cur = hoursFromShifts.get(s.employeeId) ?? { payableMs: 0, unpaidBreakMin: 0 };
+        cur.payableMs    += s.payableDurationMs;
+        cur.unpaidBreakMin += s.totalUnpaidBreakMin ?? 0;
+        hoursFromShifts.set(s.employeeId, cur);
+      }
+    }
+  }
 
-  // Managers see only their assigned location's employees.
-  // Also guarantee a 0m placeholder row for any location employee who has no stored entry,
-  // so the table always shows the full roster even in a fresh period with no clock-in data.
+  // ── Approval status from timesheet_entries (exact-periodKey match) ───────────
+  let storeEntries = store.getTimesheetEntriesForPeriod(periodKey);
+  if (companyId) storeEntries = storeEntries.filter((e) => e.companyId === companyId);
+  const approvalMap = new Map(storeEntries.map((e) => [e.employeeId, e]));
+
+  // ── Build final entries ───────────────────────────────────────────────────────
+  let entries: typeof storeEntries;
+  const now = new Date().toISOString();
+
+  if (hoursFromShifts && hoursFromShifts.size > 0) {
+    // Build from live shift data; overlay approvedHours/managerApproved from stored entries.
+    entries = Array.from(hoursFromShifts.entries()).map(([empId, agg]) => {
+      const hoursWorked    = Math.round((agg.payableMs / 3_600_000) * 10000) / 10000;
+      const breakDeduction = Math.round((agg.unpaidBreakMin / 60) * 10000) / 10000;
+      const approvedHours  = Math.max(0, Math.round((hoursWorked - breakDeduction) * 10000) / 10000);
+      const stored = approvalMap.get(empId);
+      return {
+        employeeId:      empId,
+        companyId:       companyId ?? stored?.companyId ?? "unknown",
+        periodKey,
+        hoursWorked,
+        breakDeduction,
+        // If the manager already approved this period, preserve their approved value.
+        approvedHours:   stored?.managerApproved ? (stored.approvedHours) : approvedHours,
+        source:          "easyteam" as const,
+        syncedAt:        stored?.syncedAt ?? now,
+        managerApproved: stored?.managerApproved,
+        approvedAt:      stored?.approvedAt,
+      };
+    });
+  } else {
+    // No shifts in DB for this date range — fall back to pre-aggregated entries (legacy / seeded periods).
+    entries = storeEntries;
+  }
+
+  // ── Managers: scope to their location + pad 0m rows for all roster members ──
   if (sessionUser?.role === "manager" && sessionUser.locationId) {
     const locationEmployees = await db
       .select({ id: employeesTable.id })
@@ -743,11 +798,9 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
       ))
       .catch(() => [] as { id: string }[]);
     const empIdSet = new Set(locationEmployees.map((e) => e.id));
-    // Keep only entries for location employees
     entries = entries.filter((e) => empIdSet.has(e.employeeId));
-    // Pad: add a synthetic 0m row for any location employee missing from store entries
+    // Pad: add a 0m placeholder for any roster member not yet in entries
     const coveredIds = new Set(entries.map((e) => e.employeeId));
-    const now = new Date().toISOString();
     for (const { id } of locationEmployees) {
       if (!coveredIds.has(id)) {
         entries.push({

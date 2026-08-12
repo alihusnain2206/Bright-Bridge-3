@@ -331,6 +331,17 @@ export const store = {
   resolveEasyTeamUuid(etUuid: string): string {
     return etUuidToEmployeeId.get(etUuid) ?? etUuid;
   },
+  /**
+   * Reverse of resolveEasyTeamUuid: given our internal employeeId, return
+   * the EasyTeam UUID (if we have one in the registry), or undefined if not.
+   * Employees registered through our system may not have a separate UUID.
+   */
+  getEasyTeamUuidForEmployee(internalId: string): string | undefined {
+    for (const [etUuid, empId] of etUuidToEmployeeId.entries()) {
+      if (empId === internalId && etUuid !== internalId) return etUuid;
+    }
+    return undefined;
+  },
 
   // ── EasyTeam ignored UUID blocklist ──
   ignoreEasyTeamUuid(etUuid: string): void {

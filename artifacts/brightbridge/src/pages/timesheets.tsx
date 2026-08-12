@@ -343,9 +343,12 @@ export default function Timesheets() {
       const tokenData = await tokenRes.json() as { token?: string; error?: string };
       if (!tokenRes.ok || !tokenData.token) { setTokenError(tokenData.error ?? "Token generation failed"); return; }
 
-      const empData = await empRes.json() as { employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string; locationId?: string }> };
+      const empData = await empRes.json() as { employees?: Array<{ id: string; easyteamUuid?: string; name: string; role: string; wage: number; wageType: string; locationId?: string }> };
       const apiEmployees = (empData.employees ?? []).map(e => ({
-        id: e.id,
+        // Use easyteamUuid as the SDK id when available so EasyTeam can match shifts to rows.
+        // Employees registered directly in EasyTeam have a UUID that differs from our internal ID;
+        // passing our internal ID causes their hours to appear in the Total but not as a named row.
+        id: e.easyteamUuid ?? e.id,
         name: e.name,
         role: e.role ?? "Staff",
         timeTrackingEnabled: true,

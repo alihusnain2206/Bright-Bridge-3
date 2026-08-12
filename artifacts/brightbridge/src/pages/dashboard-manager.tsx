@@ -60,7 +60,15 @@ function decodeJwt(token: string): Record<string, unknown> | null {
   try { return JSON.parse(atob(token.split(".")[1])); } catch { return null; }
 }
 
-interface EasyTeamEmployee { id: string; name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean; wage: number; wageType: "hourly"; status?: string; locationId?: string; }
+interface EasyTeamEmployee {
+  id: string;
+  /** EasyTeam's own UUID for this employee (set for employees who registered in EasyTeam
+   *  directly). If present, this must be used as the id in the SDK employees array so the
+   *  SDK can match their shifts to the correct named row. */
+  easyteamUuid?: string;
+  name: string; role: string; timeTrackingEnabled: boolean; isVisible?: boolean;
+  wage: number; wageType: "hourly"; status?: string; locationId?: string;
+}
 
 // Fallback coords for seeded companies when API locations haven't been fetched yet.
 const COMPANY_LOCATIONS: Record<string, Array<{ id: string; name: string; latitude: number; longitude: number }>> = {
@@ -301,9 +309,13 @@ export default function ManagerDashboard() {
         wage: user.hourlyWage ?? 2500,
         wageType: "hourly",
       };
-      const allLaunchEmployees = user.employeeId && !launchEmployees.some(e => e.id === user.employeeId)
-        ? [managerSelf, ...launchEmployees]
-        : launchEmployees;
+      // Use easyteamUuid as the SDK id when available: employees who registered directly in
+      // EasyTeam have a UUID that differs from our internal ID. Using our internal ID causes
+      // their shifts to appear in the Total but not in a named row.
+      const sdkEmployees = launchEmployees.map(e => ({ ...e, id: e.easyteamUuid ?? e.id }));
+      const allLaunchEmployees = user.employeeId && !sdkEmployees.some(e => e.id === user.employeeId)
+        ? [managerSelf, ...sdkEmployees]
+        : sdkEmployees;
 
       launch(data.token, {
         page: Pages.TIMESHEET,
