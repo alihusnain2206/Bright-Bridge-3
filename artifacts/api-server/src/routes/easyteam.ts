@@ -661,6 +661,15 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     const allShiftsMap = new Map<string, EasyTeamShift>(); // keyed by EasyTeam shift ID
     const companyEtLocIds = new Set<string>(); // EasyTeam UUIDs for this company's locations
 
+    // Pre-seed from DB — these values were written by ensureLocationTimezone (boot-time token
+    // exchange), so they are already validated against EasyTeam's org.  Pre-seeding means the
+    // guard accepts shifts under a secondary location UUID even when the token exchange for that
+    // location returns the primary location's UUID (EasyTeam maps unrecognised external IDs to
+    // the org's default location in the access-token response).
+    for (const locId of co.locationIds) {
+      companyEtLocIds.add(locId);
+    }
+
     for (const locId of co.locationIds) {
       const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
       req.log.info(
@@ -2174,15 +2183,18 @@ export async function ensureLocationTimezone(
 
     logger.info({ locationId, internalLocId, country, state, patchUrl }, "ensureLocationTimezone: country/state patched");
 
-    // Persist the real EasyTeam UUID back to the locations table so the sdk-payload sends the
-    // correct id next time without a manual UPDATE. Only runs when the DB row still holds the
-    // internal string (e.g. "LOC-SUNSHINE") instead of the UUID — idempotent on subsequent boots.
+    // Persist the real EasyTeam UUID back to the locations table so the sdk-payload and sync
+    // guard always see the current org's mapping.  Runs unconditionally whenever the token
+    // exchange returns a UUID that differs from the row's internal id — covers both the
+    // self-referential case ("LOC-SUNSHINE" or "165c811a-..." stored as their own id) AND the
+    // stale-shared-org case (e.g. "9defae07-..." left over from before the company got its
+    // own per-company org).  Idempotent: writing the same UUID twice is a harmless no-op.
     if (internalLocId && internalLocId !== locationId) {
       try {
         await db
           .update(locationsTable)
           .set({ easyteamLocationId: internalLocId })
-          .where(and(eq(locationsTable.id, locationId), eq(locationsTable.easyteamLocationId, locationId)));
+          .where(eq(locationsTable.id, locationId));
         logger.info({ locationId, internalLocId }, "ensureLocationTimezone: persisted EasyTeam UUID to locations table");
       } catch (dbErr) {
         logger.warn({ locationId, internalLocId, dbErr }, "ensureLocationTimezone: failed to persist EasyTeam UUID (non-fatal)");
@@ -2299,19 +2311,40 @@ export async function ensureTimeOffPolicy(
   }
 }
 
-// At startup, patch country+state for all seeded locations whose EasyTeam record may have no
-// location data (causing EasyTeam to default to the partner account's timezone). Idempotent.
-// Runs after a short delay so the server is fully up before making outbound calls.
-setTimeout(() => {
+// At startup, patch country+state and persist the correct EasyTeam UUID for EVERY active
+// location — not just the hardcoded seed list.  This is systematic: new companies created
+// via the wizard, companies that gain a per-company org later, and companies with multiple
+// locations all get their easyteam_location_id corrected automatically.
+//
+// Mechanism: ensureLocationTimezone() exchanges a JWT for each location under the company's
+// current EasyTeam org, reads the real UUID from the access-token payload, and writes it back
+// to locations.easyteam_location_id.  The sync guard and sdk-payload both read that column,
+// so they pick up the corrected UUID without any further changes.
+setTimeout(async () => {
   if (!EASYTEAM_API_KEY) return;
-  const seedLocations: Array<{ locationId: string; country: string; state: string; companyId: string }> = [
-    { locationId: "LOC-SUNSHINE", country: "US", state: "NJ", companyId: "ORG-SUNSHINE" },
-    { locationId: "LOC-RAINBOW",  country: "US", state: "NJ", companyId: "ORG-RAINBOW"  },
-  ];
-  for (const { locationId, country, state, companyId } of seedLocations) {
-    ensureLocationTimezone(locationId, { country, state, companyId }).catch(() => { /* already logged inside */ });
-    // Also ensure at least one time-off policy exists so the Save button is enabled in the SDK.
-    ensureTimeOffPolicy(locationId, { companyId }).catch(() => { /* already logged inside */ });
+  try {
+    // Join locations → companies so we have the company's state for timezone derivation.
+    const activeLocations = await db
+      .select({
+        locationId: locationsTable.id,
+        companyId:  locationsTable.companyId,
+        state:      companiesTable.state,
+      })
+      .from(locationsTable)
+      .innerJoin(companiesTable, eq(locationsTable.companyId, companiesTable.id))
+      .where(eq(locationsTable.isActive, true));
+
+    logger.info({ count: activeLocations.length }, "Boot: running ensureLocationTimezone for all active locations");
+
+    for (const { locationId, companyId, state } of activeLocations) {
+      const country = "US"; // companies.country column does not exist; all clients are US-based
+      ensureLocationTimezone(locationId, { country, state: state ?? "NJ", companyId })
+        .catch(() => { /* already logged inside ensureLocationTimezone */ });
+      ensureTimeOffPolicy(locationId, { companyId })
+        .catch(() => { /* already logged inside ensureTimeOffPolicy */ });
+    }
+  } catch (err) {
+    logger.warn({ err }, "Boot: failed to query active locations for ensureLocationTimezone");
   }
 }, 5000);
 
