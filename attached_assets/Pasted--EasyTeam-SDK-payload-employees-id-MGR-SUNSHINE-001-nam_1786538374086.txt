@@ -1,0 +1,96 @@
+[EasyTeam SDK payload] {
+  "employees": [
+    {
+      "id": "MGR-SUNSHINE-001",
+      "name": "Susan Manager",
+      "role": "Daycare Manager",
+      "timeTrackingEnabled": false,
+      "isVisible": false,
+      "wage": 2500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-SUNSHINE-001",
+      "name": "John Smith",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 3500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-SUNSHINE-002",
+      "name": "Mary Johnson",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1500,
+      "wageType": "hourly"
+    },
+    {
+      "id": "emp-mqt5wnur-adx9ey",
+      "name": "Bilal Nasir",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-MS1QJQW4-XV29AQ",
+      "name": "Gerald Foster",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-MS1MLW2G-C5VM55",
+      "name": "Raymond Holt",
+      "role": "manager",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-MS1JLSXM-3TOPI7",
+      "name": "Diane Whitfield",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 0,
+      "wageType": "hourly"
+    },
+    {
+      "id": "EMP-MS1Q4OT4-U8EPXX",
+      "name": "Natalie Reed",
+      "role": "employee",
+      "timeTrackingEnabled": true,
+      "wage": 1800,
+      "wageType": "hourly"
+    }
+  ],
+  "locations": [
+    {
+      "id": "LOC-SUNSHINE",
+      "name": "Sunshine Daycare Centre",
+      "latitude": 40.7357,
+      "longitude": -74.1724,
+      "employees": {
+        "MGR-SUNSHINE-001": {},
+        "EMP-SUNSHINE-001": {},
+        "EMP-SUNSHINE-002": {},
+        "emp-mqt5wnur-adx9ey": {},
+        "EMP-MS1MLW2G-C5VM55": {}
+      }
+    },
+    {
+      "id": "9defae07-3f8f-43ad-9062-9963820014fd",
+      "name": "Amsterdam Avenue",
+      "latitude": 40.7887,
+      "longitude": -73.9754,
+      "employees": {
+        "MGR-SUNSHINE-001": {},
+        "EMP-MS1QJQW4-XV29AQ": {},
+        "EMP-MS1JLSXM-3TOPI7": {},
+        "EMP-MS1Q4OT4-U8EPXX": {}
+      }
+    }
+  ]
+}

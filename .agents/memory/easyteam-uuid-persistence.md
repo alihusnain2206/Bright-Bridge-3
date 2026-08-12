@@ -17,7 +17,12 @@ Three phases, in order:
 
 **Phase 0 — backfill:** Write historically known UUID→empId pairs from `KNOWN_EASYTEAM_UUIDS`
 to DB rows whose `easyteam_uuid` is currently null. Idempotent (WHERE easyteam_uuid IS NULL).
-Add new entries to that array any time you discover a UUID from logs.
+Add new entries only for UUIDs from the company's CURRENT EasyTeam org. If a company migrates
+to a new EasyTeam org, their old-org UUIDs MUST be removed from this array — otherwise Phase 0
+restores obsolete UUIDs, Phase 1 sees them as current, and Phase 2 skips re-registration.
+Symptom: `backfilled: N, registered: 0` for those employees + `skippedUnknownEtIds` during sync.
+Fix: delete stale entries from `KNOWN_EASYTEAM_UUIDS`, clear the DB rows
+(`UPDATE employees SET easyteam_uuid=NULL WHERE id IN (...)`), restart.
 
 **Phase 1 — DB → map:** `SELECT id, easyteam_uuid WHERE easyteam_uuid IS NOT NULL` → populate
 `etUuidToEmployeeId` map instantly, NO API calls. Log line: "populated EasyTeam UUID map from DB".

@@ -269,12 +269,9 @@ async function bootSeedEmployees() {
  */
 const KNOWN_EASYTEAM_UUIDS: Array<{ empId: string; uuid: string }> = [
   // ── Sunshine Daycare ──────────────────────────────────────────────────
-  { empId: "EMP-SUNSHINE-001",        uuid: "f765647e-0a5c-495b-9c14-984f7ae4d0e5" }, // John Smith
-  { empId: "EMP-MS1JLSXM-3TOPI7",    uuid: "245d3a22-4746-415c-998d-cbcb8882b06a" }, // Diane Whitfield ← backfill target
-  { empId: "EMP-MRRHGO5L-EHDBJT",    uuid: "ad0f22b2-844e-4af7-b8f5-a7eabf11c745" },
-  { empId: "EMP-MRRHXI99-50CHVE",    uuid: "456a78a8-7f72-446c-922f-2537404b7801" },
-  { empId: "EMP-MRRHG3RE-3I7B4E",    uuid: "6c89a2e5-d9f4-419b-9aaf-b6c11f437870" },
-  { empId: "EMP-MS0P5SKC-8D36M7",    uuid: "6f12162f-e815-49ca-8e6c-8059f81876dc" },
+  // (removed — ORG-SUNSHINE now has its own dedicated EasyTeam org; old-org UUIDs
+  //  are obsolete.  Boot Phase 2 re-registers all Sunshine employees under the new
+  //  org at every cold start; live token exchanges keep the map current thereafter.)
   // ── Rainbow Kids Daycare ──────────────────────────────────────────────
   { empId: "EMP-RAINBOW-001",         uuid: "ad989af3-6bff-42c9-a619-53ca102f0324" },
   { empId: "EMP-RAINBOW-002",         uuid: "a9a0b3ff-03b5-49fb-a2dd-e010ea9c7d93" },
