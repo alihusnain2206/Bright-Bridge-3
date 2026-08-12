@@ -1,0 +1,34 @@
+Here's the complete, final prompt — copy-paste the whole thing:
+
+EasyTeam support has given definitive guidance on the SDK payload, which supersedes the earlier revert. Yaniv (EasyTeam): "In most cases, pass all locations, all employees, and all location→employee relations in the dicts, for all sessions." Visibility is controlled by JWT permissions (e.g. LOCATION_READ = can see others' data at shared locations; SHIFT_READ alone = own data only), not by filtering the payload. Rebuild the launcher payload accordingly:
+
+1. Complete company map, every session
+
+All sessions (owner, manager, employee) pass the same complete structure for the current company:
+
+locations[]: every ACTIVE location of the company, each as { id: <easyteamLocationId>, name, latitude, longitude, timezone (when known), employees: {…} } — where each location's employees map contains exactly the employees assigned to it (from employees.locationId)
+employees[]: ALL of the company's employees in the flat array — with no locationId field on any employee entry (that earlier bug stays dead; EasyTeam's Employee spec has no such field)
+For ORG-SUNSHINE right now this means TWO locations: LOC-SUNSHINE (all employees except Mary Johnson) and the Annex 165c811a-… (Mary Johnson)
+2. Do not filter the payload by the caller's role — but respect the company boundary
+
+The manager's restriction comes from their JWT (locationId + permissions), not from a thinner payload. Note: the frontend currently builds its dicts from GET /api/easyteam/employees, which is location-scoped for managers — the SDK payload needs the FULL company picture regardless of caller. Solve this cleanly (e.g. a dedicated payload endpoint, or an explicit include-all parameter with its own guard) WITHOUT weakening the manager scoping on the existing endpoints — those stay scoped for everything else they serve.
+
+Important scoping note: "all locations / all employees" means all within the current company — never across companies. Our platform runs as one EasyTeam organization with each company as a sub-entity; EasyTeam confirmed this partial-dict pattern is the supported "advanced use case" for exactly this (splitting an organization into sub-entities where different admins see different slices). The per-company boundary is tenant isolation and must remain absolute. The only change here is that within a company, every session gets the complete company picture.
+
+3. Keep the diagnostic console.log
+
+Leave the [EasyTeam SDK payload] log in place for now — we'll verify the shipped payload in the browser one more time, then remove it in a later cleanup.
+
+4. Verification before publish (paste real outputs)
+Paste the payload structure now produced for Susan's (owner) session: must contain both locations, correct per-location employee maps, EasyTeam-UUID ids, no locationId on employee entries
+Paste the payload for a manager's session (e.g. Gerald): must be the SAME complete company structure (his restriction lives in his JWT, not the payload)
+Paste the payload for a company that still has ONE location (e.g. ORG-RAINBOW): single location, all employees in its map — confirming single-location companies keep working unchanged
+Confirm no cross-company data appears in any payload (spot-check that Sunshine's payload contains zero Rainbow employees and vice versa)
+Confirm the JWTs are untouched by this change (owner: no locationId; manager: their location + scoped permissions; employee: own location) — this task changes ONLY the SDK payload
+Scope boundary
+Do NOT change any JWT/token code (it's now correct — owner org-wide, manager scoped)
+Do NOT weaken manager scoping on existing API endpoints
+Do NOT touch the sync, Rollfi, or anything else — this is the launcher payload only
+Deliverable
+
+Files changed, the three pasted payloads, the cross-company check result, and publish-ready confirmation.

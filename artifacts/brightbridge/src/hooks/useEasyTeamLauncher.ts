@@ -12,11 +12,13 @@ export interface LauncherEmployee {
   name: string;
   role?: string;
   timeTrackingEnabled?: boolean;
+  isVisible?: boolean;
   wage?: number;
   wageType?: "hourly" | "weekly" | "monthly";
-  /** Phase 3: employee's assigned location. When set, this employee appears ONLY in that
-   *  location's dict. When absent (legacy / manager-self entries), employee appears in all. */
-  locationId?: string;
+  /** EasyTeam location ID (easyteamLocationId) of this employee's assigned location.
+   *  When set, the employee appears ONLY in that location's dict.
+   *  When absent (self/reviewer entries), employee appears in ALL location dicts. */
+  locationEtId?: string;
 }
 
 export interface LauncherLocation {
@@ -82,22 +84,22 @@ export function useEasyTeamLauncher(
     if (!container) return;
     container.innerHTML = "";
 
-    // All employees go into every location's dict (pre-Phase-3 flat behaviour).
-    // Phase 3 per-location filtering broke per-employee hour attribution — EasyTeam
-    // was not recognising our internal location IDs. Reverted pending confirmation
-    // of the correct multi-location payload shape from EasyTeam.
+    // Per EasyTeam guidance (Yaniv): pass ALL locations and ALL employees in every session.
+    // Each location's employees dict contains only the employees assigned to it (via locationEtId).
+    // Employees with no locationEtId (self/reviewer entries) appear in ALL location dicts.
+    // Role restriction lives in the JWT, not in a thinned payload.
     const resolvedLocations = config.locations.map((loc) => ({
       ...loc,
       employees: Object.fromEntries(
-        config.employees.map((e) => [e.id, {}])
+        config.employees
+          .filter(e => !e.locationEtId || e.locationEtId === loc.id)
+          .map(e => [e.id, {}])
       ),
     }));
 
-    // Strip `locationId` from the entries passed to the SDK — it is our internal
-    // routing key used above to build resolvedLocations, but EasyTeam doesn't
-    // recognise our internal IDs and interprets the field as a location filter,
-    // which causes every per-employee row to show 0m while the total stays correct.
-    const sdkEmployees = config.employees.map(({ locationId: _loc, ...rest }) => rest);
+    // Strip `locationEtId` from the entries passed to the SDK — it is our internal
+    // routing key used above to build resolvedLocations; EasyTeam's Employee spec has no such field.
+    const sdkEmployees = config.employees.map(({ locationEtId: _loc, ...rest }) => rest);
 
     // TEMP DIAGNOSTIC — remove after confirming payload shape
     console.log("[EasyTeam SDK payload]", JSON.stringify({

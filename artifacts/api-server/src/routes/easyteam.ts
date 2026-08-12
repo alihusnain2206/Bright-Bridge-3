@@ -163,6 +163,93 @@ router.get("/easyteam/employees", requireRole("super_admin", "owner", "manager")
   res.json({ employees });
 });
 
+// GET /easyteam/sdk-payload — full company SDK structure for the EasyTeam launcher.
+// Returns ALL active locations + ALL employees for the company regardless of the caller's
+// role.  Per EasyTeam's documented "advanced partial-dict pattern", every session receives
+// the complete company picture; role-based access restriction lives in the JWT
+// (locationId + permissions), NOT in a thinned payload.
+// Company boundary is absolute: callers can only see their own company's data.
+router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager"), async (req, res) => {
+  const sessionUser = store.getUserById(req.session.userId!);
+  const requestedCompanyId = req.query.companyId as string | undefined;
+  const companyId = sessionUser?.role === "super_admin"
+    ? requestedCompanyId
+    : (sessionUser?.companyId ?? requestedCompanyId);
+  if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
+  if (!assertCompanyAccess(req, res, companyId)) return;
+
+  try {
+    // 1. All active locations — use easyteamLocationId as the canonical SDK id.
+    const locationRows = await db
+      .select({
+        id:                 locationsTable.id,
+        easyteamLocationId: locationsTable.easyteamLocationId,
+        name:               locationsTable.name,
+        latitude:           locationsTable.latitude,
+        longitude:          locationsTable.longitude,
+      })
+      .from(locationsTable)
+      .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)));
+
+    // Map: our internal location.id → easyteamLocationId (for resolving employee.locationId)
+    const locEtIdMap = new Map<string, string>(
+      locationRows.map(l => [l.id, l.easyteamLocationId ?? l.id])
+    );
+
+    // 2. All employees — NO role-based location filter here.
+    const users = store.getUsersForCompany(companyId).filter(
+      u => u.employeeId &&
+           (u.role === "employee" || u.role === "manager") &&
+           (!u.status || u.status === "active" || u.status === "onboarding")
+    );
+
+    const empIds = users.map(u => u.employeeId).filter((id): id is string => !!id);
+    const dbEmpRows = empIds.length > 0
+      ? await db
+          .select({ id: employeesTable.id, hourlyWage: employeesTable.hourlyWage, locationId: employeesTable.locationId })
+          .from(employeesTable)
+          .where(inArray(employeesTable.id, empIds))
+          .catch(() => [] as { id: string; hourlyWage: number | null; locationId: string | null }[])
+      : [];
+    const dbWageMap     = new Map(dbEmpRows.map(e => [e.id, e.hourlyWage]));
+    const dbLocationMap = new Map(dbEmpRows.map(e => [e.id, e.locationId]));
+
+    const employees = users.map(u => {
+      const empId        = u.employeeId!;
+      const internalLocId = dbLocationMap.get(empId) ?? null;
+      // Resolve the easyteamLocationId for this employee's location.
+      // Falls through to the raw locationId string when not found in the map
+      // (handles legacy employees whose locationId is already an ET-compatible string).
+      const locationEtId = internalLocId
+        ? (locEtIdMap.get(internalLocId) ?? internalLocId)
+        : undefined;
+      return {
+        id:                   store.getEasyTeamUuidForEmployee(empId) ?? empId,
+        name:                 u.name,
+        role:                 u.role,
+        wage:                 dbWageMap.get(empId) ?? u.hourlyWage ?? 1500,
+        wageType:             "hourly" as const,
+        timeTrackingEnabled:  true,
+        // locationEtId: routing key used by the frontend to build per-location employee dicts.
+        // Stripped before the payload is passed to the EasyTeam SDK (EasyTeam has no such field).
+        ...(locationEtId ? { locationEtId } : {}),
+      };
+    });
+
+    const locations = locationRows.map(l => ({
+      id:        l.easyteamLocationId ?? l.id,
+      name:      l.name,
+      latitude:  l.latitude  ?? 0,
+      longitude: l.longitude ?? 0,
+    }));
+
+    res.json({ locations, employees });
+  } catch (err) {
+    req.log.error({ err }, "sdk-payload: failed to build company SDK structure");
+    res.status(500).json({ error: "Failed to build SDK payload" });
+  }
+});
+
 router.get("/easyteam/status", requireAuth, (_req, res) => {
   const keyFirstLine = EASYTEAM_API_KEY?.split("\n")[0]?.slice(0, 40) ?? "";
   const keyLooksLikePem =

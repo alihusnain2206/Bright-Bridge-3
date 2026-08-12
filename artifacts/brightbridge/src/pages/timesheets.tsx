@@ -336,34 +336,37 @@ export default function Timesheets() {
       // Fetch token, employees, and pay period in parallel so launch() always
       // receives the authoritative date range — never stale React state.
       const companyId = encodeURIComponent(user.companyId ?? "");
-      const [tokenRes, empRes, ppRes] = await Promise.all([
+      const [tokenRes, sdkPayloadRes, ppRes] = await Promise.all([
         fetch("/api/auth/token-by-role", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userId: user.id }),
         }),
-        fetch(`/api/easyteam/employees?companyId=${companyId}`, { credentials: "include" }),
+        // sdk-payload returns the FULL company picture (all locations + all employees) regardless
+        // of caller role — EasyTeam guidance: pass complete company map every session; role
+        // restriction lives in the JWT, not the payload.
+        fetch(`/api/easyteam/sdk-payload?companyId=${companyId}`, { credentials: "include" }),
         fetch(`/api/companies/${companyId}/pay-period`, { credentials: "include" }),
       ]);
 
       const tokenData = await tokenRes.json() as { token?: string; error?: string };
       if (!tokenRes.ok || !tokenData.token) { setTokenError(tokenData.error ?? "Token generation failed"); return; }
 
-      const empData = await empRes.json() as { employees?: Array<{ id: string; easyteamUuid?: string; name: string; role: string; wage: number; wageType: string; locationId?: string }> };
-      const apiEmployees = (empData.employees ?? []).map(e => ({
-        // Use easyteamUuid as the SDK id when available so EasyTeam can match shifts to rows.
-        // Employees registered directly in EasyTeam have a UUID that differs from our internal ID;
-        // passing our internal ID causes their hours to appear in the Total but not as a named row.
-        id: e.easyteamUuid ?? e.id,
+      const sdkData = await sdkPayloadRes.json() as {
+        locations?: Array<{ id: string; name: string; latitude: number; longitude: number }>;
+        employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string; locationEtId?: string }>;
+      };
+      // id is already the easyteamUuid (resolved server-side); locationEtId is the easyteam
+      // location ID of the employee's assigned location (used by the launcher to build
+      // per-location employee dicts, then stripped before passing to the EasyTeam SDK).
+      const apiEmployees = (sdkData.employees ?? []).map(e => ({
+        id: e.id,
         name: e.name,
         role: e.role ?? "Staff",
         timeTrackingEnabled: true,
         wage: e.wage ?? 1500,
         wageType: "hourly" as const,
-        // locationId intentionally omitted from SDK payload — Phase 3 fallback.
-        // EasyTeam misinterprets our internal location IDs as its own UUIDs and
-        // silently zeroes per-employee rows. Restoring pre-Phase-3 flat behaviour
-        // until the correct multi-location payload shape is confirmed with EasyTeam.
+        ...(e.locationEtId ? { locationEtId: e.locationEtId } : {}),
       }));
 
       // Use freshly-fetched pay period dates for the iframe URL.
@@ -397,14 +400,13 @@ export default function Timesheets() {
         ? [selfEntry, ...apiEmployees]
         : apiEmployees;
 
-      // SDK launcher locations: use static COMPANY_LOCATIONS (pre-Phase-3 fallback).
-      // Fetching locations from the API and splitting employees per-location broke
-      // per-employee hour attribution in the EasyTeam iframe (all rows showed 0m).
-      // Reverting to a flat single-location payload while the correct multi-location
-      // SDK shape is confirmed with EasyTeam. Backend Phase 3 changes are untouched.
-      const locations = COMPANY_LOCATIONS[user.companyId ?? ""] ?? (authLocation
-        ? [{ id: authLocation.id, name: authLocation.name, latitude: authLocation.latitude, longitude: authLocation.longitude }]
-        : []);
+      // Use locations from sdk-payload (all active locations, easyteamLocationId as id).
+      // Fall back to COMPANY_LOCATIONS only if the endpoint returns nothing (e.g. DB down).
+      const locations = (sdkData.locations ?? []).length > 0
+        ? (sdkData.locations ?? [])
+        : (COMPANY_LOCATIONS[user.companyId ?? ""] ?? (authLocation
+            ? [{ id: authLocation.id, name: authLocation.name, latitude: authLocation.latitude, longitude: authLocation.longitude }]
+            : []));
 
       if (locations.length === 0) { setTokenError("No location data available for this company"); return; }
 
