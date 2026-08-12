@@ -721,9 +721,12 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     await Promise.all(inRange.map(async (s) => {
       if (store.isEasyTeamUuidIgnored(s.employeeId, co.id)) return; // blocklisted for this company — skip
       const internalEmpId = store.resolveEasyTeamUuid(s.employeeId);
-      const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : null;
-      if (!mappedEmpId) {
-        req.log.warn({ etEmpId: s.employeeId }, "Sync: persisting shift with null employeeId — EasyTeam UUID not in registry");
+      // When the UUID is not in our registry, fall back to the EasyTeam UUID itself as the
+      // employee_id. This preserves shifts for EasyTeam-only employees (wizard-created companies
+      // whose employees exist only in EasyTeam's backend) so they appear in the hours table.
+      const mappedEmpId = internalEmpId !== s.employeeId ? internalEmpId : s.employeeId;
+      if (internalEmpId === s.employeeId) {
+        req.log.info({ etEmpId: s.employeeId }, "Sync: persisting shift with EasyTeam UUID as employeeId — not in internal registry (wizard-company employee)");
       }
       await upsertTimesheetShift({
         easyteamShiftId:     s.id,
@@ -756,10 +759,11 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
         req.log.info({ etEmpId, minutesLost: totalMinutes, companyId: co.id }, "Sync: silently skipping blocklisted EasyTeam UUID");
         continue;
       }
-      if (internalEmpId === etEmpId) {
-        req.log.warn({ etEmpId, minutesLost: totalMinutes }, "Sync: skipping timesheet_entry for unrecognised EasyTeam UUID (not in our employee registry)");
-        skippedUnknownUuids.push({ etEmpId, minutesLost: totalMinutes });
-        continue;
+      const isEtUuidFallback = internalEmpId === etEmpId;
+      if (isEtUuidFallback) {
+        // Not in our registry — write the entry using the EasyTeam UUID as the employee key
+        // so wizard-company employees' hours are preserved and visible after Pull Hours.
+        req.log.info({ etEmpId, totalMinutes }, "Sync: writing timesheet_entry with EasyTeam UUID as employeeId (wizard-company employee)");
       }
       const matched = companyUsers.find((u) => u.employeeId === internalEmpId);
       const hoursWorked = Math.round((totalMinutes / 60) * 10000) / 10000;
@@ -806,8 +810,11 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 });
 
 // ── GET /easyteam/company-members — employee names for timesheet approval panel ──
-// Returns { [employeeId]: fullName } from store staff users (covers both seeded and
-// wizard-created employees). Used by the timesheets page to show names in the approval table.
+// Returns { [employeeId]: fullName } from store staff users (covers seeded employees).
+// For wizard-created companies with no store staff (employees exist only in EasyTeam),
+// falls back to fetching employee names from EasyTeam's users API.
+// Used by the timesheets page to show names in the approval table, including for
+// ET-UUID-keyed hours entries produced by the sync fallback path.
 router.get("/easyteam/company-members", requireRole("super_admin", "owner", "manager"), async (req, res) => {
   const { companyId } = req.query as { companyId?: string };
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }
@@ -830,6 +837,34 @@ router.get("/easyteam/company-members", requireRole("super_admin", "owner", "man
   for (const u of staff) {
     if (u.employeeId) names[u.employeeId] = u.name;
   }
+
+  // For wizard-created companies whose employees aren't in the in-memory store (e.g. the store
+  // was not populated at boot because the company was created after the last server restart),
+  // fall back to user_accounts DB rows. This covers employees whose UUIDs the sync stores as
+  // the employee_id key — their names need to resolve to something readable.
+  // We key by both the internal employeeId AND their easyteam_uuid so either key hits the name.
+  if (staff.length === 0) {
+    try {
+      const dbUsers = await db
+        .select({ id: userAccountsTable.id, name: userAccountsTable.name, employeeId: userAccountsTable.employeeId, role: userAccountsTable.role })
+        .from(userAccountsTable)
+        .where(and(eq(userAccountsTable.companyId, companyId), inArray(userAccountsTable.role, ["employee", "manager"])))
+        .catch(() => [] as { id: string; name: string | null; employeeId: string | null; role: string }[]);
+      for (const u of dbUsers) {
+        if (!u.name) continue;
+        if (u.employeeId) names[u.employeeId] = u.name;
+        // Also map easyteam_uuid → name so ET-UUID-keyed hours entries show real names
+        const etUuid = u.employeeId ? store.getEasyTeamUuidForEmployee(u.employeeId) : undefined;
+        if (etUuid && etUuid !== u.employeeId) names[etUuid] = u.name;
+      }
+      if (dbUsers.length > 0) {
+        req.log.info({ companyId, count: Object.keys(names).length }, "company-members: populated names from DB user_accounts (store miss)");
+      }
+    } catch (err) {
+      req.log.warn({ err, companyId }, "company-members: DB user_accounts fallback failed (non-fatal)");
+    }
+  }
+
   res.json({ names });
 });
 
@@ -2117,6 +2152,22 @@ export async function ensureLocationTimezone(
     );
 
     logger.info({ locationId, internalLocId, country, state, patchUrl }, "ensureLocationTimezone: country/state patched");
+
+    // Persist the real EasyTeam UUID back to the locations table so the sdk-payload sends the
+    // correct id next time without a manual UPDATE. Only runs when the DB row still holds the
+    // internal string (e.g. "LOC-SUNSHINE") instead of the UUID — idempotent on subsequent boots.
+    if (internalLocId && internalLocId !== locationId) {
+      try {
+        await db
+          .update(locationsTable)
+          .set({ easyteamLocationId: internalLocId })
+          .where(and(eq(locationsTable.id, locationId), eq(locationsTable.easyteamLocationId, locationId)));
+        logger.info({ locationId, internalLocId }, "ensureLocationTimezone: persisted EasyTeam UUID to locations table");
+      } catch (dbErr) {
+        logger.warn({ locationId, internalLocId, dbErr }, "ensureLocationTimezone: failed to persist EasyTeam UUID (non-fatal)");
+      }
+    }
+
     return { ok: true };
   } catch (err) {
     const axErr = err as { message?: string; response?: { status?: number; data?: unknown } };
