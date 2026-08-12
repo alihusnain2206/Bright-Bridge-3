@@ -96,8 +96,14 @@ export function useEasyTeamLauncher(
       ),
     }));
 
+    // Strip `locationId` from the entries passed to the SDK — it is our internal
+    // routing key used above to build resolvedLocations, but EasyTeam doesn't
+    // recognise our internal IDs and interprets the field as a location filter,
+    // which causes every per-employee row to show 0m while the total stays correct.
+    const sdkEmployees = config.employees.map(({ locationId: _loc, ...rest }) => rest);
+
     const launcher = new EasyTeamEmbedLauncher(token, {
-      employees: config.employees,
+      employees: sdkEmployees,
       locations: resolvedLocations as never,
       organization: config.organization,
       baseURL: SANDBOX_BASE_URL,
