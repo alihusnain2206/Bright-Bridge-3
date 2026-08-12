@@ -47,13 +47,18 @@ export async function resolveCompanyLocationId(companyId: string): Promise<strin
   try {
     // 2. Locations table — authoritative for wizard companies after Phase 1 boot migration.
     //    Prefer the is_primary row; break ties by creation date (oldest first) for determinism.
+    //
+    // EXTERNAL KEY RULE: return locations.id (the row's own primary key), NOT easyteam_location_id.
+    // locations.id is the external key registered with EasyTeam at boot via ensureLocationTimezone.
+    // easyteam_location_id is EasyTeam's *internal* UUID — it belongs in REST URL paths and shift
+    // guard matching only; it must NEVER appear in a JWT locationId field.
     const [loc] = await db
-      .select({ easyteamLocationId: locationsTable.easyteamLocationId })
+      .select({ rowId: locationsTable.id })
       .from(locationsTable)
       .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)))
       .orderBy(sql`is_primary DESC, created_at ASC`)
       .limit(1);
-    if (loc?.easyteamLocationId) return loc.easyteamLocationId;
+    if (loc?.rowId) return loc.rowId;
 
     // 3. Legacy fallback: companies.rollfiLocationId (pre-Phase 1 companies)
     const [dbCo] = await db

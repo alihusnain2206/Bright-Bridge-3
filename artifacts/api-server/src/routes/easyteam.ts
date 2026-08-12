@@ -9,7 +9,7 @@ import { db, pool, companies as companiesTable, employees as employeesTable, use
 import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
-import { resolveCompanyLocationId } from "../lib/location.js";
+import { resolveCompanyLocationId, resolveEmployeeLocationId } from "../lib/location.js";
 import { requireAuth, requireRole, assertCompanyAccess } from "../lib/auth-middleware.js";
 import { resolveEasyTeamOrgId } from "../lib/easyteam-org.js";
 
@@ -348,6 +348,15 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
       resolvedEtEmployeeId = staffUser.employeeId ?? employee_id;
       if (!dbEmp) resolvedWage = (staffUser.hourlyWage ?? 1500) / 100;
     }
+
+    // EXTERNAL KEY RULE: JWT locationId must be the locations row id (the external key EasyTeam
+    // was registered with at boot), never easyteam_location_id (EasyTeam's internal UUID).
+    // resolveEmployeeLocationId returns employees.location_id which IS that external key:
+    // it is the locations.id PK — the same value ensureLocationTimezone sends at boot.
+    // This ensures secondary-location employees (e.g. Amsterdam Ave) have their shifts recorded
+    // at their own location, not silently at the company's primary location.
+    const empLocId = await resolveEmployeeLocationId(employee_id);
+    if (empLocId) resolvedLocationId = empLocId;
   }
 
   // Scope permissions by role — LOCATION_ADMIN / ORGANIZATION_ADMIN grant org-wide switching
@@ -621,27 +630,45 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
 
   // Phase 3: build per-company list of ALL active location IDs (not just one).
   // Each company may have multiple active locations; we collect shifts from all of them.
-  type SyncableCompany = { id: string; locationIds: string[] };
+  //
+  // EXTERNAL KEY RULE: JWT locationId = locations.id (external key, registered with EasyTeam at
+  // boot via ensureLocationTimezone). easyteam_location_id is EasyTeam's *internal* UUID and must
+  // NEVER appear in a JWT locationId — only in shift guard matching and REST URL path segments.
+  type SyncableCompany = {
+    id: string;
+    externalLocIds: string[]; // locations.id — used in JWT locationId for fetchEasyTeamShiftsForLocation
+    internalLocIds: string[]; // locations.easyteam_location_id — used only for guard pre-seed
+  };
   const companiesToSync: SyncableCompany[] = [];
   for (const id of allClientIds) {
     const activeLocRows = await db
-      .select({ easyteamLocationId: locationsTable.easyteamLocationId })
+      .select({
+        rowId: locationsTable.id,                            // external key → JWT locationId
+        easyteamLocationId: locationsTable.easyteamLocationId, // internal UUID → guard matching only
+      })
       .from(locationsTable)
       .where(and(eq(locationsTable.companyId, id), eq(locationsTable.isActive, true)))
-      .catch(() => [] as { easyteamLocationId: string | null }[]);
+      .catch(() => [] as { rowId: string; easyteamLocationId: string | null }[]);
 
-    let locationIds = activeLocRows
+    // External keys: the row ids EasyTeam was registered with; safe to use in JWT locationId.
+    const externalLocIds = activeLocRows
+      .map((l) => l.rowId)
+      .filter((lid): lid is string => !!lid);
+    // Internal UUIDs: only for guard pre-seeding (shift.locationId comparison).
+    const internalLocIds = activeLocRows
       .map((l) => l.easyteamLocationId)
       .filter((lid): lid is string => !!lid);
 
-    // Fall back to store / resolveCompanyLocationId for companies whose location row predates Phase 1
-    if (locationIds.length === 0) {
+    // Fall back to store / resolveCompanyLocationId for companies whose location row predates Phase 1.
+    // resolveCompanyLocationId now returns the external key (Bug B fix: locations.id, not easyteam_location_id).
+    if (externalLocIds.length === 0) {
       const resolved = store.getCompany(id)?.locationId ?? await resolveCompanyLocationId(id);
-      if (resolved) locationIds = [resolved];
+      if (resolved) externalLocIds.push(resolved);
+      // internalLocIds will be populated from the token-exchange result during fetch.
     }
 
-    if (locationIds.length > 0) {
-      companiesToSync.push({ id, locationIds });
+    if (externalLocIds.length > 0) {
+      companiesToSync.push({ id, externalLocIds, internalLocIds });
     } else {
       req.log.warn({ companyId: id }, "Sync: no active locations found for company — skipping");
     }
@@ -659,21 +686,23 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     // EasyTeam's flat /timesheets endpoint returns ALL org shifts regardless of which
     // location JWT was used, so we deduplicate by shift ID across location fetches.
     const allShiftsMap = new Map<string, EasyTeamShift>(); // keyed by EasyTeam shift ID
-    const companyEtLocIds = new Set<string>(); // EasyTeam UUIDs for this company's locations
+    const companyEtLocIds = new Set<string>(); // EasyTeam internal UUIDs for this company's locations
 
-    // Pre-seed from DB — these values were written by ensureLocationTimezone (boot-time token
-    // exchange), so they are already validated against EasyTeam's org.  Pre-seeding means the
-    // guard accepts shifts under a secondary location UUID even when the token exchange for that
-    // location returns the primary location's UUID (EasyTeam maps unrecognised external IDs to
-    // the org's default location in the access-token response).
-    for (const locId of co.locationIds) {
-      companyEtLocIds.add(locId);
+    // Pre-seed guard with INTERNAL UUIDs from DB (written by ensureLocationTimezone at boot —
+    // already validated against EasyTeam's org).  These are NOT used in JWTs; only compared
+    // against shift.locationId to accept or reject each shift in the foreign-location guard.
+    for (const internalId of co.internalLocIds) {
+      companyEtLocIds.add(internalId);
     }
 
-    for (const locId of co.locationIds) {
-      const result = await fetchEasyTeamShiftsForLocation(locId, fromDate, toDate, co.id);
+    // Fetch shifts using EXTERNAL keys (locations.id) in the JWT.
+    // EXTERNAL KEY RULE: JWT locationId = external key ALWAYS; internal UUIDs never go in JWTs.
+    // The token exchange returns EasyTeam's internal UUID in the access token; fetchEasyTeamShiftsForLocation
+    // decodes it and returns it as result.easyteamLocationId for guard matching below.
+    for (const externalId of co.externalLocIds) {
+      const result = await fetchEasyTeamShiftsForLocation(externalId, fromDate, toDate, co.id);
       req.log.info(
-        { locationId: locId, companyId: co.id, result: "error" in result ? result.error : `${result.shifts.length} shifts` },
+        { externalLocId: externalId, companyId: co.id, result: "error" in result ? result.error : `${result.shifts.length} shifts` },
         "Sync: REST API result",
       );
 
@@ -730,7 +759,7 @@ router.post("/easyteam/hours/sync", requireRole("super_admin", "owner", "manager
     }
     totalSkippedForeign += skippedForeignShifts;
     req.log.info(
-      { companyId: co.id, locationIds: co.locationIds, totalCollected: allShiftsMap.size, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() },
+      { companyId: co.id, externalLocIds: co.externalLocIds, totalCollected: allShiftsMap.size, inRange: inRange.length, skippedForeignShifts, from: fromDate.toISOString(), to: toDate.toISOString() },
       "Sync: date-filtered shifts for company",
     );
 

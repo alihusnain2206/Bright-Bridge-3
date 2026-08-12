@@ -30,3 +30,4 @@
 - [Phase 2 multi-location feature](phase2-multi-location.md) — Locations CRUD, company-settings tab, directory/profile/edit/wizard UI, grant-access, B5/B6 integration fixes
 - [Phase 3 multi-location time tracking](phase3-multi-location.md) — JWT scoping, per-location sync, SDK launcher filtering, lat/lng schema, company-settings UI
 - [EasyTeam location UUID resolution](easyteam-location-uuid-resolution.md) — boot token-exchange resolves real UUID; two pitfalls: persist WHERE clause + sync guard pre-seed from DB
+- [EasyTeam JWT external key rule](easyteam-jwt-external-key-rule.md) — JWT locationId = locations.id ONLY; easyteam_location_id in JWTs creates phantom locations; full fix + phantom list inside
