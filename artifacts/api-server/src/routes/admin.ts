@@ -15,7 +15,7 @@ import { eq, and, isNotNull, inArray, isNull } from "drizzle-orm";
 import { store, type UserRole } from "../store.js";
 import { FORM_8655_STALE_THRESHOLD_MS } from "../lib/form8655-constants.js";
 import { registerEmployeeInEasyTeam } from "../lib/easyteam-employee-sync.js";
-import { resolveCompanyLocationId } from "../lib/location.js";
+import { resolveCompanyLocationId, resolveEmployeeLocationId } from "../lib/location.js";
 
 const adminRouter = Router();
 
@@ -412,8 +412,12 @@ adminRouter.get("/admin/stale-8655-uploads", async (req, res) => {
 });
 
 // ── POST /api/admin/easyteam/register-company ─────────────────────────────────
-// Re-run EasyTeam registration for every employee in a company that has no UUID yet.
-// Safe to call multiple times — only processes employees where easyteam_uuid IS NULL.
+// Re-run EasyTeam registration for employees in a company.
+// Default (no forceEmployeeIds): processes employees where easyteam_uuid IS NULL.
+// forceEmployeeIds: re-register the listed employees regardless of current UUID
+//   — overwrites stale UUIDs and corrects the in-memory map immediately.
+//   Uses each employee's own assigned location (resolveEmployeeLocationId) so
+//   secondary-location employees (e.g. Amsterdam Ave) get the right JWT.
 adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
   const caller = getCaller(req as Parameters<typeof getCaller>[0]);
   if (!caller || caller.role !== "super_admin") {
@@ -421,48 +425,83 @@ adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
     return;
   }
 
-  const { companyId } = req.body as { companyId?: string };
+  const { companyId, forceEmployeeIds } = req.body as { companyId?: string; forceEmployeeIds?: string[] };
   if (!companyId) {
     res.status(400).json({ error: "companyId is required" });
     return;
   }
 
   try {
-    const locationId = await resolveCompanyLocationId(companyId);
-    const unregistered = await db
-      .select()
-      .from(employees)
-      .where(and(eq(employees.companyId, companyId), isNull(employees.easyteamUuid)));
-
     const results: Array<{ employeeId: string; name: string; success: boolean; easyteamUuid?: string; error?: string }> = [];
 
-    for (const emp of unregistered) {
-      const result = await registerEmployeeInEasyTeam(
-        {
-          id: emp.id,
+    // ── Forced re-registration (ignores existing UUID) ─────────────────────────
+    if (forceEmployeeIds && forceEmployeeIds.length > 0) {
+      const forceEmps = await db
+        .select()
+        .from(employees)
+        .where(and(eq(employees.companyId, companyId), inArray(employees.id, forceEmployeeIds)));
+
+      for (const emp of forceEmps) {
+        // Use the employee's own location so secondary-location employees get the correct JWT.
+        const empLocId = (await resolveEmployeeLocationId(emp.id)) ?? (await resolveCompanyLocationId(companyId));
+        const result = await registerEmployeeInEasyTeam(
+          {
+            id: emp.id,
+            name: `${emp.firstName} ${emp.lastName}`,
+            email: emp.email,
+            roleName: emp.position ?? "Staff",
+            wage: (emp.hourlyWage ?? 1500) / 100,
+            wageType: "hourly",
+          },
+          empLocId,
+          companyId,
+          req.log
+        );
+        results.push({
+          employeeId: emp.id,
           name: `${emp.firstName} ${emp.lastName}`,
-          email: emp.email,
-          roleName: emp.position ?? "Staff",
-          wage: (emp.hourlyWage ?? 1500) / 100,
-          wageType: "hourly",
-        },
-        locationId,
-        companyId,
-        req.log
-      );
-      results.push({
-        employeeId: emp.id,
-        name: `${emp.firstName} ${emp.lastName}`,
-        success: result.success,
-        easyteamUuid: result.easyteamEmployeeId,
-        error: result.error,
-      });
+          success: result.success,
+          easyteamUuid: result.easyteamEmployeeId,
+          error: result.error,
+        });
+      }
+    } else {
+      // ── Default: register employees with no UUID yet ───────────────────────────
+      const fallbackLocationId = await resolveCompanyLocationId(companyId);
+      const unregistered = await db
+        .select()
+        .from(employees)
+        .where(and(eq(employees.companyId, companyId), isNull(employees.easyteamUuid)));
+
+      for (const emp of unregistered) {
+        const empLocId = (await resolveEmployeeLocationId(emp.id)) ?? fallbackLocationId;
+        const result = await registerEmployeeInEasyTeam(
+          {
+            id: emp.id,
+            name: `${emp.firstName} ${emp.lastName}`,
+            email: emp.email,
+            roleName: emp.position ?? "Staff",
+            wage: (emp.hourlyWage ?? 1500) / 100,
+            wageType: "hourly",
+          },
+          empLocId,
+          companyId,
+          req.log
+        );
+        results.push({
+          employeeId: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          success: result.success,
+          easyteamUuid: result.easyteamEmployeeId,
+          error: result.error,
+        });
+      }
     }
 
     const succeeded = results.filter((r) => r.success).length;
     const failed    = results.filter((r) => !r.success).length;
-    req.log.info({ companyId, locationId, succeeded, failed }, "admin: EasyTeam company registration complete");
-    res.json({ companyId, locationId, succeeded, failed, results });
+    req.log.info({ companyId, succeeded, failed, forced: forceEmployeeIds?.length ?? 0 }, "admin: EasyTeam company registration complete");
+    res.json({ companyId, succeeded, failed, results });
   } catch (err) {
     req.log.error({ err }, "POST /admin/easyteam/register-company failed");
     res.status(500).json({ error: "Registration failed" });
