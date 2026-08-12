@@ -5,7 +5,7 @@ import axios from "axios";
 import { store } from "../store";
 import { upsertTimesheetEntry, clearTimesheetEntriesForCompanyPeriod } from "../lib/easyteam-persist.js";
 import { upsertTimesheetApproval } from "../lib/timesheet-approvals-persist.js";
-import { db, pool, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable, locations as locationsTable } from "@workspace/db";
+import { db, pool, companies as companiesTable, employees as employeesTable, userAccounts as userAccountsTable, timesheetShifts as timesheetShiftsTable, timesheetEntries as timesheetEntriesTable, locations as locationsTable } from "@workspace/db";
 import { eq, and, inArray, gte, lte } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { upsertTimesheetShift, getTimesheetShiftsByCompanyAndRange, shiftLocalDate } from "../lib/timesheet-shifts-persist.js";
@@ -756,7 +756,14 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
   // earlier syncs and never refreshed unless the user re-synced the exact same range.
   let hoursFromShifts: Map<string, { payableMs: number; unpaidBreakMin: number }> | null = null;
   if (companyId) {
-    const shiftRows = await getTimesheetShiftsByCompanyAndRange(companyId, fromDate, toDate).catch(() => null);
+    let shiftFetchError: unknown = null;
+    const shiftRows = await getTimesheetShiftsByCompanyAndRange(companyId, fromDate, toDate).catch((e) => { shiftFetchError = e; return null; });
+    req.log.info(
+      { companyId, periodKey, fromDate: fromDate.toISOString(), toDate: toDate.toISOString(),
+        shiftRows: shiftRows?.length ?? null, shiftFetchError: shiftFetchError ? String(shiftFetchError) : null,
+        sessionRole: sessionUser?.role ?? "no-session", sessionCompanyId: sessionUser?.companyId ?? null },
+      "GET /hours: shift query result",
+    );
     if (shiftRows && shiftRows.length > 0) {
       hoursFromShifts = new Map();
       for (const s of shiftRows) {
@@ -773,6 +780,12 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
   let storeEntries = store.getTimesheetEntriesForPeriod(periodKey);
   if (companyId) storeEntries = storeEntries.filter((e) => e.companyId === companyId);
   const approvalMap = new Map(storeEntries.map((e) => [e.employeeId, e]));
+
+  req.log.info(
+    { periodKey, hoursFromShiftsSize: hoursFromShifts?.size ?? null, storeEntriesCount: storeEntries.length,
+      storeEntrySample: storeEntries.slice(0, 3).map(e => ({ id: e.employeeId, h: e.hoursWorked })) },
+    "GET /hours: entries source",
+  );
 
   // ── Build final entries ───────────────────────────────────────────────────────
   let entries: typeof storeEntries;
@@ -801,7 +814,25 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
     });
   } else {
     // No shifts in DB for this date range — fall back to pre-aggregated entries (legacy / seeded periods).
-    entries = storeEntries;
+    // If the in-memory store is empty (e.g. after a deploy restart that cleared the cache), also
+    // query the DB directly so we never return stale 0m rows when the DB has real data.
+    if (storeEntries.length === 0 && companyId) {
+      const dbEntries = await db
+        .select()
+        .from(timesheetEntriesTable)
+        .where(and(
+          eq(timesheetEntriesTable.companyId, companyId),
+          eq(timesheetEntriesTable.periodKey, periodKey),
+        ))
+        .catch(() => [] as typeof storeEntries);
+      req.log.info(
+        { periodKey, companyId, dbEntriesCount: dbEntries.length },
+        "GET /hours: in-memory store empty — fetched timesheet_entries from DB directly",
+      );
+      entries = dbEntries.length > 0 ? dbEntries : storeEntries;
+    } else {
+      entries = storeEntries;
+    }
   }
 
   // ── Managers: pad 0m rows for all roster members; never drop entries with real hours ──
