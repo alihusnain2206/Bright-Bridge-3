@@ -1,0 +1,167 @@
+Ali husnain  [12:57 AM]
+Hi @Yaniv Gerber@Nir Tayeb,
+We need your help with a secondary location issue in our ORG-SUNSHINE organisation (Sunshine Daycare Centre). We have two locations set up:
+Location 1 — Primary (working correctly)
+
+Name: Sunshine Daycare Centre (main site)
+Our external key / JWTlocationId:LOC-SUNSHINE
+Your internal UUID:53f6b890-f159-41e9-960c-1cf8da98612a
+Employees clock in using our embedded SDK with a scoped JWT. Pull Hours syncs their shifts via your flat/timesheetsendpoint.Hours appear correctly in our system. This location works perfectly.
+Location 2 — Secondary (broken)
+
+Name: Amsterdam Avenue
+Our external key / JWTlocationId:9defae07-3f8f-43ad-9062-9963820014fd←the external ID we registered this location with
+Your internal UUID (as returned by token exchange at boot):06e611e0-67d6-4333-b6c8-7bf50f2f1c69
+We generate employee JWTs withlocationId = "9defae07-3f8f-43ad-9062-9963820014fd"(our registered external key, never your internal UUID).This location is broken.
+
+
+What we observe
+We use your flat /embed/api/timesheets?startDate=…&endDate=… endpoint (with an access token obtained by exchanging a signed JWT) to sync hours.
+When we exchange a JWT scoped to the primary location (locationId = "LOC-SUNSHINE"), the endpoint returns 13 shifts — correct.
+When we exchange a JWT scoped to Amsterdam Avenue (locationId = "9defae07-3f8f-43ad-9062-9963820014fd"), the exact same endpoint returns 0 shifts, even though we know employees have clocked in.
+We also observed that Diane Whitfield clocked in and out via our Amsterdam Avenue SDK. Her resulting shift (ID b499504f-a0e0-4dff-a77d-2dd74ba62818) was not stored under Amsterdam Avenue's internal UUID (06e611e0-67d6-...). Instead, it was stored under location UUID 5e7b7483-4b10-4f43-a701-8bf2e9530450 — which is one of several phantom locations (see below) — and our sync excluded it as a foreign shift.
+
+Phantom locations that need to be deleted
+During earlier development we accidentally sent your internal location UUIDs as the JWT locationId value (before we understood that field expects an external key). Each one caused EasyTeam to auto-create a new phantom location. We have since fixed our JWT generation, but these phantoms remain in ORG-SUNSHINE and appear to be intercepting Amsterdam Avenue clock-ins:
+Phantom internal UUIDExternalId that was mistakenly sent5e7b7483-4b10-4f43-a701-8bf2e953045053f6b890-f159-41e9-960c-1cf8da98612a (primary's internal UUID)34c0ee20-...693c7267-...9facff02-...06e611e0-67d6-4333-b6c8-7bf50f2f1c69 (Amsterdam Ave's internal UUID — likely the main offender)b6934adc-...06e611e0-87b1-...76b0b66b-...9defae07-4e35-...
+None of these phantoms have employees. Please delete all 5 from ORG-SUNSHINE.
+We also have phantom locations in ORG-BRIGHTBRIDGE (same pattern — locations with UUID-format externalIds and no display name). Please clean those up too.
+
+Questions
+
+After deleting the phantoms, can you confirm that 9defae07-3f8f-43ad-9062-9963820014fd is correctly registered as the external key for Amsterdam Avenue in ORG-SUNSHINE? We believe this is why the flat /timesheets endpoint returns 0 shifts for that JWT — EasyTeam may not be recognising the external key as valid.
+Diane's shift b499504f-a0e0-4dff-a77d-2dd74ba62818 landed under phantom 5e7b7483-... instead of the real Amsterdam Avenue location. Can you move it (and any other misattributed shifts for Amsterdam Ave employees) to 06e611e0-67d6-4333-b6c8-7bf50f2f1c69?
+In the embed widget, the "Shift details" panel always shows "Sunshine Daycare Centre" as the location name, even when the JWT specifies the Amsterdam Avenue locationId. Is this displaying the organisation name or the location name? Should we have set a display name on the secondary location when registering it?
+After an employee clocks out, the widget shows "Total time today: 00:00:00". Is this expected for secondary-location sessions (i.e. the session timer resets on page reload), or does it indicate the clock-out did not register?
+Thank you — this is blocking us from going live with Amsterdam Avenue.
+Yaniv Gerber  [1:25 AM]
+Hi well check about deleting these please let us go through the data
+Yaniv Gerber  [1:26 AM]
+Will also check your other questions about the title not matching and 00:00:00 hours amount
+Ali husnain  [10:56 AM]
+Ok
+Ali husnain  [12:00 PM]
+@Yaniv Gerber
+Yaniv — one more precise finding to add. Employee clock-in JWTs for our second location carry locationId: "9defae07-3f8f-…" — the same external key our boot flow successfully registered (your API resolved it to internal 06e611e0-67d6-…). But clock-ins with that JWT silently record at the primary location (53f6b890-…) instead of Amsterdam. So the external key is exchangeable in one path but not honored at clock-in. Questions: (1) why would a registered external location key fall back silently at clock-in, and (2) can EasyTeam make unknown-location (and unknown-org/employee) references error instead of silently falling back or auto-creating? The silent behaviors are what made this whole episode so hard to diagnose. Combined with the phantom cleanup we requested, this is the last open item — after that our multi-location flow is fully working on our side.
+Yaniv Gerber  [12:58 PM]
+@Nir Tayeb CC
+Nir Tayeb  [1:41 PM]
+Regarding the "wrong" clock in location - the web clock in location decided in the following order:
+
+1. If the clock screen shows a location selector, that choice wins.
+When the employer has enabled location selection on the time clock, whatever the employee picks in the dropdown is the location stamped on the shift.
+
+2. If a selector is enabled but there's nothing to pick, the app pre-fills one.
+It fills in, in this order:
+
+the location of the shift the employee is currently scheduled for, if there is one;
+their only location, if they're assigned to just one (assignment happens during token exchange with the location id);
+their location set on the JWT
+
+
+The employee sees this as fixed text rather than a dropdown, and it's what gets sent.
+
+3. If location selection is turned off entirely, the shift falls back to the employee's location from the JWT - the one attached to their session when they signed in. (edited) 
+Nir Tayeb  [1:47 PM]
+Your organization name is either "BrightBridge Assist" or empty (you didn't supplied one for the new 8 organizations yesterday)
+The "Sunshine Daycare Centre" you set as a location name. (edited) 
+Nir Tayeb  [1:50 PM]
+The data model on easyteam is:
+Organization = Your customer (i.e Zara)
+Location = Your customer store (i.e "Zara 660 5th Ave @ NYC", "Zara 101 5th Ave @ NYC", "Zara 725 S Figueroa St @ LA" )
+
+so when a customer's employee clocks in, they clock in into a Location, and the timesheet shows data per location (edited) 
+Nir Tayeb  [1:56 PM]
+please list the exact location_ids you want to delete (edited) 
+bridghtbridge-locations-prod.csv 
+
+organization_nameorganization_external_idlocation_idlocation_namelocation_external_idORG-SUNSHINE53f6b890-f159-41e9-960c-1cf8da98612aLOC-SUNSHINEORG-SUNSHINE5e7b7483-4b10-4f43-a701-8bf2e953045053f6b890-f159-41e9-960c-1cf8da98612aORG-SUNSHINE693c7267-415e-4856-b203-a95cf6d994bd165c811a-956c-4c57-ab96-0e9289244b7bORG-SUNSHINE34c0ee20-b679-429b-a871-e6b553716bb8693c7267-415e-4856-b203-a95cf6d994bdORG-SUNSHINE06e611e0-67d6-4333-b6c8-7bf50f2f1c699defae07-3f8f-43ad-9062-9963820014fdORG-SUNSHINE9facff02-57df-4c04-bd98-6118b8c8e83606e611e0-67d6-4333-b6c8-7bf50f2f1c69ORG-SUNSHINEb6934adc-f4e4-4570-bda1-b39158ff58dc06e611e0-87b1-4c52-bc71-23d7d3c77ebaORG-SUNSHINE76b0b66b-55c6-42ee-8eca-848b89da6ee59defae07-4e35-4143-840a-8d7dd820f2b3BrightBridge AssistORG-BRIGHTBRIDGEa7649c10-a3b1-419a-81fa-2555899635b3Sunshine Daycare CentreLOC-SUNSHINE
+
+Nir Tayeb  [2:01 PM]
+I moved Diana's shift to the new location, no other shifts were under 5e7b7483-4b10-4f43-a701-8bf2e9530450 location
+Nir Tayeb  [2:03 PM]
+Regarding your last question, Locations are created automatically for "lazy loading" purpose, so you won't have to sync location assignment every time on your system when onboarding employees/changing their location on your side.
+Ali husnain  [2:14 PM]
+@Nir Tayeb Thanks for moving Diane's shift and for the explanation on location-stamping priority — that clarifies exactly what's happening.
+Please delete these 5 locations from ORG-SUNSHINE:
+
+5e7b7483-4b10-4f43-a701-8bf2e9530450
+34c0ee20-b679-429b-a871-e6b553716bb8
+9facff02-57df-4c04-bd98-6118b8c8e836
+b6934adc-f4e4-4570-bda1-b39158ff58dc
+76b0b66b-55c6-42ee-8eca-848b89da6ee5
+Keep these 3 (all real): 53f6b890-… (primary / LOC-SUNSHINE), 693c7267-… (Sunshine Annex, external_id 165c811a-…), 06e611e0-… (Amsterdam Avenue, external_id 9defae07-…).
+Follow-up questions:
+
+Picker scope: after cleanup, when an Amsterdam Avenue employee opens the clock widget, will the picker show only their assigned location, or all locations in the org? We want to be sure they can't accidentally stamp a punch at another site.
+Disabling the picker for employees: we currently send "location_picker": true in all JWTs. If we set it to false for employee-role tokens (keeping it true for managers), does that make the JWT's locationId authoritative (your Priority 3) and prevent accidental location creation? That seems the safest default for us.
+Re-assignment: since assignment happens at token exchange and takes precedence over the JWT, how do we move an employee between locations? One of our employees was assigned to the primary by earlier sessions but should now be at Amsterdam Avenue — will new tokens with the new location update the assignment, or does the original persist?
+Shared org + test orgs: could you send the same CSV for ORG-BRIGHTBRIDGE? It still serves several of our customers and its timesheet summary currently shows 0m per employee. Also, the 8 unnamed organizations created yesterday were from our testing — please send their IDs so we can confirm which to delete.
+Thanks again.
+Yaniv Gerber  [2:18 PM]
+I can answer #1 and #2, the expected behavior is for the picker to only show the locations assigned to the employee.
+Also, if only one location is assigned then the picker will not be interactive and the employee will be forced to use that location.
+
+If you want to restrict them to a single location do that by making sure the employee is assigned only to that location. Not recommended to do a conditional feature flag as this might change the behavior of some other screens and features as well.
+Nir Tayeb  [2:24 PM]
+Employees can work in multiple location, so when you exchange token, they are assigned to that location (while keeping the old one).
+The locations picker within the clock in component list the locations assignment you provide in the Provider.
+So as long as you don't set the old location in the jwt / or list the location as assigned in the easyteam provider, they cannot clock in to that location.
+
+The CSV already contains ORG-BRIGHTBRIDGE. (edited) 
+Nir Tayeb  [2:32 PM]
+the 5 locations has been deleted
+Ali husnain  [3:03 PM]
+Hi @Nir Tayeb @Yaniv Gerber — we tested after your cleanup and it's still landing wrong, so this looks like the accumulated-assignment issue you described.
+Setup (all verified on our side):
+
+Employee: Natalie Reed, EMP-MS1Q4OT4-U8EPXX, org ORG-SUNSHINE
+Her JWT carries locationId: "9defae07-3f8f-43ad-9062-9963820014fd" (Amsterdam Avenue's external ID — confirmed in the decoded token)
+Our Provider payload lists her only under Amsterdam Avenue's employees map — she is not listed under the primary location at all
+Same for Gerald Foster (EMP-MS1QJQW4-XV29AQ) and Diane Whitfield (EMP-MS1JLSXM-3TOPI7)
+What happens: she clocks in (fresh punch today, ~3 minutes) and the shift is still recorded at the primary location (53f6b890-…), not Amsterdam Avenue (06e611e0-…). In our timesheet view she shows hours under "All locations" but 0m when filtered to Amsterdam Avenue.
+Our reading: per your explanation, she was assigned to the primary location by earlier token exchanges (before we fixed our JWTs), and that assignment persists — "they are assigned to that location while keeping the old one."
+Ask: can you remove the primary-location assignment for Natalie, Gerald, and Diane so they're assigned only to Amsterdam Avenue (06e611e0-…)? And more generally — is there a way for us to remove a stale assignment ourselves via API when an employee changes location? That will be a normal operation for our customers (staff transferring between sites), so we'd like a self-serve path rather than raising a ticket each time.
+Thanks!2 files Ali husnain  [5:00 PM]
+@Nir Tayeb
+Nir Tayeb  [7:36 PM]
+@Ali husnain do you send also the right organizationId in the jwt?
+Ali husnain  [7:43 PM]
+@Nir Tayeb— Yes, and that's actually a relevant detail.
+
+Currently the JWTs for Natalie, Gerald, and Diane carry `organizationId: "ORG-SUNSHINE"` — that's the org ID we have stored for Sunshine in our system, and it's confirmed in the decoded tokens we're generating now.
+
+However, there's a history here worth flagging: before a fix we deployed roughly two weeks ago, all companies on our platform shared the same fallback `organizationId: "ORG-BRIGHTBRIDGE"` in their JWTs — including Sunshine employees. So EasyTeam may have these employees associated with `ORG-BRIGHTBRIDGE` in addition to (or instead of) `ORG-SUNSHINE`, on top of the primary-vs-Amsterdam-Avenue location issue we already described.
+
+So to summarise the full picture for these three employees:
+- **Old org:** `ORG-BRIGHTBRIDGE` (from stale tokens, before our fix)
+- **Current org:** `ORG-SUNSHINE`
+- **Old location assignment:** primary location `53f6b890-…` (from stale tokens before we fixed the locationId)
+- **Intended location:** Amsterdam Avenue `06e611e0-…` (current tokens, confirmed correct)
+
+Could you check on your side whether they have accumulated assignments across both orgs? It's possible the stale `ORG-BRIGHTBRIDGE` assignment is what's anchoring them to the wrong location. If so, the cleanup may need to cover both the org reassignment and the location reassignment.
+
+Thanks
+Nir Tayeb  [7:49 PM]
+each organization has its own locations and its own employees (neither employee nor location cannot be assigned to multiple organization on our system).
+
+so you have the employee and location created on both organization.
+
+The shift which created during clock in is assigned to the employee/location on the organization provided in the jwt.
+
+so as long as your users uses the old jwt before the fix, their shifts will be on the old location/organization. (edited) 
+Ali husnain  [8:00 PM]
+@Nir Tayeb
+Thanks for explaining — that makes the situation clear.
+To confirm: yes, the organizationId in our JWTs is now correct. Natalie, Gerald, and Diane are Sunshine employees and their tokens carry organizationId: "ORG-SUNSHINE". Before a fix we deployed recently, all companies on our platform were incorrectly sharing organizationId: "ORG-BRIGHTBRIDGE" — so those three employees (and their locations) got created in both orgs during that period.
+We understand the historical shifts that landed in ORG-BRIGHTBRIDGE will stay there — that's fine, we accept that data loss.
+What we need cleaned up in ORG-SUNSHINE is the stale primary-location assignment for these three employees — they should be assigned only to Amsterdam Avenue (06e611e0-…):
+
+Natalie Reed—EMP-MS1Q4OT4-U8EPXX
+Gerald Foster—EMP-MS1QJQW4-XV29AQ
+Diane Whitfield—EMP-MS1JLSXM-3TOPI7
+Could you remove the primary-location assignment for those three in ORG-SUNSHINE? And separately — is there any API endpoint we can call ourselves to remove a location assignment? As I mentioned earlier, employees transferring between sites will be a routine operation for us, so a self-serve path would be very helpful. Thanks!
+Nir Tayeb  [8:12 PM]
+I cleaned the stale locations, these 3 employees are assigned only to Amsterdam Avenue. We don't have an endpoint for that right now.
+As long as you provide jwt to the exchange token with the right organization id and location id, everything should work as expected (even after employees transferring between sites)Ali husnain  [8:15 PM]
+Noted ,let me test it again please
