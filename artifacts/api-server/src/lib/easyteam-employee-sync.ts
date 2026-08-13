@@ -61,7 +61,7 @@ export async function registerEmployeeInEasyTeam(
     const employeeJwt = jwt.sign(
       {
         employeeId: etEmployeeId,
-        organizationId: resolveEasyTeamOrgId(companyId),
+        organizationId: await resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {

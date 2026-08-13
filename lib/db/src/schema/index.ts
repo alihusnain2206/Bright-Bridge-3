@@ -121,6 +121,10 @@ export const companies = pgTable("companies", {
   fundingAccountType:    text("funding_account_type"),
   bankLinkMethod:        text("bank_link_method"),          // "Manual" | "Plaid"
   bankLinkGeneratedAt:   text("bank_link_generated_at"),    // ISO-8601; Plaid links expire ~72 h
+  // EasyTeam — one org per company. Set at creation time; resolver falls back to
+  // "ORG-BRIGHTBRIDGE" (shared legacy org) when null. Never send placeholder strings:
+  // EasyTeam auto-creates a new org for every unrecognised organizationId it receives.
+  easyteamOrgId:      text("easyteam_org_id"),
   // Onboarding
   kybStatus:          text("kyb_status").notNull().default("not_started"),
   bankAccountAdded:   boolean("bank_account_added").notNull().default(false),

@@ -19,6 +19,8 @@ type CompanyRow = {
   createdAt?: string | null;
   /** Populated for DB-persisted companies (wizard flow). Used as locationId fallback. */
   rollfiLocationId?: string | null;
+  /** EasyTeam org ID — set at creation time so the company gets its own org. */
+  easyteamOrgId?: string | null;
 };
 
 /**
@@ -44,6 +46,9 @@ function projectCompany(co: CompanyRow) {
     createdAt: co.createdAt ?? new Date().toISOString(),
     linkedCompanyId: co.id,
     locationId,
+    // Passed to the frontend SDK organization resolver so new companies use their
+    // own EasyTeam org rather than the shared ORG-BRIGHTBRIDGE fallback.
+    easyteamOrgId: co.easyteamOrgId ?? null,
   };
 }
 
@@ -132,6 +137,9 @@ router.post("/clients", requireRole("super_admin"), async (req, res) => {
     name,
     locationName,
     rollfiLocationId: `LOC-${id}`,
+    // Assign the company its own EasyTeam org ID so it never shares ORG-BRIGHTBRIDGE.
+    // EasyTeam auto-creates the org on first token exchange for this organizationId.
+    easyteamOrgId: id,
     createdAt: now,
     updatedAt: now,
   });

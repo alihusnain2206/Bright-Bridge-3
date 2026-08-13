@@ -121,7 +121,7 @@ export default function EmployeeDashboard() {
       launch(data.token, {
         page: Pages.TIME_CLOCK,
         employees: myEmployees,
-        organization: resolveEasyTeamOrg(user.companyId, company?.name),
+        organization: resolveEasyTeamOrg(user.companyId, company?.name, company?.easyteamOrgId),
         locations: myLocations,
       });
     } catch { setTokenError("Network error"); }

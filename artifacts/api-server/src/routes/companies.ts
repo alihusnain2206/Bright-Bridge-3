@@ -266,6 +266,11 @@ router.post("/companies", async (req: Request, res: Response) => {
       state: body.state,
       zipcode: body.zipcode,
       locationName: body.locationName ?? body.companyName,
+      // Assign the company its own EasyTeam org ID at creation time.
+      // EasyTeam auto-creates the org on the first token exchange for this ID.
+      // IMPORTANT: EasyTeam auto-creates a new org for every unrecognised organizationId —
+      // using the company's own stable ID ensures exactly one org is created per company.
+      easyteamOrgId: companyId,
       ein: useEin,
       fundingBankName: body.fundingBankName,
       fundingAccountLast4: body.fundingAccountNumber ? body.fundingAccountNumber.slice(-4) : null,

@@ -414,7 +414,7 @@ export default function Timesheets() {
       launch(tokenData.token, {
         page: Pages.TIMESHEET,
         employees: allEmployees,
-        organization: resolveEasyTeamOrg(user?.companyId, company?.name),
+        organization: resolveEasyTeamOrg(user?.companyId, company?.name, company?.easyteamOrgId),
         locations,
         fromDate: launchFrom,
         toDate: launchTo,
@@ -440,7 +440,7 @@ export default function Timesheets() {
         if (client) {
           launch(data.token, {
             page,
-            organization: resolveEasyTeamOrg(cId, client.locationName),
+            organization: resolveEasyTeamOrg(cId, client.locationName, client.easyteamOrgId),
             locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
             employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
           });

@@ -65,7 +65,7 @@ export default function TimeClock() {
         }
         launch(data.token, {
           page: Pages.TIME_CLOCK,
-          organization: resolveEasyTeamOrg(cId, client.locationName),
+          organization: resolveEasyTeamOrg(cId, client.locationName, client.easyteamOrgId),
           locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
           employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
         });

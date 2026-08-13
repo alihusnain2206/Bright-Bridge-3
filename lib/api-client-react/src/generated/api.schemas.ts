@@ -138,6 +138,9 @@ export interface Client {
    *  passing locations to the EasyTeam launcher, because `id` is the company ID ("ORG-SUNSHINE")
    *  which EasyTeam does not recognise as a location external ID. */
   locationId?: string | null;
+  /** EasyTeam org ID from companies.easyteam_org_id — set at company creation so each company
+   *  gets its own EasyTeam org. Null for legacy companies still on the shared ORG-BRIGHTBRIDGE. */
+  easyteamOrgId?: string | null;
 }
 
 export interface CreateClientRequest {

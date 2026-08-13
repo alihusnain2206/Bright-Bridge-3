@@ -24,6 +24,8 @@ export interface AuthCompany {
   address?: string;
   latitude?: number;
   longitude?: number;
+  /** EasyTeam org ID from the DB — set at company creation; null for legacy companies on ORG-BRIGHTBRIDGE. */
+  easyteamOrgId?: string | null;
 }
 
 export interface AuthLocation {

@@ -332,7 +332,7 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
   // client_id is a companyId in the unified model — resolve its EasyTeam location id.
   if (client_id) {
     resolvedLocationId = await resolveCompanyLocationId(client_id);
-    resolvedOrgId = resolveEasyTeamOrgId(client_id);
+    resolvedOrgId = await resolveEasyTeamOrgId(client_id);
   }
 
   let resolvedEtEmployeeId = employee_id;
@@ -443,7 +443,7 @@ async function triggerEasyTeamExportForLocation(locationId: string, companyId?: 
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: resolveEasyTeamOrgId(companyId),
+        organizationId: await resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -1207,7 +1207,7 @@ async function fetchEasyTeamShiftsForLocation(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: resolveEasyTeamOrgId(companyId),
+        organizationId: await resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -1544,7 +1544,7 @@ router.get("/easyteam/debug/shifts", requireRole("super_admin", "owner"), async 
     const adminJwt = jwt.sign(
       {
         employeeId: mgr.employeeId,
-        organizationId: resolveEasyTeamOrgId(debugCompanyId),
+        organizationId: await resolveEasyTeamOrgId(debugCompanyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: { name: "manager", permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"] },
@@ -1739,7 +1739,7 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner", "
           const rawJwt = jwt.sign(
             {
               employeeId: managerUser.employeeId,
-              organizationId: resolveEasyTeamOrgId(companyId),
+              organizationId: await resolveEasyTeamOrgId(companyId),
               locationId,
               ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
               accessRole: {
@@ -1759,7 +1759,7 @@ router.post("/easyteam/debug/remove-uuid", requireRole("super_admin", "owner", "
             { timeout: 8000 }
           );
           const accessToken = exResp.data.accessToken;
-          let internalOrgId = resolveEasyTeamOrgId(companyId);
+          let internalOrgId = await resolveEasyTeamOrgId(companyId);
           let internalLocId = locationId;
           try {
             const parts = accessToken.split(".");
@@ -2070,7 +2070,7 @@ router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), 
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: resolveEasyTeamOrgId(companyId),
+        organizationId: await resolveEasyTeamOrgId(companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -2174,7 +2174,7 @@ export async function ensureLocationTimezone(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: resolveEasyTeamOrgId(opts.companyId),
+        organizationId: await resolveEasyTeamOrgId(opts.companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {
@@ -2271,7 +2271,7 @@ export async function ensureTimeOffPolicy(
     const adminJwt = jwt.sign(
       {
         employeeId: managerUser.employeeId,
-        organizationId: resolveEasyTeamOrgId(opts.companyId),
+        organizationId: await resolveEasyTeamOrgId(opts.companyId),
         locationId,
         ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
         accessRole: {

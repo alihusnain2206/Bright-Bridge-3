@@ -107,6 +107,28 @@ async function bootCompanySignedFormsSchema() {
   });
 }
 
+/**
+ * Add easyteam_org_id to the companies table (introduced when per-company EasyTeam orgs
+ * were implemented). Safe to run on every boot — ADD COLUMN IF NOT EXISTS is idempotent.
+ * Also backfills the one company (ORG-SUNSHINE) that had its org ID confirmed before
+ * this column existed; all other companies keep NULL and resolve to ORG-BRIGHTBRIDGE.
+ */
+async function bootEasyteamOrgIdMigration() {
+  await pool.query(`
+    ALTER TABLE companies
+      ADD COLUMN IF NOT EXISTS easyteam_org_id TEXT;
+  `).catch(() => {
+    // Table may not exist on first boot — safe to ignore.
+  });
+  // Backfill Sunshine's known org ID so the resolver doesn't fall back to ORG-BRIGHTBRIDGE.
+  await pool.query(`
+    UPDATE companies
+    SET easyteam_org_id = 'ORG-SUNSHINE'
+    WHERE id = 'ORG-SUNSHINE'
+      AND easyteam_org_id IS NULL;
+  `).catch(() => {/* non-fatal */});
+}
+
 async function bootIgnoredEtUuids() {
   // Create table if not yet present (original schema: et_uuid as PK)
   await pool.query(`
@@ -722,7 +744,7 @@ app.listen(port, (err) => {
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([
-    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()),
+    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()).then(() => bootEasyteamOrgIdMigration()),
     // Phase 3: run schema migration FIRST so is_primary/lat/lng columns exist before seeding
     bootPhase3LocationSchema()
       .then(() => bootSeedCompanies())

@@ -82,9 +82,12 @@ async function resolveUserLocation(userId: string): Promise<object | undefined> 
 async function resolveUserCompany(companyId?: string): Promise<object | undefined> {
   if (!companyId) return undefined;
   const storeCo = store.getCompany(companyId);
-  if (storeCo) return storeCo;
+  // Always check the DB so we can surface easyteamOrgId (set when the company was created).
+  // DB wins over store for shared fields; the spread preserves store-only fields (e.g.
+  // latitude/longitude for seeded demo companies that may have no DB row or a sparse one).
   const [dbCo] = await db.select().from(companies).where(eq(companies.id, companyId)).catch(() => [undefined]);
-  return dbCo ?? undefined;
+  if (dbCo) return { ...storeCo, ...dbCo };
+  return storeCo ?? undefined;
 }
 
 // ── Login ────────────────────────────────────────────────────
@@ -439,7 +442,7 @@ router.post("/auth/token-by-role", async (req, res) => {
     // "LOC-SUNSHINE") rather than EasyTeam's UUID it silently filters all shifts to 0m.
     payload = {
       employeeId: user.employeeId,
-      organizationId: resolveEasyTeamOrgId(user.companyId),
+      organizationId: await resolveEasyTeamOrgId(user.companyId),
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
         name: "manager",
@@ -460,7 +463,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
     payload = {
       employeeId: user.employeeId,
-      organizationId: resolveEasyTeamOrgId(user.companyId),
+      organizationId: await resolveEasyTeamOrgId(user.companyId),
       locationId: mgrLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
@@ -487,7 +490,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       ?? "LOC-SUNSHINE";
     payload = {
       employeeId: user.employeeId,
-      organizationId: resolveEasyTeamOrgId(user.companyId),
+      organizationId: await resolveEasyTeamOrgId(user.companyId),
       locationId: empLocationId,
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {

@@ -386,7 +386,7 @@ export default function ManagerDashboard() {
       launch(data.token, {
         page: Pages.TIMESHEET,
         employees: allLaunchEmployees,
-        organization: resolveEasyTeamOrg(user?.companyId, company?.name),
+        organization: resolveEasyTeamOrg(user?.companyId, company?.name, company?.easyteamOrgId),
         locations: allLaunchLocations,
         fromDate,
         toDate,

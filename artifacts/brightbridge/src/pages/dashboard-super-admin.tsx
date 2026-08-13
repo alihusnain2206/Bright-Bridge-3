@@ -35,7 +35,7 @@ const ALL_LOCATIONS = [
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
 interface EasyTeamEmployee { id: string; name: string; role: string; companyId: string; timeTrackingEnabled: boolean; wage: number; wageType: "hourly"; status?: string; }
-interface Company { id: string; name: string; locationName?: string | null; address1?: string | null; city?: string | null; state?: string | null; status: string }
+interface Company { id: string; name: string; locationName?: string | null; address1?: string | null; city?: string | null; state?: string | null; status: string; easyteamOrgId?: string | null }
 interface CreatedManager { id: string; name: string; email: string; companyId: string; role: string; password: string; loginEmail: string; position: string }
 
 function decodeJwt(token: string): Record<string, unknown> | null {
@@ -401,7 +401,8 @@ export default function SuperAdminDashboard() {
   const handlePageChange = (newPage: Pages) => {
     setSelectedPage(newPage);
     if (tokenData) {
-      const org = resolveEasyTeamOrg(user?.companyId, dbCompanies.find(c => c.id === user?.companyId)?.name);
+      const _co = dbCompanies.find(c => c.id === user?.companyId);
+      const org = resolveEasyTeamOrg(user?.companyId, _co?.name, _co?.easyteamOrgId);
       launch(tokenData.token, { page: newPage, employees: allEmployees, organization: org, locations: ALL_LOCATIONS });
     }
   };
@@ -420,7 +421,8 @@ export default function SuperAdminDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      const org = resolveEasyTeamOrg(user?.companyId, dbCompanies.find(c => c.id === user?.companyId)?.name);
+      const _co2 = dbCompanies.find(c => c.id === user?.companyId);
+      const org = resolveEasyTeamOrg(user?.companyId, _co2?.name, _co2?.easyteamOrgId);
       launch(data.token, { page: selectedPage, employees: allEmployees, organization: org, locations: ALL_LOCATIONS });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
