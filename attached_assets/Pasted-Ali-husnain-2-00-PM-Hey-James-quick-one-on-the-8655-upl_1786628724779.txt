@@ -1,0 +1,33 @@
+Ali husnain  [2:00 PM]
+Hey James, quick one on the 8655 upload. We've built the signing flow and are testing uploadDocument against the sandbox, but every request returns HTTP 400 with an empty body — same response we get for any unknown method name, while calls like getCompanyInfo work fine on the same credentials.
+Could you confirm:
+
+Is uploadDocument available in the sandbox environment, or is it production-only?
+Is the method name exactly uploadDocument, and which endpoint path should it go to?
+The expected field names — we're sending { method, companyId, fileName, documentType: "8655Form", fileBase64 } — is that right, or is it a multipart/file upload rather than base64 JSON?
+Thanks!
+Ali husnain  [2:32 PM]
+Hi James :wave:
+Update on the 8655 — we found the issue on our side: we were hitting the wrong endpoint path. Once we switched to /adminPortal/uploadDocument per your docs, the upload went through successfully.
+We've now completed a full end-to-end test in sandbox for the test company Maple Grove Early Learning: the owner signs the pre-filled 8655 in our app, we generate the PDF (all fields populated via getCompanyInfo/getBusinessUsers, plus the 940/941 dates computed per your guidance), and upload it via uploadDocument with documentType: "8655Form".
+Could you confirm on your end that:
+
+The uploaded 8655 for Maple Grove Early Learning looks correct — fields, formatting, signature section?
+The pending signature task for that company cleared as expected?
+If it all looks right, we'll consider this flow verified and use it for real companies in production. Thanks!
+James Gaskell  [12:32 AM]
+Hey @Ali husnain please could you send me the pdf of the 8655. It appears it may not be valid base64
+Ali husnain  [12:35 AM]
+I am sending this one
+PDF Form8655_Gail_J_Davis_2026-08-05.pdfPDFJames Gaskell  [12:47 AM]
+I was mistaken, the base64 is valid. Investigating why S3 is rejecting the uppload
+Ali husnain  [12:48 AM]
+Sure
+James Gaskell  [3:07 AM]
+@Ali husnain please can you retry the upload. We have updated a configuration on our end
+James Gaskell  [7:56 PM]
+Hey @Ali husnain just want to confirm you were able to upload the document successfully ^ ?
+Ali husnain  [8:00 PM]
+I just tried again and it is the same error there
+image.png James Gaskell  [8:10 PM]
+@Ali husnain please could you re-try the 8655 upload? We'll make sure to get this fixed today if you're still having issues
