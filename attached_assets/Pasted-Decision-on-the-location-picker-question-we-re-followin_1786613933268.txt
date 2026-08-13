@@ -1,0 +1,15 @@
+Decision on the location_picker question: we're following EasyTeam's explicit recommendation, not the flag workaround. Your reasoning about accumulated assignments is noted, but two of its pillars are unverified assumptions ("only affects clock-in", "EasyTeam can't remove old assignments"), and this saga has taught us not to override vendor guidance with guesses about their internals. Nir's path is testable in one cycle; if it fails, we escalate with a concrete case and reconsider the flag as fallback.
+
+Implement:
+
+Revert the location_picker: false changes in both token paths (easyteam.ts POST /api/easyteam/token and auth.ts token-by-role employee branch). Restore the previous behavior: location_picker: true for all roles, exactly as before last night's change.
+Verify our two outputs reference ONLY each employee's current location — per Nir: "as long as you don't set the old location in the JWT or list it as assigned in the Provider, they cannot clock in to that location." Confirm with pasted evidence:
+(a) Employee JWT: locationId = their assigned location's external key (locations.id) — paste Natalie's decoded token showing 9defae07 (Amsterdam's row id)
+(b) sdk-payload: each employee appears ONLY under their current location's employees map — paste Sunshine's locations array confirming Natalie is in Amsterdam's dict only, nowhere else
+Check both employee and manager/owner sessions produce the same correct payload
+Confirm nothing else from last night's session is still diverging from the vendor-aligned state — list any other EasyTeam-touching changes made during the location_picker work that should also be reverted or kept, with one-line reasoning each.
+Build clean, restart, publish-ready. State explicitly that a publish is required.
+
+Then the test (I'll do in browser after publish): Natalie logs in → clock screen should show Amsterdam Avenue only (fixed text or single-option picker, per Nir's "if only one location is assigned then the picker will not be interactive") → clock in/out → Pull Hours → her new shift's easyteam_location_id must be 06e611e0 (real Amsterdam), not 53f6b890 (primary).
+
+If the test fails (she still sees primary as an option or the punch lands there): do NOT re-apply the flag — report the exact behavior observed so we can send Nir the failing case and ask him to clear her stale primary assignment. The flag remains a last-resort fallback only after the vendor path is proven insufficient.

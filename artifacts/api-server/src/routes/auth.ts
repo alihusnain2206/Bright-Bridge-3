@@ -497,9 +497,7 @@ router.post("/auth/token-by-role", async (req, res) => {
       role: { name: user.position, hourlyWage: wageCents / 100 },
       wage: wageCents / 100,
       wageType: "hourly",
-      // location_picker: false — JWT locationId is authoritative for employees (Nir's Priority 3).
-      // Picker disabled to prevent accidental phantom location creation in EasyTeam.
-      features: { geolocation: false, shiftNotes: false, location_picker: false },
+      features: { geolocation: false, shiftNotes: false },
     };
   } else {
     res.json({ token: null, role: "parent", message: "Parents do not have EasyTeam access" });
