@@ -393,7 +393,13 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
       geolocation: false,
       shiftNotes: true,
       timesheet_badges: true,
-      location_picker: true,
+      // PHANTOM PREVENTION: location_picker must be false for employee-role tokens.
+      // When true, EasyTeam shows (or auto-fills) a location selector whose choice overrides
+      // the JWT locationId (Nir Tayeb's Priority 1/2).  For employees, the JWT locationId is
+      // the sole source of truth (Priority 3) — disabling the picker makes it authoritative
+      // and prevents accidental phantom creation via unknown locationId submissions.
+      // Managers and owners legitimately switch locations, so they keep location_picker: true.
+      location_picker: resolvedAccessRole !== "employee",
       timesheets_wages: true,
     },
   };
