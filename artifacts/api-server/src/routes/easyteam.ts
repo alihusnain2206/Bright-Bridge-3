@@ -314,9 +314,15 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
     if (!assertCompanyAccess(req, res, requestedCompanyId)) return;
   }
 
-  // Resolve client and employee from store when client_id is provided
-  let resolvedLocationId = location_id || company_id || "SANDBOX-LOC-001";
-  let resolvedOrgId = organization_id || company_id || "SANDBOX-ORG-001";
+  // Resolve client and employee from store when client_id is provided.
+  // IMPORTANT: EasyTeam auto-creates a new org for every unrecognised organizationId it receives.
+  // Never fall back to a placeholder string — require an explicit company/org identifier instead.
+  if (!client_id && !organization_id && !company_id) {
+    res.status(400).json({ success: false, error: "client_id, company_id, or organization_id is required — refusing to sign a token without a known org" });
+    return;
+  }
+  let resolvedLocationId = location_id || company_id || "LOC-UNKNOWN";
+  let resolvedOrgId = organization_id || company_id || "ORG-UNKNOWN"; // overwritten below when client_id is present
   let resolvedRoleName = role_name || "Manager";
   let resolvedAccessRole = access_role || "manager";
   // Wage is expressed in DOLLARS in the launch JWT — consistent with /auth/token-by-role and
@@ -2400,7 +2406,7 @@ router.post("/easyteam/test-connection", requireRole("super_admin", "owner"), as
   const apiKeyPresent = !!EASYTEAM_API_KEY;
   const partnerIdPresent = !!EASYTEAM_PARTNER_ID;
   let jwtSigning = false;
-  let tokenExchange = false;
+  let tokenExchange: boolean | null = false;
   const details: Record<string, unknown> = {};
 
   if (apiKeyPresent) {
@@ -2414,31 +2420,16 @@ router.post("/easyteam/test-connection", requireRole("super_admin", "owner"), as
     }
   }
 
+  // Token exchange test intentionally removed.
+  // EasyTeam auto-creates a new org for every unrecognised organizationId sent during an exchange.
+  // Sending speculative identifiers (e.g. "TEST-ORG") mints phantom orgs that cannot easily be
+  // deleted and corrupt the timesheets summary — the same class of bug that caused the phantom-
+  // location incident. JWT signing (above) already confirms the private key is correctly configured;
+  // a successful exchange would additionally confirm network connectivity and partner ID pairing,
+  // but that is not worth the org-creation side-effect. Use a real employee login to verify E2E.
   if (jwtSigning) {
-    try {
-      const testPayload = {
-        employeeId: "TEST-EMP",
-        locationId: "TEST-LOC",
-        organizationId: "TEST-ORG",
-        ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
-        accessRole: { name: "manager", permissions: ["SHIFT_READ"] },
-      };
-      const testJwt = jwt.sign(testPayload, EASYTEAM_API_KEY!, { algorithm: "RS256" });
-      const response = await axios.post<{ accessToken: string }>(
-        `${EASYTEAM_SANDBOX_URL}/api/auth/exchangeToken`,
-        { token: testJwt },
-        { timeout: 8000 }
-      );
-      tokenExchange = !!response.data.accessToken;
-      details.exchangeMessage = "Token exchange with EasyTeam sandbox succeeded";
-    } catch (err) {
-      const error = err as { message?: string; response?: { status?: number; data?: unknown } };
-      details.exchangeError = error.message;
-      details.exchangeStatus = error.response?.status;
-      details.exchangeHint = partnerIdPresent
-        ? "Exchange failed even with PARTNER_ID — check your key registration with EasyTeam"
-        : "Set EASYTEAM_PARTNER_ID to enable full token exchange";
-    }
+    tokenExchange = null; // skipped — see comment above
+    details.exchangeMessage = "Token exchange test skipped to prevent phantom org creation. Verify with a real employee login.";
   }
 
   res.json({

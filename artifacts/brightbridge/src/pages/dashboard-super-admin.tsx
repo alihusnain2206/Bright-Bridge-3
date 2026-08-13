@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/useAuth";
 import { useEasyTeamLauncher, Pages } from "@/hooks/useEasyTeamLauncher";
+import { resolveEasyTeamOrg } from "@/lib/easyteam-org";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -30,7 +31,6 @@ const ALL_LOCATIONS = [
   { id: "LOC-RAINBOW", name: "Rainbow Kids Daycare", latitude: 40.7178, longitude: -74.0431 },
 ];
 
-const LAUNCH_ORG = { id: "ORG-BRIGHTBRIDGE", name: "BrightBridge Assist" };
 
 interface TokenData { token: string; decoded: Record<string, unknown>; role: string }
 interface WebhookEvent { id: string; event: string; employee_id: string; timestamp: string; data: Record<string, unknown> }
@@ -401,7 +401,8 @@ export default function SuperAdminDashboard() {
   const handlePageChange = (newPage: Pages) => {
     setSelectedPage(newPage);
     if (tokenData) {
-      launch(tokenData.token, { page: newPage, employees: allEmployees, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+      const org = resolveEasyTeamOrg(user?.companyId, dbCompanies.find(c => c.id === user?.companyId)?.name);
+      launch(tokenData.token, { page: newPage, employees: allEmployees, organization: org, locations: ALL_LOCATIONS });
     }
   };
 
@@ -419,7 +420,8 @@ export default function SuperAdminDashboard() {
       const data = await res.json() as TokenData;
       if (!res.ok) { setTokenError("Token generation failed"); return; }
       setTokenData(data);
-      launch(data.token, { page: selectedPage, employees: allEmployees, organization: LAUNCH_ORG, locations: ALL_LOCATIONS });
+      const org = resolveEasyTeamOrg(user?.companyId, dbCompanies.find(c => c.id === user?.companyId)?.name);
+      launch(data.token, { page: selectedPage, employees: allEmployees, organization: org, locations: ALL_LOCATIONS });
     } catch { setTokenError("Network error"); }
     finally { setTokenLoading(false); }
   };
