@@ -434,16 +434,21 @@ function Form8655Card({
         {/* Failed upload: error detail + retry button */}
         {isFailed && (
           <div className="mt-3 ml-12 space-y-2">
-            <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-[11px] text-red-700 flex items-start gap-1.5">
-              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-500" />
-              <span>
-                The form could not be submitted to the IRS filing service.
-                {signed.uploadError ? ` Reason: ${signed.uploadError}` : ""}
-              </span>
-            </div>
+            {/* Hide the stale error banner once the user has submitted a retry —
+                the upload now runs in the background and the status will update
+                via polling.  Show it again only if the retry itself errors out. */}
+            {!retryMutation.isPending && !retryMutation.isSuccess && (
+              <div className="rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-[11px] text-red-700 flex items-start gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5 text-red-500" />
+                <span>
+                  The form could not be submitted to the IRS filing service.
+                  {signed.uploadError ? ` Reason: ${signed.uploadError}` : ""}
+                </span>
+              </div>
+            )}
             <Button
               size="sm"
-              disabled={retryMutation.isPending}
+              disabled={retryMutation.isPending || retryMutation.isSuccess}
               onClick={() => { retryMutation.reset(); retryMutation.mutate(); }}
               className="h-8 px-3 text-xs text-white gap-1.5 bg-red-600 hover:bg-red-700"
             >

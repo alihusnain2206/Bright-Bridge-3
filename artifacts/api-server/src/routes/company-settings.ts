@@ -1598,141 +1598,138 @@ router.post("/rollfi/companies/:companyId/retry-8655-upload", requireAuth, async
     .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
     .catch(() => {});
 
-  // ── 4. Fetch company info from Rollfi to rebuild PDF ─────────────────────
-  let taxpayerName = "";
-  let taxpayerEin  = "";
-  let address      = "";
-  let cityStateZip = "";
-  let phone        = "";
+  // Respond immediately so the UI shows "pending" state without blocking on
+  // the Rollfi upload call.  Steps 4–6 run in the background; the client
+  // polls the pending-signatures endpoint (every 10 s) to pick up the result.
+  res.json({ queued: true, message: "Upload queued — status will update shortly" });
 
-  try {
-    const infoResp = await axios.post(
-      `${getBaseUrl()}/reports#getCompanyInfo`,
-      { method: "getCompanyInfo", companyId: rollfiCompanyId },
-      { headers: rollfiHeaders() },
-    );
-    const raw       = infoResp.data as Record<string, unknown>;
-    const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
-    const co        = companies[0] ?? {};
-    taxpayerName    = (co.company as string | undefined) ?? "";
-    const kybInfos  = Array.isArray(co.KYBInformations) ? co.KYBInformations as Record<string, unknown>[] : [];
-    taxpayerEin     = (kybInfos[0]?.ein as string | undefined) ?? "";
-    phone           = (kybInfos[0]?.phoneNumber as string | undefined) ?? "";
-    const locs      = Array.isArray(co.CompanyLocations) ? co.CompanyLocations as Record<string, unknown>[] : [];
-    const loc       = locs[0] ?? {};
-    address         = (loc.address1 as string | undefined) ?? "";
-    const city      = (loc.city     as string | undefined) ?? "";
-    const state     = (loc.state    as string | undefined) ?? "";
-    const zip       = (loc.zipcode  as string | undefined) ?? "";
-    cityStateZip    = [city, state, zip].filter(Boolean).join(", ");
-  } catch (err) {
-    req.log.warn({ err }, "retry-8655-upload: getCompanyInfo failed — using DB fallback");
-    const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
-    if (dbCo) {
-      taxpayerName = dbCo.name ?? "";
-      taxpayerEin  = dbCo.ein  ?? "";
-      address      = [dbCo.address1, dbCo.address2].filter(Boolean).join(" ");
-      cityStateZip = [dbCo.city, dbCo.state, dbCo.zipcode].filter(Boolean).join(", ");
-      phone        = dbCo.phone ?? "";
-    }
-  }
+  // ── Steps 4-6 run in background (after response is sent) ─────────────────
+  setImmediate(async () => {
+    // ── 4. Fetch company info from Rollfi to rebuild PDF ───────────────────
+    let taxpayerName = "";
+    let taxpayerEin  = "";
+    let address      = "";
+    let cityStateZip = "";
+    let phone        = "";
 
-  // ── 5. Rebuild PDF ────────────────────────────────────────────────────────
-  const signedAt = new Date(row.signedAt);
-  const { annual940, quarterly941 } = getForm8655AuthDates(signedAt);
-
-  let pdfBytes: Uint8Array;
-  try {
-    pdfBytes = await buildForm8655Pdf({
-      taxpayerName:        taxpayerName.trim()  || "Company",
-      taxpayerEin:         taxpayerEin.trim(),
-      address:             address.trim(),
-      cityStateZip:        cityStateZip.trim(),
-      phone:               phone.trim(),
-      signerName:          row.signerName.trim(),
-      signerTitle:         row.signerTitle.trim(),
-      signedAt,
-      annual940,
-      quarterly941,
-      // Re-use the stored drawn signature image so the retry PDF matches the original
-      signatureImageBase64: row.signatureImage ?? undefined,
-    });
-  } catch (err) {
-    req.log.error({ err }, "retry-8655-upload: PDF regeneration failed");
-    await db.update(companySignedForms)
-      .set({ uploadStatus: "failed", uploadError: "PDF regeneration failed" })
-      .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
-      .catch(() => {});
-    res.status(500).json({ error: "Failed to regenerate Form 8655 PDF" }); return;
-  }
-
-  // ── 6. Upload to Rollfi ───────────────────────────────────────────────────
-  let uploadStatus: string = "pending";
-  let uploadError:  string | null = null;
-  let rollfiDocumentId: string | null = null;
-
-  try {
-    const dateStr    = signedAt.toISOString().slice(0, 10).replace(/-/g, "");
-    const safeName   = row.signerName.trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
-    const fileName   = `Form8655_${safeName}_${dateStr}.pdf`;
-    const fileBase64 = Buffer.from(pdfBytes).toString("base64");
-
-    const uploadResp = await axios.post(
-      `${getBaseUrl()}/adminPortal/uploadDocument`,
-      {
-        method:       "uploadDocument",
-        companyId:    rollfiCompanyId,
-        fileName,
-        documentType: "8655Form",
-        fileBase64,
-      },
-      { headers: rollfiHeaders() },
-    );
-
-    req.log.info({ uploadResp: uploadResp.data }, "retry-8655-upload: uploadDocument response");
-
-    // Expected Rollfi response shape: { documentId: string } on success,
-    // or { error: string | { code, message } } / { success: false } on failure.
-    // We require an explicit documentId or success:true — a 2xx with neither
-    // is treated as a failure so we never silently swallow unexpected shapes.
-    const upData = uploadResp.data as Record<string, unknown>;
-    if (upData?.documentId) {
-      rollfiDocumentId = upData.documentId as string;
-      uploadStatus = "uploaded";
-    } else if (upData?.success === true) {
-      // Provider confirmed success without a documentId
-      uploadStatus = "uploaded";
-    } else if (upData?.error || upData?.success === false) {
-      const errVal = upData?.error;
-      const errMsg = typeof errVal === "string" ? errVal
-        : typeof (errVal as Record<string, unknown>)?.message === "string"
-          ? String((errVal as Record<string, unknown>).message)
-          : JSON.stringify(errVal ?? "uploadDocument returned success=false");
-      throw new Error(errMsg);
-    } else {
-      // Neither documentId nor success:true — treat as failure and log raw body
-      req.log.error({ rawUploadResponse: uploadResp.data }, "retry-8655-upload: uploadDocument returned unexpected shape (no documentId, no success:true)");
-      throw new Error(`uploadDocument returned an unrecognised response shape: ${JSON.stringify(uploadResp.data)}`);
+    try {
+      const infoResp = await axios.post(
+        `${getBaseUrl()}/reports#getCompanyInfo`,
+        { method: "getCompanyInfo", companyId: rollfiCompanyId },
+        { headers: rollfiHeaders() },
+      );
+      const raw       = infoResp.data as Record<string, unknown>;
+      const companies = Array.isArray(raw.Company) ? raw.Company as Record<string, unknown>[] : [];
+      const co        = companies[0] ?? {};
+      taxpayerName    = (co.company as string | undefined) ?? "";
+      const kybInfos  = Array.isArray(co.KYBInformations) ? co.KYBInformations as Record<string, unknown>[] : [];
+      taxpayerEin     = (kybInfos[0]?.ein as string | undefined) ?? "";
+      phone           = (kybInfos[0]?.phoneNumber as string | undefined) ?? "";
+      const locs      = Array.isArray(co.CompanyLocations) ? co.CompanyLocations as Record<string, unknown>[] : [];
+      const loc       = locs[0] ?? {};
+      address         = (loc.address1 as string | undefined) ?? "";
+      const city      = (loc.city     as string | undefined) ?? "";
+      const state     = (loc.state    as string | undefined) ?? "";
+      const zip       = (loc.zipcode  as string | undefined) ?? "";
+      cityStateZip    = [city, state, zip].filter(Boolean).join(", ");
+    } catch (err) {
+      req.log.warn({ err }, "retry-8655-upload[bg]: getCompanyInfo failed — using DB fallback");
+      const [dbCo] = await db.select().from(companiesTable).where(eq(companiesTable.id, companyId)).catch(() => [undefined]);
+      if (dbCo) {
+        taxpayerName = dbCo.name ?? "";
+        taxpayerEin  = dbCo.ein  ?? "";
+        address      = [dbCo.address1, dbCo.address2].filter(Boolean).join(" ");
+        cityStateZip = [dbCo.city, dbCo.state, dbCo.zipcode].filter(Boolean).join(", ");
+        phone        = dbCo.phone ?? "";
+      }
     }
 
-    await db.update(companySignedForms)
-      .set({ uploadStatus, rollfiDocumentId, uploadError: null })
-      .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")));
+    // ── 5. Rebuild PDF ──────────────────────────────────────────────────────
+    const signedAt = new Date(row.signedAt);
+    const { annual940, quarterly941 } = getForm8655AuthDates(signedAt);
 
-    req.log.info({ companyId, rollfiDocumentId }, "retry-8655-upload: upload succeeded");
-  } catch (uploadErr) {
-    const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
-    uploadError  = msg;
-    uploadStatus = "failed";
-    req.log.warn({ err: uploadErr }, "retry-8655-upload: uploadDocument failed");
+    let pdfBytes: Uint8Array;
+    try {
+      pdfBytes = await buildForm8655Pdf({
+        taxpayerName:        taxpayerName.trim()  || "Company",
+        taxpayerEin:         taxpayerEin.trim(),
+        address:             address.trim(),
+        cityStateZip:        cityStateZip.trim(),
+        phone:               phone.trim(),
+        signerName:          row.signerName.trim(),
+        signerTitle:         row.signerTitle.trim(),
+        signedAt,
+        annual940,
+        quarterly941,
+        // Re-use the stored drawn signature image so the retry PDF matches the original
+        signatureImageBase64: row.signatureImage ?? undefined,
+      });
+    } catch (err) {
+      req.log.error({ err }, "retry-8655-upload[bg]: PDF regeneration failed");
+      await db.update(companySignedForms)
+        .set({ uploadStatus: "failed", uploadError: "PDF regeneration failed" })
+        .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+        .catch(() => {});
+      return;
+    }
 
-    await db.update(companySignedForms)
-      .set({ uploadStatus: "failed", uploadError: msg })
-      .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
-      .catch((dbErr) => req.log.warn({ dbErr }, "retry-8655-upload: failed to persist upload error"));
-  }
+    // ── 6. Upload to Rollfi ─────────────────────────────────────────────────
+    try {
+      const dateStr    = signedAt.toISOString().slice(0, 10).replace(/-/g, "");
+      const safeName   = row.signerName.trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
+      const fileName   = `Form8655_${safeName}_${dateStr}.pdf`;
+      const fileBase64 = Buffer.from(pdfBytes).toString("base64");
 
-  res.json({ uploadStatus, uploadError, rollfiDocumentId });
+      const uploadResp = await axios.post(
+        `${getBaseUrl()}/adminPortal/uploadDocument`,
+        {
+          method:       "uploadDocument",
+          companyId:    rollfiCompanyId,
+          fileName,
+          documentType: "8655Form",
+          fileBase64,
+        },
+        { headers: rollfiHeaders() },
+      );
+
+      req.log.info({ uploadResp: uploadResp.data }, "retry-8655-upload[bg]: uploadDocument response");
+
+      const upData = uploadResp.data as Record<string, unknown>;
+      let uploadStatus: string = "pending";
+      let rollfiDocumentId: string | null = null;
+
+      if (upData?.documentId) {
+        rollfiDocumentId = upData.documentId as string;
+        uploadStatus = "uploaded";
+      } else if (upData?.success === true) {
+        uploadStatus = "uploaded";
+      } else if (upData?.error || upData?.success === false) {
+        const errVal = upData?.error;
+        const errMsg = typeof errVal === "string" ? errVal
+          : typeof (errVal as Record<string, unknown>)?.message === "string"
+            ? String((errVal as Record<string, unknown>).message)
+            : JSON.stringify(errVal ?? "uploadDocument returned success=false");
+        throw new Error(errMsg);
+      } else {
+        req.log.error({ rawUploadResponse: uploadResp.data }, "retry-8655-upload[bg]: uploadDocument returned unexpected shape");
+        throw new Error(`uploadDocument returned an unrecognised response shape: ${JSON.stringify(uploadResp.data)}`);
+      }
+
+      await db.update(companySignedForms)
+        .set({ uploadStatus, rollfiDocumentId, uploadError: null })
+        .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")));
+
+      req.log.info({ companyId, rollfiDocumentId }, "retry-8655-upload[bg]: upload succeeded");
+    } catch (uploadErr) {
+      const msg = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+      req.log.warn({ err: uploadErr }, "retry-8655-upload[bg]: uploadDocument failed");
+
+      await db.update(companySignedForms)
+        .set({ uploadStatus: "failed", uploadError: msg })
+        .where(and(eq(companySignedForms.companyId, companyId), eq(companySignedForms.formType, "8655")))
+        .catch((dbErr) => req.log.warn({ dbErr }, "retry-8655-upload[bg]: failed to persist upload error"));
+    }
+  });
 });
 
 // ── POST /rollfi/companies/:companyId/reconcile-8655-upload ──────────────────
