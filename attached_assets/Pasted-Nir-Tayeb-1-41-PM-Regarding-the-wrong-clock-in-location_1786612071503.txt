@@ -1,0 +1,33 @@
+Nir Tayeb  [1:41 PM]
+Regarding the "wrong" clock in location - the web clock in location decided in the following order:
+
+1. If the clock screen shows a location selector, that choice wins.
+When the employer has enabled location selection on the time clock, whatever the employee picks in the dropdown is the location stamped on the shift.
+
+2. If a selector is enabled but there's nothing to pick, the app pre-fills one.
+It fills in, in this order:
+
+the location of the shift the employee is currently scheduled for, if there is one;
+their only location, if they're assigned to just one (assignment happens during token exchange with the location id);
+their location set on the JWT
+
+
+The employee sees this as fixed text rather than a dropdown, and it's what gets sent.
+
+3. If location selection is turned off entirely, the shift falls back to the employee's location from the JWT - the one attached to their session when they signed in. (edited) 
+Nir Tayeb  [1:47 PM]
+Your organization name is either "BrightBridge Assist" or empty (you didn't supplied one for the new 8 organizations yesterday)
+The "Sunshine Daycare Centre" you set as a location name. (edited) 
+[1:50 PM]The data model on easyteam is:
+Organization = Your customer (i.e Zara)
+Location = Your customer store (i.e "Zara 660 5th Ave @ NYC", "Zara 101 5th Ave @ NYC", "Zara 725 S Figueroa St @ LA" )
+
+so when a customer's employee clocks in, they clock in into a Location, and the timesheet shows data per location (edited) 
+Nir Tayeb  [1:56 PM]
+please list the exact location_ids you want to delete (edited) 
+bridghtbridge-locations-prod.csv 
+
+organization_nameorganization_external_idlocation_idlocation_namelocation_external_idORG-SUNSHINE53f6b890-f159-41e9-960c-1cf8da98612aLOC-SUNSHINEORG-SUNSHINE5e7b7483-4b10-4f43-a701-8bf2e953045053f6b890-f159-41e9-960c-1cf8da98612aORG-SUNSHINE693c7267-415e-4856-b203-a95cf6d994bd165c811a-956c-4c57-ab96-0e9289244b7bORG-SUNSHINE34c0ee20-b679-429b-a871-e6b553716bb8693c7267-415e-4856-b203-a95cf6d994bdORG-SUNSHINE06e611e0-67d6-4333-b6c8-7bf50f2f1c699defae07-3f8f-43ad-9062-9963820014fdORG-SUNSHINE9facff02-57df-4c04-bd98-6118b8c8e83606e611e0-67d6-4333-b6c8-7bf50f2f1c69ORG-SUNSHINEb6934adc-f4e4-4570-bda1-b39158ff58dc06e611e0-87b1-4c52-bc71-23d7d3c77ebaORG-SUNSHINE76b0b66b-55c6-42ee-8eca-848b89da6ee59defae07-4e35-4143-840a-8d7dd820f2b3BrightBridge AssistORG-BRIGHTBRIDGEa7649c10-a3b1-419a-81fa-2555899635b3Sunshine Daycare CentreLOC-SUNSHINE
+
+[2:01 PM]I moved Diana's shift to the new location, no other shifts were under 5e7b7483-4b10-4f43-a701-8bf2e9530450 location
+[2:03 PM]Regarding your last question, Locations are created automatically for "lazy loading" purpose, so you won't have to sync location assignment every time on your system when onboarding employees/changing their location on your side.
