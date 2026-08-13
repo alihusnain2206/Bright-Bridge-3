@@ -965,7 +965,18 @@ router.get("/easyteam/hours", requireRole("super_admin", "owner", "manager"), as
       for (const s of shiftRows) {
         if (!s.employeeId) continue; // unknown UUID — skip (mirrors sync behaviour)
         const cur = hoursFromShifts.get(s.employeeId) ?? { payableMs: 0, unpaidBreakMin: 0 };
-        cur.payableMs    += s.payableDurationMs;
+        // When EasyTeam returns payableDuration=0 but the shift is closed (has an end time),
+        // fall back to clock arithmetic — same logic as shiftDurationMinutes().
+        // Open shifts (no utcEndTime) correctly remain 0ms until closed and re-synced.
+        let effectiveMs = s.payableDurationMs;
+        if (effectiveMs === 0 && s.utcEndTime && s.utcStartTime) {
+          const start = new Date(s.utcStartTime);
+          const end   = new Date(s.utcEndTime);
+          if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+            effectiveMs = end.getTime() - start.getTime();
+          }
+        }
+        cur.payableMs      += effectiveMs;
         cur.unpaidBreakMin += s.totalUnpaidBreakMin ?? 0;
         hoursFromShifts.set(s.employeeId, cur);
       }
