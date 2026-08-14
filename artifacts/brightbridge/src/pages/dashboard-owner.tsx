@@ -381,7 +381,7 @@ export default function OwnerDashboard() {
                 <div className="py-8 text-center text-gray-400">
                   <BarChart3 className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm">No active pay period found</p>
-                  {payrollData?.errors.payPeriod && <p className="text-xs text-red-400 mt-1">{payrollData.errors.payPeriod}</p>}
+                  {payrollData?.errors?.payPeriod && <p className="text-xs text-red-400 mt-1">{payrollData.errors.payPeriod}</p>}
                 </div>
               ) : (
                 <>

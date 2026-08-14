@@ -35,11 +35,12 @@ function callerCompanyId(req: Request, bodyOrQuery?: { companyId?: string }): st
 }
 
 // ── GET /api/locations ─────────────────────────────────────────────────────────
-router.get("/locations", requireRole("super_admin", "owner", "manager"), async (req: Request, res: Response) => {
+router.get("/locations", requireRole("super_admin", "owner", "manager", "employee"), async (req: Request, res: Response) => {
   const caller = store.getUserById((req.session as { userId?: string }).userId ?? "");
   if (!caller) { res.status(401).json({ error: "Not authenticated" }); return; }
 
   const companyIdQ = typeof req.query.companyId === "string" ? req.query.companyId : undefined;
+  // Employees are always scoped to their own company; super_admin may pass any companyId.
   const companyId = caller.role === "super_admin" ? companyIdQ : caller.companyId;
 
   if (!companyId) { res.status(400).json({ error: "companyId required" }); return; }

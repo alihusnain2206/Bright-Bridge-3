@@ -1,4 +1,46 @@
-import React, { useEffect } from "react";
+import React, { useEffect, Component, type ReactNode, type ErrorInfo } from "react";
+
+// ── App-level error boundary ─────────────────────────────────────────────────
+// Catches any unhandled render error and shows a recoverable screen instead of
+// a white/blank page. Without this, a single bad prop or optional-chaining miss
+// silently wipes the entire UI in production.
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[AppErrorBoundary] Render crash:", error, info.componentStack);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif", background: "#f9fafb" }}>
+          <div style={{ maxWidth: 480, padding: "2rem", textAlign: "center" }}>
+            <div style={{ fontSize: 48, marginBottom: "1rem" }}>⚠️</div>
+            <h1 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#111827", marginBottom: "0.5rem" }}>Something went wrong</h1>
+            <p style={{ color: "#6b7280", fontSize: "0.875rem", marginBottom: "1.5rem" }}>
+              The page encountered an error. Try refreshing — if it keeps happening, contact support.
+            </p>
+            <button
+              onClick={() => { this.setState({ error: null }); window.location.reload(); }}
+              style={{ background: "#E8622A", color: "#fff", border: "none", borderRadius: 8, padding: "0.6rem 1.5rem", fontWeight: 600, cursor: "pointer", fontSize: "0.9rem" }}
+            >
+              Refresh page
+            </button>
+            {process.env.NODE_ENV !== "production" && (
+              <pre style={{ marginTop: "1.5rem", fontSize: "0.7rem", color: "#9ca3af", textAlign: "left", overflow: "auto", maxHeight: 200, background: "#f3f4f6", borderRadius: 6, padding: "0.75rem" }}>
+                {this.state.error.message}
+              </pre>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import { Switch, Route, Router as WouterRouter, useLocation, useRoute } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -275,16 +317,18 @@ function Router() {
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <AuthProvider>
-            <Router />
-          </AuthProvider>
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <AuthProvider>
+              <Router />
+            </AuthProvider>
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   );
 }
 
