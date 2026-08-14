@@ -31,3 +31,4 @@
 - [Phase 3 multi-location time tracking](phase3-multi-location.md) — JWT scoping, per-location sync, SDK launcher filtering, lat/lng schema, company-settings UI
 - [EasyTeam location UUID resolution](easyteam-location-uuid-resolution.md) — boot token-exchange resolves real UUID; two pitfalls: persist WHERE clause + sync guard pre-seed from DB
 - [EasyTeam JWT external key rule](easyteam-jwt-external-key-rule.md) — JWT locationId = locations.id ONLY; easyteam_location_id in JWTs creates phantom locations; full fix + phantom list inside
+- [EasyTeam "All locations" aggregation rule](easyteam-alllocations-aggregation.md) — timesheet view must NOT use locationEtId (all employees in all dicts); time clock MUST use it (routing); reviewer selfEntry excluded from all dicts

@@ -357,9 +357,13 @@ export default function Timesheets() {
         locations?: Array<{ id: string; name: string; latitude: number; longitude: number }>;
         employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string; locationEtId?: string }>;
       };
-      // id is already the easyteamUuid (resolved server-side); locationEtId is the easyteam
-      // location ID of the employee's assigned location (used by the launcher to build
-      // per-location employee dicts, then stripped before passing to the EasyTeam SDK).
+      // For the TIMESHEET view (owner, read-only) we intentionally do NOT pass locationEtId.
+      // When employees are scoped to only their own location dict, EasyTeam's "All locations"
+      // aggregation only fetches the last-processed location's data, leaving other locations
+      // at 0m. Placing every employee in every location dict lets EasyTeam aggregate each
+      // employee's hours across ALL locations they appear in, so "All locations" shows the
+      // correct org-wide total. Clock-in routing (employee dashboard) still uses locationEtId
+      // independently and is unaffected by this change.
       const apiEmployees = (sdkData.employees ?? []).map(e => ({
         id: e.id,
         name: e.name,
@@ -367,7 +371,6 @@ export default function Timesheets() {
         timeTrackingEnabled: true,
         wage: e.wage ?? 1500,
         wageType: "hourly" as const,
-        ...(e.locationEtId ? { locationEtId: e.locationEtId } : {}),
       }));
 
       // Use freshly-fetched pay period dates for the iframe URL.
