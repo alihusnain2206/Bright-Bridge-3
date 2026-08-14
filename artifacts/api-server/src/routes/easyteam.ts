@@ -2165,21 +2165,26 @@ router.get("/timesheets/trend", requireRole("super_admin", "owner", "manager"), 
 
 export async function ensureLocationTimezone(
   locationId: string,
-  opts: { country?: string; state?: string; companyId?: string } = {}
+  opts: { country?: string; state?: string; companyId?: string; rowId?: string } = {}
 ): Promise<{ ok: boolean; detail?: string }> {
   if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
 
   const country = opts.country ?? "US";
   const state   = opts.state   ?? "NJ";
 
+  // opts.rowId is the DB primary key (locations.id) — used for the manager-user store lookup
+  // and DB update WHERE clause.  locationId is the JWT external key (may be a fresh UUID
+  // after a repair-without-delete).  When opts.rowId is omitted they are the same value.
+  const storeLocId = opts.rowId ?? locationId;
+
   // Reuse a manager user registered under this location to sign the admin JWT.
   let managerUser = store.getAllStaffUsers().find(
-    (u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")
+    (u) => u.locationId === storeLocId && (u.role === "manager" || u.role === "owner")
   );
   if (!managerUser?.employeeId) {
     managerUser = store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
   }
-  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${locationId}` };
+  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${storeLocId}` };
 
   try {
     const adminJwt = jwt.sign(
@@ -2237,13 +2242,16 @@ export async function ensureLocationTimezone(
     // own per-company org).  Idempotent: writing the same UUID twice is a harmless no-op.
     if (internalLocId && internalLocId !== locationId) {
       try {
+        // WHERE uses storeLocId (= opts.rowId ?? locationId) — the DB primary key.
+        // This is correct even after a repair-without-delete where locationId is a fresh UUID
+        // that differs from the PK.
         await db
           .update(locationsTable)
           .set({ easyteamLocationId: internalLocId })
-          .where(eq(locationsTable.id, locationId));
-        logger.info({ locationId, internalLocId }, "ensureLocationTimezone: persisted EasyTeam UUID to locations table");
+          .where(eq(locationsTable.id, storeLocId));
+        logger.info({ locationId, storeLocId, internalLocId }, "ensureLocationTimezone: persisted EasyTeam UUID to locations table");
       } catch (dbErr) {
-        logger.warn({ locationId, internalLocId, dbErr }, "ensureLocationTimezone: failed to persist EasyTeam UUID (non-fatal)");
+        logger.warn({ locationId, storeLocId, internalLocId, dbErr }, "ensureLocationTimezone: failed to persist EasyTeam UUID (non-fatal)");
       }
     }
 
@@ -2263,20 +2271,24 @@ export async function ensureLocationTimezone(
 // disables the Save button. This function creates a default policy if none exist yet. Idempotent.
 export async function ensureTimeOffPolicy(
   locationId: string,
-  opts: { policyName?: string; companyId?: string } = {},
+  opts: { policyName?: string; companyId?: string; rowId?: string } = {},
 ): Promise<{ ok: boolean; detail?: string }> {
   if (!EASYTEAM_API_KEY) return { ok: false, detail: "No API key" };
 
   const policyName = opts.policyName ?? "Standard Time Off";
 
+  // opts.rowId is the DB primary key — used for store lookup when locationId is a fresh
+  // external key (repair-without-delete path).
+  const storeLocId = opts.rowId ?? locationId;
+
   // Reuse a manager/owner under this location to sign the admin JWT.
   let managerUser = store.getAllStaffUsers().find(
-    (u) => u.locationId === locationId && (u.role === "manager" || u.role === "owner")
+    (u) => u.locationId === storeLocId && (u.role === "manager" || u.role === "owner")
   );
   if (!managerUser?.employeeId) {
     managerUser = store.getAllStaffUsers().find((u) => u.role === "super_admin" && u.employeeId);
   }
-  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${locationId}` };
+  if (!managerUser?.employeeId) return { ok: false, detail: `No manager found for location ${storeLocId}` };
 
   try {
     const adminJwt = jwt.sign(
@@ -2372,9 +2384,10 @@ setTimeout(async () => {
     // Join locations → companies so we have the company's state for timezone derivation.
     const activeLocations = await db
       .select({
-        locationId: locationsTable.id,
-        companyId:  locationsTable.companyId,
-        state:      companiesTable.state,
+        locationId:  locationsTable.id,
+        externalKey: locationsTable.easyteamExternalKey,
+        companyId:   locationsTable.companyId,
+        state:       companiesTable.state,
       })
       .from(locationsTable)
       .innerJoin(companiesTable, eq(locationsTable.companyId, companiesTable.id))
@@ -2382,11 +2395,15 @@ setTimeout(async () => {
 
     logger.info({ count: activeLocations.length }, "Boot: running ensureLocationTimezone for all active locations");
 
-    for (const { locationId, companyId, state } of activeLocations) {
+    for (const { locationId, externalKey, companyId, state } of activeLocations) {
       const country = "US"; // companies.country column does not exist; all clients are US-based
-      ensureLocationTimezone(locationId, { country, state: state ?? "NJ", companyId })
+      // Use easyteamExternalKey when set (repair-without-delete path); otherwise fall back to
+      // locations.id as the JWT external key.  Always pass rowId so the DB WHERE clause and
+      // manager-user store lookup use the PK, not the (possibly fresh) external key.
+      const etKey = externalKey ?? locationId;
+      ensureLocationTimezone(etKey, { country, state: state ?? "NJ", companyId, rowId: locationId })
         .catch(() => { /* already logged inside ensureLocationTimezone */ });
-      ensureTimeOffPolicy(locationId, { companyId })
+      ensureTimeOffPolicy(etKey, { companyId, rowId: locationId })
         .catch(() => { /* already logged inside ensureTimeOffPolicy */ });
     }
   } catch (err) {

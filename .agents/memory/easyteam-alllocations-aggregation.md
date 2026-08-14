@@ -1,35 +1,59 @@
 ---
 name: EasyTeam "All locations" aggregation rule
-description: Root cause — secondary locations created from the settings dashboard were registered under ORG-BRIGHTBRIDGE instead of the company's own org, making them invisible in "All locations". Code fix + data migration notes inside.
+description: Root cause + code fix + repair-without-delete mechanism for locations registered under the wrong EasyTeam org.
 ---
 
 ## Root cause (confirmed Aug 2026)
 `POST /api/locations` called `ensureLocationTimezone(easyteamLocationId, { country, state })` — NO `companyId`. Inside `ensureLocationTimezone`, `resolveEasyTeamOrgId(undefined)` falls back to `"ORG-BRIGHTBRIDGE"`. So the JWT exchanged with EasyTeam had `organizationId: "ORG-BRIGHTBRIDGE"`, registering the new location under the shared org instead of the company's dedicated org.
 
-Result: Employees at a secondary location clock in correctly (EasyTeam resolves `FD490CFC-…` → `73a65890-…` globally), but the location *belongs* to ORG-BRIGHTBRIDGE. When the owner's timesheet JWT uses `organizationId: "ORG-MSSNEMFA-3WATY2"`, "All locations" only returns locations owned by that org — not Harbor Street — so those employees show 0m.
+Result: employees at a secondary location clock in correctly (EasyTeam resolves the external key globally), but the location *belongs* to ORG-BRIGHTBRIDGE. When the owner's timesheet JWT uses `organizationId: "ORG-MSSNEMFA-3WATY2"`, "All locations" only returns locations owned by that org — not Harbor Street — so those employees show 0m.
 
-## The fix (applied Aug 2026)
+## Code fix (applied Aug 2026)
 `artifacts/api-server/src/routes/locations.ts` `POST /api/locations`:
 ```js
-// BEFORE (bug):
-await ensureLocationTimezone(easyteamLocationId, { country: "US", state: body.state || "NJ" });
-await ensureTimeOffPolicy(easyteamLocationId);
-
-// AFTER (fixed):
-await ensureLocationTimezone(easyteamLocationId, { country: "US", state: body.state || "NJ", companyId });
+// Fixed: pass companyId to both calls
+await ensureLocationTimezone(easyteamLocationId, { country: "US", state, companyId });
 await ensureTimeOffPolicy(easyteamLocationId, { companyId });
 ```
+The boot sync already correctly passed `companyId`.
 
-The boot sync (`setTimeout` in easyteam.ts ~line 2387) already correctly passes `companyId` — only the on-demand creation path was missing it.
+## Repair-without-delete mechanism (Aug 2026)
 
-## Data fix for already-broken locations
-Locations created from settings before this fix are permanently registered under ORG-BRIGHTBRIDGE. The boot sync cannot move them (EasyTeam does not transfer location ownership on JWT re-exchange).
+### New column: `locations.easyteam_external_key` (TEXT, nullable)
+- Mutable external key used in JWT `locationId` claims.
+- NULL = created before the fix; resolver falls back to `locations.id` (existing behavior).
+- POST /api/locations now sets it to `rowId` explicitly on insert.
+- Repair endpoint sets it to a fresh UUID.
 
-**To repair a broken location (e.g. Harborview's Harbor Street):**
-1. Delete the location from Company Settings
-2. Re-create it — the creation now correctly passes `companyId` → EasyTeam registers it under the company's own org
-3. Re-assign affected employees to the new location
-4. Note: existing clock-in shifts at the old location are lost (they live in EasyTeam under ORG-BRIGHTBRIDGE). For test companies this is acceptable; for production companies, ask EasyTeam support to migrate shifts before deleting.
+### Where external key is resolved
+- `resolveCompanyLocationId` → returns `easyteamExternalKey ?? locations.id`
+- `resolveEmployeeLocationId` → JOINs to locations, returns `easyteamExternalKey ?? employees.locationId`
+- Boot sync → selects `easyteamExternalKey`, calls `ensureLocationTimezone(etKey, { rowId: locationId })`
 
-## Why per-location filter worked but "All locations" didn't
-EasyTeam resolves the clock-in location external key (`FD490CFC-…`) globally — clock-ins succeed and the shift is stored at `73a65890-…` (the location UUID under ORG-BRIGHTBRIDGE). When you select a specific location in the SDK dropdown, the SDK queries that UUID directly (bypasses org filter) → shows 6m correctly. "All locations" makes an org-scoped query → only finds locations *owned* by the company's org → Harbor Street excluded → 0m.
+### `rowId` parameter added to `ensureLocationTimezone` and `ensureTimeOffPolicy`
+When `locationId` is a fresh UUID (post-repair), `opts.rowId` is the DB PK — used for:
+- Store manager-user lookup (store has `locationId = locations.id`)
+- DB UPDATE WHERE clause (to persist the new EasyTeam internal UUID)
+
+### Repair endpoint
+```
+POST /api/locations/:id/repair-easyteam  (owner or super_admin)
+```
+1. Generates `newExternalKey = randomUUID()`
+2. Updates DB: `easyteam_external_key = newExternalKey`
+3. Calls `ensureLocationTimezone(newExternalKey, { companyId, rowId: id })` → registers under correct org
+4. Returns `{ ok, newExternalKey, message }`
+
+### Frontend repair button
+Shown on location cards in Company Settings → Locations when `easyteamExternalKey === null` (i.e., old location created before the fix). Amber "Fix EasyTeam" button opens a confirmation modal with a shift-history warning.
+
+## ⚠ Impact on historical shifts
+Shifts recorded before repair are stored at the old EasyTeam location UUID (under ORG-BRIGHTBRIDGE). They remain visible via per-location filter but NOT in "All Locations" until EasyTeam support migrates them. The modal warns the owner about this. For test companies (Harborview), running repair immediately is safe. For production companies (Sunshine/Amsterdam Avenue), request EasyTeam shift migration first.
+
+## Affected production companies
+- **Harborview Test Daycare**: Harbor Street (FD490CFC-…) — registered under ORG-BRIGHTBRIDGE, should be ORG-MSSNEMFA-3WATY2
+- **Sunshine Daycare / Amsterdam Avenue**: same root cause (secondary location created from settings before the fix)
+- Any other company with a secondary location created from Company Settings before this deployment
+
+## Why per-location filter worked but "All Locations" didn't
+EasyTeam resolves the clock-in location external key globally — clock-ins succeed and the shift is stored at the EasyTeam UUID under ORG-BRIGHTBRIDGE. Selecting a specific location in the SDK queries that UUID directly (bypasses org filter) → shows hours correctly. "All locations" makes an org-scoped query → only finds locations *owned* by the company's org → broken locations excluded → 0m.

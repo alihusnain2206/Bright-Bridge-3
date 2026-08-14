@@ -752,6 +752,11 @@ interface LocationRow {
   address1?: string|null; address2?: string|null;
   city?: string|null; state?: string|null; zipcode?: string|null;
   rollfiLocationId?: string|null; easyteamLocationId?: string|null;
+  /** Mutable EasyTeam external key. NULL = created before the org-registration fix;
+   *  may be registered under the wrong EasyTeam org → employees show 0m in All Locations. */
+  easyteamExternalKey?: string|null;
+  isPrimary?: boolean;
+  latitude?: number|null; longitude?: number|null;
   isActive: boolean; createdAt?: string|null;
 }
 
@@ -838,6 +843,8 @@ function LocationsTab({ companyId }: { companyId: string }) {
   const [warnings, setWarnings]       = useState<string[] | null>(null);
   const [deactivating, setDeactivating] = useState<LocationRow | null>(null);
   const [activating,   setActivating]   = useState<LocationRow | null>(null);
+  const [repairing,  setRepairing]    = useState<LocationRow | null>(null);
+  const [repairResult, setRepairResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const { data, isLoading, refetch } = useQuery<{ locations: LocationRow[] }>({
     queryKey: ["company-settings-locations", companyId],
@@ -949,6 +956,23 @@ function LocationsTab({ companyId }: { companyId: string }) {
     }
   }
 
+  async function handleRepair(loc: LocationRow) {
+    setSaving(true); setError(null); setRepairResult(null);
+    try {
+      const r = await fetch(`/api/locations/${loc.id}/repair-easyteam`, {
+        method: "POST", credentials: "include",
+      });
+      const body = await r.json() as { ok?: boolean; message?: string; error?: string };
+      if (!r.ok) { setError(body.error ?? `Error ${r.status}`); return; }
+      setRepairResult({ ok: body.ok ?? false, message: body.message ?? (body.ok ? "Done" : "Repair incomplete") });
+      void refetch(); void qc.invalidateQueries({ queryKey: ["company-settings-locations"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Repair failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const btnCls = "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors";
 
   return (
@@ -1053,6 +1077,17 @@ function LocationsTab({ companyId }: { companyId: string }) {
                       >
                         <Pencil className="h-3.5 w-3.5" /> Edit
                       </button>
+                      {/* Repair button — shown when easyteamExternalKey is null (location was
+                          created before the org-registration fix and may be under wrong org) */}
+                      {loc.easyteamExternalKey === null && (
+                        <button
+                          className={`${btnCls} border border-amber-200 text-amber-700 hover:bg-amber-50`}
+                          title="This location may be registered under the wrong time-tracking org. Click to re-register it."
+                          onClick={() => { setRepairing(loc); setError(null); setRepairResult(null); }}
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" /> Fix EasyTeam
+                        </button>
+                      )}
                       {loc.isActive && !loc.isPrimary && (
                         <button
                           className={`${btnCls} border border-red-100 text-red-600 hover:bg-red-50`}
@@ -1094,6 +1129,59 @@ function LocationsTab({ companyId }: { companyId: string }) {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* EasyTeam repair confirmation */}
+      {repairing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-amber-50">
+                <RefreshCw className="h-4 w-4 text-amber-600" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold text-gray-900">Re-register EasyTeam Location?</h2>
+                <p className="text-xs text-gray-500">{repairing.code} — {repairing.name}</p>
+              </div>
+            </div>
+
+            {repairResult ? (
+              <>
+                <div className={`text-sm px-4 py-3 rounded-lg ${repairResult.ok ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-800"}`}>
+                  {repairResult.message}
+                </div>
+                <div className="flex justify-end">
+                  <button className={`${btnCls} bg-[#1B3A6B] text-white hover:bg-[#254d8c]`}
+                    onClick={() => { setRepairing(null); setRepairResult(null); }}>Done</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-sm text-gray-600 space-y-2">
+                  <p>
+                    This will re-register <strong>{repairing.name}</strong> with the time-tracking system under your company's account,
+                    so employees here appear correctly in the <em>All Locations</em> view.
+                  </p>
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    ⚠ Clock-in records from <em>before</em> this repair will still appear when you filter by this specific location,
+                    but may not show in All Locations until the time-tracking provider migrates them.
+                    For test companies this is fine to proceed immediately.
+                  </p>
+                </div>
+                {error && <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
+                <div className="flex gap-2 justify-end">
+                  <button className={`${btnCls} border border-gray-200 text-gray-700 hover:bg-gray-50`}
+                    onClick={() => { setRepairing(null); setError(null); }}>Cancel</button>
+                  <button className={`${btnCls} bg-amber-600 text-white hover:bg-amber-700`}
+                    disabled={saving} onClick={() => void handleRepair(repairing)}>
+                    {saving ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                    {saving ? "Re-registering…" : "Re-register"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 

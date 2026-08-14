@@ -437,8 +437,13 @@ export const locations = pgTable("locations", {
   city:               text("city").notNull().default(""),
   state:              text("state").notNull().default(""),
   zipcode:            text("zipcode").notNull().default(""),
-  easyteamLocationId: text("easyteam_location_id"),
-  rollfiLocationId:   text("rollfi_location_id"),
+  easyteamLocationId:  text("easyteam_location_id"),
+  // Mutable external key sent in JWT locationId claims.  Defaults to locations.id for all
+  // rows created before this column was added (resolver falls back to id when null).
+  // Repair-without-delete: set this to a fresh UUID to re-register the location under the
+  // correct EasyTeam org without changing the PK or any employee FK.
+  easyteamExternalKey: text("easyteam_external_key"),
+  rollfiLocationId:    text("rollfi_location_id"),
   isPrimary:          boolean("is_primary").notNull().default(false),
   latitude:           real("latitude"),
   longitude:          real("longitude"),

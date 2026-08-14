@@ -129,6 +129,26 @@ async function bootEasyteamOrgIdMigration() {
   `).catch(() => {/* non-fatal */});
 }
 
+/**
+ * Add easyteam_external_key to the locations table.
+ * This column holds the mutable external key used in EasyTeam JWT locationId claims.
+ * It defaults to NULL (resolver falls back to locations.id) for existing rows, and is
+ * set explicitly on insert for new rows.  The repair endpoint sets it to a fresh UUID
+ * to re-register a broken location under the correct org without deleting the row.
+ * Safe to run on every boot — ADD COLUMN IF NOT EXISTS is idempotent.
+ */
+async function bootEasyteamExternalKeyMigration() {
+  try {
+    await pool.query(`
+      ALTER TABLE locations
+        ADD COLUMN IF NOT EXISTS easyteam_external_key TEXT;
+    `);
+    logger.info("Boot: bootEasyteamExternalKeyMigration complete (easyteam_external_key)");
+  } catch (err) {
+    logger.warn({ err }, "Boot: bootEasyteamExternalKeyMigration failed (non-fatal)");
+  }
+}
+
 async function bootIgnoredEtUuids() {
   // Create table if not yet present (original schema: et_uuid as PK)
   await pool.query(`
@@ -744,7 +764,7 @@ app.listen(port, (err) => {
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([
-    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()).then(() => bootEasyteamOrgIdMigration()),
+    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()).then(() => bootEasyteamOrgIdMigration()).then(() => bootEasyteamExternalKeyMigration()),
     // Phase 3: run schema migration FIRST so is_primary/lat/lng columns exist before seeding
     bootPhase3LocationSchema()
       .then(() => bootSeedCompanies())

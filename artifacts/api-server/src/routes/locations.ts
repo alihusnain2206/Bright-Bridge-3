@@ -97,7 +97,11 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
     // easyteamLocationId: stable UUID-based ID so code/name changes don't break existing JWTs
     const easyteamLocationId = rowId;
 
-    // Insert the location row FIRST — always saved regardless of provider results
+    // Insert the location row FIRST — always saved regardless of provider results.
+    // easyteamExternalKey is set explicitly to rowId so future rows have a non-NULL external key.
+    // The resolver uses `easyteamExternalKey ?? locations.id` so this is a no-op for now, but
+    // it allows the repair endpoint to distinguish new rows (fixable by the boot sync) from
+    // old rows created before this column existed (those have NULL and may be broken).
     await db.insert(locationsTable).values({
       id: rowId,
       companyId,
@@ -109,7 +113,8 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
       state: body.state ?? "",
       zipcode: body.zipcode ?? "",
       easyteamLocationId,
-      rollfiLocationId: null,   // populated below if Rollfi succeeds
+      easyteamExternalKey: rowId, // explicit: same as id initially, repaired when needed
+      rollfiLocationId: null,      // populated below if Rollfi succeeds
       isActive: true,
       createdAt: nowIso(),
     });
@@ -285,14 +290,17 @@ router.put("/locations/:id", requireRole("super_admin", "owner"), async (req: Re
     await db.update(locationsTable).set(updates).where(eq(locationsTable.id, id));
 
     // ── EasyTeam: re-run setup if location just got activated ─────────────────
+    // Use easyteamExternalKey ?? locations.id as the external key; pass rowId so the manager
+    // store lookup and DB WHERE clause use the PK, not the external key.
     let easyteamWarning: string | null = null;
-    if (body.isActive === true && !loc.isActive && loc.easyteamLocationId) {
+    if (body.isActive === true && !loc.isActive) {
       const stateToUse = (updates.state as string | undefined) ?? loc.state;
+      const etKey = (loc as Record<string, unknown>).easyteamExternalKey as string | null ?? loc.id;
       try {
-        const tzResult = await ensureLocationTimezone(loc.easyteamLocationId, { country: "US", state: stateToUse || "NJ" });
+        const tzResult = await ensureLocationTimezone(etKey, { country: "US", state: stateToUse || "NJ", companyId: loc.companyId, rowId: loc.id });
         if (!tzResult.ok) easyteamWarning = `EasyTeam timezone: ${tzResult.detail ?? "failed"}`;
 
-        const polResult = await ensureTimeOffPolicy(loc.easyteamLocationId);
+        const polResult = await ensureTimeOffPolicy(etKey, { companyId: loc.companyId, rowId: loc.id });
         if (!polResult.ok) {
           const polMsg = `EasyTeam time-off policy: ${polResult.detail ?? "failed"}`;
           easyteamWarning = easyteamWarning ? `${easyteamWarning}; ${polMsg}` : polMsg;
@@ -337,8 +345,9 @@ router.put("/locations/:id", requireRole("super_admin", "owner"), async (req: Re
     }
 
     // EasyTeam: re-patch timezone if state changed (skip if we already ran setup above for activation)
-    if (updates.state && loc.easyteamLocationId && body.isActive !== true) {
-      ensureLocationTimezone(loc.easyteamLocationId, { country: "US", state: updates.state as string })
+    if (updates.state && body.isActive !== true) {
+      const etKey = (loc as Record<string, unknown>).easyteamExternalKey as string | null ?? loc.id;
+      ensureLocationTimezone(etKey, { country: "US", state: updates.state as string, companyId: loc.companyId, rowId: loc.id })
         .catch(() => { /* non-fatal, already logged inside */ });
     }
 
@@ -391,6 +400,89 @@ router.delete("/locations/:id", requireRole("super_admin", "owner"), async (req:
   } catch (err) {
     req.log.error({ err }, "DELETE /locations failed");
     res.status(500).json({ error: "Failed to deactivate location" });
+  }
+});
+
+// ── POST /api/locations/:id/repair-easyteam ────────────────────────────────────
+// Re-registers an existing location with EasyTeam under the correct company org
+// WITHOUT deleting the row or any employee data.
+//
+// Root cause this fixes: locations created from the Company Settings dashboard before
+// the July 2026 code fix were registered under ORG-BRIGHTBRIDGE (the shared org) instead
+// of the company's own EasyTeam org.  Employees at those locations clock in correctly
+// (per-location filter works), but the company's "All Locations" aggregate view shows 0m
+// because EasyTeam scopes aggregate queries to the company's own org only.
+//
+// Mechanism:
+//   1. Generate a fresh `easyteam_external_key` UUID for the locations row.
+//   2. Call ensureLocationTimezone() with that key + the correct companyId → EasyTeam
+//      registers a new location under the company's org and returns a new internal UUID.
+//   3. The resolver (resolveCompanyLocationId / resolveEmployeeLocationId) now uses the
+//      new external key in JWTs, so future clock-ins land at the new (correct-org) location.
+//
+// ⚠ Impact on historical shifts: shifts recorded before the repair are stored at the old
+// EasyTeam location UUID (under ORG-BRIGHTBRIDGE).  They remain visible via per-location
+// filter but will NOT appear in "All Locations" until EasyTeam support migrates them.
+// For test companies this is acceptable; for production ask EasyTeam support first.
+router.post("/locations/:id/repair-easyteam", requireRole("super_admin", "owner"), async (req: Request, res: Response) => {
+  const caller = store.getUserById((req.session as { userId?: string }).userId ?? "");
+  if (!caller) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+  const id = String(req.params.id);
+
+  try {
+    const [loc] = await db.select().from(locationsTable).where(eq(locationsTable.id, id));
+    if (!loc) { res.status(404).json({ error: "Location not found" }); return; }
+
+    // Owners may only repair their own company's locations.
+    if (caller.role === "owner" && loc.companyId !== caller.companyId) {
+      res.status(403).json({ error: "Not authorized for this location" }); return;
+    }
+
+    // Generate a fresh external key — EasyTeam treats this as a brand-new location under
+    // whatever org the JWT specifies.
+    const newExternalKey = randomUUID();
+
+    // Persist the new external key immediately so any concurrent JWT signings pick it up.
+    await db.update(locationsTable)
+      .set({ easyteamExternalKey: newExternalKey })
+      .where(eq(locationsTable.id, id));
+
+    // Fetch state for timezone derivation.
+    const [company] = await db.select({ state: companiesTable.state })
+      .from(companiesTable)
+      .where(eq(companiesTable.id, loc.companyId));
+
+    // Re-register under the correct org.  rowId tells ensureLocationTimezone to use loc.id
+    // for the manager-user store lookup and the easyteam_location_id DB update.
+    const tzResult = await ensureLocationTimezone(newExternalKey, {
+      country: "US",
+      state: company?.state || loc.state || "NJ",
+      companyId: loc.companyId,
+      rowId: id,
+    });
+
+    // Best-effort: set up a time-off policy for the new location registration.
+    const polResult = await ensureTimeOffPolicy(newExternalKey, { companyId: loc.companyId, rowId: id });
+
+    req.log.info({
+      id, newExternalKey, companyId: loc.companyId,
+      tzOk: tzResult.ok, polOk: polResult.ok,
+    }, "POST /locations/repair-easyteam: complete");
+
+    res.json({
+      ok: tzResult.ok,
+      locationId: id,
+      newExternalKey,
+      tzDetail: tzResult.ok ? undefined : tzResult.detail,
+      polDetail: polResult.ok ? undefined : polResult.detail,
+      message: tzResult.ok
+        ? "Location re-registered under the correct EasyTeam org. Future clock-ins will appear in All Locations. Historical shifts require EasyTeam support to migrate."
+        : `Re-registration did not fully complete: ${tzResult.detail ?? "unknown"}`,
+    });
+  } catch (err) {
+    req.log.error({ err, id }, "POST /locations/repair-easyteam failed");
+    res.status(500).json({ error: "Repair failed" });
   }
 });
 
