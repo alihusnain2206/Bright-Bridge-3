@@ -171,14 +171,18 @@ router.post("/locations", requireRole("super_admin", "owner"), async (req: Reque
 
     // ── EasyTeam: configure the new location (best-effort) ────────────────────
     // EasyTeam auto-creates the location on first JWT exchange; these calls configure it.
+    // IMPORTANT: companyId MUST be passed so ensureLocationTimezone uses the company's own
+    // EasyTeam org (not the shared ORG-BRIGHTBRIDGE fallback).  Without it, new locations are
+    // registered under ORG-BRIGHTBRIDGE, making them invisible in the company's "All locations"
+    // aggregate view even though per-location selection still works.
     let easyteamWarning: string | null = null;
     try {
-      const tzResult = await ensureLocationTimezone(easyteamLocationId, { country: "US", state: body.state || "NJ" });
+      const tzResult = await ensureLocationTimezone(easyteamLocationId, { country: "US", state: body.state || "NJ", companyId });
       if (!tzResult.ok) easyteamWarning = `EasyTeam timezone: ${tzResult.detail ?? "failed"}`;
 
       // ensureTimeOffPolicy returns 404 on orgs that don't have the policy feature enabled.
       // This is a known permanent limitation — log it but never surface it to the owner.
-      const polResult = await ensureTimeOffPolicy(easyteamLocationId);
+      const polResult = await ensureTimeOffPolicy(easyteamLocationId, { companyId });
       if (!polResult.ok) {
         req.log.warn({ detail: polResult.detail, rowId }, "POST /locations: time-off policy setup skipped (non-fatal, not shown to user)");
       }
