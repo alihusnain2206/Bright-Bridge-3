@@ -1,0 +1,18 @@
+⚠️ AUDIT ONLY — no code changes.
+
+We've discovered EasyTeam has a full REST API we haven't been using (docs.easyteam.com — Organizations, Locations, Staff members, Timesheets, Breaks, Schedules, Time Off). Two endpoints look directly relevant to our current problems:
+
+POST /api/organizations/{organization_id}/locations — creates a location properly (name, address, externalId, lat/long, per-location geofence distances) instead of relying on EasyTeam's lazy auto-creation
+GET /api/organizations/{organization_id}/locations/{location_id}/timesheets — retrieves timesheets scoped to a specific location
+
+Report on our current implementation:
+
+Location creation: exactly how does a location come to exist in EasyTeam today? Trace the full path from our "Add Location" flow → what we call → whether we ever explicitly create it or rely on lazy creation via JWT exchange. Confirm we never call the documented POST endpoint.
+Timesheet retrieval: which EasyTeam endpoint(s) do we call to fetch shifts? Paste the exact URLs. Confirm whether we use the flat /embed/api/timesheets (org-wide) and whether we've ever used the per-location endpoint. Note: our testing showed the flat endpoint returns the same org-wide list regardless of which location's token we exchange — does the per-location endpoint documented above solve that?
+Read the docs for these and summarise request/response shape + auth for each (partner key vs session JWT — confirm which): Create a new location, Update a specific location, Delete a specific location, Retrieve timesheets for a specific location, Retrieve staff members for a specific location, Retrieve staff member locations, Update a specific staff member, Sync Locations, Synchronize staff members, Create Organization With Defaults.
+Assess two hypotheses:
+Would creating Amsterdam Avenue properly via the POST endpoint (rather than lazily) plausibly fix payableDuration = 0?
+Would the per-location timesheets endpoint fix the manager view showing 0m for secondary-location employees?
+Propose (do not implement) how our Add Location flow, employee location changes, and timesheet retrieval should use this API going forward — including whether existing lazily-created locations can be repaired via Update a specific location or need recreating.
+
+Findings only, no changes.
