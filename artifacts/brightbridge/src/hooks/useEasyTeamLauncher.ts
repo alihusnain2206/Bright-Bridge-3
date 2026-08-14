@@ -85,14 +85,16 @@ export function useEasyTeamLauncher(
     container.innerHTML = "";
 
     // Per EasyTeam guidance (Yaniv): pass ALL locations and ALL employees in every session.
-    // Each location's employees dict contains only the employees assigned to it (via locationEtId).
-    // Employees with no locationEtId (self/reviewer entries) appear in ALL location dicts.
-    // Role restriction lives in the JWT, not in a thinned payload.
+    // Each location's employees dict contains only the clock-in employees assigned to that location.
+    // Reviewer/owner entries (timeTrackingEnabled: false) must NOT appear in any location dict —
+    // they belong only in the flat sdkEmployees array. If a reviewer leaks into location dicts
+    // (because they have no locationEtId), EasyTeam anchors its "All locations" scope to the
+    // last location the reviewer appears in, causing every other location to show 0 hours.
     const resolvedLocations = config.locations.map((loc) => ({
       ...loc,
       employees: Object.fromEntries(
         config.employees
-          .filter(e => !e.locationEtId || e.locationEtId === loc.id)
+          .filter(e => e.timeTrackingEnabled !== false && (!e.locationEtId || e.locationEtId === loc.id))
           .map(e => [e.id, {}])
       ),
     }));
