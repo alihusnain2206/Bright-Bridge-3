@@ -51,6 +51,7 @@ function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalP
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
   const [position, setPosition] = useState(user.position);
+  const [role, setRole] = useState<"owner" | "manager">(user.role === "owner" ? "owner" : "manager");
   const [newPassword, setNewPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
@@ -72,6 +73,7 @@ function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalP
       if (name !== user.name) body.name = name;
       if (email !== user.email) body.email = email;
       if (position !== user.position) body.position = position;
+      if (role !== user.role) body.role = role;
       if (newPassword) body.password = newPassword;
       if (Object.keys(body).length === 0) { setSaved(true); onSaved(); return; }
       const res = await fetch(`/api/companies/${companyId}/users/${user.id}`, {
@@ -117,9 +119,17 @@ function CredentialModal({ user, companyId, onClose, onSaved }: CredentialModalP
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-gray-500">Role</Label>
-            <div className="flex items-center h-8 px-3 rounded-md border border-gray-200 bg-gray-50">
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#284362]/10 text-[#284362] capitalize">{user.role}</span>
-              <span className="ml-2 text-xs text-gray-400">Read-only</span>
+            <div className="flex gap-2">
+              {(["owner", "manager"] as const).map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setRole(r)}
+                  className={`flex-1 h-8 rounded-lg border text-xs font-medium transition-colors ${role === r ? "bg-[#284362] text-white border-[#284362]" : "bg-white text-gray-600 border-gray-200 hover:border-[#284362]/40"}`}
+                >
+                  {r.charAt(0).toUpperCase() + r.slice(1)}
+                </button>
+              ))}
             </div>
           </div>
           <div className="space-y-1">

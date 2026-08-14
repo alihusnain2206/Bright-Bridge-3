@@ -548,22 +548,24 @@ async function handleUpdateCompanyUser(req: Request, res: Response) {
   const caller = store.getUserById(req.session.userId);
   if (!caller || caller.role !== "super_admin") { res.status(403).json({ error: "Super admin only" }); return; }
   const userId = String(req.params.userId);
-  const { name, email, password, position } = req.body as { name?: string; email?: string; password?: string; position?: string };
+  const { name, email, password, position, role } = req.body as { name?: string; email?: string; password?: string; position?: string; role?: "owner" | "manager" };
 
   const updates: Record<string, string> = {};
   if (name)     updates.name = name;
   if (email)    updates.email = email;
   if (password) updates.password = password;
   if (position) updates.position = position;
+  if (role === "owner" || role === "manager") updates.role = role;
 
   if (Object.keys(updates).length === 0) { res.status(400).json({ error: "No fields to update" }); return; }
 
   try {
     store.updateTestUser(userId, updates as Parameters<typeof store.updateTestUser>[1]);
 
+    const resolvedRole = (role === "owner" || role === "manager") ? role : "manager";
     await db.insert(userAccounts).values({
       id: userId, name: name ?? "", email: email ?? "", password: password ?? "",
-      role: "manager", companyId: String(req.params.companyId), createdAt: new Date().toISOString(),
+      role: resolvedRole, companyId: String(req.params.companyId), createdAt: new Date().toISOString(),
       position: position ?? null,
     }).onConflictDoUpdate({
       target: userAccounts.id,
