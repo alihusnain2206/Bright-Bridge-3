@@ -531,14 +531,16 @@ router.post("/auth/create-manager", async (req, res) => {
     return;
   }
 
-  const { name, email, companyId, position, password } = req.body as {
+  const { name, email, companyId, position, password, role } = req.body as {
     name?: string; email?: string; companyId?: string; position?: string; password?: string;
+    role?: "owner" | "manager";
   };
 
   if (!name || !email || !companyId) {
     res.status(400).json({ error: "name, email, and companyId are required" });
     return;
   }
+  const resolvedRole: "owner" | "manager" = role === "manager" ? "manager" : "owner";
 
   const storeCompany = store.getCompany(companyId);
   if (!storeCompany) {
@@ -555,6 +557,7 @@ router.post("/auth/create-manager", async (req, res) => {
     position: position ?? "Daycare Manager",
     companyId,
     password,
+    role: resolvedRole,
   });
   const finalPassword = password ?? generatedPassword;
 

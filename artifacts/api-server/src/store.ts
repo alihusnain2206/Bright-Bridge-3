@@ -476,7 +476,7 @@ export const store = {
     const { password: _p, ...safe } = newUser;
     return safe;
   },
-  createManagerUser(data: { name: string; email: string; position: string; companyId: string; password?: string }): { user: Omit<TestUser, "password">; password: string } {
+  createManagerUser(data: { name: string; email: string; position: string; companyId: string; password?: string; role?: "owner" | "manager" }): { user: Omit<TestUser, "password">; password: string } {
     const id = `USER-DYN-${Date.now()}`;
     const employeeId = `MGR-${uid().toUpperCase()}`;
     const company = companies.find((c) => c.id === data.companyId);
@@ -487,7 +487,7 @@ export const store = {
       name: data.name,
       email: data.email,
       password,
-      role: "manager",
+      role: data.role ?? "owner",
       companyId: data.companyId,
       locationId,
       employeeId,

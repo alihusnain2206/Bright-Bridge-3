@@ -618,7 +618,7 @@ function OwnerAccessSection({ company }: { company: Company }) {
   const [showForm, setShowForm] = useState(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
-  const [newForm, setNewForm] = useState({ name: "", email: "", password: "" });
+  const [newForm, setNewForm] = useState({ name: "", email: "", password: "", role: "owner" as "owner" | "manager" });
   const [showPw, setShowPw] = useState(false);
 
   // Auto-generate a password whenever the creation form opens
@@ -656,13 +656,13 @@ function OwnerAccessSection({ company }: { company: Company }) {
       const res = await fetch("/api/auth/create-manager", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newForm.name, email: newForm.email, companyId: company.id, position: "Daycare Manager", password: newForm.password }),
+        body: JSON.stringify({ name: newForm.name, email: newForm.email, companyId: company.id, position: "Daycare Manager", password: newForm.password, role: newForm.role }),
       });
       const d = await res.json() as { name?: string; email?: string; password?: string; error?: string };
       if (!res.ok) throw new Error(d.error ?? "Failed to create login");
       setCreatedUser({ name: d.name ?? newForm.name, email: d.email ?? newForm.email, password: d.password ?? newForm.password });
       setShowForm(false);
-      setNewForm({ name: "", email: "", password: "" });
+      setNewForm({ name: "", email: "", password: "", role: "owner" });
       void refetch();
       void queryClient.invalidateQueries({ queryKey: ["/api/companies/users", company.id] });
     } catch (e) {
@@ -750,7 +750,7 @@ function OwnerAccessSection({ company }: { company: Company }) {
 
       {showForm && (
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-          <p className="text-sm font-semibold text-gray-800">Create Manager Login</p>
+          <p className="text-sm font-semibold text-gray-800">Create Login</p>
           {createError && (
             <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
               <AlertTriangle className="h-4 w-4 shrink-0" />{createError}
@@ -764,6 +764,21 @@ function OwnerAccessSection({ company }: { company: Company }) {
             <div className="space-y-1">
               <Label className="text-xs text-gray-500">Email (login)</Label>
               <Input value={newForm.email} onChange={(e) => setNewForm((f) => ({ ...f, email: e.target.value }))} className="h-8 text-sm" type="email" placeholder="jane@daycare.com" />
+            </div>
+            <div className="col-span-2 space-y-1">
+              <Label className="text-xs text-gray-500">Role</Label>
+              <div className="flex gap-2">
+                {(["owner", "manager"] as const).map((r) => (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => setNewForm((f) => ({ ...f, role: r }))}
+                    className={`flex-1 h-8 rounded-lg border text-xs font-medium transition-colors ${newForm.role === r ? "bg-[#284362] text-white border-[#284362]" : "bg-white text-gray-600 border-gray-200 hover:border-[#284362]/40"}`}
+                  >
+                    {r.charAt(0).toUpperCase() + r.slice(1)}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="col-span-2 space-y-1">
               <Label className="text-xs text-gray-500">Password <span className="text-gray-400 font-normal">(auto-generated)</span></Label>
@@ -781,7 +796,7 @@ function OwnerAccessSection({ company }: { company: Company }) {
             </div>
           </div>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setCreateError(""); }}>
+            <Button variant="outline" size="sm" onClick={() => { setShowForm(false); setCreateError(""); setNewForm({ name: "", email: "", password: "", role: "owner" }); }}>
               <X className="h-3.5 w-3.5 mr-1" />Cancel
             </Button>
             <Button size="sm" onClick={() => { void handleCreate(); }} disabled={creating} className="gap-1.5 text-white border-0" style={{ background: NAVY }}>
