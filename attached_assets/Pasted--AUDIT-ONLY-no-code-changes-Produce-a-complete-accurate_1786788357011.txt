@@ -1,0 +1,35 @@
+⚠️ AUDIT ONLY — no code changes. Produce a complete, accurate description of how our EasyTeam integration currently works, end to end. This will be sent to EasyTeam for validation, so it must reflect what the code actually does today (post all recent fixes), not what it was designed to do. Where behavior is uncertain or inconsistent, say so plainly.
+
+1. Organizations
+How is an EasyTeam organization created for a new company? Is it explicit or lazy (created on first token exchange)?
+What value do we send as organizationId, and where does it come from? Cover: wizard-created companies, legacy companies, and the platform's own HQ company.
+Which companies today are on their own org vs. the shared ORG-BRIGHTBRIDGE, and why?
+Do we ever create orgs unintentionally? (You previously found and closed two such paths — confirm they're closed.)
+2. Locations
+How does a location come to exist in EasyTeam — lazily via token exchange, or explicitly? Trace both the wizard path and the Settings "Add Location" path.
+What identifier do we send as the location's external key, and how does it relate to locations.id, easyteam_external_key, and easyteam_location_id? State the rule clearly.
+What do we set on a location after creation (timezone, country/state, coordinates, anything else), and what do we not set?
+How does a location get repaired/re-registered, and what does that leave behind on EasyTeam's side?
+3. Employees
+How does an employee come to exist in EasyTeam? What identifier do we send as employeeId?
+How is an employee associated with a location — via the token, via the payload's location→employees map, or both? What happens when their location changes?
+What do we do about employees who exist only by EasyTeam UUID (manually created on their side)?
+4. Sessions and tokens
+
+For each role (employee, manager, owner, super_admin), give the exact current JWT payload shape: organizationId, locationId (present or omitted), employeeId, accessRole, permissions, features (including location_picker). Explain the reasoning for each difference.
+
+5. Clock-in / clock-out flow
+
+Step by step: what happens from an employee opening the time clock to the shift existing in our database. Include which identifiers travel at each step and where the translation between our IDs and EasyTeam's internal UUIDs happens.
+
+6. Timesheet retrieval
+Which EasyTeam endpoint(s) do we call, with what auth, and how do we scope by location and date?
+How do we match returned shifts back to our employees and locations? What happens to shifts we can't match?
+Which parts of the timesheet UI come from EasyTeam's iframe vs. our own database?
+7. Known issues, workarounds, and open questions
+
+List honestly: anything we work around (e.g. payableDuration: 0 fallbacks), anything still inconsistent, any endpoint we suspect we're using in a non-intended way, and any question we'd want EasyTeam to confirm.
+
+Format
+
+Write it as a clear document suitable for sending to a vendor — structured, factual, no internal jargon without explanation. Flag every place where behavior is inferred rather than verified.
