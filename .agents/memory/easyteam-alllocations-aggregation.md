@@ -4,56 +4,50 @@ description: Root cause + code fix + repair-without-delete mechanism for locatio
 ---
 
 ## Root cause (confirmed Aug 2026)
-`POST /api/locations` called `ensureLocationTimezone(easyteamLocationId, { country, state })` — NO `companyId`. Inside `ensureLocationTimezone`, `resolveEasyTeamOrgId(undefined)` falls back to `"ORG-BRIGHTBRIDGE"`. So the JWT exchanged with EasyTeam had `organizationId: "ORG-BRIGHTBRIDGE"`, registering the new location under the shared org instead of the company's dedicated org.
+Two separate mechanisms can misfile a location under ORG-BRIGHTBRIDGE:
 
-Result: employees at a secondary location clock in correctly (EasyTeam resolves the external key globally), but the location *belongs* to ORG-BRIGHTBRIDGE. When the owner's timesheet JWT uses `organizationId: "ORG-MSSNEMFA-3WATY2"`, "All locations" only returns locations owned by that org — not Harbor Street — so those employees show 0m.
+**A) `POST /api/locations` (Settings dashboard, pre-fix):** called `ensureLocationTimezone(rowId, { country, state })` with no `companyId`. `resolveEasyTeamOrgId(undefined) → "ORG-BRIGHTBRIDGE"`. Location registered under the shared org immediately on creation. Fixed by passing `companyId` to the call.
+
+**B) `PUT /api/locations` (first edit/activation of a wizard-created location, pre-fix):** called `ensureLocationTimezone(loc.easyteamLocationId, ...)` without `companyId` AND used the stored `easyteam_location_id` internal UUID as the external key (double bug). For wizard-created locations, `easyteam_location_id` starts as the Rollfi-assigned location UUID. On first PUT, it gets registered under ORG-BRIGHTBRIDGE. Fixed by passing `companyId: loc.companyId` and using `easyteamExternalKey ?? loc.id` as external key.
+
+**Harbor Street (Harborview's wizard-created location) was affected by mechanism B, not A.**
+
+## EasyTeam org UUIDs (confirmed from production boot logs, Aug 2026)
+- `c280023c-02e8-4025-8775-b96ca01fd451` = ORG-BRIGHTBRIDGE's internal EasyTeam org UUID
+- `e22e33a0-fe40-466b-a5aa-f801eadc308b` = Harborview (ORG-MSSNEMFA-3WATY2)'s internal EasyTeam org UUID
+- `a9bf558c-4968-4279-bb83-adefb4dee9de` = ORG-SUNSHINE's internal EasyTeam org UUID (appears in time-off 404 logs)
+
+Harbor Street (`FD490CFC-…`, `73a65890-…`) was correctly re-registered under `e22e33a0-…` (Harborview's own org) at the first production restart that included the boot sync fix. The boot sync runs 5s after startup for ALL active locations using companyId from a JOIN.
 
 ## Code fix (applied Aug 2026)
-`artifacts/api-server/src/routes/locations.ts` `POST /api/locations`:
-```js
-// Fixed: pass companyId to both calls
-await ensureLocationTimezone(easyteamLocationId, { country: "US", state, companyId });
-await ensureTimeOffPolicy(easyteamLocationId, { companyId });
-```
-The boot sync already correctly passed `companyId`.
+All call sites for `ensureLocationTimezone` and `ensureTimeOffPolicy` now pass `companyId`:
 
-## Repair-without-delete mechanism (Aug 2026)
+| File | Context | Status |
+|------|---------|--------|
+| `routes/locations.ts` POST /api/locations | Creation | ✓ Fixed |
+| `routes/locations.ts` PUT /api/locations (activation) | ensureLocationTimezone + ensureTimeOffPolicy | ✓ Fixed |
+| `routes/locations.ts` PUT /api/locations (state change) | ensureLocationTimezone | ✓ Fixed |
+| `routes/locations.ts` POST /api/locations/:id/repair-easyteam | Both | ✓ Correct |
+| `routes/easyteam.ts` Boot 5s sync setTimeout | Both, via JOIN | ✓ Fixed |
+| `routes/easyteam.ts` POST /api/easyteam/admin/patch-location-timezone | ensureLocationTimezone | ✓ Fixed (Aug 2026) |
 
-### New column: `locations.easyteam_external_key` (TEXT, nullable)
-- Mutable external key used in JWT `locationId` claims.
-- NULL = created before the fix; resolver falls back to `locations.id` (existing behavior).
-- POST /api/locations now sets it to `rowId` explicitly on insert.
-- Repair endpoint sets it to a fresh UUID.
+Zero call sites without companyId remain.
 
-### Where external key is resolved
-- `resolveCompanyLocationId` → returns `easyteamExternalKey ?? locations.id`
-- `resolveEmployeeLocationId` → JOINs to locations, returns `easyteamExternalKey ?? employees.locationId`
-- Boot sync → selects `easyteamExternalKey`, calls `ensureLocationTimezone(etKey, { rowId: locationId })`
+## `easyteam_external_key` column + repair mechanism
+Added `locations.easyteam_external_key` (TEXT, nullable). Repair endpoint generates fresh UUID, updates DB, re-registers under correct org. External key rule:
+- JWT `locationId` = `easyteamExternalKey ?? locations.id`
+- Boot sync uses same rule, passes `rowId: locations.id` for DB WHERE clause
+- Old rows have NULL → fall back to `locations.id` (the stable external key)
 
-### `rowId` parameter added to `ensureLocationTimezone` and `ensureTimeOffPolicy`
-When `locationId` is a fresh UUID (post-repair), `opts.rowId` is the DB PK — used for:
-- Store manager-user lookup (store has `locationId = locations.id`)
-- DB UPDATE WHERE clause (to persist the new EasyTeam internal UUID)
+The boot sync makes the repair endpoint redundant for locations that were active at the last server restart. The repair button remains useful for:
+- Locations where the boot sync timed out
+- Explicit confirmation that registration is under the correct org
 
-### Repair endpoint
-```
-POST /api/locations/:id/repair-easyteam  (owner or super_admin)
-```
-1. Generates `newExternalKey = randomUUID()`
-2. Updates DB: `easyteam_external_key = newExternalKey`
-3. Calls `ensureLocationTimezone(newExternalKey, { companyId, rowId: id })` → registers under correct org
-4. Returns `{ ok, newExternalKey, message }`
+## Repair button trigger condition
+Shows when `easyteamExternalKey === null` (pre-fix rows). We cannot confirm from our own data alone whether a location is actually misfiled — that requires querying EasyTeam. Modal is honest about this uncertainty. The repair is safe but historical "All Locations" shifts will not retroactively appear.
 
-### Frontend repair button
-Shown on location cards in Company Settings → Locations when `easyteamExternalKey === null` (i.e., old location created before the fix). Amber "Fix EasyTeam" button opens a confirmation modal with a shift-history warning.
+## ⚠ Repair impact on historical shifts
+Clock-in records before a repair (or before the first correct-org boot sync) are stored at the old EasyTeam location UUID. They remain visible via per-location filter but NOT in "All Locations" until the time-tracking provider migrates them.
 
-## ⚠ Impact on historical shifts
-Shifts recorded before repair are stored at the old EasyTeam location UUID (under ORG-BRIGHTBRIDGE). They remain visible via per-location filter but NOT in "All Locations" until EasyTeam support migrates them. The modal warns the owner about this. For test companies (Harborview), running repair immediately is safe. For production companies (Sunshine/Amsterdam Avenue), request EasyTeam shift migration first.
-
-## Affected production companies
-- **Harborview Test Daycare**: Harbor Street (FD490CFC-…) — registered under ORG-BRIGHTBRIDGE, should be ORG-MSSNEMFA-3WATY2
-- **Sunshine Daycare / Amsterdam Avenue**: same root cause (secondary location created from settings before the fix)
-- Any other company with a secondary location created from Company Settings before this deployment
-
-## Why per-location filter worked but "All Locations" didn't
-EasyTeam resolves the clock-in location external key globally — clock-ins succeed and the shift is stored at the EasyTeam UUID under ORG-BRIGHTBRIDGE. Selecting a specific location in the SDK queries that UUID directly (bypasses org filter) → shows hours correctly. "All locations" makes an org-scoped query → only finds locations *owned* by the company's org → broken locations excluded → 0m.
+## Per-location filter works but All Locations shows 0m
+Mechanism: the per-location filter uses `easyteam_location_id` (internal UUID) directly in the SDK location payload. EasyTeam returns shifts for that specific UUID regardless of org boundary. "All Locations" queries via the company's org JWT, which only returns shifts for locations belonging to that org. Cross-org location UUIDs are excluded.

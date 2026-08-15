@@ -2426,7 +2426,7 @@ router.post("/easyteam/admin/patch-location-timezone", requireRole("super_admin"
   const locationId = await resolveCompanyLocationId(companyId);
   if (!locationId) { res.status(404).json({ error: "Could not resolve locationId for company" }); return; }
 
-  const result = await ensureLocationTimezone(locationId, { country, state });
+  const result = await ensureLocationTimezone(locationId, { country, state, companyId });
   res.json({ companyId, locationId, country, state, ...result });
 });
 

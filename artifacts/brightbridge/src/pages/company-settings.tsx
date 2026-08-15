@@ -1077,15 +1077,16 @@ function LocationsTab({ companyId }: { companyId: string }) {
                       >
                         <Pencil className="h-3.5 w-3.5" /> Edit
                       </button>
-                      {/* Repair button — shown when easyteamExternalKey is null (location was
-                          created before the org-registration fix and may be under wrong org) */}
+                      {/* Repair button — shown when easyteamExternalKey is null, meaning the location
+                          was created before the registration fix. We cannot confirm from our data alone
+                          whether it's actually misfiled, but the repair is safe to run. */}
                       {loc.easyteamExternalKey === null && (
                         <button
                           className={`${btnCls} border border-amber-200 text-amber-700 hover:bg-amber-50`}
-                          title="This location may be registered under the wrong time-tracking org. Click to re-register it."
+                          title="This location was created before a time-tracking fix. Re-registering is safe and may restore All Locations hours."
                           onClick={() => { setRepairing(loc); setError(null); setRepairResult(null); }}
                         >
-                          <RefreshCw className="h-3.5 w-3.5" /> Fix EasyTeam
+                          <RefreshCw className="h-3.5 w-3.5" /> Re-register
                         </button>
                       )}
                       {loc.isActive && !loc.isPrimary && (
@@ -1145,6 +1146,32 @@ function LocationsTab({ companyId }: { companyId: string }) {
                 <p className="text-xs text-gray-500">{repairing.code} — {repairing.name}</p>
               </div>
             </div>
+
+            {/* ── What this does ── */}
+            {!repairResult && (
+              <div className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2 space-y-1">
+                <p className="font-medium">What we know</p>
+                <p>
+                  <strong>{repairing.name}</strong> was created before a time-tracking fix.
+                  Locations in that state <em>may</em> be registered under the wrong account,
+                  which causes their employees to show 0 min in the All Locations view even
+                  though per-location hours look correct.
+                </p>
+                <p className="font-medium mt-1">What we don't know</p>
+                <p>
+                  We can't confirm from our own data whether this location is actually misfiled —
+                  that would require querying the time-tracking provider directly.
+                </p>
+                <p className="font-medium mt-1">Is it safe to run?</p>
+                <p>
+                  Yes. Re-registering generates a fresh ID for this location under your company's account.
+                  Future clock-ins will appear in All Locations. However, <strong>historical shifts recorded
+                  before the repair will no longer appear in All Locations</strong> — they remain visible
+                  when you filter to this specific location. If that history matters, ask your time-tracking
+                  provider to migrate the old shifts before proceeding.
+                </p>
+              </div>
+            )}
 
             {repairResult ? (
               <>
