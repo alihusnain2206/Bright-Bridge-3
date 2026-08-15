@@ -361,32 +361,52 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
     // it is the locations.id PK — the same value ensureLocationTimezone sends at boot.
     // This ensures secondary-location employees (e.g. Amsterdam Ave) have their shifts recorded
     // at their own location, not silently at the company's primary location.
-    const empLocId = await resolveEmployeeLocationId(employee_id);
-    if (empLocId) resolvedLocationId = empLocId;
+    //
+    // Location pinning rule:
+    //   • employee access role + non-super_admin caller → pin to employee's location (clock-in)
+    //   • super_admin caller OR manager/owner access role → do NOT pin; keep company-level
+    //     locationId from client_id (or omit below for super_admin who needs org-wide scope)
+    if (resolvedAccessRole === "employee" && tokenCaller?.role !== "super_admin") {
+      const empLocId = await resolveEmployeeLocationId(employee_id);
+      if (empLocId) resolvedLocationId = empLocId;
+    }
   }
 
-  // Scope permissions by role — LOCATION_ADMIN / ORGANIZATION_ADMIN grant org-wide switching
-  // in the EasyTeam UI and must not be issued to employees or managers.
+  // When the session caller is super_admin, they need org-wide timesheet access — same as
+  // the super_admin block in token-by-role.  ORGANIZATION_ADMIN is required, AND locationId
+  // must be omitted (EasyTeam scopes by locationId even when ORGANIZATION_ADMIN is present).
+  // Permissions and location both track the SESSION CALLER, not the selected employee.
+  const isSuperAdminCaller = tokenCaller?.role === "super_admin";
   const tokenPermissions =
-    resolvedAccessRole === "employee"
-      ? ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE"]
-      : resolvedAccessRole === "manager"
-        ? ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE"]
-        : [
-            // admin / super_admin only
-            "LOCATION_READ", "LOCATION_ADMIN",
-            "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
-            "SCHEDULE_READ", "SCHEDULE_WRITE",
-            "ORGANIZATION_ADMIN",
-          ];
+    isSuperAdminCaller
+      ? [
+          "ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ",
+          "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+          "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE",
+        ]
+      : resolvedAccessRole === "employee"
+        ? ["LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE"]
+        : resolvedAccessRole === "manager"
+          ? ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE"]
+          : [
+              // explicit admin / super_admin access_role
+              "ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ",
+              "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE",
+              "SCHEDULE_READ", "SCHEDULE_WRITE",
+            ];
 
-  const payload = {
+  // For super_admin callers, omit locationId entirely so EasyTeam returns org-wide data.
+  // For all others, keep the location resolved above (company-level or employee-specific).
+  const payloadLocationId = isSuperAdminCaller ? undefined : resolvedLocationId;
+
+  const payload: Record<string, unknown> = {
     employeeId: resolvedEtEmployeeId,
-    locationId: resolvedLocationId,
+    ...(payloadLocationId ? { locationId: payloadLocationId } : {}),
     organizationId: resolvedOrgId,
     ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
     accessRole: {
-      name: resolvedAccessRole,
+      // EasyTeam ignores ORGANIZATION_ADMIN on "manager"-role tokens — must be "admin".
+      name: isSuperAdminCaller ? "admin" : resolvedAccessRole,
       permissions: tokenPermissions,
     },
     role: {
@@ -421,8 +441,8 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
   // The EasyTeam iframe SPA reads this from the URL query string (?token=...)
   // and performs the exchange with EasyTeam's /api/auth/exchangeToken itself.
   // Do NOT pre-exchange here — the iframe rejects already-exchanged tokens (400 Bad token).
-  req.log.info({ employeeId: employee_id, clientId: client_id }, "EasyTeam raw JWT generated");
-  res.json({ success: true, token: signedJwt });
+  req.log.info({ employeeId: employee_id, clientId: client_id, isSuperAdminCaller, resolvedAccessRole, hasLocation: !!payloadLocationId }, "EasyTeam raw JWT generated");
+  res.json({ success: true, token: signedJwt, decoded: payload });
 });
 
 router.get("/easyteam/timesheets", requireRole("super_admin", "owner", "manager"), (_req, res) => {

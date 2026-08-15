@@ -440,13 +440,18 @@ router.post("/auth/token-by-role", async (req, res) => {
     // all locations/employees in the timesheets summary.  Adding locationId scopes the
     // iframe to that specific location; if the value is our internal string (e.g.
     // "LOC-SUNSHINE") rather than EasyTeam's UUID it silently filters all shifts to 0m.
+    //
+    // accessRole.name MUST be "admin" when ORGANIZATION_ADMIN is in the permission list —
+    // EasyTeam ignores ORGANIZATION_ADMIN on "manager"-role tokens.  Without it the timesheet
+    // view is silently scoped to whichever location the session anchor resolves to, making
+    // secondary-location employees invisible in the "All locations" aggregate.
     payload = {
       employeeId: user.employeeId,
       organizationId: await resolveEasyTeamOrgId(user.companyId),
       ...(EASYTEAM_PARTNER_ID ? { partnerId: EASYTEAM_PARTNER_ID } : {}),
       accessRole: {
-        name: "manager",
-        permissions: ["LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE"],
+        name: "admin",
+        permissions: ["ORGANIZATION_ADMIN", "LOCATION_ADMIN", "LOCATION_READ", "SHIFT_READ", "SHIFT_WRITE", "SHIFT_ADD", "SHIFT_UPDATE", "SCHEDULE_READ", "SCHEDULE_WRITE", "TIMESHEET_READ", "TIMESHEET_WRITE"],
       },
       role: { name: user.position, hourlyWage: wageCents / 100 },
       wage: wageCents / 100,
