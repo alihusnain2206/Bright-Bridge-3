@@ -55,9 +55,24 @@ export default function TimeClock() {
     const client = clientsData?.clients.find((c) => c.id === cId);
     const emp = empList.find((e) => e.id === eId) ?? empList[0];
     try {
-      const data = await generateToken.mutateAsync({
-        data: { employee_id: eId || (empList[0]?.id ?? ""), client_id: cId, role_name: emp?.roleName, access_role: emp?.role },
-      });
+      // Fetch the EasyTeam JWT and all active locations in parallel.
+      // EasyTeam confirmed: SDK surfaces must receive our own external IDs.
+      // We use easyteamExternalKey ?? id so the SDK location id matches the JWT
+      // locationId — both resolve from the same column via resolveEmployeeLocationId.
+      type LocRow = { id: string; name: string; latitude: number | null; longitude: number | null; isActive?: boolean | null; easyteamExternalKey?: string | null };
+      const [data, locsRes] = await Promise.all([
+        generateToken.mutateAsync({
+          data: { employee_id: eId || (empList[0]?.id ?? ""), client_id: cId, role_name: emp?.roleName, access_role: emp?.role },
+        }),
+        fetch(`/api/locations?companyId=${encodeURIComponent(cId)}`, { credentials: "include" }),
+      ]);
+      const locsData = locsRes.ok ? await locsRes.json() as { locations?: LocRow[] } : { locations: [] as LocRow[] };
+      const activeLocs = (locsData.locations ?? []).filter(l => l.isActive !== false);
+      // Build SDK locations using external keys. Fall back to the legacy client.locationId only
+      // when the DB returns no active rows (e.g. seeded single-location company without a row).
+      const sdkLocations = activeLocs.length > 0
+        ? activeLocs.map(l => ({ id: l.easyteamExternalKey ?? l.id, name: l.name, latitude: l.latitude ?? 0, longitude: l.longitude ?? 0 }))
+        : [{ id: client?.locationId ?? cId, name: client?.locationName ?? "Location", latitude: client?.latitude ?? 0, longitude: client?.longitude ?? 0 }];
       if (data.success && data.token) {
         if (!client) {
           setError("Client not found — please select a valid daycare from the dropdown.");
@@ -66,7 +81,7 @@ export default function TimeClock() {
         launch(data.token, {
           page: Pages.TIME_CLOCK,
           organization: resolveEasyTeamOrg(cId, client.locationName, client.easyteamOrgId),
-          locations: [{ id: client.locationId ?? client.id, name: client.locationName, latitude: client.latitude, longitude: client.longitude }],
+          locations: sdkLocations,
           employees: empList.map((e) => ({ id: e.id, name: e.name, role: e.roleName ?? e.role, timeTrackingEnabled: true })),
         });
         setAccessToken(data.token);

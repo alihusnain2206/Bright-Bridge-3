@@ -32,3 +32,4 @@
 - [EasyTeam location UUID resolution](easyteam-location-uuid-resolution.md) — boot token-exchange resolves real UUID; two pitfalls: persist WHERE clause + sync guard pre-seed from DB
 - [EasyTeam JWT external key rule](easyteam-jwt-external-key-rule.md) — JWT locationId = locations.id ONLY; easyteam_location_id in JWTs creates phantom locations; full fix + phantom list inside
 - [EasyTeam "All locations" aggregation rule](easyteam-alllocations-aggregation.md) — timesheet view must NOT use locationEtId (all employees in all dicts); time clock MUST use it (routing); reviewer selfEntry excluded from all dicts
+- [EasyTeam SDK external key rule](easyteam-sdk-external-key-rule.md) — all SDK surfaces must use easyteamExternalKey ?? locations.id; never easyteamLocationId; web timeclock root cause + fix documented

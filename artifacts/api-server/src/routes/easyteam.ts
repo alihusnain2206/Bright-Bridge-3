@@ -180,21 +180,25 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
   if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
-    // 1. All active locations — use easyteamLocationId as the canonical SDK id.
+    // 1. All active locations — use easyteamExternalKey ?? locations.id as the canonical SDK id.
+    //    EasyTeam confirmed: SDK surfaces must receive our own external IDs throughout.
+    //    easyteamLocationId (internal UUID) stays in the select for guard matching only.
     const locationRows = await db
       .select({
-        id:                 locationsTable.id,
-        easyteamLocationId: locationsTable.easyteamLocationId,
-        name:               locationsTable.name,
-        latitude:           locationsTable.latitude,
-        longitude:          locationsTable.longitude,
+        id:                  locationsTable.id,
+        easyteamLocationId:  locationsTable.easyteamLocationId,
+        easyteamExternalKey: locationsTable.easyteamExternalKey,
+        name:                locationsTable.name,
+        latitude:            locationsTable.latitude,
+        longitude:           locationsTable.longitude,
       })
       .from(locationsTable)
       .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)));
 
-    // Map: our internal location.id → easyteamLocationId (for resolving employee.locationId)
+    // Map: our internal location.id → easyteamExternalKey ?? locations.id (external key rule).
+    // Used to resolve each employee's DB locationId FK → the SDK-facing locationEtId routing key.
     const locEtIdMap = new Map<string, string>(
-      locationRows.map(l => [l.id, l.easyteamLocationId ?? l.id])
+      locationRows.map(l => [l.id, l.easyteamExternalKey ?? l.id])
     );
 
     // 2. All employees — NO role-based location filter here.
@@ -249,7 +253,7 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
     });
 
     const locations = locationRows.map(l => ({
-      id:        l.easyteamLocationId ?? l.id,
+      id:        l.easyteamExternalKey ?? l.id,
       name:      l.name,
       latitude:  l.latitude  ?? 0,
       longitude: l.longitude ?? 0,
@@ -419,7 +423,9 @@ router.post("/easyteam/token", requireAuth, async (req, res) => {
       geolocation: false,
       shiftNotes: true,
       timesheet_badges: true,
-      location_picker: true,
+      // Employees must not override their assigned location at clock-in.
+      // Managers and admins retain the picker to view/switch between locations.
+      location_picker: resolvedAccessRole !== "employee",
       timesheets_wages: true,
     },
   };

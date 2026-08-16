@@ -101,10 +101,9 @@ export default function EmployeeDashboard() {
     try {
       const companyId = encodeURIComponent(user.companyId ?? "");
       // Fetch token and all company locations in parallel.
-      // /api/locations returns rows with internal IDs (locations.id) — these are the
-      // same "external keys" /auth/token-by-role puts in JWT locationId (External Key Rule).
-      // Using them here ensures the clock-in post carries the same ID the JWT is scoped to,
-      // so EasyTeam records the shift at the correct location.
+      // EasyTeam confirmed: SDK surfaces must receive our own external IDs throughout.
+      // We use easyteamExternalKey ?? id as the SDK location id so it matches the JWT
+      // locationId (resolveEmployeeLocationId returns the same value for a given location).
       const [res, locsRes] = await Promise.all([
         fetch("/api/auth/token-by-role", {
           method: "POST", credentials: "include",
@@ -120,7 +119,7 @@ export default function EmployeeDashboard() {
       // Build locations list from DB — prefer it over COMPANY_LOCATIONS / authLoc so that
       // multi-location companies (wizard-created) pass ALL locations to the SDK.
       // Filtering isActive guards against deleted locations returned by the endpoint.
-      type LocRow = { id: string; name: string; latitude: number | null; longitude: number | null; isActive?: boolean | null };
+      type LocRow = { id: string; name: string; latitude: number | null; longitude: number | null; isActive?: boolean | null; easyteamExternalKey?: string | null };
       const locsData = locsRes.ok
         ? await locsRes.json() as { locations?: LocRow[] }
         : { locations: [] as LocRow[] };
@@ -130,17 +129,20 @@ export default function EmployeeDashboard() {
         ? [{ id: location.id, name: location.name, latitude: location.latitude, longitude: location.longitude }]
         : [{ id: "LOC-SUNSHINE", name: "Sunshine Daycare Centre", latitude: 40.7357, longitude: -74.1724 }];
       const myLocations = activeLocs.length > 0
-        ? activeLocs.map(l => ({ id: l.id, name: l.name, latitude: l.latitude ?? 0, longitude: l.longitude ?? 0 }))
+        ? activeLocs.map(l => ({ id: l.easyteamExternalKey ?? l.id, name: l.name, latitude: l.latitude ?? 0, longitude: l.longitude ?? 0 }))
         : (COMPANY_LOCATIONS[user.companyId ?? ""] ?? authLoc);
 
       // locationEtId scopes this employee to their own location's dict.
       // Without it the filter `!e.locationEtId` = true, placing them in EVERY location dict.
       // EasyTeam then picks the first match — typically the primary location — and records
       // the clock-in there, causing all secondary-location employees to show 0h.
+      // Derive the external key from activeLocs so locationEtId matches locations[].id exactly.
       const myEmployees = user.employeeId ? [{
         id: user.employeeId, name: user.name, role: "employee",
         timeTrackingEnabled: true, wage: user.hourlyWage ?? 1500, wageType: "hourly" as const,
-        ...(user.locationId ? { locationEtId: user.locationId } : {}),
+        ...(user.locationId ? {
+          locationEtId: activeLocs.find(l => l.id === user.locationId)?.easyteamExternalKey ?? user.locationId,
+        } : {}),
       }] : [];
 
       launch(data.token, {
