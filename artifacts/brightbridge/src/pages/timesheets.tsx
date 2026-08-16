@@ -357,9 +357,9 @@ export default function Timesheets() {
         locations?: Array<{ id: string; name: string; latitude: number; longitude: number }>;
         employees?: Array<{ id: string; name: string; role: string; wage: number; wageType: string; locationEtId?: string }>;
       };
-      // id is already the easyteamUuid (resolved server-side); locationEtId is the easyteam
-      // location ID of the employee's assigned location (used by the launcher to build
-      // per-location employee dicts, then stripped before passing to the EasyTeam SDK).
+      // id is the external key (easyteamExternalKey ?? locations.id, resolved server-side);
+      // locationEtId is the external key of the employee's assigned location (used by the
+      // launcher to build per-location employee dicts, then stripped before passing to the SDK).
       const apiEmployees = (sdkData.employees ?? []).map(e => ({
         id: e.id,
         name: e.name,
@@ -401,7 +401,7 @@ export default function Timesheets() {
         ? [selfEntry, ...apiEmployees]
         : apiEmployees;
 
-      // Use locations from sdk-payload (all active locations, easyteamLocationId as id).
+      // Use locations from sdk-payload (all active locations, easyteamExternalKey as id).
       // Fall back to COMPANY_LOCATIONS only if the endpoint returns nothing (e.g. DB down).
       const locations = (sdkData.locations ?? []).length > 0
         ? (sdkData.locations ?? [])
