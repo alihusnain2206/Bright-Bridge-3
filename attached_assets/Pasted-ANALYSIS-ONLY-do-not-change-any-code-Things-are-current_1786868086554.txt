@@ -1,0 +1,29 @@
+ANALYSIS ONLY — do not change any code. Things are currently working and I don't want to disturb them until we've decided together.
+
+EasyTeam support has answered our integration questions. Here are their responses verbatim:
+
+When you work with our ui components, all the ids supplied by you should be "external ids" (your own ids). When you work with the API, in most of the endpoints we support using external ids (for employees/locations) but the safe side is using easyteam ids.
+Regarding the access roles, the name of the access role doesn't have a meaning by itself, only the permission list defines what the user is allowed to do. My guess is that after creating a role you changed the permission list on your side, but the system won't lazy auto-change the permission list. In this case you need to use the API: https://docs.easyteam.com/update-access-role-12589722e0
+Intended, you should use it with filters of locations/employees/dates to get specific data. It respects the user permission.
+On a specific shift the payableDuration is milliseconds, in totals we use minutes.
+time-off-policies endpoint — you use the wrong path as I mentioned in the other thread.
+A new token exchange assigns the employee to the new location automatically. It doesn't remove him from the other location.
+Yes [lazy creation is fine]. If you think that during usage it's too late, you can always use the API to create them in advance.
+
+For each point, report:
+
+What it means for our current implementation — are we doing it wrong, right, or right-by-accident?
+What would need to change, and how big/risky each change is
+Whether it's safe to leave as-is — several of these we may deliberately not act on
+
+Pay particular attention to:
+
+Point 1 vs §7.11 — our SDK locations[].id sends EasyTeam's internal UUID, not our external key. Their answer says UI components should receive our own IDs. What exactly would change, and what's the risk of changing it given the current working state? Would the per-location employee dictionaries need to change too?
+
+Point 2 — this contradicts our empirical finding that accessRole.name mattered. Their explanation is that role permissions are frozen at creation and require an explicit API call to update. Assess: does this mean our current owner fix works for a different reason than we assumed? Have we ever created access roles explicitly, or have they all been created implicitly by token exchange? If we ever need to change a role's permissions, is the update-access-role API the only path?
+
+Point 6 — assignments accumulate and are never removed. Note that this is desirable for employees who genuinely work across multiple sites (a real requirement for us), but problematic for permanent transfers, where the employee retains their old location and would be offered it in the clock-in picker. Our data model currently allows only one location per employee. Report what this implies, and whether there's any API in their docs to remove an assignment.
+
+Recommend a priority order — what's worth doing, what's worth deferring, and what's worth leaving alone entirely. Assume our bias is strongly toward stability right now.
+
+Analysis only. No code changes.
