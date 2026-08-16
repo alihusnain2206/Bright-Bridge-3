@@ -180,26 +180,21 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
   if (!assertCompanyAccess(req, res, companyId)) return;
 
   try {
-    // 1. All active locations — use easyteamExternalKey as the SDK id (EasyTeam confirmed:
-    // UI components must receive our own external IDs, not EasyTeam's internal UUIDs).
-    // easyteamExternalKey is set to locations.id at creation and is the same value used in
-    // JWT locationId claims, ensuring consistency between clock-in tokens and the SDK payload.
-    // easyteam_location_id (internal UUID) is retained for REST URL paths and shift matching only.
+    // 1. All active locations — use easyteamLocationId as the canonical SDK id.
     const locationRows = await db
       .select({
-        id:                  locationsTable.id,
-        easyteamExternalKey: locationsTable.easyteamExternalKey,
-        name:                locationsTable.name,
-        latitude:            locationsTable.latitude,
-        longitude:           locationsTable.longitude,
+        id:                 locationsTable.id,
+        easyteamLocationId: locationsTable.easyteamLocationId,
+        name:               locationsTable.name,
+        latitude:           locationsTable.latitude,
+        longitude:          locationsTable.longitude,
       })
       .from(locationsTable)
       .where(and(eq(locationsTable.companyId, companyId), eq(locationsTable.isActive, true)));
 
-    // Map: our internal location.id → external key (for resolving employee locationEtId).
-    // Both locations[].id and employee locationEtId use this map, keeping them consistent.
+    // Map: our internal location.id → easyteamLocationId (for resolving employee.locationId)
     const locEtIdMap = new Map<string, string>(
-      locationRows.map(l => [l.id, l.easyteamExternalKey ?? l.id])
+      locationRows.map(l => [l.id, l.easyteamLocationId ?? l.id])
     );
 
     // 2. All employees — NO role-based location filter here.
@@ -254,7 +249,7 @@ router.get("/easyteam/sdk-payload", requireRole("super_admin", "owner", "manager
     });
 
     const locations = locationRows.map(l => ({
-      id:        l.easyteamExternalKey ?? l.id,
+      id:        l.easyteamLocationId ?? l.id,
       name:      l.name,
       latitude:  l.latitude  ?? 0,
       longitude: l.longitude ?? 0,
