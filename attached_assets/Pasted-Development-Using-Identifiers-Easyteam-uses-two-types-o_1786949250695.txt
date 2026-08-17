@@ -1,0 +1,37 @@
+Development
+Using Identifiers
+Easyteam uses two types of identifiers for each record in the system. Understanding how and when to use each type of identifier is crucial for successful integration and support.
+Easyteam Internal IDs
+The internal ID is Easyteam's unique identifier for each record. It's automatically generated and follows a consistent GUID format across all Easyteam systems. For example dd1c8ac6-4ca2-436a-ba87-b1df00f84c17.
+External IDs
+The external ID is your organization's identifier for the record. You assign this ID, and it typically matches the ID used in your own systems. For example, if your HR system uses EMP123 or 100005 as an employee's identifier, you would set this as their external ID in Easyteam.
+When to Use Each ID Type
+When integrating with Easyteam components and APIs, always use your external IDs. This ensures consistency between your systems and simplifies data mapping. For example, when creating a new timesheet via the API, you would reference the employee using your external ID:
+POST /api/v1/timesheets
+{
+    "employee_id": "EMP123",
+    "start_date": "2024-01-01",
+    "end_date": "2024-01-07"
+}
+When interacting with Easyteam support, include both the internal and external IDs if you know both. This helps our support team quickly locate and verify the exact records you're referring to, while clarifying some rare cases of data mismatch.
+ID Usage in Webhooks
+Easyteam webhook notifications include your 'external' ID types to facilitate seamless integration. Here's an example payload for an export:
+{
+  "event_type": 'export',
+  "data": {
+    "type": "employees-list" | "employee",
+    "organizationId": "<Your-MERCHANT-ID>",
+    "requestedBy": "<Your-Internal-Employee-ID>",
+    "startDate": "2024-04-01T00:00:00Z",
+    "endDate": "2024-05-30T00:00:00Z",
+    "locations": [ "<Your-MERCHANT-ID>", .. ],
+    "employees": [ "<Your-Employee-ID>", .. ],
+    "roles": [ "role1", "role2", .. ],
+    "url": "<url of a json-file>"
+  }
+}
+Best Practices for Identifier Management
+Always Map External IDs: Ensure external IDs in Easyteam match those in your own data management systems for seamless data exchange.
+Consistent IDs: Keep IDs consistent and do not change the IDs for objects without notice.
+Validate Data Consistency: Talk to your account manager to establish a validation pipeline for IDs for both sides.
+Getting Help
