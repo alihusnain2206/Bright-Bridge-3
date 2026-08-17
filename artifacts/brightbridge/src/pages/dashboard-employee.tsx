@@ -113,7 +113,7 @@ export default function EmployeeDashboard() {
         fetch(`/api/locations?companyId=${companyId}`, { credentials: "include" }),
       ]);
       const data = await res.json() as TokenData;
-      if (!res.ok) { setTokenError("Token generation failed"); return; }
+      if (!res.ok) { setTokenError((data as { error?: string }).error ?? "Token generation failed"); return; }
       setTokenData(data);
 
       // Build locations list from DB — prefer it over COMPANY_LOCATIONS / authLoc so that

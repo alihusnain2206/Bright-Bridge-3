@@ -486,13 +486,31 @@ router.post("/auth/token-by-role", async (req, res) => {
   } else if (user.role === "employee") {
     // Resolution order: 1. employees.location_id (DB-authoritative — updated by PATCH /employees/:id)
     //   → 2. user_accounts.location_id (in-memory fallback, covers seeded/admin users without an employees row)
-    //   → 3. company's is_primary location → 4. LOC-SUNSHINE (absolute last resort).
+    //   → 3. company's is_primary location.
     // DB is checked FIRST so a location reassignment via PATCH /employees/:id takes effect on the very
     // next token request without requiring a server restart.  This is the core Phase 3 assertion.
+    //
+    // IMPORTANT: no fallback to a placeholder string.  A wrong locationId (e.g. another company's
+    // location) causes EasyTeam to silently record the clock-in at the wrong site — hours attributed
+    // to another customer's location with no error surfaced anywhere.  Hard-fail instead: a blocked
+    // clock-in is acceptable; contaminated payroll data is not.
     const empLocationId = (user.employeeId ? (await resolveEmployeeLocationId(user.employeeId)) ?? undefined : undefined)
       ?? user.locationId
-      ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : "LOC-SUNSHINE")
-      ?? "LOC-SUNSHINE";
+      ?? (user.companyId ? await resolveCompanyLocationId(user.companyId) : undefined);
+
+    if (!empLocationId) {
+      req.log.error(
+        { userId: targetId, employeeId: user.employeeId, companyId: user.companyId },
+        "token-by-role: employee location unresolved — no location assigned to this employee or company; " +
+        "refusing to issue JWT to prevent cross-company shift contamination",
+      );
+      res.status(400).json({
+        error: "Your location has not been assigned yet. Please contact your manager.",
+        code: "LOCATION_UNRESOLVED",
+      });
+      return;
+    }
+
     payload = {
       employeeId: user.employeeId,
       organizationId: await resolveEasyTeamOrgId(user.companyId),
