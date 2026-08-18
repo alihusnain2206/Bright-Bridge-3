@@ -1,0 +1,29 @@
+We need a proper migration playbook. Ten companies are still on the shared ORG-BRIGHTBRIDGE organization, including live ones — BrightbridgeAssist LLC, Urban Concepts (a real client going live shortly with four sites), and Maple Grove. Per EasyTeam's own data model, each customer company should have its own organization, and we've already migrated three: Sunshine, Harborview, and Riverside.
+
+Analysis only — no code changes, no data changes.
+
+1. What actually happened with Sunshine
+
+Reconstruct the full sequence of that migration from the code and git history: the initial change, everything that broke afterwards, and every follow-up fix that was needed to make it work. I want the honest version, including the things nobody anticipated (stale employee UUIDs, the boot function that kept restoring them, location re-resolution, identifier mismatches).
+
+2. What has since been fixed permanently
+
+Many of Sunshine's follow-ups became general fixes rather than one-offs — the location boot self-heal, the external-key rules, the UUID handling, the sync guard. For each problem Sunshine hit, state whether a company migrating today would still hit it, or whether it now self-corrects.
+
+3. The current migration procedure
+
+Given that, write the step-by-step procedure to migrate one company today: what changes, in what order, what happens automatically, what needs manual intervention, and what must be verified after each step.
+
+4. What is lost, and what it means per company
+
+Be specific about historical shift data — what becomes invisible in EasyTeam's screens, what remains in our database, and what that means for payroll. Then assess each of the ten companies individually: which are test companies where loss is irrelevant, and which have real history that would need EasyTeam's involvement to migrate.
+
+5. Special cases
+BrightbridgeAssist LLC — it is the shared org. What does migrating it even mean, and does it need to move at all?
+Urban Concepts — real client, four locations, going live soon. Is it better to migrate before go-live (small history, fewer employees) or after? What's the risk either way?
+Any company where migration is inadvisable and why.
+6. Recommendation
+
+A suggested order and timing, with a clear statement of which companies genuinely need this and which could stay on the shared org indefinitely without harm.
+
+Report only. We'll decide the plan together before anything is touched.
