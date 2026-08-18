@@ -508,6 +508,104 @@ adminRouter.post("/admin/easyteam/register-company", async (req, res) => {
   }
 });
 
+// ── POST /api/admin/easyteam/migrate-company-org ──────────────────────────────
+// One-shot org migration for a legacy shared-org company.
+// 1. Sets companies.easyteam_org_id = companyId (so resolveEasyTeamOrgId returns the new org).
+// 2. Nulls easyteam_uuid + easyteam_synced for all company employees
+//    (required — non-null UUID = boot Phase 2 skips re-registration).
+// 3. Immediately re-registers all employees under the new org via the EasyTeam
+//    token-exchange flow (same logic as boot Phase 2 and register-company).
+// super_admin only. Idempotent: safe to call again if a previous run partially failed.
+adminRouter.post("/admin/easyteam/migrate-company-org", async (req, res) => {
+  const caller = getCaller(req as Parameters<typeof getCaller>[0]);
+  if (!caller || caller.role !== "super_admin") {
+    res.status(401).json({ error: "super_admin access required" });
+    return;
+  }
+
+  const { companyId } = req.body as { companyId?: string };
+  if (!companyId || typeof companyId !== "string") {
+    res.status(400).json({ error: "companyId is required" });
+    return;
+  }
+
+  try {
+    // ── Step 1: set own org ID ─────────────────────────────────────────────
+    const [company] = await db
+      .update(companies)
+      .set({ easyteamOrgId: companyId })
+      .where(eq(companies.id, companyId))
+      .returning({ id: companies.id, name: companies.name, easyteamOrgId: companies.easyteamOrgId });
+
+    if (!company) {
+      res.status(404).json({ error: `Company not found: ${companyId}` });
+      return;
+    }
+
+    req.log.info({ companyId, newOrgId: company.easyteamOrgId }, "migrate-company-org: easyteam_org_id set");
+
+    // ── Step 2: null all employee UUIDs ────────────────────────────────────
+    const nulled = await db
+      .update(employees)
+      .set({ easyteamUuid: null, easyteamSynced: false })
+      .where(eq(employees.companyId, companyId))
+      .returning({ id: employees.id });
+
+    req.log.info({ companyId, nulledCount: nulled.length }, "migrate-company-org: employee UUIDs nulled");
+
+    // ── Step 3: re-register under new org (same as boot Phase 2) ──────────
+    const allEmps = await db
+      .select()
+      .from(employees)
+      .where(eq(employees.companyId, companyId));
+
+    const fallbackLocationId = await resolveCompanyLocationId(companyId);
+    const results: Array<{ employeeId: string; name: string; success: boolean; easyteamUuid?: string; error?: string }> = [];
+
+    for (const emp of allEmps) {
+      const empLocId = (await resolveEmployeeLocationId(emp.id)) ?? fallbackLocationId;
+      const result = await registerEmployeeInEasyTeam(
+        {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          email: emp.email,
+          roleName: emp.position ?? "Staff",
+          wage: (emp.hourlyWage ?? 1500) / 100,
+          wageType: "hourly",
+        },
+        empLocId,
+        companyId,
+        req.log
+      );
+      results.push({
+        employeeId: emp.id,
+        name: `${emp.firstName} ${emp.lastName}`,
+        success: result.success,
+        easyteamUuid: result.easyteamEmployeeId,
+        error: result.error,
+      });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed    = results.filter((r) => !r.success).length;
+    req.log.info({ companyId, succeeded, failed }, "migrate-company-org: re-registration complete");
+
+    res.json({
+      ok: true,
+      companyId,
+      companyName: company.name,
+      newOrgId: company.easyteamOrgId,
+      employeesNulled: nulled.length,
+      succeeded,
+      failed,
+      results,
+    });
+  } catch (err) {
+    req.log.error({ err }, "POST /admin/easyteam/migrate-company-org failed");
+    res.status(500).json({ error: "Migration failed" });
+  }
+});
+
 // ── Platform-level user management ───────────────────────────────────────────
 // These endpoints manage "technical" and "super_manager" accounts that have no
 // company affiliation (companyId IS NULL). super_admin access only throughout.
