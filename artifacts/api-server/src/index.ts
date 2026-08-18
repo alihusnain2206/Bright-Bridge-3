@@ -130,6 +130,85 @@ async function bootEasyteamOrgIdMigration() {
 }
 
 /**
+ * Parameterized org migration for legacy shared-org companies.
+ *
+ * Companies created before the wizard began setting easyteam_org_id automatically
+ * land on the shared ORG-BRIGHTBRIDGE org. This function moves any number of them
+ * to their own dedicated org in a single boot pass.
+ *
+ * For each companyId in COMPANIES_TO_MIGRATE:
+ *   1. Sets companies.easyteam_org_id = companyId
+ *      Guard: WHERE easyteam_org_id IS NULL — idempotent no-op on every subsequent boot.
+ *   2. Only when the org ID was actually changed in this run: nulls easyteam_uuid +
+ *      easyteam_synced for all company employees so boot Phase 2 re-registers them
+ *      under the new org via token exchange.
+ *
+ * IMPORTANT: the employee-UUID null is intentionally gated on the org-ID UPDATE
+ * returning at least one row. On subsequent boots the org ID is already set, the
+ * UPDATE returns 0 rows, and the null is skipped — preserving the fresh new-org
+ * UUIDs that Phase 2 wrote on the migration boot.
+ *
+ * To migrate another company: add its ID to COMPANIES_TO_MIGRATE and redeploy.
+ * No other changes are needed. The function is non-fatal per company — one failure
+ * does not block the rest.
+ */
+
+/** Companies being migrated from ORG-BRIGHTBRIDGE to their own EasyTeam org. */
+const COMPANIES_TO_MIGRATE: string[] = [
+  "ORG-MSAIF6DJ-LY2HE1", // Cedar Grove Kids Academy         — verified 2026-08-18
+  "ORG-MSG8W5WM-G6PNF1",  // Urban Concepts of NY Round the Clock Nursery
+];
+
+async function bootMigrateCompanyOrgs() {
+  for (const companyId of COMPANIES_TO_MIGRATE) {
+    try {
+      // Step 1: set the company's own org ID (no-op after first run)
+      const orgResult = await pool.query<{ id: string }>(
+        `UPDATE companies
+         SET easyteam_org_id = $1
+         WHERE id = $1 AND easyteam_org_id IS NULL
+         RETURNING id`,
+        [companyId]
+      );
+      const orgChanged = orgResult.rowCount ?? 0;
+
+      if (orgChanged === 0) {
+        logger.info({ companyId }, "Boot: bootMigrateCompanyOrgs — org ID already set, no-op");
+        continue;
+      }
+
+      logger.info(
+        { companyId, newOrgId: companyId },
+        "Boot: bootMigrateCompanyOrgs — easyteam_org_id set, nulling stale employee UUIDs"
+      );
+
+      // Step 2: null stale UUIDs so Phase 2 re-registers under the new org
+      const empResult = await pool.query<{ id: string; first_name: string; last_name: string }>(
+        `UPDATE employees
+         SET easyteam_uuid = NULL, easyteam_synced = FALSE
+         WHERE company_id = $1
+         RETURNING id, first_name, last_name`,
+        [companyId]
+      );
+
+      for (const row of empResult.rows) {
+        logger.info(
+          { employeeId: row.id, name: `${row.first_name} ${row.last_name}`, companyId },
+          "Boot: bootMigrateCompanyOrgs — easyteam_uuid nulled (will re-register in Phase 2)"
+        );
+      }
+
+      logger.info(
+        { companyId, employeesNulled: empResult.rowCount ?? 0 },
+        "Boot: bootMigrateCompanyOrgs complete — Phase 2 will re-register employees under new org"
+      );
+    } catch (err) {
+      logger.warn({ err, companyId }, "Boot: bootMigrateCompanyOrgs — failed for company (non-fatal, others continue)");
+    }
+  }
+}
+
+/**
  * Add easyteam_external_key to the locations table.
  * This column holds the mutable external key used in EasyTeam JWT locationId claims.
  * It defaults to NULL (resolver falls back to locations.id) for existing rows, and is
@@ -137,77 +216,6 @@ async function bootEasyteamOrgIdMigration() {
  * to re-register a broken location under the correct org without deleting the row.
  * Safe to run on every boot — ADD COLUMN IF NOT EXISTS is idempotent.
  */
-/**
- * One-time org migration for Cedar Grove Kids Academy (ORG-MSAIF6DJ-LY2HE1).
- *
- * Cedar Grove was onboarded before the company-creation wizard began setting
- * easyteam_org_id automatically. Its employees were registered under the shared
- * ORG-BRIGHTBRIDGE org, so their easyteam_uuid values are stale relative to
- * Cedar Grove's own org.
- *
- * This function:
- *   1. Sets companies.easyteam_org_id = 'ORG-MSAIF6DJ-LY2HE1'  (idempotent guard:
- *      only runs when the column is currently NULL — no-op on every subsequent boot).
- *   2. Only when the column was actually changed: nulls easyteam_uuid +
- *      easyteam_synced for Cedar Grove's employees so that boot Phase 2 (which runs
- *      after the full Promise.all) re-registers them under the new org.
- *
- * IMPORTANT: the employee-UUID null is intentionally gated on the org-ID row
- * being updated in *this* run. On subsequent boots the org ID is already set, the
- * UPDATE returns 0 rows, and we skip the null — preserving the fresh new-org UUIDs
- * written by Phase 2 on the first migration boot.
- */
-async function bootCedarGroveMigration() {
-  const CEDAR_GROVE_ID = "ORG-MSAIF6DJ-LY2HE1";
-  try {
-    // Step 1: set the company's own org ID (no-op after first run)
-    const orgResult = await pool.query<{ id: string }>(
-      `UPDATE companies
-       SET easyteam_org_id = $1
-       WHERE id = $1 AND easyteam_org_id IS NULL
-       RETURNING id`,
-      [CEDAR_GROVE_ID]
-    );
-    const orgChanged = orgResult.rowCount ?? 0;
-
-    if (orgChanged === 0) {
-      logger.info(
-        { companyId: CEDAR_GROVE_ID },
-        "Boot: bootCedarGroveMigration — org ID already set, no-op"
-      );
-      return;
-    }
-
-    logger.info(
-      { companyId: CEDAR_GROVE_ID, newOrgId: CEDAR_GROVE_ID },
-      "Boot: bootCedarGroveMigration — easyteam_org_id set, nulling stale employee UUIDs"
-    );
-
-    // Step 2: null stale UUIDs so Phase 2 re-registers under the new org
-    const empResult = await pool.query<{ id: string; first_name: string; last_name: string }>(
-      `UPDATE employees
-       SET easyteam_uuid = NULL, easyteam_synced = FALSE
-       WHERE company_id = $1
-       RETURNING id, first_name, last_name`,
-      [CEDAR_GROVE_ID]
-    );
-
-    for (const row of empResult.rows) {
-      logger.info(
-        { employeeId: row.id, name: `${row.first_name} ${row.last_name}`, companyId: CEDAR_GROVE_ID },
-        "Boot: bootCedarGroveMigration — easyteam_uuid nulled (will re-register in Phase 2)"
-      );
-    }
-
-    logger.info(
-      { companyId: CEDAR_GROVE_ID, employeesNulled: empResult.rowCount ?? 0 },
-      "Boot: bootCedarGroveMigration complete — Phase 2 will re-register employees under new org"
-    );
-  } catch (err) {
-    logger.warn({ err, companyId: CEDAR_GROVE_ID }, "Boot: bootCedarGroveMigration failed (non-fatal)");
-  }
-}
-
 async function bootEasyteamExternalKeyMigration() {
   try {
     await pool.query(`
@@ -835,7 +843,7 @@ app.listen(port, (err) => {
 
   // Run all boot tasks in the background after the server is up.
   Promise.all([
-    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()).then(() => bootEasyteamOrgIdMigration()).then(() => bootCedarGroveMigration()).then(() => bootEasyteamExternalKeyMigration()),
+    bootSessionTable().then(() => bootIgnoredEtUuids()).then(() => bootCompanySignedFormsSchema()).then(() => bootEasyteamOrgIdMigration()).then(() => bootMigrateCompanyOrgs()).then(() => bootEasyteamExternalKeyMigration()),
     // Phase 3: run schema migration FIRST so is_primary/lat/lng columns exist before seeding
     bootPhase3LocationSchema()
       .then(() => bootSeedCompanies())
